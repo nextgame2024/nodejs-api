@@ -2,9 +2,9 @@ import http from "http";
 import app from "./app.js";
 import { config } from "./config/index.js";
 
+const port = process.env.PORT || config.port;
+
 const server = http.createServer(app);
-server.listen(config.port, () => {
-  /* eslint-disable no-console */
-  console.log(`🚀  API ready on http://localhost:${config.port}`);
-  /* eslint-enable no-console */
+server.listen(port, () => {
+  console.log(`🚀  API running on http://localhost:${port}`);
 });
