@@ -18,7 +18,7 @@ export const login = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  const match = await bcrypt.compare(password, found.password);
+  const match = await bcrypt.compare(password, found.password.toString());
 
   console.log("Password match:", match);
   if (!match) {
