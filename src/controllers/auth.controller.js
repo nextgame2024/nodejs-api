@@ -13,11 +13,14 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   const found = await findByEmail(email);
+  console.log("User from DB:", found);
   if (!found) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
   const match = await bcrypt.compare(password, found.password);
+
+  console.log("Password match:", match);
   if (!match) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
