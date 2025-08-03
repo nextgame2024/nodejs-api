@@ -6,13 +6,13 @@ import { generateToken } from "../utils/generateToken.js";
 export const login = asyncHandler(async (req, res) => {
   const {
     user: { email, password },
-  } = req.body || {};
+  } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password required" });
   }
 
-  const found = findByEmail(email);
+  const found = await findByEmail(email);
   if (!found) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
