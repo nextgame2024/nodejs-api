@@ -27,7 +27,7 @@ app.use(
     optionsSuccessStatus: 204,
   })
 );
-app.options("*", cors());
+app.options(/.*/, cors());
 
 // Global middleware
 app.use(express.json());
