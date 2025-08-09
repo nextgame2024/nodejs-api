@@ -13,7 +13,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // Routes
-app.use("/api/v1/auth", authRoutes);
+app.use("/api/users/login", authRoutes);
 app.use("/api", articleRoutes);
 app.use("/api", profileRoutes);
 app.use("/api", userRoutes);
