@@ -6,6 +6,7 @@ import articleRoutes from "./routes/article.routes.js";
 import profileRoutes from "./routes/profile.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import tagRoutes from "./routes/tag.routes.js";
+import uploadRoutes from "./routes/upload.routes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
@@ -40,6 +41,7 @@ app.use("/api", articleRoutes);
 app.use("/api", profileRoutes);
 app.use("/api", userRoutes);
 app.use("/api", tagRoutes);
+app.use("/api", uploadRoutes);
 
 // Error handler
 app.use(errorHandler);
