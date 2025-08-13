@@ -1,12 +1,21 @@
 import pool from "../config/db.js";
 
-export async function getAllTags() {
-  const [rows] = await pool.query("SELECT name FROM tags ORDER BY name ASC");
+export async function getAllTags({ limit = 1000, offset = 0 } = {}) {
+  const [rows] = await pool.query(
+    `
+    SELECT name
+    FROM tags
+    ORDER BY name ASC
+    LIMIT ? OFFSET ?;
+    `,
+    [Number(limit), Number(offset)]
+  );
   return rows.map((r) => r.name);
 }
 
 export async function getTagsByArticleIds(articleIds = []) {
   if (!articleIds.length) return new Map();
+
   const placeholders = articleIds.map(() => "?").join(",");
   const [rows] = await pool.query(
     `
@@ -14,10 +23,11 @@ export async function getTagsByArticleIds(articleIds = []) {
     FROM article_tags at
     JOIN tags t ON t.id = at.tag_id
     WHERE at.article_id IN (${placeholders})
-    ORDER BY t.name
+    ORDER BY t.name;
     `,
     articleIds
   );
+
   const map = new Map();
   for (const r of rows) {
     if (!map.has(r.article_id)) map.set(r.article_id, []);
@@ -34,11 +44,11 @@ export async function ensureTags(names = []) {
       "INSERT INTO tags (name) VALUES (?) ON DUPLICATE KEY UPDATE name = name",
       [name]
     );
-    const [rows] = await pool.query(
+    const [row] = await pool.query(
       "SELECT id FROM tags WHERE name = ? LIMIT 1",
       [name]
     );
-    ids.push(rows[0].id);
+    ids.push(row[0].id);
   }
   return ids;
 }

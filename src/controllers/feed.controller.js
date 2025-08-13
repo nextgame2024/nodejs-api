@@ -1,12 +1,17 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { getFeedArticles } from "../models/article.model.js";
+import { getPagination } from "../utils/pagination.js";
+
+const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 
 export const getFeed = asyncHandler(async (req, res) => {
   const userId = req.user?.id;
-  const limit = req.query.limit || 20;
-  const offset = req.query.offset || 0;
+  const { limit, offset } = getPagination(req);
 
   const rows = await getFeedArticles({ userId, limit, offset });
+
+  const ids = rows.map((r) => r.id);
+  const tagMap = await getTagsByArticleIds(ids);
 
   const articles = rows.map((a) => ({
     id: a.id,
@@ -17,14 +22,14 @@ export const getFeed = asyncHandler(async (req, res) => {
     favoritesCount: Number(a.favoritesCount) || 0,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
-    favorited: !!a.favorited, // boolean
+    favorited: !!a.favorited,
     author: {
-      image: a.image || "",
+      image: a.image || DEFAULT_AVATAR,
       bio: a.bio || "",
       username: a.username,
-      following: true, // by definition, feed authors are followed
+      following: true,
     },
-    tagList: [], // implement tags later
+    tagList: tagMap.get(a.id) || [],
   }));
 
   res.json({ articles, articlesCount: articles.length });
