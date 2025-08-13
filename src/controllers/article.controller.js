@@ -8,7 +8,13 @@ const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 export const listArticles = asyncHandler(async (req, res) => {
   const { limit, offset } = getPagination(req);
   const userId = req.user?.id || null;
-  const dbArticles = await getAllArticles({ userId, limit, offset });
+
+  const { rows: dbArticles, total } = await getAllArticles({
+    userId,
+    limit,
+    offset,
+  });
+
   const ids = dbArticles.map((a) => a.id);
   const tagMap = await getTagsByArticleIds(ids);
 
@@ -18,7 +24,7 @@ export const listArticles = asyncHandler(async (req, res) => {
     title: a.title,
     body: a.body,
     description: a.description,
-    favoritesCount: a.favoritesCount,
+    favoritesCount: Number(a.favoritesCount) || 0,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
     favorited: !!a.favorited,
@@ -31,5 +37,5 @@ export const listArticles = asyncHandler(async (req, res) => {
     },
   }));
 
-  res.json({ articles, articlesCount: articles.length });
+  res.json({ articles, articlesCount: total });
 });

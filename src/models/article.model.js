@@ -1,10 +1,6 @@
 import pool from "../config/db.js";
 
-/**
- * List ALL articles with pagination.
- * Adds favoritesCount, favorited (for current user), and following (current user follows author).
- * Uses subqueries to avoid ONLY_FULL_GROUP_BY issues.
- */
+/** All articles with total count (for pagination) */
 export async function getAllArticles({
   userId = null,
   limit = 1000,
@@ -16,9 +12,7 @@ export async function getAllArticles({
       a.id, a.slug, a.title, a.description, a.body,
       a.createdAt, a.updatedAt,
       u.username, u.image, u.bio,
-      /* totals */
       (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS favoritesCount,
-      /* booleans for current user (false if userId is NULL) */
       EXISTS(
         SELECT 1 FROM article_favorites af2
         WHERE af2.article_id = a.id AND af2.user_id = ?
@@ -34,12 +28,15 @@ export async function getAllArticles({
     `,
     [userId, userId, Number(limit), Number(offset)]
   );
-  return rows;
+
+  const [countRows] = await pool.query(
+    `SELECT COUNT(*) AS total FROM articles;`
+  );
+  const total = countRows[0]?.total ?? 0;
+  return { rows, total };
 }
 
-/**
- * Articles from authors the current user follows (the "feed").
- */
+/** Feed with total count (for pagination) */
 export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
   const [rows] = await pool.query(
     `
@@ -61,5 +58,16 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
     `,
     [userId, userId, Number(limit), Number(offset)]
   );
-  return rows;
+
+  const [countRows] = await pool.query(
+    `
+    SELECT COUNT(*) AS total
+    FROM follows f
+    JOIN articles a ON a.author_id = f.followee_id
+    WHERE f.follower_id = ?;
+    `,
+    [userId]
+  );
+  const total = countRows[0]?.total ?? 0;
+  return { rows, total };
 }
