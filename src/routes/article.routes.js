@@ -2,6 +2,7 @@ import { Router } from "express";
 import { listArticles } from "../controllers/article.controller.js";
 import { getFeed } from "../controllers/feed.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
+import { authOptional } from "../middlewares/authOptional.js";
 
 const router = Router();
 router.get("/articles", listArticles);
