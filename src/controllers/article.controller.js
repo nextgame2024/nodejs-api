@@ -1,25 +1,29 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
-import { getAllArticles, getFeedArticles } from "../models/article.model.js";
+import { getAllArticles, findArticleBySlug } from "../models/article.model.js";
 import { getTagsByArticleIds } from "../models/tag.model.js";
-import { getPagination } from "../utils/pagination.js";
-import { findArticleBySlug } from "../models/article.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
+const MAX_LIMIT = 1000;
+
+function parseLimitOffset(q) {
+  const limit = Math.min(
+    MAX_LIMIT,
+    Math.max(1, Number.isFinite(+q.limit) ? +q.limit : MAX_LIMIT)
+  );
+  const offset = Math.max(0, Number.isFinite(+q.offset) ? +q.offset : 0);
+  return { limit, offset };
+}
 
 export const listArticles = asyncHandler(async (req, res) => {
-  const { limit, offset } = getPagination(req);
-  const userId = req.user?.id || null;
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || "";
 
-  const { rows: dbArticles, total } = await getAllArticles({
-    userId,
-    limit,
-    offset,
-  });
+  const { rows, total } = await getAllArticles({ userId, limit, offset });
 
-  const ids = dbArticles.map((a) => a.id);
+  const ids = rows.map((a) => a.id);
   const tagMap = await getTagsByArticleIds(ids);
 
-  const articles = dbArticles.map((a) => ({
+  const articles = rows.map((a) => ({
     id: a.id,
     slug: a.slug,
     title: a.title,
@@ -38,6 +42,7 @@ export const listArticles = asyncHandler(async (req, res) => {
     },
   }));
 
+  // IMPORTANT: use total (not articles.length) for correct pagination
   res.json({ articles, articlesCount: total });
 });
 
