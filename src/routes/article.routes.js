@@ -1,9 +1,6 @@
 import { Router } from "express";
-import {
-  listArticles,
-  getFeed,
-  getArticle,
-} from "../controllers/article.controller.js";
+import { listArticles, getArticle } from "../controllers/article.controller.js";
+import { getFeed } from "../controllers/feed.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
 import { authOptional } from "../middlewares/authOptional.js";
 
