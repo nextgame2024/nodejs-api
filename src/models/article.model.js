@@ -71,3 +71,32 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
   const total = countRows[0]?.total ?? 0;
   return { rows, total };
 }
+
+// Get a single article row (with author + counts/flags) by slug
+export async function findArticleBySlug({ slug, userId = "" }) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        a.id, a.slug, a.title, a.description, a.body,
+        a.createdAt, a.updatedAt,
+        u.username, u.image, u.bio,
+        /* totals */
+        (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS favoritesCount,
+        /* booleans dependent on current user (empty string when anonymous => false) */
+        EXISTS(
+          SELECT 1 FROM article_favorites af2
+          WHERE af2.article_id = a.id AND af2.user_id = ?
+        ) AS favorited,
+        EXISTS(
+          SELECT 1 FROM follows f
+          WHERE f.follower_id = ? AND f.followee_id = a.author_id
+        ) AS following
+      FROM articles a
+      JOIN users u ON u.id = a.author_id
+      WHERE a.slug = ?
+      LIMIT 1;
+      `,
+    [userId || "", userId || "", slug]
+  );
+  return rows[0] || null;
+}

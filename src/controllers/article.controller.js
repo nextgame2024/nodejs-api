@@ -1,7 +1,8 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
-import { getAllArticles } from "../models/article.model.js";
+import { getAllArticles, getFeedArticles } from "../models/article.model.js";
 import { getTagsByArticleIds } from "../models/tag.model.js";
 import { getPagination } from "../utils/pagination.js";
+import { findArticleBySlug } from "../models/article.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 
@@ -38,4 +39,35 @@ export const listArticles = asyncHandler(async (req, res) => {
   }));
 
   res.json({ articles, articlesCount: total });
+});
+
+export const getArticle = asyncHandler(async (req, res) => {
+  const slug = req.params.slug;
+  const userId = req.user?.id || "";
+
+  const row = await findArticleBySlug({ slug, userId });
+  if (!row) return res.status(404).json({ error: "Article not found" });
+
+  const tagMap = await getTagsByArticleIds([row.id]);
+
+  const article = {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    body: row.body,
+    description: row.description,
+    favoritesCount: Number(row.favoritesCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    favorited: !!row.favorited,
+    tagList: tagMap.get(row.id) || [],
+    author: {
+      image: row.image || DEFAULT_AVATAR,
+      bio: row.bio || "",
+      username: row.username,
+      following: !!row.following,
+    },
+  };
+
+  res.json({ article });
 });
