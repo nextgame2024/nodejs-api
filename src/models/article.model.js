@@ -104,3 +104,19 @@ export async function findArticleBySlug({ slug, userId = "" }) {
   );
   return rows[0] || null;
 }
+
+export async function findArticleAuthorId(slug) {
+  const [rows] = await pool.query(
+    `SELECT author_id FROM articles WHERE slug = ? LIMIT 1`,
+    [slug]
+  );
+  return rows[0]?.author_id || null;
+}
+
+export async function deleteArticleBySlug({ slug, userId }) {
+  const [result] = await pool.query(
+    `DELETE FROM articles WHERE slug = ? AND author_id = ? LIMIT 1`,
+    [slug, userId]
+  );
+  return result.affectedRows || 0;
+}

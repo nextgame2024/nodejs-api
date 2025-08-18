@@ -1,5 +1,10 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
-import { getAllArticles, findArticleBySlug } from "../models/article.model.js";
+import {
+  getAllArticles,
+  findArticleBySlug,
+  findArticleAuthorId,
+  deleteArticleBySlug,
+} from "../models/article.model.js";
 import { getTagsByArticleIds } from "../models/tag.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
@@ -75,4 +80,25 @@ export const getArticle = asyncHandler(async (req, res) => {
   };
 
   res.json({ article });
+});
+
+export const deleteArticle = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { slug } = req.params;
+
+  const authorId = await findArticleAuthorId(slug);
+  if (!authorId) return res.status(404).json({ error: "Article not found" });
+
+  if (authorId !== userId) {
+    return res
+      .status(403)
+      .json({ error: "You are not the author of this article" });
+  }
+
+  const affected = await deleteArticleBySlug({ slug, userId });
+  if (affected === 0) {
+    return res.status(404).json({ error: "Article not found" });
+  }
+
+  return res.status(204).json({});
 });
