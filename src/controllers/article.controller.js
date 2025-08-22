@@ -99,7 +99,6 @@ export const deleteArticle = asyncHandler(async (req, res) => {
 
   const authorId = await findArticleAuthorId(slug);
   if (!authorId) return res.status(404).json({ error: "Article not found" });
-
   if (authorId !== userId) {
     return res
       .status(403)
@@ -111,7 +110,7 @@ export const deleteArticle = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Article not found" });
   }
 
-  return res.status(204).json({});
+  return res.status(204).end();
 });
 
 /* CREATE */
