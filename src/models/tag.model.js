@@ -52,3 +52,17 @@ export async function ensureTags(names = []) {
   }
   return ids;
 }
+
+/* Replace an article's tags with provided names */
+export async function setArticleTags(articleId, names = []) {
+  const ids = await ensureTags(names);
+  await pool.query("DELETE FROM article_tags WHERE article_id = ?", [
+    articleId,
+  ]);
+  if (!ids.length) return;
+  const values = ids.map((id) => [articleId, id]);
+  await pool.query(
+    "INSERT IGNORE INTO article_tags (article_id, tag_id) VALUES ?",
+    [values]
+  );
+}

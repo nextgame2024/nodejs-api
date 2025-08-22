@@ -4,8 +4,10 @@ import {
   findArticleBySlug,
   findArticleAuthorId,
   deleteArticleBySlug,
+  insertArticle,
+  updateArticleBySlugForAuthor,
 } from "../models/article.model.js";
-import { getTagsByArticleIds } from "../models/tag.model.js";
+import { getTagsByArticleIds, setArticleTags } from "../models/tag.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 const MAX_LIMIT = 1000;
@@ -17,6 +19,16 @@ function parseLimitOffset(q) {
   );
   const offset = Math.max(0, Number.isFinite(+q.offset) ? +q.offset : 0);
   return { limit, offset };
+}
+
+function slugify(title = "") {
+  const base = title
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  const rnd = Math.random().toString(36).slice(2, 8);
+  return `${base || "article"}-${rnd}`;
 }
 
 export const listArticles = asyncHandler(async (req, res) => {
@@ -47,7 +59,6 @@ export const listArticles = asyncHandler(async (req, res) => {
     },
   }));
 
-  // IMPORTANT: use total (not articles.length) for correct pagination
   res.json({ articles, articlesCount: total });
 });
 
@@ -101,4 +112,113 @@ export const deleteArticle = asyncHandler(async (req, res) => {
   }
 
   return res.status(204).json({});
+});
+
+/* CREATE */
+export const createArticle = asyncHandler(async (req, res) => {
+  const authorId = req.user?.id;
+  const payload = req.body?.article || {};
+  const { title, description, body } = payload;
+  const tagList = Array.isArray(payload.tagList) ? payload.tagList : [];
+
+  if (!title || !description || !body) {
+    return res
+      .status(422)
+      .json({ error: "title, description and body required" });
+  }
+
+  const slug = slugify(title);
+  const articleId = await insertArticle({
+    authorId,
+    slug,
+    title,
+    description,
+    body,
+  });
+
+  if (tagList.length) {
+    await setArticleTags(articleId, tagList);
+  }
+
+  const row = await findArticleBySlug({ slug, userId: authorId });
+  const tagMap = await getTagsByArticleIds([articleId]);
+
+  const article = {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    body: row.body,
+    description: row.description,
+    favoritesCount: Number(row.favoritesCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    favorited: !!row.favorited,
+    tagList: tagMap.get(articleId) || [],
+    author: {
+      image: row.image || DEFAULT_AVATAR,
+      bio: row.bio || "",
+      username: row.username,
+      following: !!row.following,
+    },
+  };
+
+  res.status(201).json({ article });
+});
+
+/* UPDATE (by slug, only author) */
+export const updateArticle = asyncHandler(async (req, res) => {
+  const authorId = req.user?.id;
+  const slug = req.params.slug;
+  const payload = req.body?.article || {};
+  const { title, description, body } = payload;
+  const tagList = Array.isArray(payload.tagList) ? payload.tagList : undefined;
+  const newSlug = title ? slugify(title) : undefined;
+
+  const ok = await updateArticleBySlugForAuthor({
+    slug,
+    authorId,
+    title,
+    description,
+    body,
+    newSlug,
+  });
+  if (!ok)
+    return res
+      .status(404)
+      .json({ error: "Article not found or not owned by user" });
+
+  if (tagList) {
+    const rowAfter = await findArticleBySlug({
+      slug: newSlug ?? slug,
+      userId: authorId,
+    });
+    await setArticleTags(rowAfter.id, tagList);
+  }
+
+  const row = await findArticleBySlug({
+    slug: newSlug ?? slug,
+    userId: authorId,
+  });
+  const tagMap = await getTagsByArticleIds([row.id]);
+
+  const article = {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    body: row.body,
+    description: row.description,
+    favoritesCount: Number(row.favoritesCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    favorited: !!row.favorited,
+    tagList: tagMap.get(row.id) || [],
+    author: {
+      image: row.image || DEFAULT_AVATAR,
+      bio: row.bio || "",
+      username: row.username,
+      following: !!row.following,
+    },
+  };
+
+  res.json({ article });
 });

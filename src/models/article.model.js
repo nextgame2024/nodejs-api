@@ -120,3 +120,71 @@ export async function deleteArticleBySlug({ slug, userId }) {
   );
   return result.affectedRows || 0;
 }
+
+/** CREATE (returns new article id) */
+export async function insertArticle({
+  authorId,
+  slug,
+  title,
+  description,
+  body,
+}) {
+  const [result] = await pool.query(
+    `
+        INSERT INTO articles (id, slug, title, description, body, author_id)
+        VALUES (UUID(), ?, ?, ?, ?, ?)
+      `,
+    [slug, title, description, body, authorId]
+  );
+  // Find inserted ID by slug (slug is unique in practice with our random suffix)
+  const [rows] = await pool.query(
+    `SELECT id FROM articles WHERE slug = ? LIMIT 1`,
+    [slug]
+  );
+  return rows[0].id;
+}
+
+/** UPDATE (by slug, only if owned by authorId). Returns true if updated. */
+export async function updateArticleBySlugForAuthor({
+  slug,
+  authorId,
+  title,
+  description,
+  body,
+  newSlug,
+}) {
+  const fields = [];
+  const params = [];
+
+  if (title !== undefined) {
+    fields.push("title = ?");
+    params.push(title);
+  }
+  if (description !== undefined) {
+    fields.push("description = ?");
+    params.push(description);
+  }
+  if (body !== undefined) {
+    fields.push("body = ?");
+    params.push(body);
+  }
+  if (newSlug !== undefined) {
+    fields.push("slug = ?");
+    params.push(newSlug);
+  }
+  if (!fields.length) return true; // nothing to update
+
+  fields.push("updatedAt = NOW()");
+
+  params.push(authorId, slug);
+  const [result] = await pool.query(
+    `
+        UPDATE articles
+        SET ${fields.join(", ")}
+        WHERE author_id = ? AND slug = ?
+        LIMIT 1
+      `,
+    params
+  );
+  return result.affectedRows > 0;
+}
