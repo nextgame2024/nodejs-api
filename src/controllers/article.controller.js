@@ -120,10 +120,14 @@ export const createArticle = asyncHandler(async (req, res) => {
   const { title, description, body } = payload;
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : [];
 
-  if (!title || !description || !body) {
-    return res
-      .status(422)
-      .json({ error: "title, description and body required" });
+  const errors = {};
+  if (!title || !title.trim()) errors.title = ["can't be blank"];
+  if (!description || !description.trim())
+    errors.description = ["can't be blank"];
+  if (!body || !body.trim()) errors.body = ["can't be blank"];
+
+  if (Object.keys(errors).length) {
+    return res.status(422).json({ errors });
   }
 
   const slug = slugify(title);
@@ -135,9 +139,7 @@ export const createArticle = asyncHandler(async (req, res) => {
     body,
   });
 
-  if (tagList.length) {
-    await setArticleTags(articleId, tagList);
-  }
+  if (tagList.length) await setArticleTags(articleId, tagList);
 
   const row = await findArticleBySlug({ slug, userId: authorId });
   const tagMap = await getTagsByArticleIds([articleId]);
@@ -171,6 +173,18 @@ export const updateArticle = asyncHandler(async (req, res) => {
   const payload = req.body?.article || {};
   const { title, description, body } = payload;
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : undefined;
+
+  const errors = {};
+  if (title !== undefined && !String(title).trim())
+    errors.title = ["can't be blank"];
+  if (description !== undefined && !String(description).trim())
+    errors.description = ["can't be blank"];
+  if (body !== undefined && !String(body).trim())
+    errors.body = ["can't be blank"];
+  if (Object.keys(errors).length) {
+    return res.status(422).json({ errors });
+  }
+
   const newSlug = title ? slugify(title) : undefined;
 
   const ok = await updateArticleBySlugForAuthor({
@@ -181,10 +195,11 @@ export const updateArticle = asyncHandler(async (req, res) => {
     body,
     newSlug,
   });
-  if (!ok)
+  if (!ok) {
     return res
       .status(404)
-      .json({ error: "Article not found or not owned by user" });
+      .json({ errors: { article: ["not found or not owned by user"] } });
+  }
 
   if (tagList) {
     const rowAfter = await findArticleBySlug({
