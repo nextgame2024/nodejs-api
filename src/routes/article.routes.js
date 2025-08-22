@@ -3,6 +3,8 @@ import {
   listArticles,
   getArticle,
   deleteArticle,
+  createArticle,
+  updateArticle,
 } from "../controllers/article.controller.js";
 import { getFeed } from "../controllers/feed.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
