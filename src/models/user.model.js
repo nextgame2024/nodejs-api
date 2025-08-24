@@ -9,6 +9,13 @@ export async function findByEmail(email) {
   return rows[0];
 }
 
+export async function unfollowUser(followerId, followeeId) {
+  await pool.query(
+    "DELETE FROM follows WHERE follower_id = ? AND followee_id = ? LIMIT 1",
+    [followerId, followeeId]
+  );
+}
+
 export async function findByUsername(username) {
   const [rows] = await pool.query(
     "SELECT id, username, image, bio, email, createdAt, updatedAt, password FROM users WHERE username = ? LIMIT 1",
