@@ -6,6 +6,9 @@ import {
   deleteArticleBySlug,
   insertArticle,
   updateArticleBySlugForAuthor,
+  findArticleIdBySlug,
+  addFavorite,
+  removeFavorite,
 } from "../models/article.model.js";
 import { getTagsByArticleIds, setArticleTags } from "../models/tag.model.js";
 
@@ -29,6 +32,27 @@ function slugify(title = "") {
     .replace(/(^-|-$)/g, "");
   const rnd = Math.random().toString(36).slice(2, 8);
   return `${base || "article"}-${rnd}`;
+}
+
+function toArticleDTO(row, tagMap) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    body: row.body,
+    description: row.description,
+    favoritesCount: Number(row.favoritesCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    favorited: !!row.favorited,
+    tagList: tagMap.get(row.id) || [],
+    author: {
+      image: row.image || DEFAULT_AVATAR,
+      bio: row.bio || "",
+      username: row.username,
+      following: !!row.following,
+    },
+  };
 }
 
 export const listArticles = asyncHandler(async (req, res) => {
@@ -235,4 +259,39 @@ export const updateArticle = asyncHandler(async (req, res) => {
   };
 
   res.json({ article });
+});
+
+/* POST /api/articles/:slug/favorite */
+export const favoriteArticle = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { slug } = req.params;
+  const articleId = await findArticleIdBySlug(slug);
+  if (!articleId) return res.status(404).json({ error: "Article not found" });
+
+  // add favorite (idempotent thanks to INSERT IGNORE)
+  await addFavorite({ userId, articleId });
+
+  // re-fetch with updated counts/flags for this user
+  const row = await findArticleBySlug({ slug, userId });
+  const tagMap = await getTagsByArticleIds([row.id]);
+  const article = toArticleDTO(row, tagMap);
+
+  return res.json({ article });
+});
+
+/* DELETE /api/articles/:slug/favorite */
+export const unfavoriteArticle = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { slug } = req.params;
+
+  const articleId = await findArticleIdBySlug(slug);
+  if (!articleId) return res.status(404).json({ error: "Article not found" });
+
+  await removeFavorite({ userId, articleId });
+
+  const row = await findArticleBySlug({ slug, userId });
+  const tagMap = await getTagsByArticleIds([row.id]);
+  const article = toArticleDTO(row, tagMap);
+
+  return res.json({ article });
 });

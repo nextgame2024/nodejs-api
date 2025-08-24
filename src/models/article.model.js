@@ -188,3 +188,26 @@ export async function updateArticleBySlugForAuthor({
   );
   return result.affectedRows > 0;
 }
+
+// Return article id by slug (helper)
+export async function findArticleIdBySlug(slug) {
+  const [rows] = await pool.query(
+    `SELECT id FROM articles WHERE slug = ? LIMIT 1`,
+    [slug]
+  );
+  return rows[0]?.id || null;
+}
+
+export async function addFavorite({ userId, articleId }) {
+  await pool.query(
+    `INSERT IGNORE INTO article_favorites (user_id, article_id) VALUES (?, ?)`,
+    [userId, articleId]
+  );
+}
+
+export async function removeFavorite({ userId, articleId }) {
+  await pool.query(
+    `DELETE FROM article_favorites WHERE user_id = ? AND article_id = ? LIMIT 1`,
+    [userId, articleId]
+  );
+}
