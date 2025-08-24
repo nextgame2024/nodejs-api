@@ -5,6 +5,8 @@ import {
   deleteArticle,
   createArticle,
   updateArticle,
+  favoriteArticle,
+  unfavoriteArticle,
 } from "../controllers/article.controller.js";
 import { getFeed } from "../controllers/feed.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
@@ -17,5 +19,7 @@ router.get("/articles/:slug", authOptional, getArticle);
 router.delete("/articles/:slug", authRequired, deleteArticle);
 router.post("/articles", authRequired, createArticle);
 router.put("/articles/:slug", authRequired, updateArticle);
+router.post("/articles/:slug/favorite", authRequired, favoriteArticle);
+router.delete("/articles/:slug/favorite", authRequired, unfavoriteArticle);
 
 export default router;
