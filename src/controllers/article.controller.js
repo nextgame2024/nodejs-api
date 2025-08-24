@@ -58,31 +58,24 @@ function toArticleDTO(row, tagMap) {
 export const listArticles = asyncHandler(async (req, res) => {
   const { limit, offset } = parseLimitOffset(req.query);
   const userId = req.user?.id || "";
+  const author = (req.query.author || "").toString().trim() || undefined;
+  const favoritedBy =
+    (req.query.favorited || "").toString().trim() || undefined;
+  const tag = (req.query.tag || "").toString().trim() || undefined;
 
-  const { rows, total } = await getAllArticles({ userId, limit, offset });
+  const { rows, total } = await getAllArticles({
+    userId,
+    limit,
+    offset,
+    author,
+    favoritedBy,
+    tag,
+  });
 
   const ids = rows.map((a) => a.id);
   const tagMap = await getTagsByArticleIds(ids);
 
-  const articles = rows.map((a) => ({
-    id: a.id,
-    slug: a.slug,
-    title: a.title,
-    body: a.body,
-    description: a.description,
-    favoritesCount: Number(a.favoritesCount) || 0,
-    createdAt: a.createdAt.toISOString(),
-    updatedAt: a.updatedAt.toISOString(),
-    favorited: !!a.favorited,
-    tagList: tagMap.get(a.id) || [],
-    author: {
-      image: a.image || DEFAULT_AVATAR,
-      bio: a.bio || "",
-      username: a.username,
-      following: !!a.following,
-    },
-  }));
-
+  const articles = rows.map((row) => toArticleDTO(row, tagMap));
   res.json({ articles, articlesCount: total });
 });
 
@@ -94,26 +87,7 @@ export const getArticle = asyncHandler(async (req, res) => {
   if (!row) return res.status(404).json({ error: "Article not found" });
 
   const tagMap = await getTagsByArticleIds([row.id]);
-
-  const article = {
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    body: row.body,
-    description: row.description,
-    favoritesCount: Number(row.favoritesCount) || 0,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-    favorited: !!row.favorited,
-    tagList: tagMap.get(row.id) || [],
-    author: {
-      image: row.image || DEFAULT_AVATAR,
-      bio: row.bio || "",
-      username: row.username,
-      following: !!row.following,
-    },
-  };
-
+  const article = toArticleDTO(row, tagMap);
   res.json({ article });
 });
 
@@ -133,7 +107,6 @@ export const deleteArticle = asyncHandler(async (req, res) => {
   if (affected === 0) {
     return res.status(404).json({ error: "Article not found" });
   }
-
   return res.status(204).end();
 });
 
@@ -149,10 +122,7 @@ export const createArticle = asyncHandler(async (req, res) => {
   if (!description || !description.trim())
     errors.description = ["can't be blank"];
   if (!body || !body.trim()) errors.body = ["can't be blank"];
-
-  if (Object.keys(errors).length) {
-    return res.status(422).json({ errors });
-  }
+  if (Object.keys(errors).length) return res.status(422).json({ errors });
 
   const slug = slugify(title);
   const articleId = await insertArticle({
@@ -167,25 +137,7 @@ export const createArticle = asyncHandler(async (req, res) => {
 
   const row = await findArticleBySlug({ slug, userId: authorId });
   const tagMap = await getTagsByArticleIds([articleId]);
-
-  const article = {
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    body: row.body,
-    description: row.description,
-    favoritesCount: Number(row.favoritesCount) || 0,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-    favorited: !!row.favorited,
-    tagList: tagMap.get(articleId) || [],
-    author: {
-      image: row.image || DEFAULT_AVATAR,
-      bio: row.bio || "",
-      username: row.username,
-      following: !!row.following,
-    },
-  };
+  const article = toArticleDTO(row, tagMap);
 
   res.status(201).json({ article });
 });
@@ -205,9 +157,7 @@ export const updateArticle = asyncHandler(async (req, res) => {
     errors.description = ["can't be blank"];
   if (body !== undefined && !String(body).trim())
     errors.body = ["can't be blank"];
-  if (Object.keys(errors).length) {
-    return res.status(422).json({ errors });
-  }
+  if (Object.keys(errors).length) return res.status(422).json({ errors });
 
   const newSlug = title ? slugify(title) : undefined;
 
@@ -219,11 +169,10 @@ export const updateArticle = asyncHandler(async (req, res) => {
     body,
     newSlug,
   });
-  if (!ok) {
+  if (!ok)
     return res
       .status(404)
       .json({ errors: { article: ["not found or not owned by user"] } });
-  }
 
   if (tagList) {
     const rowAfter = await findArticleBySlug({
@@ -238,25 +187,7 @@ export const updateArticle = asyncHandler(async (req, res) => {
     userId: authorId,
   });
   const tagMap = await getTagsByArticleIds([row.id]);
-
-  const article = {
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    body: row.body,
-    description: row.description,
-    favoritesCount: Number(row.favoritesCount) || 0,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-    favorited: !!row.favorited,
-    tagList: tagMap.get(row.id) || [],
-    author: {
-      image: row.image || DEFAULT_AVATAR,
-      bio: row.bio || "",
-      username: row.username,
-      following: !!row.following,
-    },
-  };
+  const article = toArticleDTO(row, tagMap);
 
   res.json({ article });
 });
@@ -268,10 +199,8 @@ export const favoriteArticle = asyncHandler(async (req, res) => {
   const articleId = await findArticleIdBySlug(slug);
   if (!articleId) return res.status(404).json({ error: "Article not found" });
 
-  // add favorite (idempotent thanks to INSERT IGNORE)
   await addFavorite({ userId, articleId });
 
-  // re-fetch with updated counts/flags for this user
   const row = await findArticleBySlug({ slug, userId });
   const tagMap = await getTagsByArticleIds([row.id]);
   const article = toArticleDTO(row, tagMap);

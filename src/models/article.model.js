@@ -1,15 +1,50 @@
 import pool from "../config/db.js";
 
-/** All articles with total count (for pagination) */
+/** All articles (with optional filters) + total count for pagination */
 export async function getAllArticles({
   userId = null,
   limit = 1000,
   offset = 0,
+  author,
+  favoritedBy,
+  tag,
 } = {}) {
-  const uid = userId || ""; // avoid NULL in EXISTS comparisons
+  const uid = userId || "";
+  const where = [];
+  const whereParams = [];
 
-  const [rows] = await pool.query(
-    `
+  if (author) {
+    where.push(`u.username = ?`);
+    whereParams.push(author);
+  }
+
+  if (favoritedBy) {
+    where.push(`
+      EXISTS (
+        SELECT 1
+        FROM article_favorites afx
+        JOIN users u2 ON u2.id = afx.user_id
+        WHERE afx.article_id = a.id AND u2.username = ?
+      )
+    `);
+    whereParams.push(favoritedBy);
+  }
+
+  if (tag) {
+    where.push(`
+      EXISTS (
+        SELECT 1
+        FROM article_tags at2
+        JOIN tags t ON t.id = at2.tag_id
+        WHERE at2.article_id = a.id AND t.name = ?
+      )
+    `);
+    whereParams.push(tag);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const selectSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
       a.createdAt, a.updatedAt,
@@ -25,23 +60,28 @@ export async function getAllArticles({
       ) AS following
     FROM articles a
     JOIN users u ON u.id = a.author_id
+    ${whereSql}
     ORDER BY a.createdAt DESC
     LIMIT ? OFFSET ?;
-    `,
-    [uid, uid, Number(limit), Number(offset)]
-  );
+  `;
+  const params = [uid, uid, ...whereParams, Number(limit), Number(offset)];
+  const [rows] = await pool.query(selectSql, params);
 
-  const [countRows] = await pool.query(
-    `SELECT COUNT(*) AS total FROM articles;`
-  );
+  const countSql = `
+    SELECT COUNT(*) AS total
+    FROM articles a
+    JOIN users u ON u.id = a.author_id
+    ${whereSql};
+  `;
+  const [countRows] = await pool.query(countSql, whereParams);
   const total = countRows[0]?.total ?? 0;
+
   return { rows, total };
 }
 
 /** Feed with total count (for pagination) */
 export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
   const uid = userId || "";
-
   const [rows] = await pool.query(
     `
     SELECT
@@ -79,7 +119,6 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
 /** One article by slug (with author + counts/flags) */
 export async function findArticleBySlug({ slug, userId = "" }) {
   const uid = userId || "";
-
   const [rows] = await pool.query(
     `
     SELECT
@@ -129,14 +168,13 @@ export async function insertArticle({
   description,
   body,
 }) {
-  const [result] = await pool.query(
+  await pool.query(
     `
-        INSERT INTO articles (id, slug, title, description, body, author_id)
-        VALUES (UUID(), ?, ?, ?, ?, ?)
-      `,
+      INSERT INTO articles (id, slug, title, description, body, author_id)
+      VALUES (UUID(), ?, ?, ?, ?, ?)
+    `,
     [slug, title, description, body, authorId]
   );
-  // Find inserted ID by slug (slug is unique in practice with our random suffix)
   const [rows] = await pool.query(
     `SELECT id FROM articles WHERE slug = ? LIMIT 1`,
     [slug]
@@ -172,18 +210,18 @@ export async function updateArticleBySlugForAuthor({
     fields.push("slug = ?");
     params.push(newSlug);
   }
-  if (!fields.length) return true; // nothing to update
+  if (!fields.length) return true;
 
   fields.push("updatedAt = NOW()");
-
   params.push(authorId, slug);
+
   const [result] = await pool.query(
     `
-        UPDATE articles
-        SET ${fields.join(", ")}
-        WHERE author_id = ? AND slug = ?
-        LIMIT 1
-      `,
+      UPDATE articles
+      SET ${fields.join(", ")}
+      WHERE author_id = ? AND slug = ?
+      LIMIT 1
+    `,
     params
   );
   return result.affectedRows > 0;
