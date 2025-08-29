@@ -1,10 +1,18 @@
-import http from "http";
 import app from "./app.js";
-import { config } from "./config/index.js";
+import { pingDb } from "./config/db.js";
 
-const port = process.env.PORT || config.port;
+const port = Number(process.env.PORT || 3300);
 
-const server = http.createServer(app);
-server.listen(port, () => {
-  console.log(`🚀  API running on http://localhost:${port}`);
-});
+(async () => {
+  try {
+    await pingDb();
+    console.log("✅ DB reachable");
+  } catch (e) {
+    console.error("❌ DB ping failed on startup:", e?.code || e?.message || e);
+    process.exit(1);
+  }
+
+  app.listen(port, () => {
+    console.log(`API listening on :${port}`);
+  });
+})();

@@ -7,6 +7,7 @@ import profileRoutes from "./routes/profile.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import tagRoutes from "./routes/tag.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
+import healthRoutes from "./routes/health.routes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
@@ -36,6 +37,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // Routes
+app.use("/api", healthRoutes);
 app.use("/api", authRoutes);
 app.use("/api", articleRoutes);
 app.use("/api", profileRoutes);
