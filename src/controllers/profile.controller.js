@@ -3,7 +3,7 @@ import {
   findByUsername,
   followUser,
   getProfileWithFollowing,
-  unfollowUser, // NEW
+  unfollowUser,
 } from "../models/user.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";

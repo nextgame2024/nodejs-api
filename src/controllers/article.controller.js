@@ -11,6 +11,7 @@ import {
   removeFavorite,
 } from "../models/article.model.js";
 import { getTagsByArticleIds, setArticleTags } from "../models/tag.model.js";
+import { getAssetsByArticleIds } from "../models/asset.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 const MAX_LIMIT = 1000;
@@ -34,7 +35,8 @@ function slugify(title = "") {
   return `${base || "article"}-${rnd}`;
 }
 
-function toArticleDTO(row, tagMap) {
+function toArticleDTO(row, tagMap, assetsMap) {
+  const assets = assetsMap?.get(row.id) || [];
   return {
     id: row.id,
     slug: row.slug,
@@ -52,6 +54,8 @@ function toArticleDTO(row, tagMap) {
       username: row.username,
       following: !!row.following,
     },
+    status: row.status || "draft",
+    assets,
   };
 }
 
@@ -73,9 +77,12 @@ export const listArticles = asyncHandler(async (req, res) => {
   });
 
   const ids = rows.map((a) => a.id);
-  const tagMap = await getTagsByArticleIds(ids);
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds(ids),
+    getAssetsByArticleIds(ids),
+  ]);
 
-  const articles = rows.map((row) => toArticleDTO(row, tagMap));
+  const articles = rows.map((row) => toArticleDTO(row, tagMap, assetsMap));
   res.json({ articles, articlesCount: total });
 });
 
@@ -86,8 +93,12 @@ export const getArticle = asyncHandler(async (req, res) => {
   const row = await findArticleBySlug({ slug, userId });
   if (!row) return res.status(404).json({ error: "Article not found" });
 
-  const tagMap = await getTagsByArticleIds([row.id]);
-  const article = toArticleDTO(row, tagMap);
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds([row.id]),
+    getAssetsByArticleIds([row.id]),
+  ]);
+
+  const article = toArticleDTO(row, tagMap, assetsMap);
   res.json({ article });
 });
 
@@ -104,9 +115,8 @@ export const deleteArticle = asyncHandler(async (req, res) => {
   }
 
   const affected = await deleteArticleBySlug({ slug, userId });
-  if (affected === 0) {
+  if (affected === 0)
     return res.status(404).json({ error: "Article not found" });
-  }
   return res.status(204).end();
 });
 
@@ -114,7 +124,7 @@ export const deleteArticle = asyncHandler(async (req, res) => {
 export const createArticle = asyncHandler(async (req, res) => {
   const authorId = req.user?.id;
   const payload = req.body?.article || {};
-  const { title, description, body } = payload;
+  const { title, description, body, status } = payload;
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : [];
 
   const errors = {};
@@ -131,14 +141,18 @@ export const createArticle = asyncHandler(async (req, res) => {
     title,
     description,
     body,
+    status: status || "draft",
   });
 
   if (tagList.length) await setArticleTags(articleId, tagList);
 
   const row = await findArticleBySlug({ slug, userId: authorId });
-  const tagMap = await getTagsByArticleIds([articleId]);
-  const article = toArticleDTO(row, tagMap);
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds([articleId]),
+    getAssetsByArticleIds([articleId]),
+  ]);
 
+  const article = toArticleDTO(row, tagMap, assetsMap);
   res.status(201).json({ article });
 });
 
@@ -147,7 +161,7 @@ export const updateArticle = asyncHandler(async (req, res) => {
   const authorId = req.user?.id;
   const slug = req.params.slug;
   const payload = req.body?.article || {};
-  const { title, description, body } = payload;
+  const { title, description, body, status } = payload;
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : undefined;
 
   const errors = {};
@@ -168,6 +182,7 @@ export const updateArticle = asyncHandler(async (req, res) => {
     description,
     body,
     newSlug,
+    status,
   });
   if (!ok)
     return res
@@ -186,9 +201,12 @@ export const updateArticle = asyncHandler(async (req, res) => {
     slug: newSlug ?? slug,
     userId: authorId,
   });
-  const tagMap = await getTagsByArticleIds([row.id]);
-  const article = toArticleDTO(row, tagMap);
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds([row.id]),
+    getAssetsByArticleIds([row.id]),
+  ]);
 
+  const article = toArticleDTO(row, tagMap, assetsMap);
   res.json({ article });
 });
 
@@ -200,12 +218,12 @@ export const favoriteArticle = asyncHandler(async (req, res) => {
   if (!articleId) return res.status(404).json({ error: "Article not found" });
 
   await addFavorite({ userId, articleId });
-
   const row = await findArticleBySlug({ slug, userId });
-  const tagMap = await getTagsByArticleIds([row.id]);
-  const article = toArticleDTO(row, tagMap);
-
-  return res.json({ article });
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds([row.id]),
+    getAssetsByArticleIds([row.id]),
+  ]);
+  return res.json({ article: toArticleDTO(row, tagMap, assetsMap) });
 });
 
 /* DELETE /api/articles/:slug/favorite */
@@ -217,10 +235,10 @@ export const unfavoriteArticle = asyncHandler(async (req, res) => {
   if (!articleId) return res.status(404).json({ error: "Article not found" });
 
   await removeFavorite({ userId, articleId });
-
   const row = await findArticleBySlug({ slug, userId });
-  const tagMap = await getTagsByArticleIds([row.id]);
-  const article = toArticleDTO(row, tagMap);
-
-  return res.json({ article });
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds([row.id]),
+    getAssetsByArticleIds([row.id]),
+  ]);
+  return res.json({ article: toArticleDTO(row, tagMap, assetsMap) });
 });
