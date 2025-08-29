@@ -9,6 +9,7 @@ import tagRoutes from "./routes/tag.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
+import diagRoutes from "./routes/diag.routes.js";
 
 const app = express();
 
@@ -38,6 +39,7 @@ app.use(morgan("dev"));
 
 // Routes
 app.use("/api", healthRoutes);
+app.use("/api", diagRoutes);
 app.use("/api", authRoutes);
 app.use("/api", articleRoutes);
 app.use("/api", profileRoutes);
