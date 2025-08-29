@@ -9,7 +9,7 @@ const port = Number(process.env.PORT || 3300);
     console.log("✅ DB reachable");
   } catch (e) {
     console.error("❌ DB ping failed on startup:", e?.code || e?.message || e);
-    process.exit(1);
+    // Do NOT exit; start server so /api/healthz works
   }
 
   app.listen(port, () => {

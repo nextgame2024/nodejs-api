@@ -1,9 +1,9 @@
 import mysql from "mysql2/promise";
 
 const {
-  // Option A: single connection string (preferred)
+  // Option A: single URL (recommended)
   DATABASE_URL, // e.g. mysql://user:pass@host:3306/dbname
-  MYSQL_URL, // alt name if you prefer
+  MYSQL_URL, // alt var if you prefer
 
   // Option B: discrete params
   DB_HOST,
@@ -12,10 +12,11 @@ const {
   DB_PASSWORD,
   DB_NAME,
 
-  // Optional tunables
+  // Optional
   DB_POOL_SIZE, // default 5
-  DB_CONNECT_TIMEOUT, // default 10000 ms
-  DB_SSL, // 'true' to enable SSL; default is false
+  DB_CONNECT_TIMEOUT, // default 15000 ms
+  DB_SSL, // 'true' to enable TLS (default false)
+  DB_SSL_REJECT_UNAUTH, // 'false' to allow self-signed (default true)
 } = process.env;
 
 function bool(v, def = false) {
@@ -24,13 +25,31 @@ function bool(v, def = false) {
 }
 
 const useSSL = bool(DB_SSL, false);
+const rejectUnauth = bool(DB_SSL_REJECT_UNAUTH, true);
 const poolSize = Number(DB_POOL_SIZE || 5);
-const connectTimeout = Number(DB_CONNECT_TIMEOUT || 10000);
+const connectTimeout = Number(DB_CONNECT_TIMEOUT || 15000);
 
 let pool;
 
-if (DB_HOST || DB_USER || DB_NAME) {
-  // mysql2 accepts a URL string + options
+if (DATABASE_URL || MYSQL_URL) {
+  // URL path (preferred)
+  const url = DATABASE_URL || MYSQL_URL;
+  pool = mysql.createPool(url, {
+    waitForConnections: true,
+    connectionLimit: poolSize,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+    connectTimeout,
+    ssl: useSSL ? { rejectUnauthorized: rejectUnauth } : undefined,
+  });
+} else {
+  // Discrete env vars path
+  if (!DB_HOST || !DB_USER || !DB_NAME) {
+    throw new Error(
+      "DB config missing. Provide DATABASE_URL (or MYSQL_URL) OR DB_HOST, DB_USER, DB_PASSWORD, DB_NAME."
+    );
+  }
   pool = mysql.createPool({
     host: DB_HOST,
     port: Number(DB_PORT || 3306),
@@ -43,31 +62,11 @@ if (DB_HOST || DB_USER || DB_NAME) {
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
     connectTimeout,
-    ssl: useSSL ? { rejectUnauthorized: true } : undefined,
-  });
-} else {
-  // Discrete env vars path
-  if (!DATABASE_URL || !MYSQL_URL) {
-    throw new Error(
-      "DB config missing. Provide DATABASE_URL (or MYSQL_URL) OR DB_HOST, DB_USER, DB_PASSWORD, DB_NAME."
-    );
-  }
-  // Connection string path
-  const url = DATABASE_URL || MYSQL_URL;
-
-  // mysql2 accepts a URL string + options
-  pool = mysql.createPool(url, {
-    waitForConnections: true,
-    connectionLimit: poolSize,
-    queueLimit: 0,
-    enableKeepAlive: true,
-    keepAliveInitialDelay: 0,
-    connectTimeout,
-    ssl: useSSL ? { rejectUnauthorized: true } : undefined,
+    ssl: useSSL ? { rejectUnauthorized: rejectUnauth } : undefined,
   });
 }
 
-// quick probe for health checks / startup gate
+// health probe
 export async function pingDb() {
   const conn = await pool.getConnection();
   try {
