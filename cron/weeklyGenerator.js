@@ -1,3 +1,22 @@
+import "dotenv/config.js";
+import nodeCron from "node-cron";
+
+import {
+  genArticleJson,
+  genImageBytes,
+  genVideoBytesFromPromptAndImage,
+} from "../src/services/gemini.js";
+import { ttsToBuffer } from "../src/services/polly.js";
+import { putToS3 } from "../src/services/s3.js";
+
+import {
+  insertArticle,
+  updateArticleBySlugForAuthor,
+} from "../src/models/article.model.js";
+import { setArticleTags } from "../src/models/tag.model.js";
+import { insertAsset } from "../src/models/asset.model.js";
+import pool from "../src/config/db.js";
+
 /* ------------ helpers ------------ */
 function slugify(title = "") {
   const base = title
