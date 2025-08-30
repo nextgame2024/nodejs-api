@@ -1,22 +1,22 @@
 import mysql from "mysql2/promise";
 
 const {
-  // Option A: single URL (recommended)
+  // Option A: single URL (recommended for PlanetScale)
   DATABASE_URL, // e.g. mysql://user:pass@host:3306/dbname
-  MYSQL_URL, // alt var if you prefer
+  MYSQL_URL, // alt name if you prefer
 
-  // Option B: discrete params
+  // Option B: discrete params (typical cPanel / RDS)
   DB_HOST,
   DB_PORT,
   DB_USER,
   DB_PASSWORD,
   DB_NAME,
 
-  // Optional
+  // Optional tunables
   DB_POOL_SIZE, // default 5
   DB_CONNECT_TIMEOUT, // default 15000 ms
-  DB_SSL, // 'true' to enable TLS (default false)
-  DB_SSL_REJECT_UNAUTH, // 'false' to allow self-signed (default true)
+  DB_SSL, // 'true' to enable TLS
+  DB_SSL_REJECT_UNAUTH, // default true; set 'false' for self-signed
 } = process.env;
 
 function bool(v, def = false) {
@@ -24,15 +24,14 @@ function bool(v, def = false) {
   return String(v).toLowerCase() === "true";
 }
 
-const useSSL = bool(DB_SSL, false);
-const rejectUnauth = bool(DB_SSL_REJECT_UNAUTH, true);
 const poolSize = Number(DB_POOL_SIZE || 5);
 const connectTimeout = Number(DB_CONNECT_TIMEOUT || 15000);
+const useSSL = bool(DB_SSL, false);
+const rejectUnauth = bool(DB_SSL_REJECT_UNAUTH, true);
 
 let pool;
 
 if (DATABASE_URL || MYSQL_URL) {
-  // URL path (preferred)
   const url = DATABASE_URL || MYSQL_URL;
   pool = mysql.createPool(url, {
     waitForConnections: true,
@@ -44,7 +43,6 @@ if (DATABASE_URL || MYSQL_URL) {
     ssl: useSSL ? { rejectUnauthorized: rejectUnauth } : undefined,
   });
 } else {
-  // Discrete env vars path
   if (!DB_HOST || !DB_USER || !DB_NAME) {
     throw new Error(
       "DB config missing. Provide DATABASE_URL (or MYSQL_URL) OR DB_HOST, DB_USER, DB_PASSWORD, DB_NAME."
@@ -66,7 +64,7 @@ if (DATABASE_URL || MYSQL_URL) {
   });
 }
 
-// health probe
+// Health probe for startup/diag
 export async function pingDb() {
   const conn = await pool.getConnection();
   try {
