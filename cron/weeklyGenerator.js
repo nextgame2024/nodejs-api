@@ -58,6 +58,9 @@ const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required
 async function generateOne(topic, status = "draft") {
   // 1) Article JSON
   const art = await genArticleJson(topic);
+  if (!art.title || !art.description || !art.body) {
+    throw new Error("generator returned empty fields (title/description/body)");
+  }
   const slug = slugify(art.title);
 
   // 2) Insert draft

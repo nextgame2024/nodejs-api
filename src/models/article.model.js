@@ -164,7 +164,7 @@ export async function deleteArticleBySlug({ slug, userId }) {
   return rowCount || 0;
 }
 
-/** CREATE (accepts status, defaults to 'draft') */
+/** CREATE (returns new article id) — supports status */
 export async function insertArticle({
   authorId,
   slug,
@@ -173,6 +173,13 @@ export async function insertArticle({
   body,
   status = "draft",
 }) {
+  // guard to avoid NOT NULL violations
+  if (!title || !description || !body) {
+    throw new Error(
+      "insertArticle: missing required fields (title/description/body)"
+    );
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO articles (id, slug, title, description, body, author_id, status)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
@@ -182,7 +189,7 @@ export async function insertArticle({
   return rows[0].id;
 }
 
-/** UPDATE (also supports status) */
+/** UPDATE (by slug, only if owned by authorId). Returns true if updated. */
 export async function updateArticleBySlugForAuthor({
   slug,
   authorId,
@@ -190,7 +197,7 @@ export async function updateArticleBySlugForAuthor({
   description,
   body,
   newSlug,
-  status, // << added
+  status, // optional
 }) {
   const sets = [];
   const params = [];
@@ -223,9 +230,7 @@ export async function updateArticleBySlugForAuthor({
   params.push(authorId, slug);
 
   const { rowCount } = await pool.query(
-    `UPDATE articles
-       SET ${sets.join(", ")}
-     WHERE author_id = $${i++} AND slug = $${i}`,
+    `UPDATE articles SET ${sets.join(", ")} WHERE author_id = $${i++} AND slug = $${i}`,
     params
   );
   return rowCount > 0;
