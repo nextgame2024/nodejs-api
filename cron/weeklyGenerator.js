@@ -102,21 +102,28 @@ async function generateOne(topic, status = "draft") {
   });
 
   // 5) Voiceover (short teaser)
-  const teaser = `${art.title}. ${art.description}`;
-  const voiceBuf = await ttsToBuffer(teaser.slice(0, 400));
-  const voiceKey = `articles/${slug}/teaser.mp3`;
-  const voiceUrl = await putToS3({
-    key: voiceKey,
-    body: voiceBuf,
-    contentType: "audio/mpeg",
-  });
-  await insertAsset({
-    articleId,
-    type: "audio",
-    url: voiceUrl,
-    s3Key: voiceKey,
-    mimeType: "audio/mpeg",
-  });
+  try {
+    const teaser = `${art.title}. ${art.description}`;
+    const voiceBuf = await ttsToBuffer(teaser.slice(0, 400));
+    const voiceKey = `articles/${slug}/teaser.mp3`;
+    const voiceUrl = await putToS3({
+      key: voiceKey,
+      body: voiceBuf,
+      contentType: "audio/mpeg",
+    });
+    await insertAsset({
+      articleId,
+      type: "audio",
+      url: voiceUrl,
+      s3Key: voiceKey,
+      mimeType: "audio/mpeg",
+    });
+  } catch (err) {
+    console.warn(
+      "[weeklyGenerator] Polly TTS failed; continuing without audio:",
+      err?.message || err
+    );
+  }
 
   // 6) Video (Gemini/Veo), seeded by the image
   const videoPrompt = `Tasteful, smooth parallax/zoom over abstract AI visuals inspired by "${art.title}".
