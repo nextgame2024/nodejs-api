@@ -3,6 +3,8 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { generateToken } from "../utils/generateToken.js";
 import { createUser, findById, updateUserById } from "../models/user.model.js";
 
+const toISO = (v) => (v ? new Date(v).toISOString() : null);
+
 /** POST /api/users  — register (no auth) */
 export const registerUser = asyncHandler(async (req, res) => {
   const payload = req.body?.user || {};
@@ -31,8 +33,8 @@ export const registerUser = asyncHandler(async (req, res) => {
         username: user.username,
         image: user.image || "",
         bio: user.bio || "",
-        createdAt: user.createdAt.toISOString(),
-        updatedAt: user.updatedAt.toISOString(),
+        createdAt: toISO(user.createdAt),
+        updatedAt: toISO(user.updatedAt),
         token,
       },
     });
@@ -49,11 +51,10 @@ export const registerUser = asyncHandler(async (req, res) => {
 
 /** GET /api/user — current user (auth required) */
 export const getCurrentUser = asyncHandler(async (req, res) => {
-  const { id, email, username } = req.user; // set by authRequired
+  const { id } = req.user; // set by authRequired
   const user = await findById(id);
   if (!user) return res.status(404).json({ error: "User not found" });
 
-  // Issue a token (keeps client state simple)
   const token = generateToken({
     id,
     email: user.email,
@@ -67,8 +68,8 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
       username: user.username,
       image: user.image || "",
       bio: user.bio || "",
-      createdAt: user.createdAt.toISOString(),
-      updatedAt: user.updatedAt.toISOString(),
+      createdAt: toISO(user.createdAt),
+      updatedAt: toISO(user.updatedAt),
       token,
     },
   });
@@ -106,8 +107,8 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
         username: updated.username,
         image: updated.image || "",
         bio: updated.bio || "",
-        createdAt: updated.createdAt.toISOString(),
-        updatedAt: updated.updatedAt.toISOString(),
+        createdAt: toISO(updated.createdAt),
+        updatedAt: toISO(updated.updatedAt),
         token,
       },
     });

@@ -76,8 +76,6 @@ export async function updateUserById(
   if (bio !== undefined) { sets.push(`bio = $${i++}`); params.push(bio); }
 
   if (!sets.length) return findById(id);
-
-  // IMPORTANT: use the actual DB column name (lowercase)
   sets.push(`updatedat = NOW()`);
   params.push(id);
 
@@ -94,11 +92,31 @@ export async function updateUserById(
   return rows[0];
 }
 
+export async function isFollowing(followerId, followeeId) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM follows WHERE follower_id = $1 AND followee_id = $2 LIMIT 1`,
+    [followerId, followeeId]
+  );
+  return rows.length > 0;
+}
+
+export async function followUser(followerId, followeeId) {
+  const { rows } = await pool.query(
+    `INSERT INTO follows (follower_id, followee_id)
+     VALUES ($1, $2)
+     ON CONFLICT (follower_id, followee_id) DO NOTHING
+     RETURNING follower_id`,
+    [followerId, followeeId]
+  );
+  return rows.length > 0;
+}
+
 export async function unfollowUser(followerId, followeeId) {
-  await pool.query(
+  const res = await pool.query(
     `DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2`,
     [followerId, followeeId]
   );
+  return res.rowCount > 0;
 }
 
 export async function getProfileWithFollowing(username, viewerId) {
