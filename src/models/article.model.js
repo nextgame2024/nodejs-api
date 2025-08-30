@@ -164,22 +164,25 @@ export async function deleteArticleBySlug({ slug, userId }) {
   return rowCount || 0;
 }
 
+/** CREATE (accepts status, defaults to 'draft') */
 export async function insertArticle({
   authorId,
   slug,
   title,
   description,
   body,
+  status = "draft",
 }) {
   const { rows } = await pool.query(
-    `INSERT INTO articles (id, slug, title, description, body, author_id)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+    `INSERT INTO articles (id, slug, title, description, body, author_id, status)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
      RETURNING id`,
-    [slug, title, description, body, authorId]
+    [slug, title, description, body, authorId, status]
   );
   return rows[0].id;
 }
 
+/** UPDATE (also supports status) */
 export async function updateArticleBySlugForAuthor({
   slug,
   authorId,
@@ -187,6 +190,7 @@ export async function updateArticleBySlugForAuthor({
   description,
   body,
   newSlug,
+  status, // << added
 }) {
   const sets = [];
   const params = [];
@@ -208,6 +212,10 @@ export async function updateArticleBySlugForAuthor({
     sets.push(`slug = $${i++}`);
     params.push(newSlug);
   }
+  if (status !== undefined) {
+    sets.push(`status = $${i++}`);
+    params.push(status);
+  }
 
   if (!sets.length) return true;
 
@@ -215,7 +223,9 @@ export async function updateArticleBySlugForAuthor({
   params.push(authorId, slug);
 
   const { rowCount } = await pool.query(
-    `UPDATE articles SET ${sets.join(", ")} WHERE author_id = $${i++} AND slug = $${i} `,
+    `UPDATE articles
+       SET ${sets.join(", ")}
+     WHERE author_id = $${i++} AND slug = $${i}`,
     params
   );
   return rowCount > 0;

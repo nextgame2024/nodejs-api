@@ -1,21 +1,4 @@
-import "dotenv/config.js";
-import nodeCron from "node-cron";
-import {
-  genArticleJson,
-  genImageBytes,
-  genVideoBytesFromPromptAndImage,
-} from "../src/services/gemini.js";
-import { ttsToBuffer } from "../src/services/polly.js";
-import { putToS3 } from "../src/services/s3.js";
-import {
-  insertArticle,
-  updateArticleBySlugForAuthor,
-} from "../src/models/article.model.js";
-import { setArticleTags } from "../src/models/tag.model.js";
-import { insertAsset } from "../src/models/asset.model.js";
-import pool from "../src/config/db.js";
-
-// Simple slugify same as controller
+/* ------------ helpers ------------ */
 function slugify(title = "") {
   const base = title
     .toLowerCase()
@@ -26,10 +9,34 @@ function slugify(title = "") {
   return `${base || "article"}-${rnd}`;
 }
 
-// Choose a system user as author for AI posts (configure in .env)
-const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID;
+function normalizeTag(name = "") {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
 
-async function generateOne(topic) {
+// Advisory lock so only one run executes at a time (Postgres/Neon).
+async function withSingletonLock(lockId, fn) {
+  const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
+    lockId,
+  ]);
+  if (!rows?.[0]?.ok) {
+    console.log("Another weeklyGenerator run is active. Skipping.");
+    return;
+  }
+  try {
+    await fn();
+  } finally {
+    await pool.query("SELECT pg_advisory_unlock($1)", [lockId]);
+  }
+}
+
+/* -------------------- generation -------------------- */
+const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required
+
+async function generateOne(topic, status = "draft") {
   // 1) Article JSON
   const art = await genArticleJson(topic);
   const slug = slugify(art.title);
@@ -41,16 +48,22 @@ async function generateOne(topic) {
     title: art.title,
     description: art.description,
     body: art.body,
-    status: "draft",
+    status, // "draft" or "published"
   });
 
-  // 3) Tags
-  await setArticleTags(articleId, (art.tagList || []).slice(0, 6));
+  // 3) Tags — always include "content-ai"
+  const rawTags = Array.isArray(art.tagList) ? art.tagList : [];
+  const normalized = rawTags.map(normalizeTag).filter(Boolean);
+  const tagList = Array.from(new Set([...normalized, "content-ai"])).slice(
+    0,
+    6
+  );
+  await setArticleTags(articleId, tagList);
 
-  // 4) Generate hero image with Imagen
+  // 4) Hero image (Gemini/Imagen)
   const imagePrompt = `High-quality, cinematic hero image for an AI/dev article titled "${art.title}".
-Focus on abstract shapes, circuits, neural patterns, colorful gradients.
-Avoid any logos, brand marks, text overlays, or watermarks.`;
+    Focus on abstract shapes, circuits, neural patterns, colorful gradients.
+    Avoid any logos, brand marks, text overlays, or watermarks.`;
   const { bytes: imgBytes, mime: imgMime } = await genImageBytes(imagePrompt);
   const imgKey = `articles/${slug}/hero.png`;
   const imageUrl = await putToS3({
@@ -64,11 +77,9 @@ Avoid any logos, brand marks, text overlays, or watermarks.`;
     url: imageUrl,
     s3Key: imgKey,
     mimeType: imgMime,
-    width: null,
-    height: null,
   });
 
-  // 5) VOICEOVER (short teaser) via Polly
+  // 5) Voiceover (short teaser)
   const teaser = `${art.title}. ${art.description}`;
   const voiceBuf = await ttsToBuffer(teaser.slice(0, 400));
   const voiceKey = `articles/${slug}/teaser.mp3`;
@@ -83,12 +94,11 @@ Avoid any logos, brand marks, text overlays, or watermarks.`;
     url: voiceUrl,
     s3Key: voiceKey,
     mimeType: "audio/mpeg",
-    durationSec: null,
   });
 
-  // 6) VIDEO via Veo 3 (8s, 16:9), seeded by image
-  const videoPrompt = `A tasteful, smooth parallax/zoom over an abstract AI visuals inspired by the article "${art.title}".
-No text, no logos, no brand marks, no UI screenshots.`;
+  // 6) Video (Gemini/Veo), seeded by the image
+  const videoPrompt = `Tasteful, smooth parallax/zoom over abstract AI visuals inspired by "${art.title}".
+    No text, no logos, no brand marks, no UI screenshots.`;
   const {
     bytes: vidBytes,
     mime: vidMime,
@@ -109,8 +119,8 @@ No text, no logos, no brand marks, no UI screenshots.`;
     durationSec,
   });
 
-  // (Optional) auto-publish after generation
-  if (process.env.AUTO_PUBLISH_AI === "true") {
+  // Optional auto-publish switch
+  if (process.env.AUTO_PUBLISH_AI === "true" && status !== "published") {
     await updateArticleBySlugForAuthor({
       slug,
       authorId: SYSTEM_AUTHOR_ID,
@@ -121,8 +131,9 @@ No text, no logos, no brand marks, no UI screenshots.`;
   return { slug, articleId, imageUrl, voiceUrl, videoUrl };
 }
 
-// Run once now (so you can test locally) and also schedule weekly (Sunday 03:00 UTC)
-async function runBatch(count = 10) {
+async function runBatch(count = 10, status = "draft") {
+  if (!SYSTEM_AUTHOR_ID)
+    throw new Error("SYSTEM_AUTHOR_ID env var is required");
   const topics = [
     "Practical RAG for small teams",
     "Prompt engineering patterns in 2025",
@@ -136,23 +147,42 @@ async function runBatch(count = 10) {
     "LLM cost optimization tips",
   ];
 
-  const picked = topics.slice(0, count);
-  for (const t of picked) {
+  for (const t of topics.slice(0, count)) {
     try {
-      const out = await generateOne(t);
-      console.log("Generated:", out);
+      const out = await generateOne(t, status);
+      console.log("Generated:", out.slug);
     } catch (e) {
-      console.error("Failed generating topic:", t, e);
+      console.error("Failed generating topic:", t, e?.message || e);
     }
   }
 }
 
-if (process.env.RUN_ONCE === "true") {
-  runBatch().then(() => pool.end());
+// CLI: --once  --count=10  --status=published
+const argv = process.argv.slice(2);
+const ONCE = argv.includes("--once") || process.env.RUN_ONCE === "true";
+const COUNT =
+  Number((argv.find((a) => a.startsWith("--count=")) || "").split("=")[1]) ||
+  Number(process.env.GEN_COUNT || 10);
+const STATUS =
+  (argv.find((a) => a.startsWith("--status=")) || "").split("=")[1] ||
+  process.env.GEN_STATUS ||
+  "draft";
+
+// lock id can be any int64; keep constant
+const LOCK_ID = 42424242;
+
+if (ONCE) {
+  await withSingletonLock(LOCK_ID, async () => {
+    await runBatch(COUNT, STATUS);
+  });
+  await pool.end();
+  process.exit(0);
 } else {
-  // Schedule weekly
-  nodeCron.schedule("0 3 * * 0", () => {
-    runBatch().catch(console.error);
+  // every Sunday 03:00 UTC
+  nodeCron.schedule("0 3 * * 0", async () => {
+    await withSingletonLock(LOCK_ID, async () => {
+      await runBatch(COUNT, STATUS);
+    });
   });
   console.log("Weekly AI article cron scheduled (Sun 03:00 UTC).");
 }
