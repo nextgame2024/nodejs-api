@@ -100,6 +100,13 @@ export async function followUser(followerId, followeeId) {
   );
 }
 
+export async function unfollowUser(followerId, followeeId) {
+  await pool.query(
+    `DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2`,
+    [followerId, followeeId]
+  );
+}
+
 export async function getProfileWithFollowing(username, viewerId) {
   const { rows } = await pool.query(
     `SELECT
