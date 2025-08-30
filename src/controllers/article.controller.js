@@ -16,6 +16,9 @@ import { getAssetsByArticleIds } from "../models/asset.model.js";
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 const MAX_LIMIT = 1000;
 
+// Coerce Date|string|null -> ISO string or null
+const toISO = (v) => (v ? new Date(v).toISOString() : null);
+
 function parseLimitOffset(q) {
   const limit = Math.min(
     MAX_LIMIT,
@@ -26,17 +29,17 @@ function parseLimitOffset(q) {
 }
 
 function slugify(title = "") {
-  const base = title
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
+  const base = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const rnd = Math.random().toString(36).slice(2, 8);
   return `${base || "article"}-${rnd}`;
 }
 
 function toArticleDTO(row, tagMap, assetsMap) {
-  const assets = assetsMap?.get(row.id) || [];
+  // ensure assets.createdAt are safe ISO strings too
+  const assets = (assetsMap?.get(row.id) || []).map((a) => ({
+    ...a,
+    createdAt: toISO(a.createdAt),
+  }));
   return {
     id: row.id,
     slug: row.slug,
@@ -44,8 +47,8 @@ function toArticleDTO(row, tagMap, assetsMap) {
     body: row.body,
     description: row.description,
     favoritesCount: Number(row.favoritesCount) || 0,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
     favorited: !!row.favorited,
     tagList: tagMap.get(row.id) || [],
     author: {
@@ -63,17 +66,11 @@ export const listArticles = asyncHandler(async (req, res) => {
   const { limit, offset } = parseLimitOffset(req.query);
   const userId = req.user?.id || "";
   const author = (req.query.author || "").toString().trim() || undefined;
-  const favoritedBy =
-    (req.query.favorited || "").toString().trim() || undefined;
+  const favoritedBy = (req.query.favorited || "").toString().trim() || undefined;
   const tag = (req.query.tag || "").toString().trim() || undefined;
 
   const { rows, total } = await getAllArticles({
-    userId,
-    limit,
-    offset,
-    author,
-    favoritedBy,
-    tag,
+    userId, limit, offset, author, favoritedBy, tag,
   });
 
   const ids = rows.map((a) => a.id);
@@ -109,14 +106,11 @@ export const deleteArticle = asyncHandler(async (req, res) => {
   const authorId = await findArticleAuthorId(slug);
   if (!authorId) return res.status(404).json({ error: "Article not found" });
   if (authorId !== userId) {
-    return res
-      .status(403)
-      .json({ error: "You are not the author of this article" });
+    return res.status(403).json({ error: "You are not the author of this article" });
   }
 
   const affected = await deleteArticleBySlug({ slug, userId });
-  if (affected === 0)
-    return res.status(404).json({ error: "Article not found" });
+  if (affected === 0) return res.status(404).json({ error: "Article not found" });
   return res.status(204).end();
 });
 
@@ -129,19 +123,13 @@ export const createArticle = asyncHandler(async (req, res) => {
 
   const errors = {};
   if (!title || !title.trim()) errors.title = ["can't be blank"];
-  if (!description || !description.trim())
-    errors.description = ["can't be blank"];
+  if (!description || !description.trim()) errors.description = ["can't be blank"];
   if (!body || !body.trim()) errors.body = ["can't be blank"];
   if (Object.keys(errors).length) return res.status(422).json({ errors });
 
   const slug = slugify(title);
   const articleId = await insertArticle({
-    authorId,
-    slug,
-    title,
-    description,
-    body,
-    status: status || "draft",
+    authorId, slug, title, description, body, status: status || "draft",
   });
 
   if (tagList.length) await setArticleTags(articleId, tagList);
@@ -165,42 +153,26 @@ export const updateArticle = asyncHandler(async (req, res) => {
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : undefined;
 
   const errors = {};
-  if (title !== undefined && !String(title).trim())
-    errors.title = ["can't be blank"];
-  if (description !== undefined && !String(description).trim())
-    errors.description = ["can't be blank"];
-  if (body !== undefined && !String(body).trim())
-    errors.body = ["can't be blank"];
+  if (title !== undefined && !String(title).trim()) errors.title = ["can't be blank"];
+  if (description !== undefined && !String(description).trim()) errors.description = ["can't be blank"];
+  if (body !== undefined && !String(body).trim()) errors.body = ["can't be blank"];
   if (Object.keys(errors).length) return res.status(422).json({ errors });
 
   const newSlug = title ? slugify(title) : undefined;
 
   const ok = await updateArticleBySlugForAuthor({
-    slug,
-    authorId,
-    title,
-    description,
-    body,
-    newSlug,
-    status,
+    slug, authorId, title, description, body, newSlug, status,
   });
-  if (!ok)
-    return res
-      .status(404)
-      .json({ errors: { article: ["not found or not owned by user"] } });
+  if (!ok) {
+    return res.status(404).json({ errors: { article: ["not found or not owned by user"] } });
+  }
 
   if (tagList) {
-    const rowAfter = await findArticleBySlug({
-      slug: newSlug ?? slug,
-      userId: authorId,
-    });
+    const rowAfter = await findArticleBySlug({ slug: newSlug ?? slug, userId: authorId });
     await setArticleTags(rowAfter.id, tagList);
   }
 
-  const row = await findArticleBySlug({
-    slug: newSlug ?? slug,
-    userId: authorId,
-  });
+  const row = await findArticleBySlug({ slug: newSlug ?? slug, userId: authorId });
   const [tagMap, assetsMap] = await Promise.all([
     getTagsByArticleIds([row.id]),
     getAssetsByArticleIds([row.id]),

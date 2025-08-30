@@ -5,6 +5,8 @@ import { getTagsByArticleIds } from "../models/tag.model.js";
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 const MAX_LIMIT = 1000;
 
+const toISO = (v) => (v ? new Date(v).toISOString() : null);
+
 function parseLimitOffset(q) {
   const limit = Math.min(
     MAX_LIMIT,
@@ -28,8 +30,8 @@ export const getFeed = asyncHandler(async (req, res) => {
     body: a.body,
     description: a.description,
     favoritesCount: Number(a.favoritesCount) || 0,
-    createdAt: a.createdAt.toISOString(),
-    updatedAt: a.updatedAt.toISOString(),
+    createdAt: toISO(a.createdAt),
+    updatedAt: toISO(a.updatedAt),
     favorited: !!a.favorited,
     author: {
       image: a.image || DEFAULT_AVATAR,

@@ -39,18 +39,15 @@ export async function getAllArticles({
   tag,
 } = {}) {
   const uid = userId || "";
-
-  const { where, params, nextIndex } = buildArticleFilters({
-    author,
-    favoritedBy,
-    tag,
-  });
+  const { where, params, nextIndex } = buildArticleFilters({ author, favoritedBy, tag });
   const filters = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const rowsSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
-      a.createdAt, a.updatedAt, a.status,
+      a.createdat AS "createdAt",
+      a.updatedat AS "updatedAt",
+      a.status,
       u.username, u.image, u.bio,
       (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
@@ -64,10 +61,9 @@ export async function getAllArticles({
     FROM articles a
     JOIN users u ON u.id = a.author_id
     ${filters}
-    ORDER BY a.createdAt DESC
+    ORDER BY a.createdat DESC
     LIMIT $${nextIndex + 2} OFFSET $${nextIndex + 3}
   `;
-
   const rowsParams = [...params, uid, uid, Number(limit), Number(offset)];
   const { rows } = await pool.query(rowsSql, rowsParams);
 
@@ -89,7 +85,9 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
   const rowsSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
-      a.createdAt, a.updatedAt, a.status,
+      a.createdat AS "createdAt",
+      a.updatedat AS "updatedAt",
+      a.status,
       u.username, u.image, u.bio,
       (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
@@ -100,14 +98,10 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
     JOIN articles a ON a.author_id = f.followee_id
     JOIN users u    ON u.id        = a.author_id
     WHERE f.follower_id = $1
-    ORDER BY a.createdAt DESC
+    ORDER BY a.createdat DESC
     LIMIT $2 OFFSET $3
   `;
-  const { rows } = await pool.query(rowsSql, [
-    uid,
-    Number(limit),
-    Number(offset),
-  ]);
+  const { rows } = await pool.query(rowsSql, [uid, Number(limit), Number(offset)]);
 
   const { rows: cnt } = await pool.query(
     `SELECT COUNT(*)::int AS total
@@ -127,7 +121,9 @@ export async function findArticleBySlug({ slug, userId = "" }) {
     `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
-      a.createdAt, a.updatedAt, a.status,
+      a.createdat AS "createdAt",
+      a.updatedat AS "updatedAt",
+      a.status,
       u.username, u.image, u.bio,
       (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
@@ -173,13 +169,9 @@ export async function insertArticle({
   body,
   status = "draft",
 }) {
-  // guard to avoid NOT NULL violations
   if (!title || !description || !body) {
-    throw new Error(
-      "insertArticle: missing required fields (title/description/body)"
-    );
+    throw new Error("insertArticle: missing required fields (title/description/body)");
   }
-
   const { rows } = await pool.query(
     `INSERT INTO articles (id, slug, title, description, body, author_id, status)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
@@ -197,36 +189,21 @@ export async function updateArticleBySlugForAuthor({
   description,
   body,
   newSlug,
-  status, // optional
+  status,
 }) {
   const sets = [];
   const params = [];
   let i = 1;
 
-  if (title !== undefined) {
-    sets.push(`title = $${i++}`);
-    params.push(title);
-  }
-  if (description !== undefined) {
-    sets.push(`description = $${i++}`);
-    params.push(description);
-  }
-  if (body !== undefined) {
-    sets.push(`body = $${i++}`);
-    params.push(body);
-  }
-  if (newSlug !== undefined) {
-    sets.push(`slug = $${i++}`);
-    params.push(newSlug);
-  }
-  if (status !== undefined) {
-    sets.push(`status = $${i++}`);
-    params.push(status);
-  }
+  if (title !== undefined) { sets.push(`title = $${i++}`); params.push(title); }
+  if (description !== undefined) { sets.push(`description = $${i++}`); params.push(description); }
+  if (body !== undefined) { sets.push(`body = $${i++}`); params.push(body); }
+  if (newSlug !== undefined) { sets.push(`slug = $${i++}`); params.push(newSlug); }
+  if (status !== undefined) { sets.push(`status = $${i++}`); params.push(status); }
 
   if (!sets.length) return true;
 
-  sets.push(`updatedAt = NOW()`);
+  sets.push(`updatedat = NOW()`);
   params.push(authorId, slug);
 
   const { rowCount } = await pool.query(
