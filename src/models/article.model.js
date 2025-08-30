@@ -1,47 +1,35 @@
 import pool from "../config/db.js";
 
-/** Build dynamic WHERE and params for filters */
+/** build WHERE + params for optional filters */
 function buildArticleFilters({ author, favoritedBy, tag }) {
   const where = [];
   const params = [];
+  let i = 1;
 
   if (author) {
-    where.push(`u.username = ?`);
+    where.push(`u.username = $${i++}`);
     params.push(author);
   }
-
   if (favoritedBy) {
-    // articles favorited by username
-    where.push(
-      `EXISTS (
-         SELECT 1
-         FROM article_favorites af
-         JOIN users u2 ON u2.id = af.user_id
-        WHERE af.article_id = a.id AND u2.username = ?
-      )`
-    );
+    where.push(`EXISTS (
+      SELECT 1 FROM article_favorites af2
+      JOIN users favu ON favu.id = af2.user_id
+      WHERE af2.article_id = a.id AND favu.username = $${i++}
+    )`);
     params.push(favoritedBy);
   }
-
   if (tag) {
-    // articles that have tag name
-    where.push(
-      `EXISTS (
-         SELECT 1
-           FROM article_tags at2
-           JOIN tags t2 ON t2.id = at2.tag_id
-          WHERE at2.article_id = a.id AND t2.name = ?
-       )`
-    );
+    where.push(`EXISTS (
+      SELECT 1 FROM article_tags at
+      JOIN tags t ON t.id = at.tag_id
+      WHERE at.article_id = a.id AND t.name = $${i++}
+    )`);
     params.push(tag);
   }
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  return { whereSql, params };
+  return { where, params, nextIndex: i };
 }
 
-/** All articles (with optional filters) + total count for pagination */
-/** All articles with total count + author/favorited/tag filters */
+/** All articles with total count (pagination + filters) */
 export async function getAllArticles({
   userId = null,
   limit = 1000,
@@ -51,114 +39,109 @@ export async function getAllArticles({
   tag,
 } = {}) {
   const uid = userId || "";
-  const { whereSql, params } = buildArticleFilters({
+
+  const { where, params, nextIndex } = buildArticleFilters({
     author,
     favoritedBy,
     tag,
   });
+  const filters = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const sql = `
+  const rowsSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
       a.createdAt, a.updatedAt, a.status,
       u.username, u.image, u.bio,
-      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS favoritesCount,
+      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
         SELECT 1 FROM article_favorites af2
-         WHERE af2.article_id = a.id AND af2.user_id = ?
+        WHERE af2.article_id = a.id AND af2.user_id = $${nextIndex}
       ) AS favorited,
       EXISTS(
         SELECT 1 FROM follows f
-         WHERE f.follower_id = ? AND f.followee_id = a.author_id
+        WHERE f.follower_id = $${nextIndex + 1} AND f.followee_id = a.author_id
       ) AS following
     FROM articles a
     JOIN users u ON u.id = a.author_id
-    ${whereSql}
+    ${filters}
     ORDER BY a.createdAt DESC
-    LIMIT ? OFFSET ?;
+    LIMIT $${nextIndex + 2} OFFSET $${nextIndex + 3}
   `;
 
-  const [rows] = await pool.query(sql, [
-    uid,
-    uid,
-    ...params,
-    Number(limit),
-    Number(offset),
-  ]);
+  const rowsParams = [...params, uid, uid, Number(limit), Number(offset)];
+  const { rows } = await pool.query(rowsSql, rowsParams);
 
-  const [countRows] = await pool.query(
-    `
-    SELECT COUNT(*) AS total
+  const countSql = `
+    SELECT COUNT(*)::int AS total
     FROM articles a
     JOIN users u ON u.id = a.author_id
-    ${whereSql};
-    `,
-    params
-  );
+    ${filters}
+  `;
+  const { rows: cnt } = await pool.query(countSql, params);
+  const total = cnt[0]?.total ?? 0;
 
-  const total = countRows[0]?.total ?? 0;
   return { rows, total };
 }
 
-/** Feed with total count (for pagination) */
+/** Feed (followed authors) with total count */
 export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
   const uid = userId || "";
-  const [rows] = await pool.query(
-    `
+  const rowsSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
       a.createdAt, a.updatedAt, a.status,
       u.username, u.image, u.bio,
-      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS favoritesCount,
+      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
         SELECT 1 FROM article_favorites af2
-         WHERE af2.article_id = a.id AND af2.user_id = ?
+        WHERE af2.article_id = a.id AND af2.user_id = $1
       ) AS favorited
     FROM follows f
     JOIN articles a ON a.author_id = f.followee_id
     JOIN users u    ON u.id        = a.author_id
-    WHERE f.follower_id = ?
+    WHERE f.follower_id = $1
     ORDER BY a.createdAt DESC
-    LIMIT ? OFFSET ?;
-    `,
-    [uid, uid, Number(limit), Number(offset)]
-  );
+    LIMIT $2 OFFSET $3
+  `;
+  const { rows } = await pool.query(rowsSql, [
+    uid,
+    Number(limit),
+    Number(offset),
+  ]);
 
-  const [countRows] = await pool.query(
-    `
-    SELECT COUNT(*) AS total
-      FROM follows f
-      JOIN articles a ON a.author_id = f.followee_id
-     WHERE f.follower_id = ?;
-    `,
+  const { rows: cnt } = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM follows f
+     JOIN articles a ON a.author_id = f.followee_id
+     WHERE f.follower_id = $1`,
     [uid]
   );
-  const total = countRows[0]?.total ?? 0;
-  return { rows, total };
+
+  return { rows, total: cnt[0]?.total ?? 0 };
 }
 
-/** One article by slug (with author + counts/flags) */
+/** One article by slug */
 export async function findArticleBySlug({ slug, userId = "" }) {
   const uid = userId || "";
-  const [rows] = await pool.query(
+  const { rows } = await pool.query(
     `
     SELECT
-      a.id, a.slug, a.title, a.description, a.body, a.status,
-      a.createdAt, a.updatedAt,
+      a.id, a.slug, a.title, a.description, a.body,
+      a.createdAt, a.updatedAt, a.status,
       u.username, u.image, u.bio,
-      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS favoritesCount,
+      (SELECT COUNT(*) FROM article_favorites af WHERE af.article_id = a.id) AS "favoritesCount",
       EXISTS(
         SELECT 1 FROM article_favorites af2
-        WHERE af2.article_id = a.id AND af2.user_id = ?
+        WHERE af2.article_id = a.id AND af2.user_id = $1
       ) AS favorited,
       EXISTS(
         SELECT 1 FROM follows f
-        WHERE f.follower_id = ? AND f.followee_id = a.author_id
+        WHERE f.follower_id = $2 AND f.followee_id = a.author_id
       ) AS following
     FROM articles a
     JOIN users u ON u.id = a.author_id
-    WHERE a.slug = ?
-    LIMIT 1;
+    WHERE a.slug = $3
+    LIMIT 1
     `,
     [uid, uid, slug]
   );
@@ -166,45 +149,37 @@ export async function findArticleBySlug({ slug, userId = "" }) {
 }
 
 export async function findArticleAuthorId(slug) {
-  const [rows] = await pool.query(
-    `SELECT author_id FROM articles WHERE slug = ? LIMIT 1`,
+  const { rows } = await pool.query(
+    `SELECT author_id FROM articles WHERE slug = $1 LIMIT 1`,
     [slug]
   );
   return rows[0]?.author_id || null;
 }
 
 export async function deleteArticleBySlug({ slug, userId }) {
-  const [result] = await pool.query(
-    `DELETE FROM articles WHERE slug = ? AND author_id = ? LIMIT 1`,
+  const { rowCount } = await pool.query(
+    `DELETE FROM articles WHERE slug = $1 AND author_id = $2`,
     [slug, userId]
   );
-  return result.affectedRows || 0;
+  return rowCount || 0;
 }
 
-/** CREATE (returns new article id) */
 export async function insertArticle({
   authorId,
   slug,
   title,
   description,
   body,
-  status = "draft",
 }) {
-  await pool.query(
-    `
-      INSERT INTO articles (id, slug, title, description, body, author_id, status)
-      VALUES (UUID(), ?, ?, ?, ?, ?, ?)
-    `,
-    [slug, title, description, body, authorId, status]
-  );
-  const [rows] = await pool.query(
-    `SELECT id FROM articles WHERE slug = ? LIMIT 1`,
-    [slug]
+  const { rows } = await pool.query(
+    `INSERT INTO articles (id, slug, title, description, body, author_id)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+     RETURNING id`,
+    [slug, title, description, body, authorId]
   );
   return rows[0].id;
 }
 
-/** UPDATE (by slug, only if owned by authorId). Returns true if updated. */
 export async function updateArticleBySlugForAuthor({
   slug,
   authorId,
@@ -212,52 +187,43 @@ export async function updateArticleBySlugForAuthor({
   description,
   body,
   newSlug,
-  status,
 }) {
-  const fields = [];
+  const sets = [];
   const params = [];
+  let i = 1;
 
   if (title !== undefined) {
-    fields.push("title = ?");
+    sets.push(`title = $${i++}`);
     params.push(title);
   }
   if (description !== undefined) {
-    fields.push("description = ?");
+    sets.push(`description = $${i++}`);
     params.push(description);
   }
   if (body !== undefined) {
-    fields.push("body = ?");
+    sets.push(`body = $${i++}`);
     params.push(body);
   }
   if (newSlug !== undefined) {
-    fields.push("slug = ?");
+    sets.push(`slug = $${i++}`);
     params.push(newSlug);
   }
-  if (status !== undefined) {
-    fields.push("status = ?");
-    params.push(status);
-  }
 
-  if (!fields.length) return true;
-  fields.push("updatedAt = NOW()");
+  if (!sets.length) return true;
 
+  sets.push(`updatedAt = NOW()`);
   params.push(authorId, slug);
-  const [result] = await pool.query(
-    `
-      UPDATE articles
-         SET ${fields.join(", ")}
-       WHERE author_id = ? AND slug = ?
-       LIMIT 1
-    `,
+
+  const { rowCount } = await pool.query(
+    `UPDATE articles SET ${sets.join(", ")} WHERE author_id = $${i++} AND slug = $${i} `,
     params
   );
-  return result.affectedRows > 0;
+  return rowCount > 0;
 }
 
-// Return article id by slug (helper)
 export async function findArticleIdBySlug(slug) {
-  const [rows] = await pool.query(
-    `SELECT id FROM articles WHERE slug = ? LIMIT 1`,
+  const { rows } = await pool.query(
+    `SELECT id FROM articles WHERE slug = $1 LIMIT 1`,
     [slug]
   );
   return rows[0]?.id || null;
@@ -265,14 +231,15 @@ export async function findArticleIdBySlug(slug) {
 
 export async function addFavorite({ userId, articleId }) {
   await pool.query(
-    `INSERT IGNORE INTO article_favorites (user_id, article_id) VALUES (?, ?)`,
+    `INSERT INTO article_favorites (user_id, article_id)
+     VALUES ($1, $2) ON CONFLICT DO NOTHING`,
     [userId, articleId]
   );
 }
 
 export async function removeFavorite({ userId, articleId }) {
   await pool.query(
-    `DELETE FROM article_favorites WHERE user_id = ? AND article_id = ? LIMIT 1`,
+    `DELETE FROM article_favorites WHERE user_id = $1 AND article_id = $2`,
     [userId, articleId]
   );
 }

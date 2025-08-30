@@ -1,13 +1,8 @@
 import pool from "../config/db.js";
 
 export async function getAllTags({ limit = 1000, offset = 0 } = {}) {
-  const [rows] = await pool.query(
-    `
-    SELECT name
-    FROM tags
-    ORDER BY name ASC
-    LIMIT ? OFFSET ?;
-    `,
+  const { rows } = await pool.query(
+    `SELECT name FROM tags ORDER BY name ASC LIMIT $1 OFFSET $2`,
     [Number(limit), Number(offset)]
   );
   return rows.map((r) => r.name);
@@ -16,16 +11,16 @@ export async function getAllTags({ limit = 1000, offset = 0 } = {}) {
 export async function getTagsByArticleIds(articleIds = []) {
   if (!articleIds.length) return new Map();
 
-  const placeholders = articleIds.map(() => "?").join(",");
-  const [rows] = await pool.query(
-    `
-    SELECT at.article_id, t.name
-    FROM article_tags at
-    JOIN tags t ON t.id = at.tag_id
-    WHERE at.article_id IN (${placeholders})
-    ORDER BY t.name;
-    `,
-    articleIds
+  const params = articleIds;
+  const placeholders = articleIds.map((_, i) => `$${i + 1}`).join(", ");
+
+  const { rows } = await pool.query(
+    `SELECT at.article_id, t.name
+     FROM article_tags at
+     JOIN tags t ON t.id = at.tag_id
+     WHERE at.article_id IN (${placeholders})
+     ORDER BY t.name`,
+    params
   );
 
   const map = new Map();
@@ -36,33 +31,39 @@ export async function getTagsByArticleIds(articleIds = []) {
   return map;
 }
 
-/* Insert tags by name (id is AUTO_INCREMENT), return their ids */
 export async function ensureTags(names = []) {
   const ids = [];
   for (const name of names) {
-    await pool.query(
-      "INSERT INTO tags (name) VALUES (?) ON DUPLICATE KEY UPDATE name = name",
+    const ins = await pool.query(
+      `INSERT INTO tags (name) VALUES ($1)
+       ON CONFLICT (name) DO NOTHING
+       RETURNING id`,
       [name]
     );
-    const [row] = await pool.query(
-      "SELECT id FROM tags WHERE name = ? LIMIT 1",
-      [name]
-    );
-    ids.push(row[0].id);
+    if (ins.rows[0]) {
+      ids.push(ins.rows[0].id);
+    } else {
+      const sel = await pool.query(`SELECT id FROM tags WHERE name = $1`, [
+        name,
+      ]);
+      ids.push(sel.rows[0].id);
+    }
   }
   return ids;
 }
 
-/* Replace an article's tags with provided names */
 export async function setArticleTags(articleId, names = []) {
   const ids = await ensureTags(names);
-  await pool.query("DELETE FROM article_tags WHERE article_id = ?", [
+  await pool.query(`DELETE FROM article_tags WHERE article_id = $1`, [
     articleId,
   ]);
   if (!ids.length) return;
-  const values = ids.map((id) => [articleId, id]);
+
+  // bulk insert
+  const values = ids.map((_, i) => `($1, $${i + 2})`).join(", ");
   await pool.query(
-    "INSERT IGNORE INTO article_tags (article_id, tag_id) VALUES ?",
-    [values]
+    `INSERT INTO article_tags (article_id, tag_id) VALUES ${values}
+     ON CONFLICT DO NOTHING`,
+    [articleId, ...ids]
   );
 }
