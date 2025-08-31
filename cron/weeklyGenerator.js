@@ -160,7 +160,7 @@ async function generateOne(topic, status = "draft") {
   return { slug, articleId, imageUrl, voiceUrl, videoUrl };
 }
 
-async function runBatch(count = 10, status = "draft") {
+async function runBatch(count = 1, status = "draft") {
   if (!SYSTEM_AUTHOR_ID)
     throw new Error("SYSTEM_AUTHOR_ID env var is required");
   const topics = [
@@ -186,12 +186,12 @@ async function runBatch(count = 10, status = "draft") {
   }
 }
 
-// CLI: --once  --count=10  --status=published
+// CLI: --once  --count=1  --status=published
 const argv = process.argv.slice(2);
 const ONCE = argv.includes("--once") || process.env.RUN_ONCE === "true";
 const COUNT =
   Number((argv.find((a) => a.startsWith("--count=")) || "").split("=")[1]) ||
-  Number(process.env.GEN_COUNT || 10);
+  Number(process.env.GEN_COUNT || 1);
 const STATUS =
   (argv.find((a) => a.startsWith("--status=")) || "").split("=")[1] ||
   process.env.GEN_STATUS ||
