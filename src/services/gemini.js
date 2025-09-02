@@ -132,20 +132,21 @@ export async function genVideoBytesFromPromptAndImage(prompt, imageBytes) {
     operation = await ai.operations.getVideosOperation({ operation });
   }
 
-  const videoObj = operation?.response?.generatedVideos?.[0]?.video;
-  if (!videoObj) throw new Error("Veo did not return a generated video");
-
   const video = operation?.response?.generatedVideos?.[0]?.video;
   if (!video) throw new Error("Veo did not return a generated video");
 
   // 1) If the SDK returns a direct URI, fetch it and return bytes.
   if (typeof video.uri === "string" && video.uri.length) {
-    const resp = await fetch(video.uri);
-    if (!resp.ok) {
-      throw new Error(`Failed to fetch Veo video URI (${resp.status})`);
-    }
-    const ab = await resp.arrayBuffer();
-    return { bytes: Buffer.from(ab), mime: "video/mp4", durationSec: null };
+    const resp = await fetch(video.uri, {
+        // Veo URIs can require auth; pass API key
+        headers: { "x-goog-api-key": GEMINI_API_KEY }
+      });
+      if (resp.ok) {
+        const ab = await resp.arrayBuffer();
+        return { bytes: Buffer.from(ab), mime: "video/mp4", durationSec: null };
+      }
+      // Fallback to file download path if the URI fetch is blocked (e.g., 403)
+      console.warn(`[gemini] Veo URI fetch failed (${resp.status}); falling back to file download`);
   }
 
   // 2) Otherwise try the SDK's file download helper with a proper identifier.

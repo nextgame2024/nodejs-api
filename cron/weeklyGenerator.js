@@ -101,12 +101,15 @@ async function generateOne(topic, status = "draft") {
     mimeType: imgMime,
   });
 
+  let voiceUrl = null;
+  let videoUrl = null;
+
   // 5) Voiceover (short teaser)
   try {
     const teaser = `${art.title}. ${art.description}`;
     const voiceBuf = await ttsToBuffer(teaser.slice(0, 400));
     const voiceKey = `articles/${slug}/teaser.mp3`;
-    const voiceUrl = await putToS3({
+    voiceUrl = await putToS3({
       key: voiceKey,
       body: voiceBuf,
       contentType: "audio/mpeg",
@@ -138,7 +141,7 @@ async function generateOne(topic, status = "draft") {
           durationSec,
         } = await genVideoBytesFromPromptAndImage(videoPrompt, imgBytes);
         const videoKey = `articles/${slug}/teaser.mp4`;
-        const videoUrl = await putToS3({
+        videoUrl = await putToS3({
           key: videoKey,
           body: vidBytes,
           contentType: vidMime,
