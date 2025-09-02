@@ -126,28 +126,36 @@ async function generateOne(topic, status = "draft") {
   }
 
   // 6) Video (Gemini/Veo), seeded by the image
-  const videoPrompt = `Tasteful, smooth parallax/zoom over abstract AI visuals inspired by "${art.title}".
+  if (process.env.DISABLE_VIDEO === "true") {
+      console.log("Video generation disabled via DISABLE_VIDEO=true");
+    } else {
+    const videoPrompt = `Tasteful, smooth parallax/zoom over abstract AI visuals inspired by "${art.title}".
     No text, no logos, no brand marks, no UI screenshots.`;
-  const {
-    bytes: vidBytes,
-    mime: vidMime,
-    durationSec,
-  } = await genVideoBytesFromPromptAndImage(videoPrompt, imgBytes);
-  const videoKey = `articles/${slug}/teaser.mp4`;
-  const videoUrl = await putToS3({
-    key: videoKey,
-    body: vidBytes,
-    contentType: vidMime,
-  });
-  await insertAsset({
-    articleId,
-    type: "video",
-    url: videoUrl,
-    s3Key: videoKey,
-    mimeType: vidMime,
-    durationSec,
-  });
-
+      try {
+        const {
+          bytes: vidBytes,
+          mime: vidMime,
+          durationSec,
+        } = await genVideoBytesFromPromptAndImage(videoPrompt, imgBytes);
+        const videoKey = `articles/${slug}/teaser.mp4`;
+        const videoUrl = await putToS3({
+          key: videoKey,
+          body: vidBytes,
+          contentType: vidMime,
+        });
+        await insertAsset({
+          articleId,
+          type: "video",
+          url: videoUrl,
+          s3Key: videoKey,
+          mimeType: vidMime,
+          durationSec,
+        });
+      } catch (err) {
+        console.warn("[weeklyGenerator] Video generation skipped:", err?.message || err);
+      }
+    }
+    
   // Optional auto-publish switch
   if (process.env.AUTO_PUBLISH_AI === "true" && status !== "published") {
     await updateArticleBySlugForAuthor({
