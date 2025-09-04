@@ -1,7 +1,7 @@
+// src/services/gemini.js
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
-import fetch from "node-fetch";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
@@ -16,6 +16,7 @@ const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-preview"
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
+/* ---------------- Text (unchanged) ---------------- */
 async function genJsonOnce(topic) {
   const prompt = `
 You write a blog article for technology enthusiasts about: "${topic}".
@@ -50,14 +51,11 @@ Rules:
 
 /**
  * Generate one article JSON for a topic.
- * Always returns { title, description, body, tagList }
- * with safe fallbacks if parsing fails.
+ * Always returns { title, description, body, tagList } with safe fallbacks.
  */
 export async function genArticleJson(topic) {
-  // First attempt
   let raw = await genJsonOnce(topic);
 
-  // Retry once with a stricter reminder if empty/invalid
   if (!raw) {
     const nudge = `
 Return ONLY minified JSON: {"title":"...","description":"...","body":"...","tagList":["...","..."]}
@@ -77,7 +75,6 @@ Topic: ${topic}
     raw = raw.trim();
   }
 
-  // Parse defensively
   let data;
   try {
     data = JSON.parse(raw);
@@ -85,7 +82,6 @@ Topic: ${topic}
     data = {};
   }
 
-  // Sane fallbacks to avoid NULLs
   const title =
     (data.title && String(data.title).trim()) || `AI Notes: ${topic}`;
   const description =
@@ -101,7 +97,7 @@ Topic: ${topic}
   return { title, description, body, tagList };
 }
 
-/* ---------- IMAGE ---------- */
+/* ---------------- Image (unchanged) ---------------- */
 export async function genImageBytes(prompt) {
   const resp = await ai.models.generateImages({
     model: IMAGE_MODEL,
@@ -116,8 +112,45 @@ export async function genImageBytes(prompt) {
   return { bytes, mime };
 }
 
-/* ---------- VIDEO ---------- */
+/* ---------------- Video (hardened) ---------------- */
+async function ensureTmpDir() {
+  try {
+    await fs.mkdir(TMP_DIR, { recursive: true });
+  } catch (e) {
+    // if /tmp exists already, ignore
+  }
+}
+
+async function tryFetchUri(uri) {
+  // Some Veo URIs require the API key header
+  const resp = await fetch(uri, { headers: { "x-goog-api-key": GEMINI_API_KEY } });
+  if (!resp.ok) {
+    throw new Error(`URI fetch failed (${resp.status})`);
+  }
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+async function tryDownloadFileId(fileId) {
+  await ensureTmpDir();
+  const tmp = path.join(TMP_DIR, `veo_${Date.now()}.mp4`);
+  await ai.files.download({ file: fileId, downloadPath: tmp });
+  const bytes = await fs.readFile(tmp); // throws ENOENT if not written
+  return bytes;
+}
+
+/**
+ * Robust video generation and download:
+ * - SDK LRO with polling
+ * - Prefer direct URI (with API key header) if present
+ * - Otherwise try multiple possible file identifiers via ai.files.download
+ */
 export async function genVideoBytesFromPromptAndImage(prompt, imageBytes) {
+  if (typeof ai?.models?.generateVideos !== "function") {
+    throw new Error("Video generation is unavailable in this @google/genai build");
+  }
+
+  // Start LRO
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
@@ -127,7 +160,8 @@ export async function genVideoBytesFromPromptAndImage(prompt, imageBytes) {
     },
   });
 
-  while (!operation.done) {
+  // Poll until done
+  while (!operation?.done) {
     await new Promise((r) => setTimeout(r, 10_000));
     operation = await ai.operations.getVideosOperation({ operation });
   }
@@ -135,35 +169,46 @@ export async function genVideoBytesFromPromptAndImage(prompt, imageBytes) {
   const video = operation?.response?.generatedVideos?.[0]?.video;
   if (!video) throw new Error("Veo did not return a generated video");
 
-  // 1) If the SDK returns a direct URI, fetch it and return bytes.
-  if (typeof video.uri === "string" && video.uri.length) {
-    const resp = await fetch(video.uri, {
-        // Veo URIs can require auth; pass API key
-        headers: { "x-goog-api-key": GEMINI_API_KEY }
-      });
-      if (resp.ok) {
-        const ab = await resp.arrayBuffer();
-        return { bytes: Buffer.from(ab), mime: "video/mp4", durationSec: null };
-      }
-      // Fallback to file download path if the URI fetch is blocked (e.g., 403)
-      console.warn(`[gemini] Veo URI fetch failed (${resp.status}); falling back to file download`);
+  // Helpful debug: what fields did we get?
+  try {
+    const keys = Object.keys(video);
+    console.log(`[gemini] video fields: ${keys.join(", ")}`);
+  } catch {}
+
+  // 1) Try URI (fast path)
+  if (typeof video.uri === "string" && video.uri) {
+    try {
+      const bytes = await tryFetchUri(video.uri);
+      return { bytes, mime: "video/mp4", durationSec: null };
+    } catch (e) {
+      console.warn(`[gemini] Veo URI fetch failed: ${e?.message || e}. Will try file download.`);
+    }
   }
 
-  // 2) Otherwise try the SDK's file download helper with a proper identifier.
-  const fileId = video.file || video.name || null;
-  if (!fileId) {
+  // 2) Try file download with several likely identifiers
+  const candidates = [
+    video.file?.name,
+    video.file?.id,
+    video.file,
+    video.name,
+    video.resourceName,
+    // Sometimes SDK returns nested shapes; add any other likely IDs here.
+  ].filter((x) => typeof x === "string" && x);
+
+  if (!candidates.length) {
     throw new Error("Veo video has no uri/file identifier to download");
   }
 
-  await fs.mkdir(TMP_DIR, { recursive: true });
-  const tmp = path.join(TMP_DIR, `veo_${Date.now()}.mp4`);
-
-  await ai.files.download({ file: fileId, downloadPath: tmp });
-  // Ensure the SDK actually wrote the file before reading
-  try {
-    const bytes = await fs.readFile(tmp);
-    return { bytes, mime: "video/mp4", durationSec: null };
-  } catch (e) {
-    throw new Error(`Veo download wrote no file at ${tmp}: ${e?.message || e}`);
+  let lastErr = null;
+  for (const fileId of candidates) {
+    try {
+      const bytes = await tryDownloadFileId(fileId);
+      return { bytes, mime: "video/mp4", durationSec: null };
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[gemini] ai.files.download failed for "${fileId}": ${e?.message || e}`);
+    }
   }
+
+  throw new Error(`All Veo download attempts failed: ${lastErr?.message || lastErr}`);
 }
