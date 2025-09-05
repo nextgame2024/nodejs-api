@@ -136,3 +136,37 @@ export async function getProfileWithFollowing(username, viewerId) {
   );
   return rows[0];
 }
+
+/** Return authors the viewer isn't following (and not themselves),
+ *  ordered by most recently active (latest article date).
+ */
+export async function getSuggestedAuthors({
+  viewerId,
+  limit = 5,
+  defaultAvatar = null,
+}) {
+  const { rows } = await pool.query(
+    `
+    WITH latest AS (
+      SELECT author_id, MAX(createdat) AS last_post
+      FROM articles
+      GROUP BY author_id
+    )
+    SELECT
+      u.username,
+      COALESCE(u.bio, '')  AS bio,
+      COALESCE(u.image, $3) AS image
+    FROM users u
+    LEFT JOIN latest l ON l.author_id = u.id
+    WHERE u.id <> $1
+      AND NOT EXISTS (
+        SELECT 1 FROM follows f
+        WHERE f.follower_id = $1 AND f.followee_id = u.id
+      )
+    ORDER BY l.last_post DESC NULLS LAST, u.username ASC
+    LIMIT $2
+    `,
+    [viewerId, Math.max(1, Math.min(20, Number(limit))), defaultAvatar]
+  );
+  return rows;
+}

@@ -4,6 +4,7 @@ import {
   followUser,
   getProfileWithFollowing,
   unfollowUser,
+  getSuggestedAuthors,
 } from "../models/user.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
@@ -72,4 +73,25 @@ export const unfollowProfile = asyncHandler(async (req, res) => {
       following: !!profile.following,
     },
   });
+});
+
+/** GET /api/users/suggestions?limit=5 */
+export const suggestedAuthors = asyncHandler(async (req, res) => {
+  const viewerId = req.user?.id;
+  const limit = Number(req.query.limit ?? 5);
+
+  const rows = await getSuggestedAuthors({
+    viewerId,
+    limit,
+    defaultAvatar: DEFAULT_AVATAR,
+  });
+
+  const profiles = rows.map((r) => ({
+    username: r.username,
+    bio: r.bio || "",
+    image: r.image,
+    following: false,
+  }));
+
+  res.json({ profiles });
 });
