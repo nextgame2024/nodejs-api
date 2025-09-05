@@ -38,7 +38,7 @@ export async function getAllArticles({
   favoritedBy,
   tag,
 } = {}) {
-  const uid = userId || "";
+  const uid = userId ?? null;
   const { where, params, nextIndex } = buildArticleFilters({ author, favoritedBy, tag });
   const filters = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -81,7 +81,10 @@ export async function getAllArticles({
 
 /** Feed (followed authors) with total count */
 export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
-  const uid = userId || "";
+  if (!userId) {
+    return { rows: [], total: 0 };
+  }
+  const uid = userId;
   const rowsSql = `
     SELECT
       a.id, a.slug, a.title, a.description, a.body,
@@ -116,7 +119,7 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
 
 /** One article by slug */
 export async function findArticleBySlug({ slug, userId = "" }) {
-  const uid = userId || "";
+  const uid = userId ?? null;
   const { rows } = await pool.query(
     `
     SELECT

@@ -64,7 +64,7 @@ function toArticleDTO(row, tagMap, assetsMap) {
 
 export const listArticles = asyncHandler(async (req, res) => {
   const { limit, offset } = parseLimitOffset(req.query);
-  const userId = req.user?.id || "";
+  const userId = req.user?.id ?? null;
   const author = (req.query.author || "").toString().trim() || undefined;
   const favoritedBy = (req.query.favorited || "").toString().trim() || undefined;
   const tag = (req.query.tag || "").toString().trim() || undefined;
@@ -85,7 +85,7 @@ export const listArticles = asyncHandler(async (req, res) => {
 
 export const getArticle = asyncHandler(async (req, res) => {
   const slug = req.params.slug;
-  const userId = req.user?.id || "";
+  const userId = req.user?.id ?? null;
 
   const row = await findArticleBySlug({ slug, userId });
   if (!row) return res.status(404).json({ error: "Article not found" });
