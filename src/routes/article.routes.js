@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   listArticles,
   getArticle,
+  listArticleAssets,
   deleteArticle,
   createArticle,
   updateArticle,
@@ -21,5 +22,6 @@ router.post("/articles", authRequired, createArticle);
 router.put("/articles/:slug", authRequired, updateArticle);
 router.post("/articles/:slug/favorite", authRequired, favoriteArticle);
 router.delete("/articles/:slug/favorite", authRequired, unfavoriteArticle);
+router.get("/articles/:slug/assets", authOptional, listArticleAssets);
 
 export default router;

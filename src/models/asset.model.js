@@ -20,7 +20,7 @@ export async function insertAsset({
   );
 }
 
-/** Returns Map<article_id, AssetDTO[]> */
+/** Returns Map<article_id, AssetDTO[]> for a batch of article ids */
 export async function getAssetsByArticleIds(articleIds = []) {
   if (!articleIds.length) return new Map();
 
@@ -51,4 +51,37 @@ export async function getAssetsByArticleIds(articleIds = []) {
     });
   }
   return map;
+}
+
+/** Returns AssetDTO[] for a single article id, optional type filter */
+export async function getAssetsForArticleId(articleId, type = null) {
+  const params = [articleId];
+  let where = `article_id = $1`;
+  if (type) {
+    params.push(type);
+    where += ` AND type = $2`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT
+       id, article_id, type, url, mime_type, duration_sec, width, height,
+       createdat AS "createdAt",
+       metadata
+     FROM assets
+     WHERE ${where}
+     ORDER BY createdat ASC`,
+    params
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.type,
+    url: r.url,
+    mimeType: r.mime_type,
+    durationSec: r.duration_sec !== null ? Number(r.duration_sec) : null,
+    width: r.width,
+    height: r.height,
+    createdAt: r.createdAt,
+    metadata: r.metadata ?? null,
+  }));
 }

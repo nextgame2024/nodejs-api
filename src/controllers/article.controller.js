@@ -1,6 +1,7 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import {
   getAllArticles,
+  getFeedArticles,
   findArticleBySlug,
   findArticleAuthorId,
   deleteArticleBySlug,
@@ -11,7 +12,10 @@ import {
   removeFavorite,
 } from "../models/article.model.js";
 import { getTagsByArticleIds, setArticleTags } from "../models/tag.model.js";
-import { getAssetsByArticleIds } from "../models/asset.model.js";
+import {
+  getAssetsByArticleIds,
+  getAssetsForArticleId,
+} from "../models/asset.model.js";
 
 const DEFAULT_AVATAR = process.env.DEFAULT_AVATAR_URL || "";
 const MAX_LIMIT = 1000;
@@ -29,17 +33,22 @@ function parseLimitOffset(q) {
 }
 
 function slugify(title = "") {
-  const base = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  const base = title
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
   const rnd = Math.random().toString(36).slice(2, 8);
   return `${base || "article"}-${rnd}`;
 }
 
 function toArticleDTO(row, tagMap, assetsMap) {
-  // ensure assets.createdAt are safe ISO strings too
+  // normalize & sort assets oldest->newest (you can flip order in SQL if desired)
   const assets = (assetsMap?.get(row.id) || []).map((a) => ({
     ...a,
     createdAt: toISO(a.createdAt),
   }));
+
   return {
     id: row.id,
     slug: row.slug,
@@ -55,13 +64,14 @@ function toArticleDTO(row, tagMap, assetsMap) {
       image: row.image || DEFAULT_AVATAR,
       bio: row.bio || "",
       username: row.username,
-      following: !!row.following,
+      following: !!row.following, // may be false for anonymous requests
     },
     status: row.status || "draft",
     assets,
   };
 }
 
+/** GET /api/articles */
 export const listArticles = asyncHandler(async (req, res) => {
   const { limit, offset } = parseLimitOffset(req.query);
   const userId = req.user?.id ?? null;
@@ -70,7 +80,12 @@ export const listArticles = asyncHandler(async (req, res) => {
   const tag = (req.query.tag || "").toString().trim() || undefined;
 
   const { rows, total } = await getAllArticles({
-    userId, limit, offset, author, favoritedBy, tag,
+    userId,
+    limit,
+    offset,
+    author,
+    favoritedBy,
+    tag,
   });
 
   const ids = rows.map((a) => a.id);
@@ -83,6 +98,23 @@ export const listArticles = asyncHandler(async (req, res) => {
   res.json({ articles, articlesCount: total });
 });
 
+/** GET /api/articles/feed */
+export const listFeed = asyncHandler(async (req, res) => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id ?? null;
+
+  const { rows, total } = await getFeedArticles({ userId, limit, offset });
+  const ids = rows.map((a) => a.id);
+  const [tagMap, assetsMap] = await Promise.all([
+    getTagsByArticleIds(ids),
+    getAssetsByArticleIds(ids),
+  ]);
+
+  const articles = rows.map((row) => toArticleDTO(row, tagMap, assetsMap));
+  res.json({ articles, articlesCount: total });
+});
+
+/** GET /api/articles/:slug */
 export const getArticle = asyncHandler(async (req, res) => {
   const slug = req.params.slug;
   const userId = req.user?.id ?? null;
@@ -99,6 +131,20 @@ export const getArticle = asyncHandler(async (req, res) => {
   res.json({ article });
 });
 
+/** OPTIONAL: GET /api/articles/:slug/assets?type=image|audio|video */
+export const listArticleAssets = asyncHandler(async (req, res) => {
+  const slug = req.params.slug;
+  const type = (req.query.type || "").toString().trim() || null;
+
+  const articleId = await findArticleIdBySlug(slug);
+  if (!articleId) return res.status(404).json({ error: "Article not found" });
+
+  const items = await getAssetsForArticleId(articleId, type);
+  // normalize timestamps
+  const assets = items.map((a) => ({ ...a, createdAt: toISO(a.createdAt) }));
+  res.json({ assets });
+});
+
 export const deleteArticle = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { slug } = req.params;
@@ -106,15 +152,18 @@ export const deleteArticle = asyncHandler(async (req, res) => {
   const authorId = await findArticleAuthorId(slug);
   if (!authorId) return res.status(404).json({ error: "Article not found" });
   if (authorId !== userId) {
-    return res.status(403).json({ error: "You are not the author of this article" });
+    return res
+      .status(403)
+      .json({ error: "You are not the author of this article" });
   }
 
   const affected = await deleteArticleBySlug({ slug, userId });
-  if (affected === 0) return res.status(404).json({ error: "Article not found" });
+  if (affected === 0)
+    return res.status(404).json({ error: "Article not found" });
   return res.status(204).end();
 });
 
-/* CREATE */
+/** POST /api/articles */
 export const createArticle = asyncHandler(async (req, res) => {
   const authorId = req.user?.id;
   const payload = req.body?.article || {};
@@ -129,7 +178,12 @@ export const createArticle = asyncHandler(async (req, res) => {
 
   const slug = slugify(title);
   const articleId = await insertArticle({
-    authorId, slug, title, description, body, status: status || "draft",
+    authorId,
+    slug,
+    title,
+    description,
+    body,
+    status: status || "draft",
   });
 
   if (tagList.length) await setArticleTags(articleId, tagList);
@@ -144,7 +198,7 @@ export const createArticle = asyncHandler(async (req, res) => {
   res.status(201).json({ article });
 });
 
-/* UPDATE (by slug, only author) */
+/** PUT /api/articles/:slug */
 export const updateArticle = asyncHandler(async (req, res) => {
   const authorId = req.user?.id;
   const slug = req.params.slug;
@@ -153,26 +207,43 @@ export const updateArticle = asyncHandler(async (req, res) => {
   const tagList = Array.isArray(payload.tagList) ? payload.tagList : undefined;
 
   const errors = {};
-  if (title !== undefined && !String(title).trim()) errors.title = ["can't be blank"];
-  if (description !== undefined && !String(description).trim()) errors.description = ["can't be blank"];
-  if (body !== undefined && !String(body).trim()) errors.body = ["can't be blank"];
+  if (title !== undefined && !String(title).trim())
+    errors.title = ["can't be blank"];
+  if (description !== undefined && !String(description).trim())
+    errors.description = ["can't be blank"];
+  if (body !== undefined && !String(body).trim())
+    errors.body = ["can't be blank"];
   if (Object.keys(errors).length) return res.status(422).json({ errors });
 
   const newSlug = title ? slugify(title) : undefined;
 
   const ok = await updateArticleBySlugForAuthor({
-    slug, authorId, title, description, body, newSlug, status,
+    slug,
+    authorId,
+    title,
+    description,
+    body,
+    newSlug,
+    status,
   });
   if (!ok) {
-    return res.status(404).json({ errors: { article: ["not found or not owned by user"] } });
+    return res
+      .status(404)
+      .json({ errors: { article: ["not found or not owned by user"] } });
   }
 
   if (tagList) {
-    const rowAfter = await findArticleBySlug({ slug: newSlug ?? slug, userId: authorId });
+    const rowAfter = await findArticleBySlug({
+      slug: newSlug ?? slug,
+      userId: authorId,
+    });
     await setArticleTags(rowAfter.id, tagList);
   }
 
-  const row = await findArticleBySlug({ slug: newSlug ?? slug, userId: authorId });
+  const row = await findArticleBySlug({
+    slug: newSlug ?? slug,
+    userId: authorId,
+  });
   const [tagMap, assetsMap] = await Promise.all([
     getTagsByArticleIds([row.id]),
     getAssetsByArticleIds([row.id]),
@@ -182,7 +253,7 @@ export const updateArticle = asyncHandler(async (req, res) => {
   res.json({ article });
 });
 
-/* POST /api/articles/:slug/favorite */
+/** POST /api/articles/:slug/favorite */
 export const favoriteArticle = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { slug } = req.params;
@@ -198,7 +269,7 @@ export const favoriteArticle = asyncHandler(async (req, res) => {
   return res.json({ article: toArticleDTO(row, tagMap, assetsMap) });
 });
 
-/* DELETE /api/articles/:slug/favorite */
+/** DELETE /api/articles/:slug/favorite */
 export const unfavoriteArticle = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { slug } = req.params;

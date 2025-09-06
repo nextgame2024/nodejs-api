@@ -39,7 +39,11 @@ export async function getAllArticles({
   tag,
 } = {}) {
   const uid = userId ?? null;
-  const { where, params, nextIndex } = buildArticleFilters({ author, favoritedBy, tag });
+  const { where, params, nextIndex } = buildArticleFilters({
+    author,
+    favoritedBy,
+    tag,
+  });
   const filters = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const rowsSql = `
@@ -96,7 +100,12 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
       EXISTS(
         SELECT 1 FROM article_favorites af2
         WHERE af2.article_id = a.id AND af2.user_id = $1
-      ) AS favorited
+      ) AS favorited,
+      /* mirror following flag for consistency with listArticles */
+      EXISTS(
+        SELECT 1 FROM follows f2
+        WHERE f2.follower_id = $1 AND f2.followee_id = a.author_id
+      ) AS following
     FROM follows f
     JOIN articles a ON a.author_id = f.followee_id
     JOIN users u    ON u.id        = a.author_id
@@ -173,7 +182,9 @@ export async function insertArticle({
   status = "draft",
 }) {
   if (!title || !description || !body) {
-    throw new Error("insertArticle: missing required fields (title/description/body)");
+    throw new Error(
+      "insertArticle: missing required fields (title/description/body)"
+    );
   }
   const { rows } = await pool.query(
     `INSERT INTO articles (id, slug, title, description, body, author_id, status)
@@ -198,11 +209,26 @@ export async function updateArticleBySlugForAuthor({
   const params = [];
   let i = 1;
 
-  if (title !== undefined) { sets.push(`title = $${i++}`); params.push(title); }
-  if (description !== undefined) { sets.push(`description = $${i++}`); params.push(description); }
-  if (body !== undefined) { sets.push(`body = $${i++}`); params.push(body); }
-  if (newSlug !== undefined) { sets.push(`slug = $${i++}`); params.push(newSlug); }
-  if (status !== undefined) { sets.push(`status = $${i++}`); params.push(status); }
+  if (title !== undefined) {
+    sets.push(`title = $${i++}`);
+    params.push(title);
+  }
+  if (description !== undefined) {
+    sets.push(`description = $${i++}`);
+    params.push(description);
+  }
+  if (body !== undefined) {
+    sets.push(`body = $${i++}`);
+    params.push(body);
+  }
+  if (newSlug !== undefined) {
+    sets.push(`slug = $${i++}`);
+    params.push(newSlug);
+  }
+  if (status !== undefined) {
+    sets.push(`status = $${i++}`);
+    params.push(status);
+  }
 
   if (!sets.length) return true;
 
