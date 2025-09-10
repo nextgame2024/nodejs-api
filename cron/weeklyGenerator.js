@@ -28,6 +28,14 @@ function slugify(title = "") {
   return `${base || "article"}-${rnd}`;
 }
 
+function normalizeTag(name = "") {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 // Where are we writing? (useful to detect env/db mismatches)
 async function logWhereIAm() {
   try {
@@ -79,8 +87,7 @@ const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required
 async function fetchNextVideoPrompt(client) {
   // Keep it simple since we run under a global advisory lock already.
   const { rows } = await client.query(
-    `SELECT id, title, description, prompt
-     FROM video_prompts
+    `SELECT id, title, description, prompt, tag FROM video_prompts
      WHERE used = FALSE
      ORDER BY createdAt ASC, id ASC
      LIMIT 1`
@@ -90,8 +97,8 @@ async function fetchNextVideoPrompt(client) {
 
 function first150WithEllipsis(text = "") {
   const s = String(text || "");
-  const short = s.slice(0, 800);
-  return short + (s.length > 800 ? "..." : "...");
+  const short = s.slice(0, 1000);
+  return short + (s.length > 1000 ? "..." : "...");
 }
 
 async function insertArticleWithPrompt(
@@ -163,8 +170,12 @@ async function generateFromVideoPrompt(status = "published") {
       `[${nowIso()}] [OK] Marked video_prompts.id=${vp.id} as used=true`
     );
 
-    // Tags — fixed series tag for analytics
-    const tagList = [vp.tag, "content-ai"];
+    // Tags — from video_prompts.tag plus 'content-ai'
+    const vpTag = vp.tag ? normalizeTag(vp.tag) : null;
+    const tagList = [vpTag, "content-ai"].filter(Boolean);
+    if (tagList.length === 0) {
+      tagList.push("content-ai");
+    }
     await setArticleTags(articleId, tagList);
     console.log(`[${nowIso()}] [OK] Tags set: [${tagList.join(", ")}]`);
 
@@ -256,11 +267,8 @@ async function generateFromVideoPrompt(status = "published") {
 
     // Final DB sanity: fetch by slug we just created
     const { rows } = await client.query(
-      `SELECT id, title, description, prompt, tag
-       FROM video_prompts
-       WHERE used = FALSE
-       ORDER BY createdAt ASC, id ASC
-       LIMIT 1`
+      "select id, slug, status, createdAt from articles where slug=$1 limit 1",
+      [slug]
     );
     console.log(
       `[${nowIso()}] [DB] Verified by slug:`,
