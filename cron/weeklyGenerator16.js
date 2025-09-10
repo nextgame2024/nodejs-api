@@ -1,5 +1,8 @@
 import "dotenv/config.js";
 import nodeCron from "node-cron";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 
 import {
   genImageBytes,
@@ -29,11 +32,35 @@ function slugify(title = "") {
 }
 
 function normalizeTag(name = "") {
-  return name
+  return String(name || "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+async function runFFmpeg(args = [], logLabel = "ffmpeg") {
+  return new Promise((resolve, reject) => {
+    const p = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "",
+      err = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("close", (code) => {
+      if (code === 0) return resolve({ out, err });
+      const e = new Error(
+        `[${logLabel}] exit ${code}: ${err.split("\n").slice(-6).join(" | ")}`
+      );
+      e.code = code;
+      e.stderr = err;
+      reject(e);
+    });
+  });
+}
+
+function haveFFmpeg() {
+  const r = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
+  return r.status === 0;
 }
 
 // Where are we writing? (useful to detect env/db mismatches)
@@ -85,9 +112,9 @@ async function withSingletonLock(lockId, fn) {
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required
 
 async function fetchNextVideoPrompt(client) {
-  // Keep it simple since we run under a global advisory lock already.
   const { rows } = await client.query(
-    `SELECT id, title, description, prompt, tag FROM video_prompts
+    `SELECT id, title, description, prompt, tag
+     FROM video_prompts
      WHERE used = FALSE
      ORDER BY createdAt ASC, id ASC
      LIMIT 1`
@@ -97,8 +124,8 @@ async function fetchNextVideoPrompt(client) {
 
 function first150WithEllipsis(text = "") {
   const s = String(text || "");
-  const short = s.slice(0, 1000);
-  return short + (s.length > 1000 ? "..." : "...");
+  const short = s.slice(0, 150);
+  return short + (s.length > 150 ? "..." : "...");
 }
 
 async function insertArticleWithPrompt(
@@ -154,7 +181,7 @@ async function generateFromVideoPrompt(status = "published") {
       description: articleDescription,
       body: articleBody,
       prompt: articlePrompt,
-      status, // publish immediately as requested
+      status, // publish immediately
     });
 
     if (!articleId) {
@@ -164,7 +191,7 @@ async function generateFromVideoPrompt(status = "published") {
       `[${nowIso()}] [OK] Inserted article id=${articleId} slug=${slug}`
     );
 
-    // Mark used immediately once article row exists
+    // Mark used
     await markVideoPromptUsed(client, vp.id);
     console.log(
       `[${nowIso()}] [OK] Marked video_prompts.id=${vp.id} as used=true`
@@ -173,14 +200,11 @@ async function generateFromVideoPrompt(status = "published") {
     // Tags — from video_prompts.tag plus 'content-ai'
     const vpTag = vp.tag ? normalizeTag(vp.tag) : null;
     const tagList = [vpTag, "content-ai"].filter(Boolean);
-    if (tagList.length === 0) {
-      tagList.push("content-ai");
-    }
+    if (tagList.length === 0) tagList.push("content-ai");
     await setArticleTags(articleId, tagList);
     console.log(`[${nowIso()}] [OK] Tags set: [${tagList.join(", ")}]`);
 
-    // Generate media FROM the Veo prompt
-    // 1) IMAGE: feed the same prompt to Imagen (hero image)
+    // 1) IMAGE: hero image from Veo prompt
     console.log(
       `[${nowIso()}] [STEP] Generating hero image from Veo prompt...`
     );
@@ -201,32 +225,114 @@ async function generateFromVideoPrompt(status = "published") {
     });
     console.log(`[${nowIso()}] [OK] Image asset inserted (${imageUrl})`);
 
-    // 2) VIDEO: Veo from Veo prompt + the hero image as conditioning
+    // 2) VIDEO: two segments stitched (requires ffmpeg)
     if (process.env.DISABLE_VIDEO === "true") {
       console.log(`[${nowIso()}] [INFO] Video generation disabled by env.`);
+    } else if (!haveFFmpeg()) {
+      console.warn(
+        `[${nowIso()}] [WARN] ffmpeg not found. Skipping video generation. Set DISABLE_VIDEO=true to silence this warning.`
+      );
     } else {
       console.log(
-        `[${nowIso()}] [STEP] Generating teaser video from Veo prompt...`
+        `[${nowIso()}] [STEP] Generating teaser video (two segments) from Veo prompt...`
       );
       try {
-        const {
-          bytes: vidBytes,
-          mime: vidMime,
-          durationSec,
-        } = await genVideoBytesFromPromptAndImage(articlePrompt, imgBytes);
+        // Segment A
+        const segA = await genVideoBytesFromPromptAndImage(
+          articlePrompt,
+          imgBytes
+        );
+
+        // Segment B (continuation hint)
+        const continuation =
+          "\n\nCONTINUATION: continue seamlessly from the previous ending pose; begin at payoff and resolve. Maintain same framing, lighting, and timing.";
+        const segB = await genVideoBytesFromPromptAndImage(
+          articlePrompt + continuation,
+          imgBytes
+        );
+
+        // Write temp files
+        const tmpDir = process.env.TMPDIR || "/tmp";
+        const aPath = path.join(tmpDir, `${slug}_a.mp4`);
+        const bPath = path.join(tmpDir, `${slug}_b.mp4`);
+        const listPath = path.join(tmpDir, `${slug}_inputs.txt`);
+        const outPath = path.join(tmpDir, `${slug}_stitched.mp4`);
+
+        await fs.writeFile(aPath, segA.bytes);
+        await fs.writeFile(bPath, segB.bytes);
+        await fs.writeFile(listPath, `file ${aPath}\nfile ${bPath}\n`);
+
+        let stitchedBytes;
+        try {
+          // stream copy concat (no re-encode)
+          await runFFmpeg(
+            [
+              "-hide_banner",
+              "-loglevel",
+              "error",
+              "-f",
+              "concat",
+              "-safe",
+              "0",
+              "-i",
+              listPath,
+              "-c",
+              "copy",
+              outPath,
+            ],
+            "concat-copy"
+          );
+          stitchedBytes = await fs.readFile(outPath);
+        } catch (copyErr) {
+          console.warn(
+            `[${nowIso()}] [WARN] concat-copy failed, falling back to re-encode: ${copyErr.message}`
+          );
+          // robust re-encode, 30 fps, yuv420p
+          await runFFmpeg(
+            [
+              "-hide_banner",
+              "-loglevel",
+              "error",
+              "-i",
+              aPath,
+              "-i",
+              bPath,
+              "-filter_complex",
+              "[0:v:0][1:v:0]concat=n=2:v=1:a=0[outv]",
+              "-map",
+              "[outv]",
+              "-r",
+              "30",
+              "-c:v",
+              "libx264",
+              "-preset",
+              "veryfast",
+              "-crf",
+              "18",
+              "-pix_fmt",
+              "yuv420p",
+              "-movflags",
+              "+faststart",
+              outPath,
+            ],
+            "concat-reencode"
+          );
+          stitchedBytes = await fs.readFile(outPath);
+        }
+
         const videoKey = `articles/${slug}/teaser.mp4`;
         const videoUrl = await putToS3({
           key: videoKey,
-          body: vidBytes,
-          contentType: vidMime,
+          body: stitchedBytes,
+          contentType: "video/mp4",
         });
         await insertAsset({
           articleId,
           type: "video",
           url: videoUrl,
           s3Key: videoKey,
-          mimeType: vidMime,
-          durationSec,
+          mimeType: "video/mp4",
+          durationSec: 16,
         });
         console.log(`[${nowIso()}] [OK] Video asset inserted (${videoUrl})`);
       } catch (err) {
@@ -237,7 +343,7 @@ async function generateFromVideoPrompt(status = "published") {
       }
     }
 
-    // 3) AUDIO: Ask Gemini for a short narration script from the prompt, then synthesize with Polly
+    // 3) AUDIO: narration from prompt
     try {
       console.log(
         `[${nowIso()}] [STEP] Generating narration from Veo prompt...`
@@ -265,7 +371,6 @@ async function generateFromVideoPrompt(status = "published") {
       );
     }
 
-    // Final DB sanity: fetch by slug we just created
     const { rows } = await client.query(
       "select id, slug, status, createdAt from articles where slug=$1 limit 1",
       [slug]
