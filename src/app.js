@@ -10,6 +10,10 @@ import uploadRoutes from "./routes/upload.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import diagRoutes from "./routes/diag.routes.js";
+import {
+  paymentsRouter,
+  stripeWebhookRoute,
+} from "./routes/payments.routes.js";
 
 const app = express();
 
@@ -17,6 +21,9 @@ const app = express();
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:4200")
   .split(",")
   .map((s) => s.trim());
+
+/* 1) Mount Stripe webhook with RAW body BEFORE express.json() */
+app.post(stripeWebhookRoute.path, ...stripeWebhookRoute.handler);
 
 app.use(
   cors({
