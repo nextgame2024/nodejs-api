@@ -10,10 +10,7 @@ import uploadRoutes from "./routes/upload.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import diagRoutes from "./routes/diag.routes.js";
-import {
-  paymentsRouter,
-  stripeWebhookRoute,
-} from "./routes/payments.routes.js";
+import { paymentsRouter, stripeWebhookRoute } from "./routes/payment.routes.js";
 
 const app = express();
 
