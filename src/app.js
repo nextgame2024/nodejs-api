@@ -53,6 +53,7 @@ app.use("/api", profileRoutes);
 app.use("/api", userRoutes);
 app.use("/api", tagRoutes);
 app.use("/api", uploadRoutes);
+app.use("/api", paymentsRouter);
 
 // Error handler
 app.use(errorHandler);
