@@ -1,22 +1,87 @@
 import "dotenv/config.js";
-import nodeCron from "node-cron";
-
+import pool from "../src/config/db.js";
+import {
+  s3,
+  getObjectBuffer,
+  deleteFromS3,
+  putToS3,
+} from "../src/services/s3.js";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  getJobById,
+  markProcessing,
+  markDone,
+  markFailed,
+  softDeleteJob,
+  getArticlePromptById,
+} from "../src/models/render.model.js";
 import {
   genImageBytes,
   genVideoBytesFromPromptAndImage,
   genNarrationFromPrompt,
-} from "../src/services/gemini.js"; // Gemini helpers
-import { ttsToBuffer } from "../src/services/polly.js"; // AWS Polly TTS
-import { putToS3 } from "../src/services/s3.js"; // AWS S3 uploader
-
+} from "../src/services/gemini.js";
+import { ttsToBuffer } from "../src/services/polly.js";
 import { setArticleTags } from "../src/models/tag.model.js";
 import { insertAsset } from "../src/models/asset.model.js";
-import pool from "../src/config/db.js";
 
-/* ------------ helpers ------------ */
+const bucket = process.env.S3_BUCKET;
+
+/* =========================
+   CONFIG (env-overridable)
+   ========================= */
+const BRISBANE_TZ = "Australia/Brisbane";
+const LOCK_ID = Number(process.env.CRON_LOCK_ID || 43434343);
+const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // how many paid jobs per minute
+const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
+// const SIGN_URL_TTL_SEC = Number(process.env.SIGNED_URL_TTL_SEC || 21600); // 6h (used by API)
+const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 9); // 09:00 AEST
+const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3); // run cleanup at 03:00 AEST
+
+const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
+
+/* ============ utils ============ */
 function nowIso() {
   return new Date().toISOString();
 }
+function localNow() {
+  return new Date(
+    new Intl.DateTimeFormat("en-AU", {
+      timeZone: BRISBANE_TZ,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(new Date())
+  );
+}
+function isMinute(d, m) {
+  return d.getMinutes() === m;
+}
+function isHour(d, h) {
+  return d.getHours() === h;
+}
+
+async function withLock(fn) {
+  const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
+    LOCK_ID,
+  ]);
+  if (!rows?.[0]?.ok) {
+    console.log(`[${nowIso()}] Lock busy; exit.`);
+    return;
+  }
+  console.log(`[${nowIso()}] Acquired lock(${LOCK_ID}).`);
+  try {
+    await fn();
+  } finally {
+    await pool.query("SELECT pg_advisory_unlock($1)", [LOCK_ID]);
+    console.log(`[${nowIso()}] Released lock(${LOCK_ID}).`);
+  }
+}
+
+/* ============ article creation from video_prompts (exactly your current logic) ============ */
 
 function slugify(title = "") {
   const base = title
@@ -27,7 +92,6 @@ function slugify(title = "") {
   const rnd = Math.random().toString(36).slice(2, 8);
   return `${base || "article"}-${rnd}`;
 }
-
 function normalizeTag(name = "") {
   return name
     .toLowerCase()
@@ -35,72 +99,22 @@ function normalizeTag(name = "") {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 }
-
-// Where are we writing? (useful to detect env/db mismatches)
-async function logWhereIAm() {
-  try {
-    const { rows } = await pool.query(
-      "select current_database() as db, inet_server_addr()::text as host, inet_server_port() as port"
-    );
-    const r = rows?.[0] || {};
-    console.log(`[${nowIso()}] [DB] db=${r.db} host=${r.host} port=${r.port}`);
-  } catch (e) {
-    console.warn(
-      `[${nowIso()}] [DB] Could not introspect connection:`,
-      e?.message || e
-    );
-  }
-  console.log(
-    `[${nowIso()}] [ENV] S3 bucket=${process.env.S3_BUCKET} region=${process.env.S3_REGION} keyId=...${(
-      process.env.S3_ACCESS_KEY_ID || ""
-    ).slice(-4)}`
-  );
-  console.log(
-    `[${nowIso()}] [ENV] MODELS image=${process.env.GEMINI_IMAGE_MODEL || "imagen-3.0-generate-002"} video=${
-      process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-preview"
-    }`
-  );
-}
-
-async function withSingletonLock(lockId, fn) {
-  const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
-    lockId,
-  ]);
-  if (!rows?.[0]?.ok) {
-    console.log(
-      `[${nowIso()}] Another weeklyGenerator run is active. Skipping.`
-    );
-    return;
-  }
-  console.log(`[${nowIso()}] Acquired advisory lock (${lockId}).`);
-  try {
-    await fn();
-  } finally {
-    await pool.query("SELECT pg_advisory_unlock($1)", [lockId]);
-    console.log(`[${nowIso()}] Released advisory lock (${lockId}).`);
-  }
-}
-
-/* -------------------- generation from video_prompts -------------------- */
-const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required
-
-async function fetchNextVideoPrompt(client) {
-  // Keep it simple since we run under a global advisory lock already.
-  const { rows } = await client.query(
-    `SELECT id, title, description, prompt, tag FROM video_prompts
-     WHERE used = FALSE
-     ORDER BY createdAt ASC, id ASC
-     LIMIT 1`
-  );
-  return rows?.[0] || null;
-}
-
 function first150WithEllipsis(text = "") {
   const s = String(text || "");
   const short = s.slice(0, 1000);
   return short + (s.length > 1000 ? "..." : "...");
 }
 
+async function fetchNextVideoPrompt(client) {
+  const { rows } = await client.query(
+    `SELECT id, title, description, prompt, tag
+       FROM video_prompts
+      WHERE used = FALSE
+      ORDER BY createdAt ASC, id ASC
+      LIMIT 1`
+  );
+  return rows?.[0] || null;
+}
 async function insertArticleWithPrompt(
   client,
   { slug, title, description, body, prompt, status }
@@ -113,7 +127,6 @@ async function insertArticleWithPrompt(
   );
   return rows?.[0]?.id;
 }
-
 async function markVideoPromptUsed(client, id) {
   await client.query(
     `UPDATE video_prompts SET used = TRUE, updatedAt = NOW() WHERE id = $1`,
@@ -121,20 +134,15 @@ async function markVideoPromptUsed(client, id) {
   );
 }
 
-async function generateFromVideoPrompt(status = "published") {
+async function generateFromVideoPromptOnce(status = "published") {
   if (!SYSTEM_AUTHOR_ID)
     throw new Error("SYSTEM_AUTHOR_ID env var is required");
-
-  console.log(`\n[${nowIso()}] === Begin generation from video_prompts ===`);
-  await logWhereIAm();
 
   const client = await pool.connect();
   try {
     const vp = await fetchNextVideoPrompt(client);
     if (!vp) {
-      console.log(
-        `[${nowIso()}] No unused video_prompts available. Nothing to do.`
-      );
+      console.log(`[${nowIso()}] No unused video_prompts. Skipping article.`);
       return null;
     }
 
@@ -144,9 +152,8 @@ async function generateFromVideoPrompt(status = "published") {
     const articleBody = vp.description || "";
     const articlePrompt = vp.prompt || "";
 
-    // Insert article row (with prompt)
     console.log(
-      `[${nowIso()}] [STEP] Inserting article for prompt id=${vp.id}...`
+      `[${nowIso()}] [STEP] Insert article for prompt id=${vp.id}...`
     );
     const articleId = await insertArticleWithPrompt(client, {
       slug,
@@ -154,61 +161,38 @@ async function generateFromVideoPrompt(status = "published") {
       description: articleDescription,
       body: articleBody,
       prompt: articlePrompt,
-      status, // publish immediately as requested
+      status,
     });
+    if (!articleId) throw new Error("Insert failed: no id");
+    console.log(`[${nowIso()}] [OK] Article id=${articleId} slug=${slug}`);
 
-    if (!articleId) {
-      throw new Error("Insert failed: no id returned");
-    }
-    console.log(
-      `[${nowIso()}] [OK] Inserted article id=${articleId} slug=${slug}`
-    );
-
-    // Mark used immediately once article row exists
     await markVideoPromptUsed(client, vp.id);
-    console.log(
-      `[${nowIso()}] [OK] Marked video_prompts.id=${vp.id} as used=true`
-    );
-
-    // Tags — from video_prompts.tag plus 'content-ai'
     const vpTag = vp.tag ? normalizeTag(vp.tag) : null;
     const tagList = [vpTag, "content-ai"].filter(Boolean);
-    if (tagList.length === 0) {
-      tagList.push("content-ai");
-    }
-    await setArticleTags(articleId, tagList);
-    console.log(`[${nowIso()}] [OK] Tags set: [${tagList.join(", ")}]`);
-
-    // Generate media FROM the Veo prompt
-    // 1) IMAGE: feed the same prompt to Imagen (hero image)
+    await setArticleTags(articleId, tagList.length ? tagList : ["content-ai"]);
     console.log(
-      `[${nowIso()}] [STEP] Generating hero image from Veo prompt...`
+      `[${nowIso()}] [OK] Tags: [${(tagList.length ? tagList : ["content-ai"]).join(", ")}]`
     );
-    const { bytes: imgBytes, mime: imgMime } =
-      await genImageBytes(articlePrompt);
-    const imgKey = `articles/${slug}/hero.png`;
-    const imageUrl = await putToS3({
-      key: imgKey,
-      body: imgBytes,
-      contentType: imgMime,
-    });
-    await insertAsset({
-      articleId,
-      type: "image",
-      url: imageUrl,
-      s3Key: imgKey,
-      mimeType: imgMime,
-    });
-    console.log(`[${nowIso()}] [OK] Image asset inserted (${imageUrl})`);
 
-    // 2) VIDEO: Veo from Veo prompt + the hero image as conditioning
-    if (process.env.DISABLE_VIDEO === "true") {
-      console.log(`[${nowIso()}] [INFO] Video generation disabled by env.`);
-    } else {
-      console.log(
-        `[${nowIso()}] [STEP] Generating teaser video from Veo prompt...`
-      );
-      try {
+    // Media: hero image, teaser video, narration
+    try {
+      const { bytes: imgBytes, mime: imgMime } =
+        await genImageBytes(articlePrompt);
+      const imgKey = `articles/${slug}/hero.png`;
+      const imageUrl = await putToS3({
+        key: imgKey,
+        body: imgBytes,
+        contentType: imgMime,
+      });
+      await insertAsset({
+        articleId,
+        type: "image",
+        url: imageUrl,
+        s3Key: imgKey,
+        mimeType: imgMime,
+      });
+      console.log(`[${nowIso()}] [OK] Image asset inserted.`);
+      if (process.env.DISABLE_VIDEO !== "true") {
         const {
           bytes: vidBytes,
           mime: vidMime,
@@ -228,52 +212,37 @@ async function generateFromVideoPrompt(status = "published") {
           mimeType: vidMime,
           durationSec,
         });
-        console.log(`[${nowIso()}] [OK] Video asset inserted (${videoUrl})`);
+        console.log(`[${nowIso()}] [OK] Video asset inserted.`);
+      }
+      try {
+        const narration = await genNarrationFromPrompt(articlePrompt);
+        const voiceBuf = await ttsToBuffer(narration || articleTitle);
+        const voiceKey = `articles/${slug}/teaser.mp3`;
+        const voiceUrl = await putToS3({
+          key: voiceKey,
+          body: voiceBuf,
+          contentType: "audio/mpeg",
+        });
+        await insertAsset({
+          articleId,
+          type: "audio",
+          url: voiceUrl,
+          s3Key: voiceKey,
+          mimeType: "audio/mpeg",
+        });
+        console.log(`[${nowIso()}] [OK] Audio asset inserted.`);
       } catch (err) {
         console.warn(
-          `[${nowIso()}] [WARN] Video generation skipped:`,
+          `[${nowIso()}] [WARN] Audio generation skipped:`,
           err?.message || err
         );
       }
-    }
-
-    // 3) AUDIO: Ask Gemini for a short narration script from the prompt, then synthesize with Polly
-    try {
-      console.log(
-        `[${nowIso()}] [STEP] Generating narration from Veo prompt...`
-      );
-      const narration = await genNarrationFromPrompt(articlePrompt);
-      const voiceBuf = await ttsToBuffer(narration || articleTitle);
-      const voiceKey = `articles/${slug}/teaser.mp3`;
-      const voiceUrl = await putToS3({
-        key: voiceKey,
-        body: voiceBuf,
-        contentType: "audio/mpeg",
-      });
-      await insertAsset({
-        articleId,
-        type: "audio",
-        url: voiceUrl,
-        s3Key: voiceKey,
-        mimeType: "audio/mpeg",
-      });
-      console.log(`[${nowIso()}] [OK] Audio asset inserted (${voiceUrl})`);
     } catch (err) {
       console.warn(
-        `[${nowIso()}] [WARN] Audio generation skipped:`,
+        `[${nowIso()}] [WARN] Media generation skipped:`,
         err?.message || err
       );
     }
-
-    // Final DB sanity: fetch by slug we just created
-    const { rows } = await client.query(
-      "select id, slug, status, createdAt from articles where slug=$1 limit 1",
-      [slug]
-    );
-    console.log(
-      `[${nowIso()}] [DB] Verified by slug:`,
-      rows?.[0] || "(not found)"
-    );
 
     return { slug, articleId };
   } finally {
@@ -281,64 +250,118 @@ async function generateFromVideoPrompt(status = "published") {
   }
 }
 
-async function runBatch(count = 1, status = "published") {
-  console.log(
-    `[${nowIso()}] Starting batch from video_prompts: count=${count} status=${status}`
+/* ============ PAID RENDER SWEEP (every minute) ============ */
+
+async function sweepPaid(max = SWEEP_BATCH) {
+  const { rows } = await pool.query(
+    `SELECT id FROM render_jobs
+      WHERE status='paid' AND deleted_at IS NULL
+      ORDER BY "updatedAt" ASC
+      LIMIT $1`,
+    [max]
   );
-  for (let i = 0; i < count; i++) {
+  for (const { id } of rows) {
+    await processOnePaidJob(id);
+  }
+}
+
+async function processOnePaidJob(jobId) {
+  const job = await getJobById(jobId);
+  if (!job) return;
+
+  await markProcessing(jobId);
+
+  try {
+    // 1) fetch the SAME article prompt used to create the effect
+    const art = job.article_id
+      ? await getArticlePromptById(job.article_id)
+      : null;
+    const veoPrompt =
+      art?.prompt ||
+      art?.title ||
+      "Generate a short 9:16 cinematic clip using the uploaded face.";
+
+    // 2) read the user’s uploaded image from S3
+    const sourceBytes = await getObjectBuffer(job.image_key);
+
+    // 3) generate the personalized video (conditioned on the user face)
+    const { bytes: videoBytes, mime: videoMime } =
+      await genVideoBytesFromPromptAndImage(veoPrompt, sourceBytes);
+
+    // 4) store output (private object)
+    const outKey = `renders/${jobId}/output.mp4`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: outKey,
+        Body: videoBytes,
+        ContentType: videoMime || "video/mp4",
+      })
+    );
+
+    // 5) set expiry (+24h by default)
+    const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
+    await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
+
+    console.log(
+      `[${nowIso()}] [RENDER] Done ${jobId} -> ${outKey}, expires ${expiresAt.toISOString()}`
+    );
+  } catch (e) {
+    console.error(`[${nowIso()}] [RENDER] FAILED ${jobId}:`, e?.message || e);
+    await markFailed(jobId, e?.message || String(e));
+  }
+}
+
+/* ============ CLEANUP (daily — hard delete S3, soft-delete DB) ============ */
+
+async function cleanupExpired(limit = 200) {
+  const { rows } = await pool.query(
+    `SELECT id, image_key, output_video_key
+       FROM render_jobs
+      WHERE deleted_at IS NULL
+        AND expires_at IS NOT NULL
+        AND expires_at < NOW()
+      ORDER BY expires_at ASC
+      LIMIT $1`,
+    [limit]
+  );
+
+  for (const r of rows) {
     try {
-      const out = await generateFromVideoPrompt(status);
-      if (!out) break; // no more prompts
-      console.log(`[${nowIso()}] Generated: ${out.slug}`);
+      if (r.output_video_key) await deleteFromS3(r.output_video_key);
+      if (r.image_key) await deleteFromS3(r.image_key);
+      await softDeleteJob(r.id, "expired cleanup (>24h)");
+      console.log(`[${nowIso()}] [CLEANUP] Purged S3 + soft-deleted ${r.id}`);
     } catch (e) {
-      console.error(
-        `[${nowIso()}] Failed generating from video_prompts:`,
-        e?.message || e
-      );
+      console.error(`[${nowIso()}] [CLEANUP] Error ${r.id}:`, e?.message || e);
     }
   }
 }
 
-// CLI: --once  --count=1  --status=published
-const argv = process.argv.slice(2);
-const ONCE = argv.includes("--once") || process.env.RUN_ONCE === "true";
-const COUNT =
-  Number((argv.find((a) => a.startsWith("--count=")) || "").split("=")[1]) ||
-  Number(process.env.GEN_COUNT || 1);
-const STATUS =
-  (argv.find((a) => a.startsWith("--status=")) || "").split("=")[1] ||
-  process.env.GEN_STATUS ||
-  "published";
+/* ============ ENTRY: run every minute ============ */
 
-// lock id can be any int64; keep constant
-const LOCK_ID = 43434343;
+(async function main() {
+  await withLock(async () => {
+    const dLocal = localNow();
 
-if (ONCE) {
-  await withSingletonLock(LOCK_ID, async () => {
-    await runBatch(COUNT, STATUS);
-    try {
-      const { rows } = await pool.query(
-        "select slug, status, createdAt from articles order by createdAt desc limit 3"
-      );
-      console.log(`[${nowIso()}] [DB] Tail of articles:`, rows);
-    } catch (e) {
-      console.warn(
-        `[${nowIso()}] [DB] Could not list tail of articles:`,
-        e?.message || e
-      );
+    // 1) every minute — process a small batch of paid jobs
+    await sweepPaid(SWEEP_BATCH);
+
+    // 2) once per day — cleanup expired outputs and soft-delete rows
+    if (isHour(dLocal, CLEANUP_HOUR) && isMinute(dLocal, 0)) {
+      await cleanupExpired(200);
+    }
+
+    // 3) once per day — create article(s) from video_prompts (the existing logic)
+    if (isHour(dLocal, DAILY_ARTICLES_HOUR) && isMinute(dLocal, 0)) {
+      try {
+        await generateFromVideoPromptOnce("published"); // 1 article/day (adjust if you want more)
+      } catch (e) {
+        console.error(`[${nowIso()}] [ARTICLES] Failed:`, e?.message || e);
+      }
     }
   });
-  await pool.end();
-  console.log(`[${nowIso()}] Pool ended. Exiting.`);
+
+  // exit quickly; Render Cron will re-run next minute
   process.exit(0);
-} else {
-  // every Sunday 03:00 UTC
-  nodeCron.schedule("0 3 * * 0", async () => {
-    await withSingletonLock(LOCK_ID, async () => {
-      await runBatch(COUNT, STATUS);
-    });
-  });
-  console.log(
-    `[${nowIso()}] Weekly video_prompts cron scheduled (Sun 03:00 UTC).`
-  );
-}
+})();
