@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
@@ -16,35 +17,49 @@ const VIDEO_MODEL =
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
+// Smart crop toward the most salient region (usually the face) and neutralize background detail.
+async function smartIdentityCrop(buf) {
+  // 1) focus=attention approximates a face/subject crop
+  const square = await sharp(buf)
+    .resize(FACE_SMART_SIZE, FACE_SMART_SIZE, {
+      fit: "cover",
+      position: "attention",
+    })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+  return square; // jpeg buffer
+}
+
 /* -----------------------------------------------------------
    Prompt wrappers for platform fit and identity conditioning
 ----------------------------------------------------------- */
 const PLATFORM_WRAPPER = `
 SYSTEM PURPOSE:
-Create a new 9:16 (1080×1920, 30 fps) video that replicates the described effect.
+Synthesize a new 9:16 (1080×1920, 30 fps) video that matches the described effect. Always render on a fresh canvas.
 
 PLATFORM FIT (IG Reels, Facebook Reels, TikTok)
 • Output MP4 (H.264) with AAC audio.
-• 9:16 vertical, 1080×1920, 30 fps (constant), duration 8–10s (unless the effect specifies otherwise).
+• 9:16 vertical, 1080×1920, 30 fps (constant), duration as requested by EFFECT PROMPT (or 8–10s if not specified).
 • Fill the frame (no letterbox/pillarbox). No burned-in captions or logos.
-• Keep critical action within the central safe area; avoid top ~12% and bottom ~18%.
-• Maintain consistent camera language, pacing, and lighting.
+• Keep critical action inside central safe area; avoid top ~12% and bottom ~18%.
+• Maintain consistent camera language, pacing and lighting.
 
 CANVAS & FRAMING:
-• Always generate on a fresh 1080×1920 canvas.
-• Chest-up portrait by default unless the effect states otherwise.
-• Locked tripod or gentle gimbal; no handheld shake.
+• Always start from a blank 1080×1920 canvas. Never reuse the uploaded photo’s background, FOV or aspect.
+• Center-frame portrait, chest-up unless EFFECT PROMPT says otherwise.
+• Locked tripod or gentle gimbal. No handheld shake.
 
 NEGATIVE / AVOID:
-• No random people, watermarks, on-screen text, or glitches.
-• No square/landscape frames, borders, letterbox/pillarbox.
+• Do not add random people, watermarks, on-screen text or glitches.
+• No borders or letterbox/pillarbox. No use of the upload’s environment.
 `.trim();
 
 const FACE_ONLY_ADDON = `
 IDENTITY CONTROL (when a reference photo is provided):
-• Use the uploaded image ONLY to extract identity (face, age, skin tone, hair).
-• Ignore the uploaded image’s background, clothes, camera FOV, and lighting unless the effect explicitly requires it.
-• No face morphing; keep the same actor identity throughout.
+• Use the uploaded image ONLY to extract face identity (age, skin tone, hair). Do NOT copy its background, clothes, camera FOV, lens or lighting.
+• If wardrobe is unspecified by EFFECT PROMPT, use neutral, texture-light clothing that does not match the upload.
+• Keep the same actor identity throughout. No face morphing.
+• Rebuild the full scene according to EFFECT PROMPT; never sample pixels or composition from the uploaded image beyond face identity.
 `.trim();
 
 /* ---------------- Narration script from a Veo prompt ---------------- */
@@ -184,20 +199,27 @@ export async function genVideoBytesFromPrompt(effectPrompt) {
   return runVeoAndDownload({ prompt: fullPrompt });
 }
 
-/** Identity-conditioned video (user face). Use for paid renders. */
+// Identity-conditioned video (for paid renders)
 export async function genVideoBytesFromPromptAndImage(
   effectPrompt,
   sourceImageBytes
 ) {
-  if (!sourceImageBytes) {
-    // Fallback: no image provided → template-only
-    return genVideoBytesFromPrompt(effectPrompt);
+  let ref = sourceImageBytes;
+  let refMime = "image/jpeg";
+  if (FACE_SMART_CROP) {
+    try {
+      ref = await smartIdentityCrop(sourceImageBytes);
+    } catch (e) {
+      console.warn(
+        "[gemini] smart crop failed, using original:",
+        e?.message || e
+      );
+    }
   }
   const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-  const imageBase64 = sourceImageBytes.toString("base64");
   return runVeoAndDownload({
     prompt: fullPrompt,
-    imageBase64,
-    imageMime: "image/jpeg",
+    imageBase64: ref.toString("base64"),
+    imageMime: refMime,
   });
 }
