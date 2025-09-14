@@ -27,7 +27,7 @@ async function smartIdentityCrop(buf) {
     })
     .jpeg({ quality: 90 })
     .toBuffer();
-  return square; // jpeg buffer
+  return square;
 }
 
 /* -----------------------------------------------------------
