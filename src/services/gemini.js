@@ -1,11 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp"; // ok since you've installed it
+import sharp from "sharp"; // installed
 
 // ---- Smart-crop feature flags (env) ----
 const FACE_SMART_CROP = process.env.FACE_SMART_CROP === "true"; // enable/disable
-const FACE_SMART_SIZE = Number(process.env.FACE_SMART_SIZE || 640); // crop size px
+const FACE_SMART_SIZE = Number(process.env.FACE_SMART_SIZE || 640); // px (square)
+const FACE_SMART_FEATHER = Number(process.env.FACE_SMART_FEATHER || 1.2); // mask blur radius
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
@@ -49,7 +50,7 @@ const FACE_ONLY_ADDON = `
 IDENTITY CONTROL (when a reference photo is provided):
 • Use the uploaded image ONLY to extract face identity (age, skin tone, hair). Do NOT copy its background, clothes, camera FOV, lens or lighting.
 • If wardrobe is unspecified by EFFECT PROMPT, use neutral, texture-light clothing that does not match the upload.
-• Keep the same actor identity throughout. No face morphing.
+• Keep the same actor identity throughout. No face morphing, no age/gender/skin-tone drift between frames.
 • Rebuild the full scene according to EFFECT PROMPT; never sample pixels or composition from the uploaded image beyond face identity.
 `.trim();
 
@@ -119,7 +120,6 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     );
   }
 
-  // call with or without image, depending on presence
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
@@ -127,7 +127,7 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
       ? {
           image: {
             imageBytes: imageBase64,
-            mimeType: imageMime || "image/jpeg",
+            mimeType: imageMime || "image/png",
           },
         }
       : {}),
@@ -181,25 +181,49 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   );
 }
 
-/* ---------------- Optional smart identity crop ---------------- */
-// Smart crop toward the most salient region (usually the face) and neutralize background detail.
-async function smartIdentityCrop(buf) {
-  if (!FACE_SMART_CROP) return buf; // feature off → no-op
+/* ---------------- Identity preparation: face-only PNG with alpha ---------------- */
+async function prepareIdentityRef(buf) {
+  if (!FACE_SMART_CROP) return { out: buf, mime: "image/jpeg" };
+
   try {
+    // 1) Attention crop to square (keeps head/shoulders, reduces bg/outfit)
     const square = await sharp(buf)
       .resize(FACE_SMART_SIZE, FACE_SMART_SIZE, {
         fit: "cover",
         position: "attention",
       })
-      .jpeg({ quality: 90 })
       .toBuffer();
-    return square; // jpeg buffer
+
+    // 2) Build circular alpha mask (slight feather to avoid hard edge)
+    const size = FACE_SMART_SIZE;
+    const r = Math.floor(size * 0.42);
+    const cx = Math.floor(size / 2);
+    const cy = Math.floor(size / 2);
+    const svg = Buffer.from(
+      `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+         <defs><radialGradient id="g" cx="50%" cy="50%" r="50%">
+           <stop offset="${Math.max(0, 1 - FACE_SMART_FEATHER / 10).toFixed(2)}" stop-color="#ffffff"/>
+           <stop offset="1" stop-color="#000000"/>
+         </radialGradient></defs>
+         <rect width="100%" height="100%" fill="#000"/>
+         <circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#g)"/>
+       </svg>`
+    );
+    const maskPng = await sharp(svg).png().toBuffer();
+
+    // 3) Apply mask → transparent outside circle
+    const cutout = await sharp(square)
+      .composite([{ input: maskPng, blend: "dest-in" }])
+      .png()
+      .toBuffer();
+
+    return { out: cutout, mime: "image/png" };
   } catch (e) {
     console.warn(
-      "[gemini] smart crop failed, using original:",
+      "[gemini] prepareIdentityRef failed, using original:",
       e?.message || e
     );
-    return buf;
+    return { out: buf, mime: "image/jpeg" };
   }
 }
 
@@ -220,11 +244,12 @@ export async function genVideoBytesFromPromptAndImage(
     // Fallback to template-only if no image provided
     return genVideoBytesFromPrompt(effectPrompt);
   }
-  const ref = await smartIdentityCrop(sourceImageBytes);
+  const { out: refBuf, mime: refMime } =
+    await prepareIdentityRef(sourceImageBytes);
   const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
   return runVeoAndDownload({
     prompt: fullPrompt,
-    imageBase64: ref.toString("base64"),
-    imageMime: "image/jpeg",
+    imageBase64: refBuf.toString("base64"),
+    imageMime: refMime, // PNG if masked (alpha), else JPEG
   });
 }
