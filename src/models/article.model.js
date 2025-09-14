@@ -113,7 +113,11 @@ export async function getFeedArticles({ userId, limit = 1000, offset = 0 }) {
     ORDER BY a.createdat DESC
     LIMIT $2 OFFSET $3
   `;
-  const { rows } = await pool.query(rowsSql, [uid, Number(limit), Number(offset)]);
+  const { rows } = await pool.query(rowsSql, [
+    uid,
+    Number(limit),
+    Number(offset),
+  ]);
 
   const { rows: cnt } = await pool.query(
     `SELECT COUNT(*)::int AS total
@@ -248,6 +252,14 @@ export async function findArticleIdBySlug(slug) {
     [slug]
   );
   return rows[0]?.id || null;
+}
+
+export async function getArticleSlugById(id) {
+  const { rows } = await pool.query(
+    `SELECT slug FROM articles WHERE id=$1 LIMIT 1`,
+    [id]
+  );
+  return rows[0]?.slug || null;
 }
 
 export async function addFavorite({ userId, articleId }) {

@@ -1,6 +1,9 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { getJobById } from "../models/render.model.js";
 import { signGetUrl } from "../services/s3.js";
+import { asyncHandler } from "../middlewares/asyncHandler.js";
+import { getJobById } from "../models/render.model.js";
+import { getArticleSlugById } from "../models/article.model.js";
 
 // GET /api/renders/:id
 export const getRenderStatus = asyncHandler(async (req, res) => {
@@ -17,6 +20,10 @@ export const getRenderStatus = asyncHandler(async (req, res) => {
     return res.status(410).json({ error: "Expired" });
   }
 
+  const articleSlug = job.article_id
+    ? await getArticleSlugById(job.article_id)
+    : null;
+
   let signedUrl = null;
   if (job.status === "done" && job.output_video_key) {
     // 6h signed URL by default (see s3.js)
@@ -28,6 +35,7 @@ export const getRenderStatus = asyncHandler(async (req, res) => {
     status: job.status,
     expiresAt: job.expires_at,
     articleId: job.article_id,
+    articleSlug,
     signedUrl,
   });
 });

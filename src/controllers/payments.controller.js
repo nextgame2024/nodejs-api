@@ -86,8 +86,8 @@ export const createRenderSession = async (req, res, next) => {
         },
       ],
       metadata: { jobId, articleSlug },
-      success_url: `${process.env.CLIENT_URL}/checkout/success?jobId=${jobId}`,
-      cancel_url: `${process.env.CLIENT_URL}/checkout/cancel?jobId=${jobId}`,
+      success_url: `${process.env.CLIENT_URL}/checkout/success?jobId=${jobId}&article=${encodeURIComponent(articleSlug)}`,
+      cancel_url: `${process.env.CLIENT_URL}/checkout/cancel?jobId=${jobId}&article=${encodeURIComponent(articleSlug)}`,
     });
 
     await setJobAwaitingPayment(jobId, session.id);
