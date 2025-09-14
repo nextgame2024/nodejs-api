@@ -17,7 +17,8 @@ import {
 } from "../src/models/render.model.js";
 import {
   genImageBytes,
-  genVideoBytesFromPromptAndImage,
+  genVideoBytesFromPrompt, // NEW: template-only video (no identity)
+  genVideoBytesFromPromptAndImage, // identity-conditioned (user face)
   genNarrationFromPrompt,
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
@@ -33,7 +34,6 @@ const BRISBANE_TZ = "Australia/Brisbane";
 const LOCK_ID = Number(process.env.CRON_LOCK_ID || 43434343);
 const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // how many paid jobs per minute
 const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
-// const SIGN_URL_TTL_SEC = Number(process.env.SIGNED_URL_TTL_SEC || 21600); // 6h (used by API)
 const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 9); // 09:00 AEST
 const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3); // run cleanup at 03:00 AEST
 
@@ -81,7 +81,7 @@ async function withLock(fn) {
   }
 }
 
-/* ============ article creation from video_prompts (exactly your current logic) ============ */
+/* ============ article creation from video_prompts (same logic) ============ */
 
 function slugify(title = "") {
   const base = title
@@ -115,6 +115,7 @@ async function fetchNextVideoPrompt(client) {
   );
   return rows?.[0] || null;
 }
+
 async function insertArticleWithPrompt(
   client,
   { slug, title, description, body, prompt, status }
@@ -127,6 +128,7 @@ async function insertArticleWithPrompt(
   );
   return rows?.[0]?.id;
 }
+
 async function markVideoPromptUsed(client, id) {
   await client.query(
     `UPDATE video_prompts SET used = TRUE, updatedAt = NOW() WHERE id = $1`,
@@ -148,7 +150,7 @@ async function generateFromVideoPromptOnce(status = "published") {
 
     const slug = slugify(vp.title);
     const articleTitle = vp.title;
-    const articleDescription = first150WithEllipsis(vp.description || "");
+    const articleDesc = first150WithEllipsis(vp.description || "");
     const articleBody = vp.description || "";
     const articlePrompt = vp.prompt || "";
 
@@ -158,7 +160,7 @@ async function generateFromVideoPromptOnce(status = "published") {
     const articleId = await insertArticleWithPrompt(client, {
       slug,
       title: articleTitle,
-      description: articleDescription,
+      description: articleDesc,
       body: articleBody,
       prompt: articlePrompt,
       status,
@@ -174,7 +176,7 @@ async function generateFromVideoPromptOnce(status = "published") {
       `[${nowIso()}] [OK] Tags: [${(tagList.length ? tagList : ["content-ai"]).join(", ")}]`
     );
 
-    // Media: hero image, teaser video, narration
+    // Media: hero image, teaser video (template-only), narration
     try {
       const { bytes: imgBytes, mime: imgMime } =
         await genImageBytes(articlePrompt);
@@ -192,12 +194,14 @@ async function generateFromVideoPromptOnce(status = "published") {
         mimeType: imgMime,
       });
       console.log(`[${nowIso()}] [OK] Image asset inserted.`);
+
       if (process.env.DISABLE_VIDEO !== "true") {
+        // IMPORTANT: template-only video (no identity reference here)
         const {
           bytes: vidBytes,
           mime: vidMime,
           durationSec,
-        } = await genVideoBytesFromPromptAndImage(articlePrompt, imgBytes);
+        } = await genVideoBytesFromPrompt(articlePrompt);
         const videoKey = `articles/${slug}/teaser.mp4`;
         const videoUrl = await putToS3({
           key: videoKey,
@@ -214,6 +218,7 @@ async function generateFromVideoPromptOnce(status = "published") {
         });
         console.log(`[${nowIso()}] [OK] Video asset inserted.`);
       }
+
       try {
         const narration = await genNarrationFromPrompt(articlePrompt);
         const voiceBuf = await ttsToBuffer(narration || articleTitle);
@@ -272,7 +277,7 @@ async function processOnePaidJob(jobId) {
   await markProcessing(jobId);
 
   try {
-    // 1) fetch the SAME article prompt used to create the effect
+    // 1) use the SAME article prompt used for the effect
     const art = job.article_id
       ? await getArticlePromptById(job.article_id)
       : null;
@@ -284,7 +289,7 @@ async function processOnePaidJob(jobId) {
     // 2) read the user’s uploaded image from S3
     const sourceBytes = await getObjectBuffer(job.image_key);
 
-    // 3) generate the personalized video (conditioned on the user face)
+    // 3) generate personalized video (identity-conditioned)
     const { bytes: videoBytes, mime: videoMime } =
       await genVideoBytesFromPromptAndImage(veoPrompt, sourceBytes);
 
@@ -352,7 +357,7 @@ async function cleanupExpired(limit = 200) {
       await cleanupExpired(200);
     }
 
-    // 3) once per day — create article(s) from video_prompts (the existing logic)
+    // 3) once per day — create article(s) from video_prompts
     if (isHour(dLocal, DAILY_ARTICLES_HOUR) && isMinute(dLocal, 0)) {
       try {
         await generateFromVideoPromptOnce("published"); // 1 article/day (adjust if you want more)

@@ -1,7 +1,6 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { getJobById } from "../models/render.model.js";
 import { signGetUrl } from "../services/s3.js";
-import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { getJobById } from "../models/render.model.js";
 import { getArticleSlugById } from "../models/article.model.js";
 

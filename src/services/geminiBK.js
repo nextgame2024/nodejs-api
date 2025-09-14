@@ -16,37 +16,6 @@ const VIDEO_MODEL =
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-/* -----------------------------------------------------------
-   Prompt wrappers for platform fit and identity conditioning
------------------------------------------------------------ */
-const PLATFORM_WRAPPER = `
-SYSTEM PURPOSE:
-Create a new 9:16 (1080×1920, 30 fps) video that replicates the described effect.
-
-PLATFORM FIT (IG Reels, Facebook Reels, TikTok)
-• Output MP4 (H.264) with AAC audio.
-• 9:16 vertical, 1080×1920, 30 fps (constant), duration 8–10s (unless the effect specifies otherwise).
-• Fill the frame (no letterbox/pillarbox). No burned-in captions or logos.
-• Keep critical action within the central safe area; avoid top ~12% and bottom ~18%.
-• Maintain consistent camera language, pacing, and lighting.
-
-CANVAS & FRAMING:
-• Always generate on a fresh 1080×1920 canvas.
-• Chest-up portrait by default unless the effect states otherwise.
-• Locked tripod or gentle gimbal; no handheld shake.
-
-NEGATIVE / AVOID:
-• No random people, watermarks, on-screen text, or glitches.
-• No square/landscape frames, borders, letterbox/pillarbox.
-`.trim();
-
-const FACE_ONLY_ADDON = `
-IDENTITY CONTROL (when a reference photo is provided):
-• Use the uploaded image ONLY to extract identity (face, age, skin tone, hair).
-• Ignore the uploaded image’s background, clothes, camera FOV, and lighting unless the effect explicitly requires it.
-• No face morphing; keep the same actor identity throughout.
-`.trim();
-
 /* ---------------- Narration script from a Veo prompt ---------------- */
 export async function genNarrationFromPrompt(veoPrompt) {
   const prompt = `Write a short, upbeat 1–2 sentence voiceover (max 28 words) describing the visual effect in second person. No quotes, no hashtags, brand-safe. Source inspiration is:\n\n${veoPrompt}`;
@@ -82,7 +51,7 @@ export async function genImageBytes(prompt) {
   return { bytes, mime };
 }
 
-/* ---------------- Helpers for Veo video download ---------------- */
+/* ---------------- Video (from the SAME Veo prompt + image conditioning) ---------------- */
 async function ensureTmpDir() {
   try {
     await fs.mkdir(TMP_DIR, { recursive: true });
@@ -106,25 +75,23 @@ async function tryDownloadFileId(fileId) {
   return bytes;
 }
 
-async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
+/**
+ * Generate & download video bytes conditioned on the uploaded image (hero) and Veo prompt.
+ */
+export async function genVideoBytesFromPromptAndImage(prompt, imageBytes) {
   if (typeof ai?.models?.generateVideos !== "function") {
     throw new Error(
       "Video generation is unavailable in this @google/genai build"
     );
   }
 
-  // call with or without image, depending on presence
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
-    ...(imageBase64
-      ? {
-          image: {
-            imageBytes: imageBase64,
-            mimeType: imageMime || "image/jpeg",
-          },
-        }
-      : {}),
+    image: {
+      imageBytes: imageBytes.toString("base64"),
+      mimeType: "image/png",
+    },
   });
 
   while (!operation?.done) {
@@ -174,30 +141,4 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   throw new Error(
     `All Veo download attempts failed: ${lastErr?.message || lastErr}`
   );
-}
-
-/* ---------------- Video generators ---------------- */
-
-/** Template-only video (no identity reference). Use for article teaser generation. */
-export async function genVideoBytesFromPrompt(effectPrompt) {
-  const fullPrompt = `${PLATFORM_WRAPPER}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-  return runVeoAndDownload({ prompt: fullPrompt });
-}
-
-/** Identity-conditioned video (user face). Use for paid renders. */
-export async function genVideoBytesFromPromptAndImage(
-  effectPrompt,
-  sourceImageBytes
-) {
-  if (!sourceImageBytes) {
-    // Fallback: no image provided → template-only
-    return genVideoBytesFromPrompt(effectPrompt);
-  }
-  const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-  const imageBase64 = sourceImageBytes.toString("base64");
-  return runVeoAndDownload({
-    prompt: fullPrompt,
-    imageBase64,
-    imageMime: "image/jpeg",
-  });
 }
