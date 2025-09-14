@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp from "sharp"; // ok since you've installed it
+
+// ---- Smart-crop feature flags (env) ----
+const FACE_SMART_CROP = process.env.FACE_SMART_CROP === "true"; // enable/disable
+const FACE_SMART_SIZE = Number(process.env.FACE_SMART_SIZE || 640); // crop size px
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
@@ -16,19 +20,6 @@ const VIDEO_MODEL =
   process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-preview";
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
-
-// Smart crop toward the most salient region (usually the face) and neutralize background detail.
-async function smartIdentityCrop(buf) {
-  // 1) focus=attention approximates a face/subject crop
-  const square = await sharp(buf)
-    .resize(FACE_SMART_SIZE, FACE_SMART_SIZE, {
-      fit: "cover",
-      position: "attention",
-    })
-    .jpeg({ quality: 90 })
-    .toBuffer();
-  return square;
-}
 
 /* -----------------------------------------------------------
    Prompt wrappers for platform fit and identity conditioning
@@ -169,9 +160,8 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     video.resourceName,
   ].filter((x) => typeof x === "string" && x);
 
-  if (!candidates.length) {
+  if (!candidates.length)
     throw new Error("Veo video has no uri/file identifier to download");
-  }
 
   let lastErr = null;
   for (const fileId of candidates) {
@@ -191,6 +181,28 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   );
 }
 
+/* ---------------- Optional smart identity crop ---------------- */
+// Smart crop toward the most salient region (usually the face) and neutralize background detail.
+async function smartIdentityCrop(buf) {
+  if (!FACE_SMART_CROP) return buf; // feature off → no-op
+  try {
+    const square = await sharp(buf)
+      .resize(FACE_SMART_SIZE, FACE_SMART_SIZE, {
+        fit: "cover",
+        position: "attention",
+      })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    return square; // jpeg buffer
+  } catch (e) {
+    console.warn(
+      "[gemini] smart crop failed, using original:",
+      e?.message || e
+    );
+    return buf;
+  }
+}
+
 /* ---------------- Video generators ---------------- */
 
 /** Template-only video (no identity reference). Use for article teaser generation. */
@@ -199,27 +211,20 @@ export async function genVideoBytesFromPrompt(effectPrompt) {
   return runVeoAndDownload({ prompt: fullPrompt });
 }
 
-// Identity-conditioned video (for paid renders)
+/** Identity-conditioned video (user face). Use for paid renders. */
 export async function genVideoBytesFromPromptAndImage(
   effectPrompt,
   sourceImageBytes
 ) {
-  let ref = sourceImageBytes;
-  let refMime = "image/jpeg";
-  if (FACE_SMART_CROP) {
-    try {
-      ref = await smartIdentityCrop(sourceImageBytes);
-    } catch (e) {
-      console.warn(
-        "[gemini] smart crop failed, using original:",
-        e?.message || e
-      );
-    }
+  if (!sourceImageBytes) {
+    // Fallback to template-only if no image provided
+    return genVideoBytesFromPrompt(effectPrompt);
   }
+  const ref = await smartIdentityCrop(sourceImageBytes);
   const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
   return runVeoAndDownload({
     prompt: fullPrompt,
     imageBase64: ref.toString("base64"),
-    imageMime: refMime,
+    imageMime: "image/jpeg",
   });
 }
