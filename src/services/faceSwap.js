@@ -26,7 +26,7 @@ const TMP_DIR = process.env.TMPDIR || "/tmp";
 // FACE_SWAP_CMD=python3 -m facefusion
 // FACE_SWAP_ARGS_BASE=--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong
 const FACE_SWAP_CMD =
-  process.env.FACE_SWAP_CMD?.trim() || "python /opt/facefusion/run.py";
+  process.env.FACE_SWAP_CMD?.trim() || "python3 /opt/facefusion/run.py";
 const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || "")
   .split(/\s+/)
   .filter(Boolean);
