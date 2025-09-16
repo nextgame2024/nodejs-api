@@ -25,9 +25,10 @@ RUN pip install --upgrade pip setuptools wheel
 # ---- FaceFusion (CPU) from GitHub ----
     RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
     && pip install --upgrade pip setuptools wheel \
-    && pip install "numpy>=2,<2.3.0" \
-    && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
-    && pip install --upgrade onnxruntime
+    # Force a NumPy compatible with opencv-python 4.12.0.88 (needs <2.3.0)
+    && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
+    # Install repo requirements (now consistent)
+    && pip install --no-cache-dir -r /opt/facefusion/requirements.txt
 
 
 # App code
