@@ -13,19 +13,19 @@ import {
   markDone,
   markFailed,
   softDeleteJob,
-  getArticlePromptById,
 } from "../src/models/render.model.js";
+import { setArticleTags } from "../src/models/tag.model.js";
+import {
+  insertAsset,
+  getLatestVideoForArticle,
+} from "../src/models/asset.model.js";
 import {
   genImageBytes,
-  genVideoBytesFromPrompt, // NEW: template-only video (no identity)
-  genVideoBytesFromPromptAndImage, // identity-conditioned (user face)
+  genVideoBytesFromPrompt,
   genNarrationFromPrompt,
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
-import { setArticleTags } from "../src/models/tag.model.js";
-import { insertAsset } from "../src/models/asset.model.js";
-import { getLatestVideoForArticle } from "../src/models/asset.model.js";
-import { swapFaceOnVideo } from "../src/services/faceSwap.js";
+import swapFaceOnVideo from "../src/services/faceSwap.js";
 
 const bucket = process.env.S3_BUCKET;
 
@@ -34,10 +34,15 @@ const bucket = process.env.S3_BUCKET;
    ========================= */
 const BRISBANE_TZ = "Australia/Brisbane";
 const LOCK_ID = Number(process.env.CRON_LOCK_ID || 43434343);
-const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // how many paid jobs per minute
+const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // paid jobs per minute
 const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
-const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 9); // 09:00 AEST
-const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3); // run cleanup at 03:00 AEST
+
+// Defaults you asked for: 1am articles, 3am cleanup
+const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 1);
+const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
+
+// Worker loop cadence (ms)
+const LOOP_MS = Number(process.env.WORKER_LOOP_MS || 60_000);
 
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
 
@@ -46,6 +51,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 function localNow() {
+  // Returns a JS Date whose fields reflect the Brisbane local time
   return new Date(
     new Intl.DateTimeFormat("en-AU", {
       timeZone: BRISBANE_TZ,
@@ -59,19 +65,15 @@ function localNow() {
     }).format(new Date())
   );
 }
-function isMinute(d, m) {
-  return d.getMinutes() === m;
+function dayKey(d) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BRISBANE_TZ }).format(d); // YYYY-MM-DD
 }
-function isHour(d, h) {
-  return d.getHours() === h;
-}
-
 async function withLock(fn) {
   const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
     LOCK_ID,
   ]);
   if (!rows?.[0]?.ok) {
-    console.log(`[${nowIso()}] Lock busy; exit.`);
+    console.log(`[${nowIso()}] Lock busy; skipping cycle.`);
     return;
   }
   console.log(`[${nowIso()}] Acquired lock(${LOCK_ID}).`);
@@ -101,10 +103,11 @@ function normalizeTag(name = "") {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 }
-function first150WithEllipsis(text = "") {
-  const s = String(text || "");
-  const short = s.slice(0, 1000);
-  return short + (s.length > 1000 ? "..." : "...");
+function firstExcerpt(text = "", n = 150) {
+  const s = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s.slice(0, n) + (s.length > n ? "..." : "...");
 }
 
 async function fetchNextVideoPrompt(client) {
@@ -152,7 +155,7 @@ async function generateFromVideoPromptOnce(status = "published") {
 
     const slug = slugify(vp.title);
     const articleTitle = vp.title;
-    const articleDesc = first150WithEllipsis(vp.description || "");
+    const articleDesc = firstExcerpt(vp.description || "", 150);
     const articleBody = vp.description || "";
     const articlePrompt = vp.prompt || "";
 
@@ -178,8 +181,9 @@ async function generateFromVideoPromptOnce(status = "published") {
       `[${nowIso()}] [OK] Tags: [${(tagList.length ? tagList : ["content-ai"]).join(", ")}]`
     );
 
-    // Media: hero image, teaser video (template-only), narration
+    // Media: hero image, template-only teaser video, narration
     try {
+      // Image
       const { bytes: imgBytes, mime: imgMime } =
         await genImageBytes(articlePrompt);
       const imgKey = `articles/${slug}/hero.png`;
@@ -197,8 +201,8 @@ async function generateFromVideoPromptOnce(status = "published") {
       });
       console.log(`[${nowIso()}] [OK] Image asset inserted.`);
 
+      // Video (template-only, no identity)
       if (process.env.DISABLE_VIDEO !== "true") {
-        // IMPORTANT: template-only video (no identity reference here)
         const {
           bytes: vidBytes,
           mime: vidMime,
@@ -221,6 +225,7 @@ async function generateFromVideoPromptOnce(status = "published") {
         console.log(`[${nowIso()}] [OK] Video asset inserted.`);
       }
 
+      // Audio narration (best-effort)
       try {
         const narration = await genNarrationFromPrompt(articlePrompt);
         const voiceBuf = await ttsToBuffer(narration || articleTitle);
@@ -279,25 +284,23 @@ async function processOnePaidJob(jobId) {
   await markProcessing(jobId);
 
   try {
-    // 1) Load the base (teaser) video that matches the article/effect the user selected
+    // (A) fetch the base teaser video of the selected article
     if (!job.article_id) throw new Error("render_job missing article_id");
-
     const baseAsset = await getLatestVideoForArticle(job.article_id);
     if (!baseAsset?.s3_key) throw new Error("No base video asset for article");
-
     const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
 
-    // 2) Load the user's headshot (uploaded during checkout)
+    // (B) load the user's uploaded headshot
     if (!job.image_key) throw new Error("render_job missing image_key");
     const userImageBytes = await getObjectBuffer(job.image_key);
 
-    // 3) Face-swap: put the user's face onto the base video
+    // (C) face-swap: put the user's face onto the teaser video
     const { bytes: swappedBytes, mime } = await swapFaceOnVideo({
       sourceImageBytes: userImageBytes,
       baseVideoBytes,
     });
 
-    // 4) Upload to S3
+    // (D) upload final
     const outKey = `renders/${jobId}/output.mp4`;
     await s3.send(
       new PutObjectCommand({
@@ -308,7 +311,7 @@ async function processOnePaidJob(jobId) {
       })
     );
 
-    // 5) Mark done (+expiry)
+    // (E) mark done (+expiry)
     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
 
@@ -318,53 +321,6 @@ async function processOnePaidJob(jobId) {
     await markFailed(jobId, e?.message || String(e));
   }
 }
-
-// async function processOnePaidJob(jobId) {
-//   const job = await getJobById(jobId);
-//   if (!job) return;
-
-//   await markProcessing(jobId);
-
-//   try {
-//     // 1) use the SAME article prompt used for the effect
-//     const art = job.article_id
-//       ? await getArticlePromptById(job.article_id)
-//       : null;
-//     const veoPrompt =
-//       art?.prompt ||
-//       art?.title ||
-//       "Generate a short 9:16 cinematic clip using the uploaded face.";
-
-//     // 2) read the user’s uploaded image from S3
-//     const sourceBytes = await getObjectBuffer(job.image_key);
-
-//     // 3) generate personalized video (identity-conditioned)
-//     const { bytes: videoBytes, mime: videoMime } =
-//       await genVideoBytesFromPromptAndImage(veoPrompt, sourceBytes);
-
-//     // 4) store output (private object)
-//     const outKey = `renders/${jobId}/output.mp4`;
-//     await s3.send(
-//       new PutObjectCommand({
-//         Bucket: bucket,
-//         Key: outKey,
-//         Body: videoBytes,
-//         ContentType: videoMime || "video/mp4",
-//       })
-//     );
-
-//     // 5) set expiry (+24h by default)
-//     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
-//     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
-
-//     console.log(
-//       `[${nowIso()}] [RENDER] Done ${jobId} -> ${outKey}, expires ${expiresAt.toISOString()}`
-//     );
-//   } catch (e) {
-//     console.error(`[${nowIso()}] [RENDER] FAILED ${jobId}:`, e?.message || e);
-//     await markFailed(jobId, e?.message || String(e));
-//   }
-// }
 
 /* ============ CLEANUP (daily — hard delete S3, soft-delete DB) ============ */
 
@@ -392,30 +348,53 @@ async function cleanupExpired(limit = 200) {
   }
 }
 
-/* ============ ENTRY: run every minute ============ */
+/* ============ ENTRY: long-running worker loop ============ */
 
-(async function main() {
+const RUN_ONCE = process.argv.includes("--once");
+let lastArticleRunDay = null; // YYYY-MM-DD when article job last ran
+let lastCleanupRunDay = null; // YYYY-MM-DD when cleanup last ran
+
+async function runCycle() {
   await withLock(async () => {
     const dLocal = localNow();
+    const todayKey = dayKey(dLocal);
 
     // 1) every minute — process a small batch of paid jobs
     await sweepPaid(SWEEP_BATCH);
 
-    // 2) once per day — cleanup expired outputs and soft-delete rows
-    if (isHour(dLocal, CLEANUP_HOUR) && isMinute(dLocal, 0)) {
+    // 2) once per day — cleanup expired outputs (at CLEANUP_HOUR)
+    if (dLocal.getHours() === CLEANUP_HOUR && lastCleanupRunDay !== todayKey) {
       await cleanupExpired(200);
+      lastCleanupRunDay = todayKey;
     }
 
-    // 3) once per day — create article(s) from video_prompts
-    if (isHour(dLocal, DAILY_ARTICLES_HOUR) && isMinute(dLocal, 0)) {
+    // 3) once per day — create article(s) from video_prompts (at DAILY_ARTICLES_HOUR)
+    if (
+      dLocal.getHours() === DAILY_ARTICLES_HOUR &&
+      lastArticleRunDay !== todayKey
+    ) {
       try {
-        await generateFromVideoPromptOnce("published"); // 1 article/day (adjust if you want more)
+        await generateFromVideoPromptOnce("published");
       } catch (e) {
         console.error(`[${nowIso()}] [ARTICLES] Failed:`, e?.message || e);
       }
+      lastArticleRunDay = todayKey;
     }
   });
+}
 
-  // exit quickly; Render Cron will re-run next minute
-  process.exit(0);
+(async () => {
+  if (RUN_ONCE) {
+    console.log(`[${nowIso()}] Running single cycle (--once).`);
+    await runCycle();
+    process.exit(0);
+  } else {
+    console.log(
+      `[${nowIso()}] Background worker loop started (every ${LOOP_MS}ms) — articles at ${DAILY_ARTICLES_HOUR}:00, cleanup at ${CLEANUP_HOUR}:00 (${BRISBANE_TZ}).`
+    );
+    for (;;) {
+      await runCycle();
+      await new Promise((r) => setTimeout(r, LOOP_MS));
+    }
+  }
 })();

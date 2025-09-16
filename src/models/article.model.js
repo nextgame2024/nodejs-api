@@ -276,3 +276,21 @@ export async function removeFavorite({ userId, articleId }) {
     [userId, articleId]
   );
 }
+
+// Get prompt + title + slug by article id
+export async function getArticlePromptById(articleId) {
+  const { rows } = await pool.query(
+    `SELECT prompt, title, slug FROM articles WHERE id = $1 LIMIT 1`,
+    [articleId]
+  );
+  return rows[0] || null;
+}
+
+// Optional convenience
+export async function getArticlePromptBySlug(slug) {
+  const { rows } = await pool.query(
+    `SELECT id, prompt, title, slug FROM articles WHERE slug = $1 LIMIT 1`,
+    [slug]
+  );
+  return rows[0] || null;
+}

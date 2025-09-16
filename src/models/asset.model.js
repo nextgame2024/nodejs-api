@@ -99,12 +99,24 @@ export async function getAssetsForArticleId(articleId, type = null) {
 /** Return the most recent video asset for an article (url + s3_key, mime_type). */
 export async function getLatestVideoForArticle(articleId) {
   const { rows } = await pool.query(
-    `SELECT url, s3_key, mime_type
+    `SELECT id, url, s3_key, mime_type
        FROM assets
       WHERE article_id = $1 AND type = 'video'
-      ORDER BY "createdAt" DESC
+      ORDER BY createdAt DESC, id DESC
       LIMIT 1`,
     [articleId]
+  );
+  return rows?.[0] || null;
+}
+
+export async function getLatestAssetByType(articleId, type) {
+  const { rows } = await pool.query(
+    `SELECT id, url, s3_key, mime_type
+       FROM assets
+      WHERE article_id = $1 AND type = $2
+      ORDER BY createdAt DESC, id DESC
+      LIMIT 1`,
+    [articleId, type]
   );
   return rows?.[0] || null;
 }
