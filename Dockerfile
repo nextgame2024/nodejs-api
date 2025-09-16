@@ -33,5 +33,5 @@
         INSIGHTFACE_HOME=/cache/insightface
     
     # Default command; Render Cron overrides with your command/schedule
-    CMD ["node", "cron/weeklyGenerator.js", "--once"]
+    CMD ["node", "cron/weeklyGenerator.js"]
     

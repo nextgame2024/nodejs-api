@@ -391,7 +391,8 @@ async function cleanupExpired(limit = 200) {
 
 /* ============ ENTRY: worker loop ============ */
 
-const RUN_ONCE = process.argv.includes("--once");
+const RUN_ONCE =
+  process.argv.includes("--once") || process.env.RUN_ONCE === "1";
 let lastArticleRunDay = null; // "YYYY-MM-DD"
 let lastCleanupRunDay = null; // "YYYY-MM-DD"
 
