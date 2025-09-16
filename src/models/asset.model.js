@@ -16,7 +16,17 @@ export async function insertAsset({
     `INSERT INTO assets
        (article_id, type, url, s3_key, mime_type, duration_sec, width, height, metadata)
      VALUES ($1,        $2,   $3, $4,    $5,       $6,          $7,   $8,    $9)`,
-    [articleId, type, url, s3Key, mimeType, durationSec, width, height, metadata]
+    [
+      articleId,
+      type,
+      url,
+      s3Key,
+      mimeType,
+      durationSec,
+      width,
+      height,
+      metadata,
+    ]
   );
 }
 
@@ -84,4 +94,17 @@ export async function getAssetsForArticleId(articleId, type = null) {
     createdAt: r.createdAt,
     metadata: r.metadata ?? null,
   }));
+}
+
+/** Return the most recent video asset for an article (url + s3_key, mime_type). */
+export async function getLatestVideoForArticle(articleId) {
+  const { rows } = await pool.query(
+    `SELECT url, s3_key, mime_type
+       FROM assets
+      WHERE article_id = $1 AND type = 'video'
+      ORDER BY "createdAt" DESC
+      LIMIT 1`,
+    [articleId]
+  );
+  return rows?.[0] || null;
 }

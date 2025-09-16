@@ -24,6 +24,8 @@ import {
 import { ttsToBuffer } from "../src/services/polly.js";
 import { setArticleTags } from "../src/models/tag.model.js";
 import { insertAsset } from "../src/models/asset.model.js";
+import { getLatestVideoForArticle } from "../src/models/asset.model.js";
+import { swapFaceOnVideo } from "../src/services/faceSwap.js";
 
 const bucket = process.env.S3_BUCKET;
 
@@ -277,45 +279,92 @@ async function processOnePaidJob(jobId) {
   await markProcessing(jobId);
 
   try {
-    // 1) use the SAME article prompt used for the effect
-    const art = job.article_id
-      ? await getArticlePromptById(job.article_id)
-      : null;
-    const veoPrompt =
-      art?.prompt ||
-      art?.title ||
-      "Generate a short 9:16 cinematic clip using the uploaded face.";
+    // 1) Load the base (teaser) video that matches the article/effect the user selected
+    if (!job.article_id) throw new Error("render_job missing article_id");
 
-    // 2) read the user’s uploaded image from S3
-    const sourceBytes = await getObjectBuffer(job.image_key);
+    const baseAsset = await getLatestVideoForArticle(job.article_id);
+    if (!baseAsset?.s3_key) throw new Error("No base video asset for article");
 
-    // 3) generate personalized video (identity-conditioned)
-    const { bytes: videoBytes, mime: videoMime } =
-      await genVideoBytesFromPromptAndImage(veoPrompt, sourceBytes);
+    const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
 
-    // 4) store output (private object)
+    // 2) Load the user's headshot (uploaded during checkout)
+    if (!job.image_key) throw new Error("render_job missing image_key");
+    const userImageBytes = await getObjectBuffer(job.image_key);
+
+    // 3) Face-swap: put the user's face onto the base video
+    const { bytes: swappedBytes, mime } = await swapFaceOnVideo({
+      sourceImageBytes: userImageBytes,
+      baseVideoBytes,
+    });
+
+    // 4) Upload to S3
     const outKey = `renders/${jobId}/output.mp4`;
     await s3.send(
       new PutObjectCommand({
         Bucket: bucket,
         Key: outKey,
-        Body: videoBytes,
-        ContentType: videoMime || "video/mp4",
+        Body: swappedBytes,
+        ContentType: mime || "video/mp4",
       })
     );
 
-    // 5) set expiry (+24h by default)
+    // 5) Mark done (+expiry)
     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
 
-    console.log(
-      `[${nowIso()}] [RENDER] Done ${jobId} -> ${outKey}, expires ${expiresAt.toISOString()}`
-    );
+    console.log(`[${nowIso()}] [RENDER] Swapped ${jobId} -> ${outKey}`);
   } catch (e) {
     console.error(`[${nowIso()}] [RENDER] FAILED ${jobId}:`, e?.message || e);
     await markFailed(jobId, e?.message || String(e));
   }
 }
+
+// async function processOnePaidJob(jobId) {
+//   const job = await getJobById(jobId);
+//   if (!job) return;
+
+//   await markProcessing(jobId);
+
+//   try {
+//     // 1) use the SAME article prompt used for the effect
+//     const art = job.article_id
+//       ? await getArticlePromptById(job.article_id)
+//       : null;
+//     const veoPrompt =
+//       art?.prompt ||
+//       art?.title ||
+//       "Generate a short 9:16 cinematic clip using the uploaded face.";
+
+//     // 2) read the user’s uploaded image from S3
+//     const sourceBytes = await getObjectBuffer(job.image_key);
+
+//     // 3) generate personalized video (identity-conditioned)
+//     const { bytes: videoBytes, mime: videoMime } =
+//       await genVideoBytesFromPromptAndImage(veoPrompt, sourceBytes);
+
+//     // 4) store output (private object)
+//     const outKey = `renders/${jobId}/output.mp4`;
+//     await s3.send(
+//       new PutObjectCommand({
+//         Bucket: bucket,
+//         Key: outKey,
+//         Body: videoBytes,
+//         ContentType: videoMime || "video/mp4",
+//       })
+//     );
+
+//     // 5) set expiry (+24h by default)
+//     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
+//     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
+
+//     console.log(
+//       `[${nowIso()}] [RENDER] Done ${jobId} -> ${outKey}, expires ${expiresAt.toISOString()}`
+//     );
+//   } catch (e) {
+//     console.error(`[${nowIso()}] [RENDER] FAILED ${jobId}:`, e?.message || e);
+//     await markFailed(jobId, e?.message || String(e));
+//   }
+// }
 
 /* ============ CLEANUP (daily — hard delete S3, soft-delete DB) ============ */
 
