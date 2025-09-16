@@ -1,7 +1,7 @@
 {
   "type": "module",
   "engines": {
-    "node": "20.x"
+    "node": "20.15.0"
   },
   "dependencies": {
     "@aws-sdk/client-polly": "^3.879.0",
