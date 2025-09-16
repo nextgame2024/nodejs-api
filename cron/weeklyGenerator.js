@@ -298,18 +298,46 @@ async function processOnePaidJob(jobId) {
     // (A) base teaser video of the selected article
     if (!job.article_id) throw new Error("render_job missing article_id");
     const baseAsset = await getLatestVideoForArticle(job.article_id);
-    if (!baseAsset?.s3_key) throw new Error("No base video asset for article");
+    if (!baseAsset?.s3_key) {
+      throw new Error("No base video asset for article (missing s3_key)");
+    }
+
+    // fetch the base teaser video from S3
     const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
+    if (!Buffer.isBuffer(baseVideoBytes) || baseVideoBytes.length === 0) {
+      throw new Error(
+        `Base video missing/empty. s3_key=${baseAsset.s3_key} len=${baseVideoBytes?.length || 0}`
+      );
+    }
 
     // (B) the user's uploaded headshot
     if (!job.image_key) throw new Error("render_job missing image_key");
-    const userImageBytes = await getObjectBuffer(job.image_key);
 
-    // (C) face-swap
+    const userImageBytes = await getObjectBuffer(job.image_key);
+    if (!Buffer.isBuffer(userImageBytes) || userImageBytes.length === 0) {
+      throw new Error(
+        `User image missing/empty. image_key=${job.image_key} len=${userImageBytes?.length || 0}`
+      );
+    }
+
+    console.log(
+      `[${nowIso()}] [RENDER] swap start job=${jobId} faceKey=${job.image_key} baseKey=${baseAsset.s3_key} ` +
+        `sizes face=${userImageBytes.length}B video=${baseVideoBytes.length}B`
+    );
+
+    // (C) face-swap — pass the names your wrapper expects
     const { bytes: swappedBytes, mime } = await swapFaceOnVideo({
-      sourceImageBytes: userImageBytes,
-      baseVideoBytes,
+      faceBytes: userImageBytes, // <-- fix: expected name
+      videoBytes: baseVideoBytes, // <-- fix: expected name (also pass baseVideoBytes for compatibility)
+      baseVideoBytes, // (compat) in case your wrapper accepts this alias
+      // you can add extra options if supported by your wrapper:
+      // strength: Number(process.env.FACEFUSION_STRENGTH || 0.85),
+      // upscale: false,
     });
+
+    if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
+      throw new Error("Face-swap returned empty output buffer");
+    }
 
     // (D) upload final
     const outKey = `renders/${jobId}/output.mp4`;
@@ -326,7 +354,9 @@ async function processOnePaidJob(jobId) {
     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
 
-    console.log(`[${nowIso()}] [RENDER] Swapped ${jobId} -> ${outKey}`);
+    console.log(
+      `[${nowIso()}] [RENDER] swap done job=${jobId} -> s3://${bucket}/${outKey} (expires ${expiresAt.toISOString()})`
+    );
   } catch (e) {
     console.error(`[${nowIso()}] [RENDER] FAILED ${jobId}:`, e?.message || e);
     await markFailed(jobId, e?.message || String(e));
