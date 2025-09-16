@@ -37,11 +37,11 @@ const LOCK_ID = Number(process.env.CRON_LOCK_ID || 43434343);
 const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // paid jobs per minute
 const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
 
-// Defaults you asked for: 1am articles, 3am cleanup
+// defaults you requested: 1am articles, 3am cleanup
 const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 1);
 const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 
-// Worker loop cadence (ms)
+// worker loop cadence (ms)
 const LOOP_MS = Number(process.env.WORKER_LOOP_MS || 60_000);
 
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
@@ -50,24 +50,34 @@ const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article c
 function nowIso() {
   return new Date().toISOString();
 }
-function localNow() {
-  // Returns a JS Date whose fields reflect the Brisbane local time
-  return new Date(
-    new Intl.DateTimeFormat("en-AU", {
-      timeZone: BRISBANE_TZ,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(new Date())
-  );
+
+/** Safe Brisbane “clock” without constructing a locale-parsed Date */
+function localClock() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BRISBANE_TZ,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+    .formatToParts(new Date())
+    .reduce((acc, p) => {
+      if (p.type !== "literal") acc[p.type] = p.value;
+      return acc;
+    }, /** @type {Record<string,string>} */ ({}));
+
+  const ymd = `${parts.year}-${parts.month}-${parts.day}`;
+  return {
+    ymd, // "YYYY-MM-DD"
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
 }
-function dayKey(d) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: BRISBANE_TZ }).format(d); // YYYY-MM-DD
-}
+
 async function withLock(fn) {
   const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
     LOCK_ID,
@@ -107,7 +117,7 @@ function firstExcerpt(text = "", n = 150) {
   const s = String(text || "")
     .replace(/\s+/g, " ")
     .trim();
-  return s.slice(0, n) + (s.length > n ? "..." : "...");
+  return s.slice(0, n) + (s.length > n ? "..." : "");
 }
 
 async function fetchNextVideoPrompt(client) {
@@ -174,6 +184,7 @@ async function generateFromVideoPromptOnce(status = "published") {
     console.log(`[${nowIso()}] [OK] Article id=${articleId} slug=${slug}`);
 
     await markVideoPromptUsed(client, vp.id);
+
     const vpTag = vp.tag ? normalizeTag(vp.tag) : null;
     const tagList = [vpTag, "content-ai"].filter(Boolean);
     await setArticleTags(articleId, tagList.length ? tagList : ["content-ai"]);
@@ -181,7 +192,7 @@ async function generateFromVideoPromptOnce(status = "published") {
       `[${nowIso()}] [OK] Tags: [${(tagList.length ? tagList : ["content-ai"]).join(", ")}]`
     );
 
-    // Media: hero image, template-only teaser video, narration
+    // Media: hero image, template-only teaser video, narration (best-effort)
     try {
       // Image
       const { bytes: imgBytes, mime: imgMime } =
@@ -201,7 +212,7 @@ async function generateFromVideoPromptOnce(status = "published") {
       });
       console.log(`[${nowIso()}] [OK] Image asset inserted.`);
 
-      // Video (template-only, no identity)
+      // Video (template-only)
       if (process.env.DISABLE_VIDEO !== "true") {
         const {
           bytes: vidBytes,
@@ -225,7 +236,7 @@ async function generateFromVideoPromptOnce(status = "published") {
         console.log(`[${nowIso()}] [OK] Video asset inserted.`);
       }
 
-      // Audio narration (best-effort)
+      // Audio narration
       try {
         const narration = await genNarrationFromPrompt(articlePrompt);
         const voiceBuf = await ttsToBuffer(narration || articleTitle);
@@ -284,17 +295,17 @@ async function processOnePaidJob(jobId) {
   await markProcessing(jobId);
 
   try {
-    // (A) fetch the base teaser video of the selected article
+    // (A) base teaser video of the selected article
     if (!job.article_id) throw new Error("render_job missing article_id");
     const baseAsset = await getLatestVideoForArticle(job.article_id);
     if (!baseAsset?.s3_key) throw new Error("No base video asset for article");
     const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
 
-    // (B) load the user's uploaded headshot
+    // (B) the user's uploaded headshot
     if (!job.image_key) throw new Error("render_job missing image_key");
     const userImageBytes = await getObjectBuffer(job.image_key);
 
-    // (C) face-swap: put the user's face onto the teaser video
+    // (C) face-swap
     const { bytes: swappedBytes, mime } = await swapFaceOnVideo({
       sourceImageBytes: userImageBytes,
       baseVideoBytes,
@@ -348,37 +359,33 @@ async function cleanupExpired(limit = 200) {
   }
 }
 
-/* ============ ENTRY: long-running worker loop ============ */
+/* ============ ENTRY: worker loop ============ */
 
 const RUN_ONCE = process.argv.includes("--once");
-let lastArticleRunDay = null; // YYYY-MM-DD when article job last ran
-let lastCleanupRunDay = null; // YYYY-MM-DD when cleanup last ran
+let lastArticleRunDay = null; // "YYYY-MM-DD"
+let lastCleanupRunDay = null; // "YYYY-MM-DD"
 
 async function runCycle() {
   await withLock(async () => {
-    const dLocal = localNow();
-    const todayKey = dayKey(dLocal);
+    const clk = localClock(); // { ymd, hour, minute, second }
 
     // 1) every minute — process a small batch of paid jobs
     await sweepPaid(SWEEP_BATCH);
 
-    // 2) once per day — cleanup expired outputs (at CLEANUP_HOUR)
-    if (dLocal.getHours() === CLEANUP_HOUR && lastCleanupRunDay !== todayKey) {
+    // 2) daily cleanup at CLEANUP_HOUR
+    if (clk.hour === CLEANUP_HOUR && lastCleanupRunDay !== clk.ymd) {
       await cleanupExpired(200);
-      lastCleanupRunDay = todayKey;
+      lastCleanupRunDay = clk.ymd;
     }
 
-    // 3) once per day — create article(s) from video_prompts (at DAILY_ARTICLES_HOUR)
-    if (
-      dLocal.getHours() === DAILY_ARTICLES_HOUR &&
-      lastArticleRunDay !== todayKey
-    ) {
+    // 3) daily article creation at DAILY_ARTICLES_HOUR
+    if (clk.hour === DAILY_ARTICLES_HOUR && lastArticleRunDay !== clk.ymd) {
       try {
         await generateFromVideoPromptOnce("published");
       } catch (e) {
         console.error(`[${nowIso()}] [ARTICLES] Failed:`, e?.message || e);
       }
-      lastArticleRunDay = todayKey;
+      lastArticleRunDay = clk.ymd;
     }
   });
 }
