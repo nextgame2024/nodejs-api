@@ -23,9 +23,12 @@ ENV PATH="/opt/ffenv/bin:${PATH}"
 RUN pip install --upgrade pip setuptools wheel
 
 # ---- FaceFusion (CPU) from GitHub ----
-RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
- && pip install -r /opt/facefusion/requirements.txt \
- && pip install --upgrade onnxruntime
+    RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
+    && pip install --upgrade pip setuptools wheel \
+    && pip install "numpy>=2,<2.3.0" \
+    && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
+    && pip install --upgrade onnxruntime
+
 
 # App code
 COPY . .
