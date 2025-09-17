@@ -27,16 +27,17 @@ RUN pip install --upgrade pip setuptools wheel
 # ---- FaceFusion (CPU) from GitHub ----
 RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
  && pip install --upgrade pip setuptools wheel \
+ # Keep NumPy compatible with this repo's OpenCV pin
  && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
  && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
  && rm -rf /root/.cache/pip
 
-# Let Python find the repo
+# Make repo importable (defensive)
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
-# ✅ Correct, supported defaults for this FaceFusion variant
+# ✅ Defaults that match the CLI actually available
 ENV FACE_SWAP_CMD="python3 /opt/facefusion/facefusion.py" \
-    FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer" \
+    FACE_SWAP_ARGS_BASE="--processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer --execution-providers cpu" \
     FACEFUSION_CWD="/opt/facefusion" \
     FACEFUSION_CACHE_DIR=/cache \
     XDG_CACHE_HOME=/cache/xdg \

@@ -18,9 +18,8 @@ function run(cmd, args, opts = {}) {
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-/** ✅ Supported in your FaceFusion build */
 const DEFAULT_ARGS =
-  "--headless --execution-provider cpu --processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer";
+  "--processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer --execution-providers cpu--processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer --execution-providers cpu";
 
 const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || DEFAULT_ARGS)
   .split(/\s+/)
@@ -28,7 +27,8 @@ const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || DEFAULT_ARGS)
 
 const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
 const FACE_SWAP_CMD =
-  process.env.FACE_SWAP_CMD?.trim() || "python3 /opt/facefusion/facefusion.py";
+  (process.env.FACE_SWAP_CMD && process.env.FACE_SWAP_CMD.trim()) ||
+  "python3 /opt/facefusion/facefusion.py";
 
 /**
  * @param {Object} p
@@ -71,62 +71,34 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
-  // Build candidate commands (prefer facefusion.py)
-  const tail = [
+  // Build args: subcommand FIRST, then options
+  const baseCmdParts = FACE_SWAP_CMD.split(/\s+/).filter(Boolean);
+  const cmd = baseCmdParts.shift();
+  if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
+
+  const args = [
+    ...baseCmdParts,
+    "run",
     ...FACE_SWAP_ARGS_BASE,
     "--source",
     facePath,
     "--target",
     inVideoPath,
-    "--output",
+    "--output-path",
     outVideoPath,
     ...extraArgs,
   ];
 
-  const candidates = [];
-  const push = (cmdStr, prefixArgs = []) => {
-    const parts = cmdStr.split(/\s+/).filter(Boolean);
-    const cmd = parts.shift();
-    if (cmd) candidates.push({ cmd, args: [...parts, ...prefixArgs, ...tail] });
-  };
-
-  // facefusion.py (with and without "run" subcommand)
-  push(FACE_SWAP_CMD, ["run"]);
-  push(FACE_SWAP_CMD);
-
-  // Fallbacks
-  push("python3 /opt/facefusion/facefusion.py", ["run"]);
-  push("python3 /opt/facefusion/facefusion.py");
-  push("/opt/ffenv/bin/python3 /opt/facefusion/facefusion.py");
-
-  let lastErr;
-  for (const c of candidates) {
-    try {
-      await run(c.cmd, c.args, {
-        cwd: FACEFUSION_CWD,
-        env: {
-          ...process.env,
-          FACEFUSION_CACHE_DIR: process.env.FACEFUSION_CACHE_DIR || "/cache",
-          XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || "/cache/xdg",
-          HF_HOME: process.env.HF_HOME || "/cache/hf",
-          INSIGHTFACE_HOME:
-            process.env.INSIGHTFACE_HOME || "/cache/insightface",
-        },
-      });
-      lastErr = undefined;
-      break;
-    } catch (e) {
-      lastErr = e;
-      console.warn(`[FaceSwap] Candidate failed: ${c.cmd} ${c.args.join(" ")}`);
-    }
-  }
-  if (lastErr) {
-    try {
-      const entries = await fs.readdir("/opt/facefusion");
-      console.warn(`[FaceSwap] /opt/facefusion entries: ${entries.join(", ")}`);
-    } catch {}
-    throw lastErr;
-  }
+  await run(cmd, args, {
+    cwd: FACEFUSION_CWD,
+    env: {
+      ...process.env,
+      FACEFUSION_CACHE_DIR: process.env.FACEFUSION_CACHE_DIR || "/cache",
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || "/cache/xdg",
+      HF_HOME: process.env.HF_HOME || "/cache/hf",
+      INSIGHTFACE_HOME: process.env.INSIGHTFACE_HOME || "/cache/insightface",
+    },
+  });
 
   const ok = await fs
     .stat(outVideoPath)
