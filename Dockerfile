@@ -31,13 +31,12 @@ RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion
  && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
  && rm -rf /root/.cache/pip
 
-# Make repo importable
+# Let Python find the repo
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
-# Sensible defaults (can override in Render if you want)
-# IMPORTANT: point to facefusion.py here
+# ✅ Correct, supported defaults for this FaceFusion variant
 ENV FACE_SWAP_CMD="python3 /opt/facefusion/facefusion.py" \
-    FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong" \
+    FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer" \
     FACEFUSION_CWD="/opt/facefusion" \
     FACEFUSION_CACHE_DIR=/cache \
     XDG_CACHE_HOME=/cache/xdg \

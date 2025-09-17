@@ -18,14 +18,15 @@ function run(cmd, args, opts = {}) {
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
+/** ✅ Supported in your FaceFusion build */
 const DEFAULT_ARGS =
-  "--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong";
+  "--headless --execution-provider cpu --processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer";
+
 const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || DEFAULT_ARGS)
   .split(/\s+/)
   .filter(Boolean);
 
 const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
-/** Default to the script we actually have in your image */
 const FACE_SWAP_CMD =
   process.env.FACE_SWAP_CMD?.trim() || "python3 /opt/facefusion/facefusion.py";
 
@@ -70,7 +71,7 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
-  // Build candidate commands
+  // Build candidate commands (prefer facefusion.py)
   const tail = [
     ...FACE_SWAP_ARGS_BASE,
     "--source",
@@ -89,22 +90,15 @@ export async function swapFaceOnVideo({
     if (cmd) candidates.push({ cmd, args: [...parts, ...prefixArgs, ...tail] });
   };
 
-  // Prefer the file you actually have: facefusion.py (with/without "run")
+  // facefusion.py (with and without "run" subcommand)
   push(FACE_SWAP_CMD, ["run"]);
   push(FACE_SWAP_CMD);
 
-  // Fallbacks in case ENV was changed
+  // Fallbacks
   push("python3 /opt/facefusion/facefusion.py", ["run"]);
   push("python3 /opt/facefusion/facefusion.py");
-
-  // Other historical launchers (may not exist in your checkout)
-  push("python3 -m facefusion");
-  push("python3 /opt/facefusion/run.py");
   push("/opt/ffenv/bin/python3 /opt/facefusion/facefusion.py");
-  push("/opt/ffenv/bin/python3 -m facefusion");
-  push("/opt/ffenv/bin/python3 /opt/facefusion/run.py");
 
-  // Try until one works
   let lastErr;
   for (const c of candidates) {
     try {
@@ -129,21 +123,17 @@ export async function swapFaceOnVideo({
   if (lastErr) {
     try {
       const entries = await fs.readdir("/opt/facefusion");
-      console.warn(
-        `[FaceSwap] /opt/facefusion entries: ${entries.slice(0, 80).join(", ")}`
-      );
+      console.warn(`[FaceSwap] /opt/facefusion entries: ${entries.join(", ")}`);
     } catch {}
     throw lastErr;
   }
 
-  // Ensure output exists
   const ok = await fs
     .stat(outVideoPath)
     .then((s) => s.isFile() && s.size > 0)
     .catch(() => false);
   if (!ok) throw new Error("FaceFusion didn’t produce an output video");
 
-  // Read & cleanup
   const out = await fs.readFile(outVideoPath);
   try {
     await fs.unlink(facePath);
