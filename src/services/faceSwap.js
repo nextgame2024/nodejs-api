@@ -22,16 +22,18 @@ function run(cmd, args, opts = {}) {
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
+// Defaults (env can override)
 const DEFAULT_FACE_SWAP_ARGS_BASE =
   "--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong";
-const DEFAULT_CMD = "python3 /opt/facefusion/run.py";
-const FACE_SWAP_CMD = process.env.FACE_SWAP_CMD?.trim() || DEFAULT_CMD;
 const FACE_SWAP_ARGS_BASE = (
   process.env.FACE_SWAP_ARGS_BASE || DEFAULT_FACE_SWAP_ARGS_BASE
 )
   .split(/\s+/)
   .filter(Boolean);
 const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
+
+// Prefer console script; wrapper will fall back to other launchers
+const FACE_SWAP_CMD = process.env.FACE_SWAP_CMD?.trim() || "facefusion";
 
 /**
  * swapFaceOnVideo
@@ -75,7 +77,7 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
-  // 2) Build command candidates (try both run.py and -m facefusion)
+  // 2) Build command candidates
   const baseTail = [
     ...FACE_SWAP_ARGS_BASE,
     "--source",
@@ -88,20 +90,21 @@ export async function swapFaceOnVideo({
   ];
 
   const candidates = [];
-  const pushCmd = (cmdStr) => {
+  const pushCmd = (cmdStr, prefixArgs = []) => {
     const parts = cmdStr.split(/\s+/).filter(Boolean);
     const cmd = parts.shift();
-    if (cmd) candidates.push({ cmd, args: [...parts, ...baseTail] });
+    if (cmd)
+      candidates.push({ cmd, args: [...parts, ...prefixArgs, ...baseTail] });
   };
 
-  // Primary from env (or default)
+  // Primary from env (try with and without "run" subcommand)
+  pushCmd(FACE_SWAP_CMD, ["run"]);
   pushCmd(FACE_SWAP_CMD);
 
-  // Fallbacks (only add if different from primary)
-  if (!/run\.py/.test(FACE_SWAP_CMD)) pushCmd("python3 /opt/facefusion/run.py");
-  if (!/-m\s+facefusion/.test(FACE_SWAP_CMD)) pushCmd("python3 -m facefusion");
-  // Ensure venv python is tried explicitly as a last resort
-  pushCmd("/opt/ffenv/bin/python3 /opt/facefusion/run.py");
+  // Fallbacks
+  pushCmd("python3 -m facefusion"); // package module (if installed)
+  pushCmd("python3 /opt/facefusion/run.py"); // legacy script in repo
+  pushCmd("/opt/ffenv/bin/python3 /opt/facefusion/run.py"); // venv python + legacy
 
   // 3) Try each candidate until one works
   let lastErr;
@@ -125,7 +128,17 @@ export async function swapFaceOnVideo({
       console.warn(`[FaceSwap] Candidate failed: ${c.cmd} ${c.args.join(" ")}`);
     }
   }
-  if (lastErr) throw lastErr;
+
+  if (lastErr) {
+    // Help debug by listing likely entry scripts found in the repo
+    try {
+      const entries = await fs.readdir("/opt/facefusion");
+      console.warn(
+        `[FaceSwap] /opt/facefusion entries: ${entries.slice(0, 50).join(", ")}`
+      );
+    } catch {}
+    throw lastErr;
+  }
 
   // 4) Ensure output exists
   const produced = await fs

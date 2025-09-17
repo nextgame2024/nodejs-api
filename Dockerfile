@@ -32,13 +32,15 @@ RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion
  && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
  # Install repo requirements
  && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
+ # Try to install the repo as a package (creates 'facefusion' console script if supported)
+ && (cd /opt/facefusion && { [ -f setup.py ] || [ -f pyproject.toml ]; } && pip install . || true) \
  && rm -rf /root/.cache/pip
 
 # Make repo importable (just in case)
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
 # Sensible defaults (Render env can override)
-ENV FACE_SWAP_CMD="python3 /opt/facefusion/run.py" \
+ENV FACE_SWAP_CMD="facefusion" \
     FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong" \
     FACEFUSION_CWD="/opt/facefusion" \
     FACEFUSION_CACHE_DIR=/cache \
