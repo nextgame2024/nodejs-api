@@ -1,7 +1,6 @@
 # Use bookworm so we get Python 3.11
 FROM node:20-bookworm
 
-# Faster/cleaner pip
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # System deps for FaceFusion/OpenCV + ffmpeg + git
@@ -18,7 +17,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Python venv (this will be 3.11 on bookworm)
+# Python venv (3.11 on bookworm)
 RUN python3 -m venv /opt/ffenv
 ENV PATH="/opt/ffenv/bin:${PATH}"
 
@@ -28,19 +27,16 @@ RUN pip install --upgrade pip setuptools wheel
 # ---- FaceFusion (CPU) from GitHub ----
 RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
  && pip install --upgrade pip setuptools wheel \
- # Force a NumPy compatible with opencv-python 4.12.0.88 (needs <2.3.0)
  && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
- # Install repo requirements
  && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
- # Try to install the repo as a package (creates 'facefusion' console script if supported)
- && (cd /opt/facefusion && { [ -f setup.py ] || [ -f pyproject.toml ]; } && pip install . || true) \
  && rm -rf /root/.cache/pip
 
-# Make repo importable (just in case)
+# Make repo importable
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
-# Sensible defaults (Render env can override)
-ENV FACE_SWAP_CMD="facefusion" \
+# Sensible defaults (can override in Render if you want)
+# IMPORTANT: point to facefusion.py here
+ENV FACE_SWAP_CMD="python3 /opt/facefusion/facefusion.py" \
     FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong" \
     FACEFUSION_CWD="/opt/facefusion" \
     FACEFUSION_CACHE_DIR=/cache \
