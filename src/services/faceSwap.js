@@ -26,10 +26,11 @@ const TMP_DIR = process.env.TMPDIR || "/tmp";
 // FACE_SWAP_CMD=python3 -m facefusion
 // FACE_SWAP_ARGS_BASE=--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong
 const FACE_SWAP_CMD =
-  process.env.FACE_SWAP_CMD?.trim() || "python3 /opt/facefusion/run.py";
+  process.env.FACE_SWAP_CMD?.trim() || "python3 -m facefusion";
 const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || "")
   .split(/\s+/)
   .filter(Boolean);
+const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
 
 /**
  * swapFaceOnVideo
@@ -95,6 +96,7 @@ export async function swapFaceOnVideo({
 
   // 4) Run FaceFusion
   await run(cmd, args, {
+    cwd: FACEFUSION_CWD,
     env: {
       ...process.env,
       FACEFUSION_CACHE_DIR: process.env.FACEFUSION_CACHE_DIR || "/cache",
@@ -103,6 +105,15 @@ export async function swapFaceOnVideo({
       INSIGHTFACE_HOME: process.env.INSIGHTFACE_HOME || "/cache/insightface",
     },
   });
+
+  // 4.1) Make sure FaceFusion actually produced an output
+  const produced = await fs
+    .stat(outVideoPath)
+    .then((s) => s.isFile() && s.size > 0)
+    .catch(() => false);
+  if (!produced) {
+    throw new Error("FaceFusion didn’t produce an output video");
+  }
 
   // 5) Read output
   const out = await fs.readFile(outVideoPath);

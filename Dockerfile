@@ -1,6 +1,9 @@
 # Use bookworm so we get Python 3.11
 FROM node:20-bookworm
 
+# Faster/cleaner pip
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
 # System deps for FaceFusion/OpenCV + ffmpeg + git
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -23,13 +26,17 @@ ENV PATH="/opt/ffenv/bin:${PATH}"
 RUN pip install --upgrade pip setuptools wheel
 
 # ---- FaceFusion (CPU) from GitHub ----
-    RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
-    && pip install --upgrade pip setuptools wheel \
-    # Force a NumPy compatible with opencv-python 4.12.0.88 (needs <2.3.0)
-    && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
-    # Install repo requirements (now consistent)
-    && pip install --no-cache-dir -r /opt/facefusion/requirements.txt
+RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion \
+ && pip install --upgrade pip setuptools wheel \
+ # Force a NumPy compatible with opencv-python 4.12.0.88 (needs <2.3.0)
+ && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
+ # Install repo requirements (now consistent)
+ && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
+ # Drop any pip cache that might still exist
+ && rm -rf /root/.cache/pip
 
+# Make repo importable when running "python3 -m facefusion"
+ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
 # App code
 COPY . .
@@ -40,5 +47,5 @@ ENV FACEFUSION_CACHE_DIR=/cache \
     HF_HOME=/cache/hf \
     INSIGHTFACE_HOME=/cache/insightface
 
-# Run one cycle by default; your worker loop/env can override
+# Run the continuous worker loop by default
 CMD ["node", "cron/weeklyGenerator.js"]
