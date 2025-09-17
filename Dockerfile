@@ -38,6 +38,11 @@ RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion
 # Make repo importable when running "python3 -m facefusion"
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
+# Sensible defaults (Render env can override if you really want)
+ENV FACE_SWAP_CMD="python3 -m facefusion" \
+    FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong" \
+    FACEFUSION_CWD="/opt/facefusion"
+
 # App code
 COPY . .
 

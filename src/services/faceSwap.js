@@ -23,11 +23,13 @@ function run(cmd, args, opts = {}) {
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
 // Example env in Render:
-// FACE_SWAP_CMD=python3 -m facefusion
-// FACE_SWAP_ARGS_BASE=--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong
-const FACE_SWAP_CMD =
-  process.env.FACE_SWAP_CMD?.trim() || "python3 -m facefusion";
-const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || "")
+const DEFAULT_FACE_SWAP_ARGS_BASE =
+  "--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong";
+const DEFAULT_CMD = "python3 -m facefusion";
+const FACE_SWAP_CMD = process.env.FACE_SWAP_CMD?.trim() || DEFAULT_CMD;
+const FACE_SWAP_ARGS_BASE = (
+  process.env.FACE_SWAP_ARGS_BASE || DEFAULT_FACE_SWAP_ARGS_BASE
+)
   .split(/\s+/)
   .filter(Boolean);
 const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
@@ -77,8 +79,20 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
+  let cmdString = FACE_SWAP_CMD;
+  if (/run\.py/.test(cmdString)) {
+    try {
+      await fs.access("/opt/facefusion/run.py");
+    } catch {
+      console.warn(
+        '[FaceSwap] FACE_SWAP_CMD points to run.py but file is missing; falling back to "python3 -m facefusion".'
+      );
+      cmdString = DEFAULT_CMD;
+    }
+  }
+
   // 3) Parse command + args
-  const parts = FACE_SWAP_CMD.split(/\s+/).filter(Boolean);
+  const parts = cmdString.split(/\s+/).filter(Boolean);
   const cmd = parts.shift();
   if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
 
