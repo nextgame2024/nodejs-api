@@ -30,27 +30,24 @@ RUN git clone --depth 1 https://github.com/facefusion/facefusion /opt/facefusion
  && pip install --upgrade pip setuptools wheel \
  # Force a NumPy compatible with opencv-python 4.12.0.88 (needs <2.3.0)
  && sed -i 's/^numpy==.*/numpy==2.2.6/' /opt/facefusion/requirements.txt \
- # Install repo requirements (now consistent)
+ # Install repo requirements
  && pip install --no-cache-dir -r /opt/facefusion/requirements.txt \
- # Drop any pip cache that might still exist
  && rm -rf /root/.cache/pip
 
-# Make repo importable when running "python3 -m facefusion"
+# Make repo importable (just in case)
 ENV PYTHONPATH="/opt/facefusion:${PYTHONPATH}"
 
-# Sensible defaults (Render env can override if you really want)
-ENV FACE_SWAP_CMD="python3 -m facefusion" \
+# Sensible defaults (Render env can override)
+ENV FACE_SWAP_CMD="python3 /opt/facefusion/run.py" \
     FACE_SWAP_ARGS_BASE="--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong" \
-    FACEFUSION_CWD="/opt/facefusion"
-
-# App code
-COPY . .
-
-# Cache dirs (mount a Render disk to /cache for persistence)
-ENV FACEFUSION_CACHE_DIR=/cache \
+    FACEFUSION_CWD="/opt/facefusion" \
+    FACEFUSION_CACHE_DIR=/cache \
     XDG_CACHE_HOME=/cache/xdg \
     HF_HOME=/cache/hf \
     INSIGHTFACE_HOME=/cache/insightface
+
+# App code
+COPY . .
 
 # Run the continuous worker loop by default
 CMD ["node", "cron/weeklyGenerator.js"]

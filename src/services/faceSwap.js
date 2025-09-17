@@ -22,10 +22,9 @@ function run(cmd, args, opts = {}) {
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-// Example env in Render:
 const DEFAULT_FACE_SWAP_ARGS_BASE =
   "--headless --execution-provider cpu --face-selector-mode best --seamless --face-enhancer codeformer --color-transfer strong";
-const DEFAULT_CMD = "python3 -m facefusion";
+const DEFAULT_CMD = "python3 /opt/facefusion/run.py";
 const FACE_SWAP_CMD = process.env.FACE_SWAP_CMD?.trim() || DEFAULT_CMD;
 const FACE_SWAP_ARGS_BASE = (
   process.env.FACE_SWAP_ARGS_BASE || DEFAULT_FACE_SWAP_ARGS_BASE
@@ -37,10 +36,10 @@ const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
 /**
  * swapFaceOnVideo
  * @param {Object} p
- * @param {Buffer} p.faceBytes                 User photo bytes (PNG/JPEG).
- * @param {string} [p.baseVideoUrl]            Public/presigned URL to base video.
- * @param {Buffer} [p.baseVideoBytes]          Base video bytes (alternative to URL).
- * @param {string[]} [p.extraArgs]             Extra FaceFusion CLI flags.
+ * @param {Buffer} p.faceBytes
+ * @param {string} [p.baseVideoUrl]
+ * @param {Buffer} [p.baseVideoBytes]
+ * @param {string[]} [p.extraArgs]
  * @returns {Promise<{ bytes: Buffer, mime: string }>}
  */
 export async function swapFaceOnVideo({
@@ -64,40 +63,20 @@ export async function swapFaceOnVideo({
   const inVideoPath = path.join(TMP_DIR, `in_${ts}.mp4`);
   const outVideoPath = path.join(TMP_DIR, `out_${ts}.mp4`);
 
-  // 1) Write face image
+  // 1) Write temp inputs
   await fs.writeFile(facePath, faceBytes);
-
-  // 2) Prepare base video (download or write bytes)
   if (baseVideoBytes && Buffer.isBuffer(baseVideoBytes)) {
     await fs.writeFile(inVideoPath, baseVideoBytes);
   } else {
     const resp = await fetch(baseVideoUrl);
-    if (!resp.ok) {
+    if (!resp.ok)
       throw new Error(`Failed to fetch base video (${resp.status})`);
-    }
     const ab = await resp.arrayBuffer();
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
-  let cmdString = FACE_SWAP_CMD;
-  if (/run\.py/.test(cmdString)) {
-    try {
-      await fs.access("/opt/facefusion/run.py");
-    } catch {
-      console.warn(
-        '[FaceSwap] FACE_SWAP_CMD points to run.py but file is missing; falling back to "python3 -m facefusion".'
-      );
-      cmdString = DEFAULT_CMD;
-    }
-  }
-
-  // 3) Parse command + args
-  const parts = cmdString.split(/\s+/).filter(Boolean);
-  const cmd = parts.shift();
-  if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
-
-  const args = [
-    ...parts,
+  // 2) Build command candidates (try both run.py and -m facefusion)
+  const baseTail = [
     ...FACE_SWAP_ARGS_BASE,
     "--source",
     facePath,
@@ -108,37 +87,60 @@ export async function swapFaceOnVideo({
     ...extraArgs,
   ];
 
-  // 4) Run FaceFusion
-  await run(cmd, args, {
-    cwd: FACEFUSION_CWD,
-    env: {
-      ...process.env,
-      FACEFUSION_CACHE_DIR: process.env.FACEFUSION_CACHE_DIR || "/cache",
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || "/cache/xdg",
-      HF_HOME: process.env.HF_HOME || "/cache/hf",
-      INSIGHTFACE_HOME: process.env.INSIGHTFACE_HOME || "/cache/insightface",
-    },
-  });
+  const candidates = [];
+  const pushCmd = (cmdStr) => {
+    const parts = cmdStr.split(/\s+/).filter(Boolean);
+    const cmd = parts.shift();
+    if (cmd) candidates.push({ cmd, args: [...parts, ...baseTail] });
+  };
 
-  // 4.1) Make sure FaceFusion actually produced an output
+  // Primary from env (or default)
+  pushCmd(FACE_SWAP_CMD);
+
+  // Fallbacks (only add if different from primary)
+  if (!/run\.py/.test(FACE_SWAP_CMD)) pushCmd("python3 /opt/facefusion/run.py");
+  if (!/-m\s+facefusion/.test(FACE_SWAP_CMD)) pushCmd("python3 -m facefusion");
+  // Ensure venv python is tried explicitly as a last resort
+  pushCmd("/opt/ffenv/bin/python3 /opt/facefusion/run.py");
+
+  // 3) Try each candidate until one works
+  let lastErr;
+  for (const c of candidates) {
+    try {
+      await run(c.cmd, c.args, {
+        cwd: FACEFUSION_CWD,
+        env: {
+          ...process.env,
+          FACEFUSION_CACHE_DIR: process.env.FACEFUSION_CACHE_DIR || "/cache",
+          XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || "/cache/xdg",
+          HF_HOME: process.env.HF_HOME || "/cache/hf",
+          INSIGHTFACE_HOME:
+            process.env.INSIGHTFACE_HOME || "/cache/insightface",
+        },
+      });
+      lastErr = undefined;
+      break; // success
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[FaceSwap] Candidate failed: ${c.cmd} ${c.args.join(" ")}`);
+    }
+  }
+  if (lastErr) throw lastErr;
+
+  // 4) Ensure output exists
   const produced = await fs
     .stat(outVideoPath)
     .then((s) => s.isFile() && s.size > 0)
     .catch(() => false);
-  if (!produced) {
-    throw new Error("FaceFusion didn’t produce an output video");
-  }
+  if (!produced) throw new Error("FaceFusion didn’t produce an output video");
 
-  // 5) Read output
+  // 5) Read & cleanup
   const out = await fs.readFile(outVideoPath);
-
-  // Cleanup (best effort)
   try {
     await fs.unlink(facePath);
     await fs.unlink(inVideoPath);
     await fs.unlink(outVideoPath);
   } catch {}
-
   return { bytes: out, mime: "video/mp4" };
 }
 
