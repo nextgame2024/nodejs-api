@@ -32,8 +32,8 @@ const EXECUTION_PROVIDERS = (process.env.FACEFUSION_PROVIDERS || "cpu")
   .filter(Boolean);
 const THREADS = process.env.FACEFUSION_THREADS || "1";
 
-/** The new CLI only accepts many|one|reference */
-const FACE_SELECTOR_MODE = (process.env.FACE_SELECTOR_MODE || "one").trim();
+/** Valid selector options in current CLI */
+const FACE_SELECTOR_MODE = (process.env.FACE_SELECTOR_MODE || "one").trim(); // many|one|reference
 const FACE_SELECTOR_ORDER = (
   process.env.FACE_SELECTOR_ORDER || "best-worst"
 ).trim();
@@ -43,6 +43,13 @@ const FACE_SWAPPER_MODEL = process.env.FACE_SWAPPER_MODEL || "inswapper_128";
 /** Optional enhancer (turn on only if you have RAM for it) */
 const ENABLE_ENHANCER = (process.env.FACEFUSION_ENABLE_ENHANCER || "0") === "1";
 const FACE_ENHANCER_MODEL = process.env.FACE_ENHANCER_MODEL || "codeformer";
+
+/** Pre-scaling to cut RAM/CPU */
+const PRESCALE_MAX_WIDTH = parseInt(
+  process.env.PRESCALE_MAX_WIDTH || "960",
+  10
+); // ~540p width
+const PRESCALE_FPS = parseInt(process.env.PRESCALE_FPS || "20", 10);
 
 /**
  * swapFaceOnVideo
@@ -72,6 +79,7 @@ export async function swapFaceOnVideo({
   const ts = Date.now();
   const facePath = path.join(TMP_DIR, `face_${ts}.jpg`);
   const inVideoPath = path.join(TMP_DIR, `in_${ts}.mp4`);
+  const prescaledPath = path.join(TMP_DIR, `pre_${ts}.mp4`);
   const outVideoPath = path.join(TMP_DIR, `out_${ts}.mp4`);
 
   // Write inputs
@@ -86,6 +94,25 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
+  // ---- Pre-scale to reduce RAM (biggest saver) ----
+  // - scale video to <= PRESCALE_MAX_WIDTH (keep aspect) and lower FPS
+  // - veryfast/ultrafast preset keeps CPU low
+  await run("ffmpeg", [
+    "-y",
+    "-i",
+    inVideoPath,
+    "-vf",
+    `scale='min(${PRESCALE_MAX_WIDTH},iw)':'-2',fps=${PRESCALE_FPS}`,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-crf",
+    "28",
+    "-an",
+    prescaledPath,
+  ]);
+
   const processors = ["face_swapper"];
   if (ENABLE_ENHANCER) processors.push("face_enhancer");
 
@@ -93,19 +120,32 @@ export async function swapFaceOnVideo({
   const cmd = parts.shift();
   if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
 
+  // ---- FaceFusion args (headless-run) tuned for 2 GB CPU workers ----
   const args = [
     ...parts,
-    FACEFUSION_SUBCOMMAND, // "headless-run"
+    FACEFUSION_SUBCOMMAND,
+
     "--execution-providers",
     ...EXECUTION_PROVIDERS,
     "--execution-thread-count",
     THREADS,
 
-    // NEW: valid selector options in latest CLI
     "--face-selector-mode",
-    FACE_SELECTOR_MODE, // many|one|reference
+    FACE_SELECTOR_MODE,
     "--face-selector-order",
-    FACE_SELECTOR_ORDER, // best-worst, left-right, etc.
+    FACE_SELECTOR_ORDER,
+
+    // Lighter detector/landmarker models
+    "--face-detector-model",
+    "yunet",
+    "--face-landmarker-model",
+    "2dfan4",
+
+    // Keep memory tight on CPU
+    "--video-memory-strategy",
+    "strict",
+    "--system-memory-limit",
+    "2",
 
     "--processors",
     ...processors,
@@ -113,11 +153,17 @@ export async function swapFaceOnVideo({
     FACE_SWAPPER_MODEL,
     ...(ENABLE_ENHANCER ? ["--face-enhancer-model", FACE_ENHANCER_MODEL] : []),
 
-    // Canonical flags for headless-run
+    // Output encoding that keeps CPU + RAM low
+    "--output-video-encoder",
+    "libx264",
+    "--output-video-preset",
+    "ultrafast",
+
+    // Canonical I/O flags for headless-run
     "-s",
     facePath,
     "-t",
-    inVideoPath,
+    prescaledPath,
     "-o",
     outVideoPath,
 
@@ -147,6 +193,7 @@ export async function swapFaceOnVideo({
   try {
     await fs.unlink(facePath);
     await fs.unlink(inVideoPath);
+    await fs.unlink(prescaledPath);
     await fs.unlink(outVideoPath);
   } catch {}
 
