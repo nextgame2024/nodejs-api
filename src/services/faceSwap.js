@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-/** Run a command and stream output */
+/** Small helper to run a process and stream its output */
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: "inherit", shell: false, ...opts });
@@ -18,19 +18,32 @@ function run(cmd, args, opts = {}) {
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-const DEFAULT_ARGS =
-  "--processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer --execution-providers cpu--processors face_swapper face_enhancer --face-swapper-model inswapper_128 --face-enhancer-model codeformer --execution-providers cpu";
-
-const FACE_SWAP_ARGS_BASE = (process.env.FACE_SWAP_ARGS_BASE || DEFAULT_ARGS)
-  .split(/\s+/)
+/**
+ * Defaults chosen for low-RAM CPU workers.
+ * Toggle with env vars in Render as needed.
+ */
+const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
+const FACE_SWAP_CMD = (
+  process.env.FACE_SWAP_CMD || "python3 /opt/facefusion/facefusion.py"
+).trim();
+const FACEFUSION_SUBCOMMAND = (
+  process.env.FACEFUSION_SUBCOMMAND || "headless-run"
+).trim(); // or "run"
+const EXECUTION_PROVIDERS = (process.env.FACEFUSION_PROVIDERS || "cpu")
+  .split(",")
+  .map((s) => s.trim())
   .filter(Boolean);
 
-const FACEFUSION_CWD = process.env.FACEFUSION_CWD || "/opt/facefusion";
-const FACE_SWAP_CMD =
-  (process.env.FACE_SWAP_CMD && process.env.FACE_SWAP_CMD.trim()) ||
-  "python3 /opt/facefusion/facefusion.py";
+const THREADS = process.env.FACEFUSION_THREADS || "1"; // keep memory low
+const FACE_SELECTOR_MODE = process.env.FACE_SELECTOR_MODE || "best";
+const FACE_SWAPPER_MODEL = process.env.FACE_SWAPPER_MODEL || "inswapper_128";
+
+// Enable enhancer when you have more RAM
+const ENABLE_ENHANCER = (process.env.FACEFUSION_ENABLE_ENHANCER || "0") === "1";
+const FACE_ENHANCER_MODEL = process.env.FACE_ENHANCER_MODEL || "codeformer";
 
 /**
+ * swapFaceOnVideo
  * @param {Object} p
  * @param {Buffer} p.faceBytes
  * @param {string} [p.baseVideoUrl]
@@ -59,7 +72,7 @@ export async function swapFaceOnVideo({
   const inVideoPath = path.join(TMP_DIR, `in_${ts}.mp4`);
   const outVideoPath = path.join(TMP_DIR, `out_${ts}.mp4`);
 
-  // Inputs
+  // Write temp inputs
   await fs.writeFile(facePath, faceBytes);
   if (baseVideoBytes && Buffer.isBuffer(baseVideoBytes)) {
     await fs.writeFile(inVideoPath, baseVideoBytes);
@@ -71,21 +84,34 @@ export async function swapFaceOnVideo({
     await fs.writeFile(inVideoPath, Buffer.from(ab));
   }
 
-  // Build args: subcommand FIRST, then options
-  const baseCmdParts = FACE_SWAP_CMD.split(/\s+/).filter(Boolean);
-  const cmd = baseCmdParts.shift();
+  // Build args for the current FaceFusion CLI
+  const processors = ["face_swapper"];
+  if (ENABLE_ENHANCER) processors.push("face_enhancer");
+
+  const parts = FACE_SWAP_CMD.split(/\s+/).filter(Boolean);
+  const cmd = parts.shift();
   if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
 
   const args = [
-    ...baseCmdParts,
-    "run",
-    ...FACE_SWAP_ARGS_BASE,
+    ...parts,
+    FACEFUSION_SUBCOMMAND, // "headless-run" or "run"
+    "--execution-providers",
+    ...EXECUTION_PROVIDERS,
+    "--execution-thread-count",
+    THREADS,
+    "--face-selector-mode",
+    FACE_SELECTOR_MODE,
+    "--processors",
+    ...processors,
+    "--face-swapper-model",
+    FACE_SWAPPER_MODEL,
+    ...(ENABLE_ENHANCER ? ["--face-enhancer-model", FACE_ENHANCER_MODEL] : []),
     "--source",
     facePath,
     "--target",
     inVideoPath,
     "--output-path",
-    outVideoPath,
+    outVideoPath, // <-- IMPORTANT: output-path (not --output)
     ...extraArgs,
   ];
 
@@ -100,6 +126,7 @@ export async function swapFaceOnVideo({
     },
   });
 
+  // Ensure output exists
   const ok = await fs
     .stat(outVideoPath)
     .then((s) => s.isFile() && s.size > 0)
@@ -107,11 +134,14 @@ export async function swapFaceOnVideo({
   if (!ok) throw new Error("FaceFusion didn’t produce an output video");
 
   const out = await fs.readFile(outVideoPath);
+
+  // Cleanup (best effort)
   try {
     await fs.unlink(facePath);
     await fs.unlink(inVideoPath);
     await fs.unlink(outVideoPath);
   } catch {}
+
   return { bytes: out, mime: "video/mp4" };
 }
 
