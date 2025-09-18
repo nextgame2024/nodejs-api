@@ -52,7 +52,9 @@ ENV FACE_SWAP_CMD="python3 /opt/facefusion/facefusion.py" \
     OMP_NUM_THREADS="1" MKL_NUM_THREADS="1" OPENBLAS_NUM_THREADS="1" NUMEXPR_NUM_THREADS="1" \
     # ffmpeg pre-scale defaults (can override via Render env)
     PRESCALE_MAX_WIDTH="960" \
-    PRESCALE_FPS="20"
+    PRESCALE_FPS="20" \
+    # OPTIONAL: only 0,4,8,...,128 allowed by FaceFusion. Keep 0 to omit.
+    SYSTEM_MEMORY_LIMIT="0"
 
 # App code
 COPY . .

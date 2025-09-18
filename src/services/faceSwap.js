@@ -51,6 +51,16 @@ const PRESCALE_MAX_WIDTH = parseInt(
 ); // ~540p width
 const PRESCALE_FPS = parseInt(process.env.PRESCALE_FPS || "20", 10);
 
+/** Optional system memory limit (FaceFusion accepts 0,4,8,...,128 only) */
+const SYSTEM_MEMORY_LIMIT = (() => {
+  const raw = parseInt(process.env.SYSTEM_MEMORY_LIMIT || "0", 10);
+  const allowed = new Set([
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76,
+    80, 84, 88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128,
+  ]);
+  return allowed.has(raw) ? raw : 0; // 0 => omit
+})();
+
 /**
  * swapFaceOnVideo
  * @param {Object} p
@@ -95,8 +105,6 @@ export async function swapFaceOnVideo({
   }
 
   // ---- Pre-scale to reduce RAM (biggest saver) ----
-  // - scale video to <= PRESCALE_MAX_WIDTH (keep aspect) and lower FPS
-  // - veryfast/ultrafast preset keeps CPU low
   await run("ffmpeg", [
     "-y",
     "-i",
@@ -120,7 +128,6 @@ export async function swapFaceOnVideo({
   const cmd = parts.shift();
   if (!cmd) throw new Error("FACE_SWAP_CMD is empty");
 
-  // ---- FaceFusion args (headless-run) tuned for 2 GB CPU workers ----
   const args = [
     ...parts,
     FACEFUSION_SUBCOMMAND,
@@ -144,8 +151,10 @@ export async function swapFaceOnVideo({
     // Keep memory tight on CPU
     "--video-memory-strategy",
     "strict",
-    "--system-memory-limit",
-    "2",
+    // Only pass system-memory-limit when valid (0 is omitted)
+    ...(SYSTEM_MEMORY_LIMIT
+      ? ["--system-memory-limit", String(SYSTEM_MEMORY_LIMIT)]
+      : []),
 
     "--processors",
     ...processors,
