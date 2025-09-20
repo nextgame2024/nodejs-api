@@ -25,7 +25,7 @@ import {
   genNarrationFromPrompt,
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
-import { swapFaceOnVideoViaPod } from "./faceSwap.pod.js";
+import { swapFaceOnVideoViaPod } from "../src/services/faceSwap.pod";
 
 const bucket = process.env.S3_BUCKET;
 
@@ -327,8 +327,8 @@ async function processOnePaidJob(jobId) {
 
     // (C) face-swap — pass the names your wrapper expects
     const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
-      faceKey: faceKey,
-      videoKey: baseKey,
+      faceKey: job.image_key,
+      videoKey: baseAsset.s3_key,
       // extraArgs: ["--face-color-corrections", "rct"] // if you add pass-through later
     });
 
