@@ -25,7 +25,7 @@ import {
   genNarrationFromPrompt,
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
-import swapFaceOnVideo from "../src/services/faceSwap.js";
+import swapFaceOnVideo from "../src/services/faceSwap.pod.js";
 
 const bucket = process.env.S3_BUCKET;
 
@@ -326,13 +326,10 @@ async function processOnePaidJob(jobId) {
     );
 
     // (C) face-swap — pass the names your wrapper expects
-    const { bytes: swappedBytes, mime } = await swapFaceOnVideo({
-      faceBytes: userImageBytes, // <-- fix: expected name
-      videoBytes: baseVideoBytes, // <-- fix: expected name (also pass baseVideoBytes for compatibility)
-      baseVideoBytes, // (compat) in case your wrapper accepts this alias
-      // you can add extra options if supported by your wrapper:
-      // strength: Number(process.env.FACEFUSION_STRENGTH || 0.85),
-      // upscale: false,
+    const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
+      faceKey: job.image_key,
+      videoKey: baseAsset.s3_key,
+      // extraArgs: ["--face-color-corrections", "rct"] // if you add pass-through later
     });
 
     if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
