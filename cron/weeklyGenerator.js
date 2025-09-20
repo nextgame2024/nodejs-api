@@ -25,7 +25,7 @@ import {
   genNarrationFromPrompt,
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
-import swapFaceOnVideo from "../src/services/faceSwap.pod.js";
+import swapFaceOnVideoViaPod from "../src/services/faceSwap.pod.js";
 
 const bucket = process.env.S3_BUCKET;
 
