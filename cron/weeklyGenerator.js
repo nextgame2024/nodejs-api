@@ -302,52 +302,80 @@ async function processOnePaidJob(jobId) {
       throw new Error("No base video asset for article (missing s3_key)");
     }
 
-    // fetch the base teaser video from S3
-    const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
-    if (!Buffer.isBuffer(baseVideoBytes) || baseVideoBytes.length === 0) {
-      throw new Error(
-        `Base video missing/empty. s3_key=${baseAsset.s3_key} len=${baseVideoBytes?.length || 0}`
-      );
-    }
-
-    // (B) the user's uploaded headshot
+    // (B) the user's uploaded headshot (S3 object key only; no download here)
     if (!job.image_key) throw new Error("render_job missing image_key");
 
-    const userImageBytes = await getObjectBuffer(job.image_key);
-    if (!Buffer.isBuffer(userImageBytes) || userImageBytes.length === 0) {
-      throw new Error(
-        `User image missing/empty. image_key=${job.image_key} len=${userImageBytes?.length || 0}`
+    const useServerless =
+      String(process.env.USE_SERVERLESS).toLowerCase() === "true";
+    console.log(
+      `[${nowIso()}] [RENDER] swap start job=${jobId} faceKey=${job.image_key} baseKey=${baseAsset.s3_key} mode=${
+        useServerless ? "SERVERLESS" : "POD"
+      }`
+    );
+
+    // (C) face-swap
+    let outKey;
+    if (useServerless) {
+      // —— Serverless path: send S3 URLs, worker uploads result to S3 ——
+      const { swapFaceViaServerless } = await import(
+        "../src/services/faceSwap.serverless.js"
+      );
+      const result = await swapFaceViaServerless({
+        jobId,
+        faceKey: job.image_key,
+        videoKey: baseAsset.s3_key,
+        // Optional per-job overrides:
+        // scale: 0.6,
+        // frameStride: 1,
+        // maxFrames: 0,
+      });
+      outKey = result.outKey; // worker already uploaded to this key
+      // result.signedUrl is also available if you want to show it immediately
+    } else {
+      // —— Pod fallback: your existing implementation (downloads bytes, uploads to S3) ——
+      // fetch the base teaser video from S3 (bytes) for logging/validation
+      const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
+      if (!Buffer.isBuffer(baseVideoBytes) || baseVideoBytes.length === 0) {
+        throw new Error(
+          `Base video missing/empty. s3_key=${baseAsset.s3_key} len=${baseVideoBytes?.length || 0}`
+        );
+      }
+
+      // fetch user image (bytes) for logging/validation
+      const userImageBytes = await getObjectBuffer(job.image_key);
+      if (!Buffer.isBuffer(userImageBytes) || userImageBytes.length === 0) {
+        throw new Error(
+          `User image missing/empty. image_key=${job.image_key} len=${userImageBytes?.length || 0}`
+        );
+      }
+
+      console.log(
+        `[${nowIso()}] [RENDER] (pod) sizes face=${userImageBytes.length}B video=${baseVideoBytes.length}B`
+      );
+
+      const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
+        faceKey: job.image_key,
+        videoKey: baseAsset.s3_key,
+        // extraArgs: ["--face-color-corrections", "rct"] // if you add pass-through later
+      });
+
+      if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
+        throw new Error("Face-swap returned empty output buffer");
+      }
+
+      // Upload final result
+      outKey = `renders/${jobId}/output.mp4`;
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: outKey,
+          Body: swappedBytes,
+          ContentType: mime || "video/mp4",
+        })
       );
     }
 
-    console.log(
-      `[${nowIso()}] [RENDER] swap start job=${jobId} faceKey=${job.image_key} baseKey=${baseAsset.s3_key} ` +
-        `sizes face=${userImageBytes.length}B video=${baseVideoBytes.length}B`
-    );
-
-    // (C) face-swap — pass the names your wrapper expects
-    const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
-      faceKey: job.image_key,
-      videoKey: baseAsset.s3_key,
-      // extraArgs: ["--face-color-corrections", "rct"] // if you add pass-through later
-    });
-
-    if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
-      throw new Error("Face-swap returned empty output buffer");
-    }
-
-    // (D) upload final
-    const outKey = `renders/${jobId}/output.mp4`;
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: outKey,
-        Body: swappedBytes,
-        ContentType: mime || "video/mp4",
-      })
-    );
-
-    // (E) mark done (+expiry)
+    // (D) mark done (+expiry) — same as before, UI keeps working
     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
 
