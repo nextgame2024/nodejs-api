@@ -74,19 +74,71 @@ export async function genNarrationFromPrompt(veoPrompt) {
     .trim();
 }
 
+/* ---------------- Robust retry helper ---------------- */
+async function retry(fn, attempts = 3, delayMs = 1500) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, delayMs * Math.pow(2, i))); // expo backoff
+      }
+    }
+  }
+  throw last;
+}
+
 /* ---------------- Image (from the SAME Veo prompt) ---------------- */
 export async function genImageBytes(prompt) {
-  const resp = await ai.models.generateImages({
-    model: IMAGE_MODEL,
-    prompt,
+  return retry(async () => {
+    const resp = await ai.models.generateImages({
+      model: IMAGE_MODEL,
+      prompt,
+    });
+
+    const img = resp?.generatedImages?.[0]?.image;
+    if (!img?.imageBytes) {
+      // Log shape to help diagnose occasional API shape shifts
+      console.warn(
+        "[gemini] Unexpected image payload:",
+        JSON.stringify(resp)?.slice(0, 800)
+      );
+      throw new Error("Imagen did not return image bytes");
+    }
+
+    const bytes = Buffer.from(img.imageBytes, "base64");
+    const mime = img.mimeType || "image/png";
+    return { bytes, mime };
   });
+}
 
-  const img = resp?.generatedImages?.[0]?.image;
-  if (!img?.imageBytes) throw new Error("Imagen did not return image bytes");
+/* ---------------- Video generators ---------------- */
 
-  const bytes = Buffer.from(img.imageBytes, "base64");
-  const mime = img.mimeType || "image/png";
-  return { bytes, mime };
+/** Template-only video (no identity reference). Use for article teaser generation. */
+export async function genVideoBytesFromPrompt(effectPrompt) {
+  const fullPrompt = `${PLATFORM_WRAPPER}\n\nEFFECT PROMPT:\n${effectPrompt}`;
+  return runVeoAndDownload({ prompt: fullPrompt });
+}
+
+/** Identity-conditioned video (user face). Use for paid renders. */
+export async function genVideoBytesFromPromptAndImage(
+  effectPrompt,
+  sourceImageBytes
+) {
+  if (!sourceImageBytes) {
+    // Fallback to template-only if no image provided
+    return genVideoBytesFromPrompt(effectPrompt);
+  }
+  const { out: refBuf, mime: refMime } =
+    await prepareIdentityRef(sourceImageBytes);
+  const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
+  return runVeoAndDownload({
+    prompt: fullPrompt,
+    imageBase64: refBuf.toString("base64"),
+    imageMime: refMime, // PNG if masked (alpha), else JPEG
+  });
 }
 
 /* ---------------- Helpers for Veo video download ---------------- */
@@ -225,31 +277,4 @@ async function prepareIdentityRef(buf) {
     );
     return { out: buf, mime: "image/jpeg" };
   }
-}
-
-/* ---------------- Video generators ---------------- */
-
-/** Template-only video (no identity reference). Use for article teaser generation. */
-export async function genVideoBytesFromPrompt(effectPrompt) {
-  const fullPrompt = `${PLATFORM_WRAPPER}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-  return runVeoAndDownload({ prompt: fullPrompt });
-}
-
-/** Identity-conditioned video (user face). Use for paid renders. */
-export async function genVideoBytesFromPromptAndImage(
-  effectPrompt,
-  sourceImageBytes
-) {
-  if (!sourceImageBytes) {
-    // Fallback to template-only if no image provided
-    return genVideoBytesFromPrompt(effectPrompt);
-  }
-  const { out: refBuf, mime: refMime } =
-    await prepareIdentityRef(sourceImageBytes);
-  const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-  return runVeoAndDownload({
-    prompt: fullPrompt,
-    imageBase64: refBuf.toString("base64"),
-    imageMime: refMime, // PNG if masked (alpha), else JPEG
-  });
 }

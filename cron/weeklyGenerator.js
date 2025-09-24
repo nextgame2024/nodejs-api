@@ -27,17 +27,16 @@ import {
 import { ttsToBuffer } from "../src/services/polly.js";
 import { swapFaceOnVideoViaPod } from "../src/services/faceSwap.pod.js";
 
-const bucket = process.env.S3_BUCKET;
-
 /* =========================
    CONFIG (env-overridable)
    ========================= */
+const bucket = process.env.S3_BUCKET;
 const BRISBANE_TZ = "Australia/Brisbane";
 const LOCK_ID = Number(process.env.CRON_LOCK_ID || 43434343);
 const SWEEP_BATCH = Number(process.env.RENDER_SWEEP_BATCH || 2); // paid jobs per minute
 const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
 
-// defaults you requested: 1am articles, 3am cleanup
+// defaults: 1am articles, 3am cleanup
 const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 1);
 const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 
@@ -45,6 +44,12 @@ const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 const LOOP_MS = Number(process.env.WORKER_LOOP_MS || 60_000);
 
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
+
+// Testing convenience: force an article run regardless of the hour
+const RUN_ONCE =
+  process.argv.includes("--once") || process.env.RUN_ONCE === "1";
+const FORCE_ARTICLE =
+  process.argv.includes("--article-now") || process.env.FORCE_ARTICLE === "1";
 
 /* ============ utils ============ */
 function nowIso() {
@@ -151,6 +156,10 @@ async function markVideoPromptUsed(client, id) {
   );
 }
 
+/**
+ * Generate a new article + media from the next unused row in video_prompts.
+ * Each media type is now best-effort and independently attempted (image, video, audio).
+ */
 async function generateFromVideoPromptOnce(status = "published") {
   if (!SYSTEM_AUTHOR_ID)
     throw new Error("SYSTEM_AUTHOR_ID env var is required");
@@ -192,9 +201,10 @@ async function generateFromVideoPromptOnce(status = "published") {
       `[${nowIso()}] [OK] Tags: [${(tagList.length ? tagList : ["content-ai"]).join(", ")}]`
     );
 
-    // Media: hero image, template-only teaser video, narration (best-effort)
+    // ======= MEDIA (decoupled tries; best-effort on each) =======
+
+    // (1) Image
     try {
-      // Image
       const { bytes: imgBytes, mime: imgMime } =
         await genImageBytes(articlePrompt);
       const imgKey = `articles/${slug}/hero.png`;
@@ -211,9 +221,16 @@ async function generateFromVideoPromptOnce(status = "published") {
         mimeType: imgMime,
       });
       console.log(`[${nowIso()}] [OK] Image asset inserted.`);
+    } catch (err) {
+      console.warn(
+        `[${nowIso()}] [WARN] Image generation skipped:`,
+        err?.message || err
+      );
+    }
 
-      // Video (template-only)
-      if (process.env.DISABLE_VIDEO !== "true") {
+    // (2) Video (template-only)
+    if (process.env.DISABLE_VIDEO !== "true") {
+      try {
         const {
           bytes: vidBytes,
           mime: vidMime,
@@ -234,35 +251,35 @@ async function generateFromVideoPromptOnce(status = "published") {
           durationSec,
         });
         console.log(`[${nowIso()}] [OK] Video asset inserted.`);
-      }
-
-      // Audio narration
-      try {
-        const narration = await genNarrationFromPrompt(articlePrompt);
-        const voiceBuf = await ttsToBuffer(narration || articleTitle);
-        const voiceKey = `articles/${slug}/teaser.mp3`;
-        const voiceUrl = await putToS3({
-          key: voiceKey,
-          body: voiceBuf,
-          contentType: "audio/mpeg",
-        });
-        await insertAsset({
-          articleId,
-          type: "audio",
-          url: voiceUrl,
-          s3Key: voiceKey,
-          mimeType: "audio/mpeg",
-        });
-        console.log(`[${nowIso()}] [OK] Audio asset inserted.`);
       } catch (err) {
         console.warn(
-          `[${nowIso()}] [WARN] Audio generation skipped:`,
+          `[${nowIso()}] [WARN] Video generation skipped:`,
           err?.message || err
         );
       }
+    }
+
+    // (3) Audio narration
+    try {
+      const narration = await genNarrationFromPrompt(articlePrompt);
+      const voiceBuf = await ttsToBuffer(narration || articleTitle);
+      const voiceKey = `articles/${slug}/teaser.mp3`;
+      const voiceUrl = await putToS3({
+        key: voiceKey,
+        body: voiceBuf,
+        contentType: "audio/mpeg",
+      });
+      await insertAsset({
+        articleId,
+        type: "audio",
+        url: voiceUrl,
+        s3Key: voiceKey,
+        mimeType: "audio/mpeg",
+      });
+      console.log(`[${nowIso()}] [OK] Audio asset inserted.`);
     } catch (err) {
       console.warn(
-        `[${nowIso()}] [WARN] Media generation skipped:`,
+        `[${nowIso()}] [WARN] Audio generation skipped:`,
         err?.message || err
       );
     }
@@ -316,9 +333,9 @@ async function processOnePaidJob(jobId) {
     // (C) face-swap
     let outKey;
     if (useServerless) {
-      // —— Serverless path: send S3 URLs, worker uploads result to S3 ——
+      // —— Serverless path: worker uploads result to S3 ——
       const { swapFaceViaServerless } = await import(
-        "../src/services/faceSwap.serverless.js"
+        "./src/services/faceSwap.serverless.js"
       );
       const result = await swapFaceViaServerless({
         jobId,
@@ -329,11 +346,9 @@ async function processOnePaidJob(jobId) {
         // frameStride: 1,
         // maxFrames: 0,
       });
-      outKey = result.outKey; // worker already uploaded to this key
-      // result.signedUrl is also available if you want to show it immediately
+      outKey = result.outKey;
     } else {
-      // —— Pod fallback: your existing implementation (downloads bytes, uploads to S3) ——
-      // fetch the base teaser video from S3 (bytes) for logging/validation
+      // —— Pod fallback: download bytes, upload to S3 ——
       const baseVideoBytes = await getObjectBuffer(baseAsset.s3_key);
       if (!Buffer.isBuffer(baseVideoBytes) || baseVideoBytes.length === 0) {
         throw new Error(
@@ -341,7 +356,6 @@ async function processOnePaidJob(jobId) {
         );
       }
 
-      // fetch user image (bytes) for logging/validation
       const userImageBytes = await getObjectBuffer(job.image_key);
       if (!Buffer.isBuffer(userImageBytes) || userImageBytes.length === 0) {
         throw new Error(
@@ -356,7 +370,7 @@ async function processOnePaidJob(jobId) {
       const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
         faceKey: job.image_key,
         videoKey: baseAsset.s3_key,
-        // extraArgs: ["--face-color-corrections", "rct"] // if you add pass-through later
+        // extraArgs: ["--face-color-corrections", "rct"]
       });
 
       if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
@@ -375,7 +389,7 @@ async function processOnePaidJob(jobId) {
       );
     }
 
-    // (D) mark done (+expiry) — same as before, UI keeps working
+    // (D) mark done (+expiry)
     const expiresAt = new Date(Date.now() + EXPIRE_HOURS * 3600_000);
     await markDone({ id: jobId, outputKey: outKey, thumbKey: null, expiresAt });
 
@@ -416,8 +430,6 @@ async function cleanupExpired(limit = 200) {
 
 /* ============ ENTRY: worker loop ============ */
 
-const RUN_ONCE =
-  process.argv.includes("--once") || process.env.RUN_ONCE === "1";
 let lastArticleRunDay = null; // "YYYY-MM-DD"
 let lastCleanupRunDay = null; // "YYYY-MM-DD"
 
@@ -428,14 +440,18 @@ async function runCycle() {
     // 1) every minute — process a small batch of paid jobs
     await sweepPaid(SWEEP_BATCH);
 
-    // 2) daily cleanup at CLEANUP_HOUR
+    // 2) daily cleanup at CLEANUP_HOUR (once per day)
     if (clk.hour === CLEANUP_HOUR && lastCleanupRunDay !== clk.ymd) {
       await cleanupExpired(200);
       lastCleanupRunDay = clk.ymd;
     }
 
-    // 3) daily article creation at DAILY_ARTICLES_HOUR
-    if (clk.hour === DAILY_ARTICLES_HOUR && lastArticleRunDay !== clk.ymd) {
+    // 3) daily article creation at DAILY_ARTICLES_HOUR (or forced for testing)
+    const shouldRunArticle =
+      FORCE_ARTICLE ||
+      (clk.hour === DAILY_ARTICLES_HOUR && lastArticleRunDay !== clk.ymd);
+
+    if (shouldRunArticle) {
       try {
         await generateFromVideoPromptOnce("published");
       } catch (e) {
@@ -448,7 +464,9 @@ async function runCycle() {
 
 (async () => {
   if (RUN_ONCE) {
-    console.log(`[${nowIso()}] Running single cycle (--once).`);
+    console.log(
+      `[${nowIso()}] Running single cycle (--once${FORCE_ARTICLE ? " + --article-now" : ""}).`
+    );
     await runCycle();
     process.exit(0);
   } else {
