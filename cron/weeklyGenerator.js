@@ -335,7 +335,7 @@ async function processOnePaidJob(jobId) {
     if (useServerless) {
       // —— Serverless path: worker uploads result to S3 ——
       const { swapFaceViaServerless } = await import(
-        "./src/services/faceSwap.serverless.js"
+        "../src/services/faceSwap.serverless.js"
       );
       const result = await swapFaceViaServerless({
         jobId,
