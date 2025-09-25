@@ -13,13 +13,14 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   const found = await findByEmail(email);
-  console.log("User from DB:", found);
   if (!found) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  const match = await bcrypt.compare(password, String(found.password || ""));
-  console.log("Password match:", match);
+  const match = await bcrypt.compare(
+    String(password || ""),
+    String(found.password || "")
+  );
   if (!match) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
@@ -30,7 +31,6 @@ export const login = asyncHandler(async (req, res) => {
     username: found.username,
   });
 
-  // Coerce timestamps
   const createdAtISO = found.createdAt
     ? new Date(found.createdAt).toISOString()
     : null;
