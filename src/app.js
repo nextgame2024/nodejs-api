@@ -12,6 +12,8 @@ import { errorHandler } from "./middlewares/errorHandler.js";
 import diagRoutes from "./routes/diag.routes.js";
 import { paymentsRouter, stripeWebhookRoute } from "./routes/payment.routes.js";
 import rendersRoutes from "./routes/renders.routes.js";
+import teamRoutes from "./routes/team.routes.js";
+import employeeRoutes from "./routes/employee.routes.js";
 
 const app = express();
 
@@ -53,6 +55,8 @@ app.use("/api", tagRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api", paymentsRouter);
 app.use("/api", rendersRoutes);
+app.use("/api", teamRoutes);
+app.use("/api", employeeRoutes);
 
 // Error handler
 app.use(errorHandler);
