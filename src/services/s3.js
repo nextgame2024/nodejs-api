@@ -35,13 +35,17 @@ export async function putToS3({ key, body, contentType }) {
 }
 
 /** Presigned PUT (browser upload of user’s source image) */
-export async function signPutUrl(key, contentType, expiresSec = 600) {
+export async function signPutUrl(
+  key,
+  contentType = "application/octet-stream",
+  ttl = 60
+) {
   const cmd = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
   });
-  return presign(s3, cmd, { expiresIn: expiresSec });
+  return presign(s3, cmd, { expiresIn: ttl });
 }
 
 /** Presigned GET (private delivery of rendered video). Default TTL: 6h */

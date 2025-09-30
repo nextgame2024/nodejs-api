@@ -1,6 +1,6 @@
 import express from "express";
-import { signPutUrl } from "../services/s3.js"; // reuse your helper
-// import { authRequired } from '../middlewares/authJwt.js'; // uncomment if you already protect this route
+import { signPutUrl } from "../services/s3.js"; // the helper from s3.js
+// import { authRequired } from '../middlewares/authJwt.js';
 
 const router = express.Router();
 
@@ -9,11 +9,6 @@ const REGION =
 const BUCKET = process.env.S3_BUCKET;
 const PUBLIC_BASE = `https://${BUCKET}.s3.${REGION}.amazonaws.com`;
 
-/**
- * POST /api/uploads/presign
- * body: { filename: string, contentType?: string, folder?: string }
- * returns: { uploadUrl, objectKey, publicUrl, expiresIn }
- */
 router.post(
   "/uploads/presign",
   /*authRequired,*/ async (req, res, next) => {
@@ -23,15 +18,10 @@ router.post(
         contentType = "application/octet-stream",
         folder = "users",
       } = req.body || {};
-
-      // sanitize filename, keep extension if present
       const safe = String(filename).replace(/[^a-zA-Z0-9._-]/g, "-");
       const ext = safe.includes(".") ? safe.slice(safe.lastIndexOf(".")) : "";
       const key = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-
-      // Presign using the shared helper (no checksum fields added)
-      const uploadUrl = await signPutUrl(key, contentType, 60); // 60s TTL
-
+      const uploadUrl = await signPutUrl(key, contentType, 60);
       const publicUrl = `${PUBLIC_BASE}/${encodeURI(key)}`;
       res.json({ uploadUrl, objectKey: key, publicUrl, expiresIn: 60 });
     } catch (err) {
