@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import sharp from "sharp"; // installed
+
+const pExecFile = promisify(execFile);
 
 // ---- Smart-crop feature flags (env) ----
 const FACE_SMART_CROP = process.env.FACE_SMART_CROP === "true"; // enable/disable
@@ -22,8 +26,13 @@ const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-001";
 
 // Portrait is the critical fix: Veo defaults to 16:9 if unspecified.
 const VIDEO_ASPECT = process.env.GEMINI_VIDEO_ASPECT || "9:16"; // "9:16" | "16:9"
-const VIDEO_RESOLUTION = process.env.GEMINI_VIDEO_RESOLUTION || "720p"; // portrait commonly returns 720p
+// NOTE: resolution param is NOT supported by the API – removed to prevent hard errors.
+// If you want 1080x1920, enable the post step below.
 const VIDEO_DURATION_SEC = Number(process.env.GEMINI_VIDEO_DURATION_SEC || 16); // 8–16 typical
+
+// Optional post-process to force 1080x1920 portrait via ffmpeg (if installed)
+// Set ENABLE_VERTICAL_ENFORCER=1 to activate.
+const ENABLE_VERTICAL_ENFORCER = process.env.ENABLE_VERTICAL_ENFORCER === "1";
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
@@ -170,9 +179,57 @@ async function tryDownloadFileId(fileId) {
   return bytes;
 }
 
+/* ---- Optional post step: force 1080x1920 portrait via ffmpeg if enabled ---- */
+async function enforcePortrait1080x1920(inputBytes) {
+  if (!ENABLE_VERTICAL_ENFORCER) return inputBytes; // no-op
+
+  await ensureTmpDir();
+  const inPath = path.join(TMP_DIR, `in_${Date.now()}.mp4`);
+  const outPath = path.join(TMP_DIR, `out_${Date.now()}.mp4`);
+  await fs.writeFile(inPath, inputBytes);
+
+  try {
+    // Center-crop to 9:16 and scale to 1080x1920
+    await pExecFile("ffmpeg", [
+      "-y",
+      "-i",
+      inPath,
+      "-vf",
+      "scale=-2:1920,crop=1080:1920",
+      "-r",
+      "30",
+      "-c:v",
+      "libx264",
+      "-crf",
+      "18",
+      "-preset",
+      "medium",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      outPath,
+    ]);
+    const out = await fs.readFile(outPath);
+    return out;
+  } catch (e) {
+    console.warn("[gemini] ffmpeg portrait enforcer failed:", e?.message || e);
+    // fallback to original bytes
+    return inputBytes;
+  } finally {
+    try {
+      await fs.rm(inPath, { force: true });
+    } catch {}
+    try {
+      await fs.rm(outPath, { force: true });
+    } catch {}
+  }
+}
+
 /**
  * The single place that calls Veo.
  * IMPORTANT: we force portrait with aspectRatio "9:16".
+ * Do NOT send "resolution" – the API rejects it.
  */
 async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   if (typeof ai?.models?.generateVideos !== "function") {
@@ -185,9 +242,9 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     model: VIDEO_MODEL,
     prompt,
     config: {
-      aspectRatio: VIDEO_ASPECT, // "9:16" to force portrait
-      resolution: VIDEO_RESOLUTION, // "720p" (portrait commonly returns 720p)
-      durationSeconds: VIDEO_DURATION_SEC,
+      aspectRatio: VIDEO_ASPECT, // <-- Portrait vs Landscape authority
+      durationSeconds: VIDEO_DURATION_SEC, // <-- Optional, supported
+      // resolution: (removed; API rejects this param)
     },
     ...(imageBase64
       ? {
@@ -210,7 +267,9 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   // Try direct URI first
   if (typeof video.uri === "string" && video.uri) {
     try {
-      const bytes = await tryFetchUri(video.uri);
+      let bytes = await tryFetchUri(video.uri);
+      // Optional hard guarantee to portrait 1080x1920:
+      bytes = await enforcePortrait1080x1920(bytes);
       return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       console.warn(
@@ -234,7 +293,8 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   let lastErr = null;
   for (const fileId of candidates) {
     try {
-      const bytes = await tryDownloadFileId(fileId);
+      let bytes = await tryDownloadFileId(fileId);
+      bytes = await enforcePortrait1080x1920(bytes);
       return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       lastErr = e;
