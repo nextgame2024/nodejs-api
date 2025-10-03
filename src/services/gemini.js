@@ -184,9 +184,11 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
-    aspectRatio: VIDEO_ASPECT, // <-- portrait/landscape authority
-    resolution: VIDEO_RESOLUTION, // "720p" for portrait today
-    durationSeconds: VIDEO_DURATION_SEC,
+    config: {
+      aspectRatio: VIDEO_ASPECT, // "9:16" to force portrait
+      resolution: VIDEO_RESOLUTION, // "720p" (portrait commonly returns 720p)
+      durationSeconds: VIDEO_DURATION_SEC,
+    },
     ...(imageBase64
       ? {
           image: {
