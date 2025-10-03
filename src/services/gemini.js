@@ -15,10 +15,15 @@ if (!GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
+// ---- Models & video render config (env-overridable) ----
 const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.0-flash";
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "imagen-3.0-generate-002";
-const VIDEO_MODEL =
-  process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-preview";
+const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-001";
+
+// Portrait is the critical fix: Veo defaults to 16:9 if unspecified.
+const VIDEO_ASPECT = process.env.GEMINI_VIDEO_ASPECT || "9:16"; // "9:16" | "16:9"
+const VIDEO_RESOLUTION = process.env.GEMINI_VIDEO_RESOLUTION || "720p"; // portrait commonly returns 720p
+const VIDEO_DURATION_SEC = Number(process.env.GEMINI_VIDEO_DURATION_SEC || 16); // 8–16 typical
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
@@ -27,31 +32,31 @@ const TMP_DIR = process.env.TMPDIR || "/tmp";
 ----------------------------------------------------------- */
 const PLATFORM_WRAPPER = `
 SYSTEM PURPOSE:
-Synthesize a new 9:16 (1080×1920, 30 fps) video that matches the described effect. Always render on a fresh canvas.
+Synthesize a **vertical 9:16** video that matches the described effect. Always render on a fresh canvas.
 
 PLATFORM FIT (IG Reels, Facebook Reels, TikTok)
 • Output MP4 (H.264) with AAC audio.
-• 9:16 vertical, 1080×1920, 30 fps (constant), duration as requested by EFFECT PROMPT (or 8–10s if not specified).
-• Fill the frame (no letterbox/pillarbox). No burned-in captions or logos.
+• Strict **9:16 portrait**, 30 fps (constant), duration 14–16 s unless otherwise stated.
+• **Fill the frame** (no letterbox/pillarbox). No burned-in captions or logos.
 • Keep critical action inside central safe area; avoid top ~12% and bottom ~18%.
 • Maintain consistent camera language, pacing and lighting.
 
 CANVAS & FRAMING:
-• Always start from a blank 1080×1920 canvas. Never reuse the uploaded photo’s background, FOV or aspect.
+• Start from a blank vertical canvas; do NOT reuse any background or aspect from the uploaded photo.
 • Center-frame portrait, chest-up unless EFFECT PROMPT says otherwise.
 • Locked tripod or gentle gimbal. No handheld shake.
 
 NEGATIVE / AVOID:
-• Do not add random people, watermarks, on-screen text or glitches.
-• No borders or letterbox/pillarbox. No use of the upload’s environment.
+• No extra people, watermarks, on-screen text or glitches.
+• No borders or cinematic bars. Do not adopt the upload’s environment.
 `.trim();
 
 const FACE_ONLY_ADDON = `
 IDENTITY CONTROL (when a reference photo is provided):
-• Use the uploaded image ONLY to extract face identity (age, skin tone, hair). Do NOT copy its background, clothes, camera FOV, lens or lighting.
+• Use the uploaded image ONLY for face identity (age, skin tone, hair). Do NOT copy its background, clothes, camera FOV, lens or lighting.
 • If wardrobe is unspecified by EFFECT PROMPT, use neutral, texture-light clothing that does not match the upload.
-• Keep the same actor identity throughout. No face morphing, no age/gender/skin-tone drift between frames.
-• Rebuild the full scene according to EFFECT PROMPT; never sample pixels or composition from the uploaded image beyond face identity.
+• Keep the same actor identity throughout. No face morphing or age/gender/skin-tone drift.
+• Rebuild the full scene according to EFFECT PROMPT; never sample composition from the uploaded image beyond face identity.
 `.trim();
 
 /* ---------------- Narration script from a Veo prompt ---------------- */
@@ -165,6 +170,10 @@ async function tryDownloadFileId(fileId) {
   return bytes;
 }
 
+/**
+ * The single place that calls Veo.
+ * IMPORTANT: we force portrait with aspectRatio "9:16".
+ */
 async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   if (typeof ai?.models?.generateVideos !== "function") {
     throw new Error(
@@ -175,6 +184,9 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
+    aspectRatio: VIDEO_ASPECT, // <-- portrait/landscape authority
+    resolution: VIDEO_RESOLUTION, // "720p" for portrait today
+    durationSeconds: VIDEO_DURATION_SEC,
     ...(imageBase64
       ? {
           image: {
@@ -193,10 +205,11 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   const video = operation?.response?.generatedVideos?.[0]?.video;
   if (!video) throw new Error("Veo did not return a generated video");
 
+  // Try direct URI first
   if (typeof video.uri === "string" && video.uri) {
     try {
       const bytes = await tryFetchUri(video.uri);
-      return { bytes, mime: "video/mp4", durationSec: null };
+      return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       console.warn(
         `[gemini] Veo URI fetch failed: ${e?.message || e}. Trying file id...`
@@ -204,6 +217,7 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     }
   }
 
+  // Fallback to file-id download
   const candidates = [
     video.file?.name,
     video.file?.id,
@@ -219,7 +233,7 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   for (const fileId of candidates) {
     try {
       const bytes = await tryDownloadFileId(fileId);
-      return { bytes, mime: "video/mp4", durationSec: null };
+      return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       lastErr = e;
       console.warn(

@@ -341,10 +341,6 @@ async function processOnePaidJob(jobId) {
         jobId,
         faceKey: job.image_key,
         videoKey: baseAsset.s3_key,
-        // Optional per-job overrides:
-        // scale: 0.6,
-        // frameStride: 1,
-        // maxFrames: 0,
       });
       outKey = result.outKey;
     } else {
@@ -370,7 +366,6 @@ async function processOnePaidJob(jobId) {
       const { bytes: swappedBytes, mime } = await swapFaceOnVideoViaPod({
         faceKey: job.image_key,
         videoKey: baseAsset.s3_key,
-        // extraArgs: ["--face-color-corrections", "rct"]
       });
 
       if (!Buffer.isBuffer(swappedBytes) || swappedBytes.length === 0) {
