@@ -38,6 +38,7 @@ const EXPIRE_HOURS = Number(process.env.RENDER_EXPIRES_HOURS || 24);
 
 // defaults: 1am articles, 3am cleanup
 const DAILY_ARTICLES_HOUR = Number(process.env.CRON_ARTICLES_HOUR || 1);
+const DAILY_ARTICLES_MINUTE = Number(process.env.CRON_ARTICLES_MINUTE || 0);
 const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 
 // worker loop cadence (ms)
@@ -444,7 +445,9 @@ async function runCycle() {
     // 3) daily article creation at DAILY_ARTICLES_HOUR (or forced for testing)
     const shouldRunArticle =
       FORCE_ARTICLE ||
-      (clk.hour === DAILY_ARTICLES_HOUR && lastArticleRunDay !== clk.ymd);
+      (clk.hour === DAILY_ARTICLES_HOUR &&
+        clk.minute === DAILY_ARTICLES_MINUTE &&
+        lastArticleRunDay !== clk.ymd);
 
     if (shouldRunArticle) {
       try {
