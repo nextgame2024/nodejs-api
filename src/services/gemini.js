@@ -22,7 +22,7 @@ const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-001";
 
 // Portrait is the critical fix: Veo defaults to 16:9 if unspecified.
 const VIDEO_ASPECT = process.env.GEMINI_VIDEO_ASPECT || "9:16"; // "9:16" | "16:9"
-const VIDEO_DURATION_SEC = Number(process.env.GEMINI_VIDEO_DURATION_SEC || 16); // 8–16 typical
+const VIDEO_DURATION_SEC = Number(process.env.GEMINI_VIDEO_DURATION_SEC || 8); // 8–16 typical
 
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
