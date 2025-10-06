@@ -1,13 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import sharp from "sharp"; // installed
 
-const pExecFile = promisify(execFile);
+// ---- Smart-crop feature flags (env) ----
+const FACE_SMART_CROP = process.env.FACE_SMART_CROP === "true"; // enable/disable
+const FACE_SMART_SIZE = Number(process.env.FACE_SMART_SIZE || 640); // px (square)
+const FACE_SMART_FEATHER = Number(process.env.FACE_SMART_FEATHER || 1.2); // mask blur radius
 
-// -------------------- ENV / CLIENT --------------------
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
   throw new Error("GEMINI_API_KEY env var is required");
@@ -15,40 +15,33 @@ if (!GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-// Models (overridable)
+// ---- Models & video render config (env-overridable) ----
 const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.0-flash";
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "imagen-3.0-generate-002";
 const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL || "veo-3.0-generate-001";
 
-// Portrait authority (Veo defaults to 16:9 if unspecified)
+// Portrait is the critical fix: Veo defaults to 16:9 if unspecified.
 const VIDEO_ASPECT = process.env.GEMINI_VIDEO_ASPECT || "9:16"; // "9:16" | "16:9"
 const VIDEO_DURATION_SEC = Number(process.env.GEMINI_VIDEO_DURATION_SEC || 8); // 8–16 typical
 
-// Optional post step to guarantee true 1080x1920 portrait (kills baked-in bars)
-const ENABLE_VERTICAL_ENFORCER = process.env.ENABLE_VERTICAL_ENFORCER === "1";
-const ENFORCER_ZOOM = Number(process.env.ENFORCER_ZOOM || 1.08); // 1.04–1.12 usually safe
-
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-// Smart face-crop for identity refs (optional)
-const FACE_SMART_CROP = process.env.FACE_SMART_CROP === "true";
-const FACE_SMART_SIZE = Number(process.env.FACE_SMART_SIZE || 640);
-const FACE_SMART_FEATHER = Number(process.env.FACE_SMART_FEATHER || 1.2);
-
-// -------------------- Prompt wrappers --------------------
+/* -----------------------------------------------------------
+   Prompt wrappers for platform fit and identity conditioning
+----------------------------------------------------------- */
 const PLATFORM_WRAPPER = `
 SYSTEM PURPOSE:
-Synthesize a **vertical 9:16** video that matches the described effect. Always render on a fresh portrait canvas.
+Synthesize a **vertical 9:16** video that matches the described effect. Always render on a fresh canvas.
 
 PLATFORM FIT (IG Reels, Facebook Reels, TikTok)
 • Output MP4 (H.264) with AAC audio.
-• Strict **9:16 portrait**, 30 fps (constant), duration 8–16 s (see timing).
+• Strict **9:16 portrait**, 30 fps (constant), duration 14–16 s unless otherwise stated.
 • **Fill the frame** (no letterbox/pillarbox). No burned-in captions or logos.
 • Keep critical action inside central safe area; avoid top ~12% and bottom ~18%.
 • Maintain consistent camera language, pacing and lighting.
 
 CANVAS & FRAMING:
-• Start from a blank vertical canvas; do NOT reuse any background/aspect from the uploaded photo.
+• Start from a blank vertical canvas; do NOT reuse any background or aspect from the uploaded photo.
 • Center-frame portrait, chest-up unless EFFECT PROMPT says otherwise.
 • Locked tripod or gentle gimbal. No handheld shake.
 
@@ -65,7 +58,7 @@ IDENTITY CONTROL (when a reference photo is provided):
 • Rebuild the full scene according to EFFECT PROMPT; never sample composition from the uploaded image beyond face identity.
 `.trim();
 
-// -------------------- Public helpers --------------------
+/* ---------------- Narration script from a Veo prompt ---------------- */
 export async function genNarrationFromPrompt(veoPrompt) {
   const prompt = `Write a short, upbeat 1–2 sentence voiceover (max 28 words) describing the visual effect in second person. No quotes, no hashtags, brand-safe. Source inspiration is:\n\n${veoPrompt}`;
   const resp = await ai.models.generateContent({
@@ -85,52 +78,74 @@ export async function genNarrationFromPrompt(veoPrompt) {
     .trim();
 }
 
-export async function genImageBytes(prompt) {
-  const resp = await ai.models.generateImages({
-    model: IMAGE_MODEL,
-    prompt,
-  });
-
-  const img = resp?.generatedImages?.[0]?.image;
-  if (!img?.imageBytes) {
-    console.warn(
-      "[gemini] Unexpected image payload:",
-      JSON.stringify(resp)?.slice(0, 800)
-    );
-    throw new Error("Imagen did not return image bytes");
+/* ---------------- Robust retry helper ---------------- */
+async function retry(fn, attempts = 3, delayMs = 1500) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, delayMs * Math.pow(2, i))); // expo backoff
+      }
+    }
   }
-
-  const bytes = Buffer.from(img.imageBytes, "base64");
-  const mime = img.mimeType || "image/png";
-  return { bytes, mime };
+  throw last;
 }
 
-// For article teaser generation (no identity image)
+/* ---------------- Image (from the SAME Veo prompt) ---------------- */
+export async function genImageBytes(prompt) {
+  return retry(async () => {
+    const resp = await ai.models.generateImages({
+      model: IMAGE_MODEL,
+      prompt,
+    });
+
+    const img = resp?.generatedImages?.[0]?.image;
+    if (!img?.imageBytes) {
+      // Log shape to help diagnose occasional API shape shifts
+      console.warn(
+        "[gemini] Unexpected image payload:",
+        JSON.stringify(resp)?.slice(0, 800)
+      );
+      throw new Error("Imagen did not return image bytes");
+    }
+
+    const bytes = Buffer.from(img.imageBytes, "base64");
+    const mime = img.mimeType || "image/png";
+    return { bytes, mime };
+  });
+}
+
+/* ---------------- Video generators ---------------- */
+
+/** Template-only video (no identity reference). Use for article teaser generation. */
 export async function genVideoBytesFromPrompt(effectPrompt) {
   const fullPrompt = `${PLATFORM_WRAPPER}\n\nEFFECT PROMPT:\n${effectPrompt}`;
   return runVeoAndDownload({ prompt: fullPrompt });
 }
 
-// Identity-conditioned video (use user face)
+/** Identity-conditioned video (user face). Use for paid renders. */
 export async function genVideoBytesFromPromptAndImage(
   effectPrompt,
   sourceImageBytes
 ) {
-  if (!sourceImageBytes) return genVideoBytesFromPrompt(effectPrompt);
-
+  if (!sourceImageBytes) {
+    // Fallback to template-only if no image provided
+    return genVideoBytesFromPrompt(effectPrompt);
+  }
   const { out: refBuf, mime: refMime } =
     await prepareIdentityRef(sourceImageBytes);
-
   const fullPrompt = `${PLATFORM_WRAPPER}\n\n${FACE_ONLY_ADDON}\n\nEFFECT PROMPT:\n${effectPrompt}`;
-
   return runVeoAndDownload({
     prompt: fullPrompt,
     imageBase64: refBuf.toString("base64"),
-    imageMime: refMime, // PNG when masked, else JPEG
+    imageMime: refMime, // PNG if masked (alpha), else JPEG
   });
 }
 
-// -------------------- Internal helpers --------------------
+/* ---------------- Helpers for Veo video download ---------------- */
 async function ensureTmpDir() {
   try {
     await fs.mkdir(TMP_DIR, { recursive: true });
@@ -154,61 +169,9 @@ async function tryDownloadFileId(fileId) {
   return bytes;
 }
 
-// Optional: guaranteed portrait fill (kills baked-in bars)
-async function enforcePortraitFill(inputBytes) {
-  if (!ENABLE_VERTICAL_ENFORCER) return inputBytes;
-
-  await ensureTmpDir();
-  const inPath = path.join(TMP_DIR, `in_${Date.now()}.mp4`);
-  const outPath = path.join(TMP_DIR, `out_${Date.now()}.mp4`);
-  await fs.writeFile(inPath, inputBytes);
-
-  const zoom = Math.max(1.0, Math.min(1.2, ENFORCER_ZOOM));
-  // Zoom slightly, keep aspect, crop to exact 1080x1920, and lock 30fps
-  const vf = [
-    "setsar=1",
-    `scale=ceil(iw*${zoom}/2)*2:ceil(ih*${zoom}/2)*2`,
-    "crop=1080:1920",
-    "fps=30",
-  ].join(",");
-
-  try {
-    await pExecFile("ffmpeg", [
-      "-y",
-      "-i",
-      inPath,
-      "-vf",
-      vf,
-      "-c:v",
-      "libx264",
-      "-crf",
-      "18",
-      "-preset",
-      "medium",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "128k",
-      outPath,
-    ]);
-    const out = await fs.readFile(outPath);
-    return out;
-  } catch (e) {
-    console.warn("[gemini] ffmpeg portrait enforcer failed:", e?.message || e);
-    return inputBytes;
-  } finally {
-    try {
-      await fs.rm(inPath, { force: true });
-    } catch {}
-    try {
-      await fs.rm(outPath, { force: true });
-    } catch {}
-  }
-}
-
 /**
- * Single place that calls Veo 3.
- * IMPORTANT: Put video settings under "config". Do NOT send "resolution" (API rejects it).
+ * The single place that calls Veo.
+ * IMPORTANT: we force portrait with aspectRatio "9:16".
  */
 async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   if (typeof ai?.models?.generateVideos !== "function") {
@@ -217,7 +180,6 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     );
   }
 
-  // Request portrait via config (authoritative)
   let operation = await ai.models.generateVideos({
     model: VIDEO_MODEL,
     prompt,
@@ -243,20 +205,19 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   const video = operation?.response?.generatedVideos?.[0]?.video;
   if (!video) throw new Error("Veo did not return a generated video");
 
-  // Prefer direct URI
+  // Try direct URI first
   if (typeof video.uri === "string" && video.uri) {
     try {
-      let bytes = await tryFetchUri(video.uri);
-      bytes = await enforcePortraitFill(bytes); // kill baked-in bars if any
+      const bytes = await tryFetchUri(video.uri);
       return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       console.warn(
-        `[gemini] URI fetch failed: ${e?.message || e}. Trying file id...`
+        `[gemini] Veo URI fetch failed: ${e?.message || e}. Trying file id...`
       );
     }
   }
 
-  // Fallback: download by file id
+  // Fallback to file-id download
   const candidates = [
     video.file?.name,
     video.file?.id,
@@ -265,15 +226,13 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
     video.resourceName,
   ].filter((x) => typeof x === "string" && x);
 
-  if (!candidates.length) {
+  if (!candidates.length)
     throw new Error("Veo video has no uri/file identifier to download");
-  }
 
   let lastErr = null;
   for (const fileId of candidates) {
     try {
-      let bytes = await tryDownloadFileId(fileId);
-      bytes = await enforcePortraitFill(bytes);
+      const bytes = await tryDownloadFileId(fileId);
       return { bytes, mime: "video/mp4", durationSec: VIDEO_DURATION_SEC };
     } catch (e) {
       lastErr = e;
@@ -288,12 +247,12 @@ async function runVeoAndDownload({ prompt, imageBase64, imageMime }) {
   );
 }
 
-// -------------------- Identity prep (optional) --------------------
+/* ---------------- Identity preparation: face-only PNG with alpha ---------------- */
 async function prepareIdentityRef(buf) {
   if (!FACE_SMART_CROP) return { out: buf, mime: "image/jpeg" };
 
   try {
-    // 1) Attention crop to square (head/shoulders)
+    // 1) Attention crop to square (keeps head/shoulders, reduces bg/outfit)
     const square = await sharp(buf)
       .resize(FACE_SMART_SIZE, FACE_SMART_SIZE, {
         fit: "cover",
@@ -301,7 +260,7 @@ async function prepareIdentityRef(buf) {
       })
       .toBuffer();
 
-    // 2) Soft circular alpha mask to de-emphasize clothing/background
+    // 2) Build circular alpha mask (slight feather to avoid hard edge)
     const size = FACE_SMART_SIZE;
     const r = Math.floor(size * 0.42);
     const cx = Math.floor(size / 2);
@@ -318,6 +277,7 @@ async function prepareIdentityRef(buf) {
     );
     const maskPng = await sharp(svg).png().toBuffer();
 
+    // 3) Apply mask → transparent outside circle
     const cutout = await sharp(square)
       .composite([{ input: maskPng, blend: "dest-in" }])
       .png()
