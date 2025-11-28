@@ -1,5 +1,5 @@
 import { Router } from "express";
-import auth from "../middlewares/auth.js";
+import { authRequired } from "../middlewares/authJwt.js";
 import {
   createPreAssessmentHandler,
   getPreAssessmentHandler,
@@ -8,8 +8,16 @@ import {
 
 const router = Router();
 
-router.post("/planner/pre-assessments", auth, createPreAssessmentHandler);
-router.get("/planner/pre-assessments", auth, listPreAssessmentsHandler);
-router.get("/planner/pre-assessments/:id", auth, getPreAssessmentHandler);
+router.post(
+  "/planner/pre-assessments",
+  authRequired,
+  createPreAssessmentHandler
+);
+router.get("/planner/pre-assessments", authRequired, listPreAssessmentsHandler);
+router.get(
+  "/planner/pre-assessments/:id",
+  authRequired,
+  getPreAssessmentHandler
+);
 
 export default router;
