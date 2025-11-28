@@ -1,4 +1,11 @@
-import genAI from "./gemini.js"; // export your configured client here
+import { GoogleGenAI } from "@google/genai";
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  throw new Error("GEMINI_API_KEY env var is required");
+}
+
+const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 const TEXT_MODEL = process.env.GEMINI_PLANNER_MODEL || "gemini-2.0-pro";
 
@@ -38,6 +45,5 @@ ${JSON.stringify(proposal, null, 2)}
   const result = await model.generateContent(prompt);
   const text = result.response.text().trim();
 
-  // Let’s assume model returns valid JSON; in production, add try/catch and fallback.
   return JSON.parse(text);
 }
