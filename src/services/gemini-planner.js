@@ -6,7 +6,6 @@ if (!GEMINI_API_KEY) {
 }
 
 const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-
 const TEXT_MODEL = process.env.GEMINI_PLANNER_MODEL || "gemini-2.0-pro";
 
 export async function genPreAssessmentSummary({ site, planning, proposal }) {
@@ -30,8 +29,6 @@ Return your answer as JSON with this structure:
   ]
 }
 
-Here is the input data:
-
 SITE:
 ${JSON.stringify(site, null, 2)}
 
@@ -44,6 +41,5 @@ ${JSON.stringify(proposal, null, 2)}
 
   const result = await model.generateContent(prompt);
   const text = result.response.text().trim();
-
-  return JSON.parse(text);
+  return JSON.parse(text); // TODO: wrap in try/catch in prod
 }

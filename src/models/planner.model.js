@@ -8,21 +8,15 @@ export async function createPreAssessment({
   pdfUrl,
   status = "completed",
 }) {
-  const query = `
-    INSERT INTO pre_assessments
-      (user_id, site_input, planning_data, gemini_summary, pdf_url, status)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING *;
-  `;
-  const values = [
-    userId,
-    siteInput,
-    planningData,
-    geminiSummary,
-    pdfUrl,
-    status,
-  ];
-  const { rows } = await pool.query(query, values);
+  const { rows } = await pool.query(
+    `
+      INSERT INTO pre_assessments
+        (user_id, site_input, planning_data, gemini_summary, pdf_url, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `,
+    [userId, siteInput, planningData, geminiSummary, pdfUrl, status]
+  );
   return rows[0];
 }
 
