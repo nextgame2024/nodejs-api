@@ -6,7 +6,7 @@ if (!GEMINI_API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-const TEXT_MODEL = process.env.GEMINI_PLANNER_MODEL || "gemini-2.0-pro";
+const TEXT_MODEL = process.env.GEMINI_PLANNER_MODEL || "gemini-2.0-flash";
 
 export async function genPreAssessmentSummary({ site, planning, proposal }) {
   const prompt = `
