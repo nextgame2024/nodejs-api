@@ -5,12 +5,10 @@ if (!GEMINI_API_KEY) {
   throw new Error("GEMINI_API_KEY env var is required");
 }
 
-const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 const TEXT_MODEL = process.env.GEMINI_PLANNER_MODEL || "gemini-2.0-pro";
 
 export async function genPreAssessmentSummary({ site, planning, proposal }) {
-  const model = genAI.getGenerativeModel({ model: TEXT_MODEL });
-
   const prompt = `
 You are a Brisbane town planning assistant.
 
@@ -39,7 +37,25 @@ PROPOSAL:
 ${JSON.stringify(proposal, null, 2)}
 `;
 
-  const result = await model.generateContent(prompt);
-  const text = result.response.text().trim();
-  return JSON.parse(text); // TODO: wrap in try/catch in prod
+  const resp = await ai.models.generateContent({
+    model: TEXT_MODEL,
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+  });
+
+  const rawText =
+    (resp?.response &&
+      typeof resp.response.text === "function" &&
+      resp.response.text()) ||
+    resp?.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+    "";
+
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    console.error("[planner] Gemini JSON parse error:", err, rawText);
+    throw new Error("Gemini returned invalid JSON for pre-assessment summary");
+  }
+
+  return parsed;
 }
