@@ -23,7 +23,7 @@ function buildPdfBuffer({ site, planning, proposal, summary }) {
     });
     doc.moveDown();
 
-    // Site
+    // 1. Site details
     doc.fontSize(13).text("1. Site details", { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(11);
@@ -33,7 +33,7 @@ function buildPdfBuffer({ site, planning, proposal, summary }) {
     if (site.frontage) doc.text(`Frontage: ${site.frontage} m`);
     doc.moveDown();
 
-    // Planning
+    // 2. Planning context
     doc.fontSize(13).text("2. Planning context", { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(11);
@@ -51,7 +51,7 @@ function buildPdfBuffer({ site, planning, proposal, summary }) {
     }
     doc.moveDown();
 
-    // Shed / proposal
+    // 3. Proposal
     doc.fontSize(13).text("3. Proposal – domestic outbuilding", {
       underline: true,
     });
@@ -113,8 +113,9 @@ function buildPdfBuffer({ site, planning, proposal, summary }) {
 
 /**
  * POST /api/planner/pre-assessments
+ * This is the handler your routes expect as createPreAssessmentHandler.
  */
-export const createPreAssessment = asyncHandler(async (req, res) => {
+export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   const userId = req.user?.id || null;
   const { site = {}, proposal = {} } = req.body || {};
 
@@ -124,13 +125,13 @@ export const createPreAssessment = asyncHandler(async (req, res) => {
       .json({ error: "Site.address is required to create a pre-assessment" });
   }
 
-  // 1) Planning data (geocode + zoning from GeoJSON, etc.)
+  // 1) Get planning data (geocode + zoning lookup)
   const planning = await fetchPlanningData({
     address: site.address,
     lotPlan: site.lotPlan || null,
   });
 
-  // 2) Gemini (with fallback inside the service)
+  // 2) Generate summary via Gemini (with internal fallback)
   const summary = await genPreAssessmentSummary({ site, planning, proposal });
 
   // 3) Build PDF
@@ -150,6 +151,7 @@ export const createPreAssessment = asyncHandler(async (req, res) => {
     contentType: "application/pdf",
   });
 
+  // For now we don't persist to DB – that can come later
   const preAssessment = {
     id: key,
     userId,
@@ -162,7 +164,11 @@ export const createPreAssessment = asyncHandler(async (req, res) => {
     createdAt: new Date().toISOString(),
   };
 
-  // TODO: later – persist preAssessment metadata to DB.
-
   return res.status(201).json({ preAssessment });
 });
+
+/**
+ * GET /api/planner/pre-assessments
+ * Stub for now – returns empty list.
+ */
+export const listPreAssessmentsHandler = as;
