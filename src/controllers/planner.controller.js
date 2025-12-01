@@ -113,7 +113,7 @@ function buildPdfBuffer({ site, planning, proposal, summary }) {
 
 /**
  * POST /api/planner/pre-assessments
- * This is the handler your routes expect as createPreAssessmentHandler.
+ * Main handler used by the Angular planner.
  */
 export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   const userId = req.user?.id || null;
@@ -151,7 +151,6 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     contentType: "application/pdf",
   });
 
-  // For now we don't persist to DB – that can come later
   const preAssessment = {
     id: key,
     userId,
@@ -167,8 +166,4 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   return res.status(201).json({ preAssessment });
 });
 
-/**
- * GET /api/planner/pre-assessments
- * Stub for now – returns empty list.
- */
-export const listPreAssessmentsHandler = as;
+// NOTE: no other exports for now – list/get can be added later when needed.
