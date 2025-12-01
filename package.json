@@ -10,6 +10,7 @@
     "@aws-sdk/s3-presigned-post": "^3.x",
     "@aws-sdk/s3-request-presigner": "^3.887.0",
     "@google/genai": "^1.1.0",
+    "@turf/turf": "^7.3.1",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
