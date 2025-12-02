@@ -7,19 +7,20 @@ if (!GEMINI_API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-// Prefer a specific model for planner if set; otherwise reuse text model.
 const TEXT_MODEL =
   process.env.GEMINI_PLANNER_MODEL ||
   process.env.GEMINI_TEXT_MODEL ||
   "gemini-2.0-flash";
 
 /**
- * Fallback deterministic summary (no AI) – used if Gemini JSON is invalid.
+ * Fallback deterministic summary (no AI).
  */
 function buildFallbackSummary({ site, planning, proposal }) {
   const address = site.address || "the subject site";
   const zoning = planning.zoning || "Unknown zoning";
-  const np = planning.neighbourhoodPlan || "No neighbourhood plan identified";
+  const np =
+    planning.neighbourhoodPlan ||
+    "No neighbourhood plan identified in this pre-assessment";
 
   const shedDescParts = [];
   if (proposal.lengthM && proposal.widthM) {
@@ -87,19 +88,20 @@ function buildFallbackSummary({ site, planning, proposal }) {
 }
 
 /**
- * Call Gemini to generate a JSON summary. If parsing fails, fall back to
- * buildFallbackSummary so the user always gets something.
+ * Call Gemini to generate a JSON summary. If parsing fails, fall back.
  */
 export async function genPreAssessmentSummary({ site, planning, proposal }) {
   const prompt = `
 You are a Brisbane town planning assistant.
 
-Generate a clear, client-friendly Pre-Assessment Summary for a domestic outbuilding (shed) proposal.
+Generate a clear, client-friendly Pre-Assessment Summary for a domestic outbuilding (shed) proposal in Brisbane.
 
-IMPORTANT OUTPUT RULES:
-- Respond with **JSON ONLY**.
-- Do NOT include Markdown, backticks, commentary, or explanations.
-- The JSON must match this exact structure:
+Use the zoning, neighbourhood plan, overlays (flood, transport noise, etc.) and site details provided.
+
+OUTPUT RULES (very important):
+- Respond with JSON ONLY.
+- DO NOT include Markdown, backticks, commentary, or explanations.
+- The JSON must match this structure exactly:
 
 {
   "sections": [
@@ -115,7 +117,7 @@ IMPORTANT OUTPUT RULES:
 SITE DATA:
 ${JSON.stringify(site, null, 2)}
 
-PLANNING DATA:
+PLANNING DATA (includes geocode + zoning + neighbourhood plan + overlays):
 ${JSON.stringify(planning, null, 2)}
 
 PROPOSAL DATA:
@@ -140,9 +142,10 @@ ${JSON.stringify(proposal, null, 2)}
 
     rawText = String(rawText).trim();
 
-    // Strip ```json ... ``` if the model ignored our instructions
+    // Strip ```json ... ``` if model ignores instructions
     if (rawText.startsWith("```")) {
-      rawText = rawText.replace(/^```json/i, "").replace(/^```/, "");
+      rawText = rawText.replace(/^```json/i, "");
+      rawText = rawText.replace(/^```/, "");
       rawText = rawText.replace(/```$/, "").trim();
     }
 

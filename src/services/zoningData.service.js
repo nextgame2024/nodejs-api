@@ -1,7 +1,7 @@
 import axios from "axios";
-import * as turf from "@turf/turf";
+import { point, booleanPointInPolygon } from "@turf/turf";
 
-// You can override this in Render dashboard
+// Zoning GeoJSON (cp14-zoning-overlay.geojson)
 const ZONING_GEOJSON_URL =
   process.env.ZONING_GEOJSON_URL ||
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/cp14-zoning-overlay.geojson";
@@ -13,7 +13,8 @@ let zoningDatasetPromise = null;
  */
 async function loadZoningGeoJSON() {
   if (!ZONING_GEOJSON_URL) {
-    throw new Error("ZONING_GEOJSON_URL env var is required");
+    console.error("[planner] ZONING_GEOJSON_URL is not configured");
+    throw new Error("Zoning dataset URL not configured");
   }
 
   if (!zoningDatasetPromise) {
@@ -21,7 +22,7 @@ async function loadZoningGeoJSON() {
       .get(ZONING_GEOJSON_URL, { responseType: "json" })
       .then((res) => res.data)
       .catch((err) => {
-        zoningDatasetPromise = null; // allow retry next request
+        zoningDatasetPromise = null;
         console.error("[planner] Failed to load zoning GeoJSON:", err.message);
         throw new Error("Unable to load zoning dataset");
       });
@@ -32,11 +33,10 @@ async function loadZoningGeoJSON() {
 
 /**
  * Look up zoning for a given point (lng/lat).
- * Returns best-effort info – if field names change we just fall back to nulls.
  */
 export async function lookupZoningForPoint({ lng, lat }) {
   const geojson = await loadZoningGeoJSON();
-  const pt = turf.point([lng, lat]);
+  const pt = point([lng, lat]);
   const features = geojson.features || [];
 
   let match = null;
@@ -45,12 +45,12 @@ export async function lookupZoningForPoint({ lng, lat }) {
     if (!feature?.geometry) continue;
 
     try {
-      if (turf.booleanPointInPolygon(pt, feature)) {
+      if (booleanPointInPolygon(pt, feature)) {
         match = feature;
         break;
       }
-    } catch (err) {
-      // ignore invalid geometries, keep scanning
+    } catch {
+      // ignore invalid geometries
     }
   }
 
@@ -65,7 +65,6 @@ export async function lookupZoningForPoint({ lng, lat }) {
 
   const props = match.properties || {};
 
-  // Best guess at common field names in cp14-zoning-overlay
   const zoningName =
     props.zone_prec_desc ||
     props.zone_desc ||
@@ -75,7 +74,6 @@ export async function lookupZoningForPoint({ lng, lat }) {
 
   const zoningCode = props.zone_code || props.ZONE_CODE || props.ZONE || null;
 
-  // Many zoning polygons won't have a neighbourhood plan; we keep this flexible.
   const neighbourhoodPlan =
     props.neighbourhood_plan_precinct ||
     props.neighbourhood_plan_prec_desc ||
