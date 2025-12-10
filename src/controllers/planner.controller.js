@@ -1,4 +1,3 @@
-// src/controllers/planner.controller.js
 import axios from "axios";
 import pgPkg from "pg";
 import PDFDocument from "pdfkit";
@@ -11,6 +10,9 @@ import { putToS3 } from "../services/s3.js";
 import { classifyDevelopment } from "../services/plannerClassification.service.js";
 
 const { Pool } = pgPkg;
+
+// All public files should live under this prefix to match your S3 bucket policy.
+const S3_PUBLIC_PREFIX = process.env.S3_PUBLIC_PREFIX || "public/";
 
 const connectionString =
   process.env.DATABASE_URL ||
@@ -35,7 +37,7 @@ const PDF_LOGO_URL =
 
 /**
  * Build a PDF in memory and resolve with a Buffer.
- * Now also includes classification info if provided.
+ * Includes classification and overlays where available.
  */
 function buildPdfBuffer(options) {
   const site = options.site || {};
@@ -100,12 +102,7 @@ function buildPdfBuffer(options) {
     }
     if (Array.isArray(planning.overlays) && planning.overlays.length > 0) {
       const overlayText = planning.overlays
-        .map(function (o) {
-          if (o.severity) {
-            return o.name + " (" + o.severity + ")";
-          }
-          return o.name;
-        })
+        .map((o) => (o.severity ? `${o.name} (${o.severity})` : o.name))
         .join(", ");
       doc.text("Overlays: " + overlayText);
     }
@@ -201,7 +198,7 @@ function buildPdfBuffer(options) {
       summary && Array.isArray(summary.sections) ? summary.sections : [];
 
     if (sections.length > 0) {
-      sections.forEach(function (section, idx) {
+      sections.forEach((section, idx) => {
         if (idx > 0) {
           doc.addPage();
         }
@@ -240,7 +237,8 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     throw new Error("Planner DB is not configured");
   }
 
-  const userId = req.user?.id; // UUID from JWT
+  // User is required – we use their UUID directly in planner_projects.user_id
+  const userId = req.user?.id;
   if (!userId) {
     return res.status(401).json({ error: "Authentication required" });
   }
@@ -262,7 +260,7 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     lotPlan: site.lotPlan || null,
   });
 
-  // 2) Classify development type & assessment level (Phase 2)
+  // 2) Classify development type & assessment level
   const classification = classifyDevelopment({ site, proposal, planning });
 
   // 3) Generate summary via Gemini
@@ -297,8 +295,9 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     logoBuffer,
   });
 
-  // 6) Upload PDF to S3
+  // 6) Upload PDF to S3 under the public/ prefix so it matches the bucket policy
   const key =
+    S3_PUBLIC_PREFIX +
     "pre-assessments/" +
     userId +
     "/" +
@@ -316,13 +315,13 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   // 7) Build pre-assessment metadata JSON
   const preAssessmentMeta = {
     pdfKey: key,
-    pdfUrl: pdfUrl,
-    summary: summary,
-    classification: classification,
+    pdfUrl,
+    summary,
+    classification,
     createdAt: new Date().toISOString(),
   };
 
-  // 8) Upsert project in DB: set dev_type + assessment_level from classification
+  // 8) Upsert project in DB
   let projectRow;
 
   if (projectId) {
@@ -414,19 +413,19 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   const preAssessment = {
     id: key,
     projectId: projectRow.id,
-    userId: userId,
+    userId,
     pdfKey: key,
-    pdfUrl: pdfUrl,
-    site: site,
-    proposal: proposal,
+    pdfUrl,
+    site,
+    proposal,
     planningData: planning,
-    summary: summary,
-    classification: classification,
+    summary,
+    classification,
     createdAt: preAssessmentMeta.createdAt,
   };
 
   return res.status(201).json({
     project: projectRow,
-    preAssessment: preAssessment,
+    preAssessment,
   });
 });

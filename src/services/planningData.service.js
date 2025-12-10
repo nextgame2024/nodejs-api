@@ -21,7 +21,7 @@ if (!connectionString) {
   );
 }
 
-const pool = new Pool({ connectionString });
+const pool = connectionString ? new Pool({ connectionString }) : null;
 
 function readProp(obj, keys) {
   if (!obj) return null;
@@ -33,16 +33,20 @@ function readProp(obj, keys) {
   return null;
 }
 
+/**
+ * Generic spatial lookup helper.
+ *
+ * - For polygon tables: uses ST_Contains(geom, point)
+ * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
+ */
 async function queryOne(table, lng, lat, withinDistanceMeters) {
-  if (!connectionString) {
-    return null;
-  }
+  if (!pool) return null;
 
   const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
   let sql;
 
   if (typeof withinDistanceMeters === "number") {
-    // For transport noise (lines / corridors) – use ST_DWithin
+    // For transport noise (lines / corridors) – use ST_DWithin on geography
     sql = `
       SELECT properties
       FROM ${table}
@@ -146,7 +150,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   // 3) Interpret attributes
 
-  // Zoning
+  // Zoning – try several possible property names before falling back to "Unknown"
   let zoningName =
     readProp(zoningProps, [
       "ZONE_NAME",
@@ -159,7 +163,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   const zoningCode = readProp(zoningProps, ["ZONE_CODE", "zone_code"]) || null;
 
-  // Neighbourhood plan
+  // Neighbourhood plan (boundary + precinct tables)
   const npNameBoundary =
     readProp(npBoundaryProps, ["NP_NAME", "np_name", "NAME", "name"]) || null;
 
