@@ -240,11 +240,10 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     throw new Error("Planner DB is not configured");
   }
 
-  // NOTE: user_id in planner_projects is BIGINT.
-  // req.user.id may be a UUID string; only use it if it’s numeric.
-  const rawUserId = req.user && req.user.id;
-  const userId =
-    rawUserId && !Number.isNaN(Number(rawUserId)) ? Number(rawUserId) : null;
+  const userId = req.user?.id; // UUID from JWT
+  if (!userId) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
 
   const body = req.body || {};
   const site = body.site || {};
@@ -301,7 +300,7 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
   // 6) Upload PDF to S3
   const key =
     "pre-assessments/" +
-    (userId || "anon") +
+    userId +
     "/" +
     Date.now() +
     "-" +
@@ -355,7 +354,7 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
              assessment_level = $8,
              status = 'pre_assessment',
              updated_at = NOW()
-       WHERE id = $9
+       WHERE id = $9 AND user_id = $10
        RETURNING *`,
       [
         site.address || existing.address,
@@ -367,8 +366,14 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
         classification.devType,
         classification.assessmentLevel,
         projectId,
+        userId,
       ]
     );
+
+    if (!updated.rows.length) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
     projectRow = updated.rows[0];
   } else {
     const title =
