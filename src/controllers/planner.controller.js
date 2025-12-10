@@ -240,7 +240,12 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     throw new Error("Planner DB is not configured");
   }
 
-  const userId = (req.user && req.user.id) || null;
+  // NOTE: user_id in planner_projects is BIGINT.
+  // req.user.id may be a UUID string; only use it if it’s numeric.
+  const rawUserId = req.user && req.user.id;
+  const userId =
+    rawUserId && !Number.isNaN(Number(rawUserId)) ? Number(rawUserId) : null;
+
   const body = req.body || {};
   const site = body.site || {};
   const proposal = body.proposal || {};
