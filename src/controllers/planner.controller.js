@@ -1,3 +1,4 @@
+// src/controllers/planner.controller.js
 import axios from "axios";
 import pgPkg from "pg";
 import PDFDocument from "pdfkit";
@@ -7,6 +8,7 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { fetchPlanningData } from "../services/planningData.service.js";
 import { genPreAssessmentSummary } from "../services/gemini-planner.js";
 import { putToS3 } from "../services/s3.js";
+import { classifyDevelopment } from "../services/plannerClassification.service.js";
 
 const { Pool } = pgPkg;
 
@@ -33,12 +35,14 @@ const PDF_LOGO_URL =
 
 /**
  * Build a PDF in memory and resolve with a Buffer.
+ * Now also includes classification info if provided.
  */
 function buildPdfBuffer(options) {
   const site = options.site || {};
   const planning = options.planning || {};
   const proposal = options.proposal || {};
   const summary = options.summary || {};
+  const classification = options.classification || null;
   const logoBuffer = options.logoBuffer || null;
 
   return new Promise((resolve, reject) => {
@@ -166,8 +170,31 @@ function buildPdfBuffer(options) {
     doc.text("Rear: " + (s.rear != null ? s.rear : "-") + " m");
     doc.moveDown();
 
-    // 5. Assessment summary (Gemini or fallback)
-    doc.fontSize(13).text("5. Assessment summary", { underline: true });
+    // 5. Classification summary
+    doc.fontSize(13).text("5. Likely development classification", {
+      underline: true,
+    });
+    doc.moveDown(0.5);
+    doc.fontSize(11);
+    if (classification) {
+      doc.text("Development type (guidance only): " + classification.devType);
+      doc.text(
+        "Likely assessment level (guidance only): " +
+          classification.assessmentLevel
+      );
+      if (classification.reasoning) {
+        doc.moveDown(0.5);
+        doc.text(classification.reasoning, { align: "left" });
+      }
+    } else {
+      doc.text(
+        "Classification could not be determined from the available information."
+      );
+    }
+    doc.moveDown();
+
+    // 6. Assessment summary (Gemini or fallback)
+    doc.fontSize(13).text("6. Assessment summary", { underline: true });
     doc.moveDown(0.5);
 
     const sections =
@@ -231,10 +258,18 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     lotPlan: site.lotPlan || null,
   });
 
-  // 2) Generate summary via Gemini
-  const summary = await genPreAssessmentSummary({ site, planning, proposal });
+  // 2) Classify development type & assessment level (Phase 2)
+  const classification = classifyDevelopment({ site, proposal, planning });
 
-  // 3) Load logo (optional)
+  // 3) Generate summary via Gemini
+  const summary = await genPreAssessmentSummary({
+    site,
+    planning,
+    proposal,
+    classification,
+  });
+
+  // 4) Load logo (optional)
   let logoBuffer = null;
   try {
     const resp = await axios.get(PDF_LOGO_URL, {
@@ -248,16 +283,17 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     );
   }
 
-  // 4) Build PDF
+  // 5) Build PDF
   const pdfBuffer = await buildPdfBuffer({
     site,
     planning,
     proposal,
     summary,
+    classification,
     logoBuffer,
   });
 
-  // 5) Upload PDF to S3
+  // 6) Upload PDF to S3
   const key =
     "pre-assessments/" +
     (userId || "anon") +
@@ -273,18 +309,19 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     contentType: "application/pdf",
   });
 
-  // 6) Upsert project in DB
+  // 7) Build pre-assessment metadata JSON
   const preAssessmentMeta = {
     pdfKey: key,
     pdfUrl: pdfUrl,
     summary: summary,
+    classification: classification,
     createdAt: new Date().toISOString(),
   };
 
+  // 8) Upsert project in DB: set dev_type + assessment_level from classification
   let projectRow;
 
   if (projectId) {
-    // Update existing project for this user
     const existingRes = await pool.query(
       "SELECT * FROM planner_projects WHERE id = $1 AND user_id = $2",
       [projectId, userId]
@@ -309,9 +346,11 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
              proposal_json = $4,
              planning_data_json = $5,
              pre_assessment_json = $6,
+             dev_type = $7,
+             assessment_level = $8,
              status = 'pre_assessment',
              updated_at = NOW()
-       WHERE id = $7
+       WHERE id = $9
        RETURNING *`,
       [
         site.address || existing.address,
@@ -320,12 +359,13 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
         updatedProposalJson,
         planning,
         preAssessmentMeta,
+        classification.devType,
+        classification.assessmentLevel,
         projectId,
       ]
     );
     projectRow = updated.rows[0];
   } else {
-    // Create a new project
     const title =
       (proposal && proposal.purpose) ||
       site.address ||
@@ -334,8 +374,8 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     const inserted = await pool.query(
       `INSERT INTO planner_projects
          (user_id, title, address, lot_plan, site_json, proposal_json,
-          planning_data_json, pre_assessment_json, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pre_assessment')
+          planning_data_json, pre_assessment_json, dev_type, assessment_level, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pre_assessment')
        RETURNING *`,
       [
         userId,
@@ -346,12 +386,14 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
         proposal,
         planning,
         preAssessmentMeta,
+        classification.devType,
+        classification.assessmentLevel,
       ]
     );
     projectRow = inserted.rows[0];
   }
 
-  // 7) Store PDF document metadata
+  // 9) Store PDF document metadata
   await pool.query(
     `INSERT INTO planner_documents
        (project_id, type, s3_key, url, mime_type)
@@ -369,6 +411,7 @@ export const createPreAssessmentHandler = asyncHandler(async (req, res) => {
     proposal: proposal,
     planningData: planning,
     summary: summary,
+    classification: classification,
     createdAt: preAssessmentMeta.createdAt,
   };
 
