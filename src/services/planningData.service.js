@@ -23,6 +23,9 @@ if (!connectionString) {
 
 const pool = connectionString ? new Pool({ connectionString }) : null;
 
+/**
+ * Safely read a property from a JSON object trying multiple keys.
+ */
 function readProp(obj, keys) {
   if (!obj) return null;
   for (const k of keys) {
@@ -131,7 +134,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
         queryOne("bcc_flood_overland", lng, lat),
         queryOne("bcc_flood_creek", lng, lat),
         queryOne("bcc_flood_river", lng, lat),
-        queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer
+        queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
       ]);
 
     zoningProps = zProps;
@@ -150,18 +153,22 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   // 3) Interpret attributes
 
-  // Zoning – try several possible property names before falling back to "Unknown"
+  // Zoning – use properties JSON; fall back to "Unknown zoning"
+  // Your sample row contains:
+  //   lvl1_zone, lvl2_zone, zone_code, zone_prec_desc
   let zoningName =
     readProp(zoningProps, [
-      "ZONE_NAME",
+      "zone_prec_desc", // "LDR – Low density residential"
+      "ZONE_PREC_DESC",
+      "lvl2_zone", // "Low density residential"
+      "LVL2_ZONE",
+      "lvl1_zone", // "General residential"
+      "LVL1_ZONE",
       "zone_name",
-      "ZONE_DESC",
-      "zone_desc",
-      "ZONE",
-      "zone",
+      "ZONE_NAME",
     ]) || "Unknown zoning";
 
-  const zoningCode = readProp(zoningProps, ["ZONE_CODE", "zone_code"]) || null;
+  const zoningCode = readProp(zoningProps, ["zone_code", "ZONE_CODE"]) || null;
 
   // Neighbourhood plan (boundary + precinct tables)
   const npNameBoundary =
