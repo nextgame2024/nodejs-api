@@ -1,3 +1,4 @@
+// src/services/planningData.service.js
 import axios from "axios";
 import pgPkg from "pg";
 
@@ -22,6 +23,27 @@ if (!connectionString) {
 }
 
 const pool = connectionString ? new Pool({ connectionString }) : null;
+
+/**
+ * Explicit zoning lookup SQL.
+ *
+ * We extract the key attributes we care about from the bcc_zoning.properties
+ * JSON so they are easy to read and debug.
+ */
+const zoningSql = `
+  WITH site AS (
+    SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326) AS geom
+  )
+  SELECT
+    (z.properties->>'zone_code')       AS zone_code,
+    (z.properties->>'lvl1_zone')       AS lvl1_zone,
+    (z.properties->>'lvl2_zone')       AS lvl2_zone,
+    (z.properties->>'zone_prec_desc')  AS zone_prec_desc,
+    z.properties                       AS properties
+  FROM bcc_zoning z, site s
+  WHERE ST_Contains(z.geom, s.geom)
+  LIMIT 1;
+`;
 
 /**
  * Safely read a property from a JSON object trying multiple keys.
@@ -117,7 +139,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const lng = result.geometry.location.lng;
 
   // 2) Spatial lookups (run in parallel)
-  let zoningProps = null;
+  let zoningRow = null;
   let npBoundaryProps = null;
   let npPrecinctProps = null;
   let floodOverlandProps = null;
@@ -126,9 +148,24 @@ export async function fetchPlanningData({ address, lotPlan }) {
   let noiseProps = null;
 
   try {
-    const [zProps, npBProps, npPProps, fOverland, fCreek, fRiver, nProps] =
+    const [zRow, npBProps, npPProps, fOverland, fCreek, fRiver, nProps] =
       await Promise.all([
-        queryOne("bcc_zoning", lng, lat),
+        // ZONING via explicit SQL
+        (async () => {
+          if (!pool) return null;
+          try {
+            const { rows } = await pool.query(zoningSql, [lng, lat]);
+            return rows[0] || null;
+          } catch (err) {
+            console.error(
+              "[planner] zoning lookup failed:",
+              (err && err.message) || err
+            );
+            return null;
+          }
+        })(),
+
+        // Neighbourhood plan & overlays via generic helper
         queryOne("bcc_np_boundaries", lng, lat),
         queryOne("bcc_np_precincts", lng, lat),
         queryOne("bcc_flood_overland", lng, lat),
@@ -137,7 +174,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
         queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
       ]);
 
-    zoningProps = zProps;
+    zoningRow = zRow;
     npBoundaryProps = npBProps;
     npPrecinctProps = npPProps;
     floodOverlandProps = fOverland;
@@ -153,10 +190,11 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   // 3) Interpret attributes
 
-  // Zoning – use properties JSON; fall back to "Unknown zoning"
-  // Your sample row contains:
-  //   lvl1_zone, lvl2_zone, zone_code, zone_prec_desc
+  // Zoning – prefer explicit columns from zoningRow, fall back to properties JSON
+  const zoningProps = zoningRow ? zoningRow.properties || {} : null;
+
   let zoningName =
+    readProp(zoningRow, ["zone_prec_desc"]) ||
     readProp(zoningProps, [
       "zone_prec_desc", // "LDR – Low density residential"
       "ZONE_PREC_DESC",
@@ -166,9 +204,13 @@ export async function fetchPlanningData({ address, lotPlan }) {
       "LVL1_ZONE",
       "zone_name",
       "ZONE_NAME",
-    ]) || "Unknown zoning";
+    ]) ||
+    "Unknown zoning";
 
-  const zoningCode = readProp(zoningProps, ["zone_code", "ZONE_CODE"]) || null;
+  const zoningCode =
+    readProp(zoningRow, ["zone_code"]) ||
+    readProp(zoningProps, ["zone_code", "ZONE_CODE"]) ||
+    null;
 
   // Neighbourhood plan (boundary + precinct tables)
   const npNameBoundary =
