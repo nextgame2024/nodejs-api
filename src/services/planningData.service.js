@@ -35,11 +35,14 @@ const zoningSql = `
     SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326) AS geom
   )
   SELECT
-    (z.properties->>'zone_code')       AS zone_code,
-    (z.properties->>'lvl1_zone')       AS lvl1_zone,
-    (z.properties->>'lvl2_zone')       AS lvl2_zone,
-    (z.properties->>'zone_prec_desc')  AS zone_prec_desc,
-    z.properties                       AS properties
+    (z.properties->>'zone_code')      AS zone_code,
+    (z.properties->>'lvl1_zone')      AS lvl1_zone,
+    (z.properties->>'lvl2_zone')      AS lvl2_zone,
+    (z.properties->>'zone_prec_desc') AS zone_prec_desc,
+    z.properties                      AS properties,
+    ST_AsGeoJSON(
+      ST_Simplify(z.geom, 0.0003)     -- keep payload light
+    )                                 AS geom_geojson
   FROM bcc_zoning z, site s
   WHERE ST_Contains(z.geom, s.geom)
   LIMIT 1;
@@ -71,28 +74,34 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
   let sql;
 
   if (typeof withinDistanceMeters === "number") {
-    // For transport noise (lines / corridors) – use ST_DWithin on geography
     sql = `
-      SELECT properties
-      FROM ${table}
-      WHERE ST_DWithin(
-        geom::geography,
-        (${pointExpr})::geography,
-        $3
-      )
-      LIMIT 1;
-    `;
+        SELECT
+          properties,
+          ST_AsGeoJSON(
+            ST_Simplify(geom, 0.0003)
+          ) AS geom_geojson
+        FROM ${table}
+        WHERE ST_DWithin(
+          geom::geography,
+          (${pointExpr})::geography,
+          $3
+        )
+        LIMIT 1;
+      `;
   } else {
-    // Polygons – use ST_Contains
     sql = `
-      SELECT properties
-      FROM ${table}
-      WHERE ST_Contains(
-        geom,
-        ${pointExpr}
-      )
-      LIMIT 1;
-    `;
+        SELECT
+          properties,
+          ST_AsGeoJSON(
+            ST_Simplify(geom, 0.0003)
+          ) AS geom_geojson
+        FROM ${table}
+        WHERE ST_Contains(
+          geom,
+          ${pointExpr}
+        )
+        LIMIT 1;
+      `;
   }
 
   const params =
@@ -102,7 +111,12 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 
   const { rows } = await pool.query(sql, params);
   if (!rows || !rows.length) return null;
-  return rows[0].properties || {};
+
+  const row = rows[0];
+  return {
+    properties: row.properties || {},
+    geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
+  };
 }
 
 /**
@@ -146,41 +160,57 @@ export async function fetchPlanningData({ address, lotPlan }) {
   let floodCreekProps = null;
   let floodRiverProps = null;
   let noiseProps = null;
+  let npBoundaryGeom = null;
+  let npPrecinctGeom = null;
+  let floodOverlandGeom = null;
+  let floodCreekGeom = null;
+  let floodRiverGeom = null;
+  let noiseGeom = null;
 
   try {
-    const [zRow, npBProps, npPProps, fOverland, fCreek, fRiver, nProps] =
-      await Promise.all([
-        // ZONING via explicit SQL
-        (async () => {
-          if (!pool) return null;
-          try {
-            const { rows } = await pool.query(zoningSql, [lng, lat]);
-            return rows[0] || null;
-          } catch (err) {
-            console.error(
-              "[planner] zoning lookup failed:",
-              (err && err.message) || err
-            );
-            return null;
-          }
-        })(),
+    const [zRow, npB, npP, fOverland, fCreek, fRiver, n] = await Promise.all([
+      // ZONING via explicit SQL
+      (async () => {
+        if (!pool) return null;
+        try {
+          const { rows } = await pool.query(zoningSql, [lng, lat]);
+          return rows[0] || null;
+        } catch (err) {
+          console.error(
+            "[planner] zoning lookup failed:",
+            (err && err.message) || err
+          );
+          return null;
+        }
+      })(),
 
-        // Neighbourhood plan & overlays via generic helper
-        queryOne("bcc_np_boundaries", lng, lat),
-        queryOne("bcc_np_precincts", lng, lat),
-        queryOne("bcc_flood_overland", lng, lat),
-        queryOne("bcc_flood_creek", lng, lat),
-        queryOne("bcc_flood_river", lng, lat),
-        queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
-      ]);
+      // Neighbourhood plan & overlays via generic helper
+      queryOne("bcc_np_boundaries", lng, lat),
+      queryOne("bcc_np_precincts", lng, lat),
+      queryOne("bcc_flood_overland", lng, lat),
+      queryOne("bcc_flood_creek", lng, lat),
+      queryOne("bcc_flood_river", lng, lat),
+      queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
+    ]);
 
     zoningRow = zRow;
-    npBoundaryProps = npBProps;
-    npPrecinctProps = npPProps;
-    floodOverlandProps = fOverland;
-    floodCreekProps = fCreek;
-    floodRiverProps = fRiver;
-    noiseProps = nProps;
+    npBoundaryProps = npB?.properties || null;
+    npBoundaryGeom = npB?.geometry || null;
+
+    npPrecinctProps = npP?.properties || null;
+    npPrecinctGeom = npP?.geometry || null;
+
+    floodOverlandProps = fOverland?.properties || null;
+    floodOverlandGeom = fOverland?.geometry || null;
+
+    floodCreekProps = fCreek?.properties || null;
+    floodCreekGeom = fCreek?.geometry || null;
+
+    floodRiverProps = fRiver?.properties || null;
+    floodRiverGeom = fRiver?.geometry || null;
+
+    noiseProps = n?.properties || null;
+    noiseGeom = n?.geometry || null;
   } catch (err) {
     console.error(
       "[planner] PostGIS lookup failed:",
@@ -192,6 +222,11 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   // Zoning – prefer explicit columns from zoningRow, fall back to properties JSON
   const zoningProps = zoningRow ? zoningRow.properties || {} : null;
+
+  const zoningPolygon =
+    zoningRow && zoningRow.geom_geojson
+      ? JSON.parse(zoningRow.geom_geojson)
+      : null;
 
   let zoningName =
     readProp(zoningRow, ["zone_prec_desc"]) ||
@@ -242,6 +277,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const neighbourhoodPlanCode = npCodePrecinct || npCodeBoundary || null;
 
   // Overlays
+  const overlayPolygons = [];
   const overlays = [];
   const rawFloodFeatures = [];
   let rawTransportNoiseFeature = null;
@@ -263,6 +299,13 @@ export async function fetchPlanningData({ address, lotPlan }) {
       source: "overland",
       properties: floodOverlandProps,
     });
+
+    if (floodOverlandGeom) {
+      overlayPolygons.push({
+        code: "flood_overland_flow",
+        geometry: floodOverlandGeom,
+      });
+    }
   }
 
   if (floodCreekProps) {
@@ -283,6 +326,31 @@ export async function fetchPlanningData({ address, lotPlan }) {
     });
   }
 
+  if (floodCreekProps) {
+    overlays.push({
+      name: "Flood overlay – creek/waterway",
+      code: "flood_creek_waterway",
+      severity:
+        readProp(floodCreekProps, [
+          "HAZARD",
+          "hazard",
+          "SEVERITY",
+          "severity",
+        ]) || "creek/waterway flood planning area",
+    });
+    rawFloodFeatures.push({
+      source: "creek_waterway",
+      properties: floodCreekProps,
+    });
+
+    if (floodCreekGeom) {
+      overlayPolygons.push({
+        code: "flood_creek_waterway",
+        geometry: floodCreekGeom,
+      });
+    }
+  }
+
   if (floodRiverProps) {
     overlays.push({
       name: "Flood overlay – Brisbane River flood planning area",
@@ -299,6 +367,13 @@ export async function fetchPlanningData({ address, lotPlan }) {
       source: "brisbane_river",
       properties: floodRiverProps,
     });
+
+    if (floodRiverGeom) {
+      overlayPolygons.push({
+        code: "flood_brisbane_river",
+        geometry: floodRiverGeom,
+      });
+    }
   }
 
   if (noiseProps) {
@@ -313,6 +388,13 @@ export async function fetchPlanningData({ address, lotPlan }) {
     rawTransportNoiseFeature = {
       properties: noiseProps,
     };
+
+    if (noiseGeom) {
+      overlayPolygons.push({
+        code: "transport_noise_corridor",
+        geometry: noiseGeom,
+      });
+    }
   }
 
   return {
@@ -324,6 +406,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
     zoning: zoningName,
     zoningCode,
+    zoningPolygon,
 
     neighbourhoodPlan,
     neighbourhoodPlanCode,
@@ -332,6 +415,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
     hasTransportNoiseCorridor,
     overlays,
+    overlayPolygons,
 
     // raw debugging info (useful for future tuning / logs / admin UI)
     rawZoningFeature: zoningProps,
