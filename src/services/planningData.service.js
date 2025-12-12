@@ -75,33 +75,33 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 
   if (typeof withinDistanceMeters === "number") {
     sql = `
-        SELECT
-          properties,
-          ST_AsGeoJSON(
-            ST_Simplify(geom, 0.0003)
-          ) AS geom_geojson
-        FROM ${table}
-        WHERE ST_DWithin(
-          geom::geography,
-          (${pointExpr})::geography,
-          $3
-        )
-        LIMIT 1;
-      `;
+      SELECT
+        properties,
+        ST_AsGeoJSON(
+          ST_Simplify(geom, 0.0003)
+        ) AS geom_geojson
+      FROM ${table}
+      WHERE ST_DWithin(
+        geom::geography,
+        (${pointExpr})::geography,
+        $3
+      )
+      LIMIT 1;
+    `;
   } else {
     sql = `
-        SELECT
-          properties,
-          ST_AsGeoJSON(
-            ST_Simplify(geom, 0.0003)
-          ) AS geom_geojson
-        FROM ${table}
-        WHERE ST_Contains(
-          geom,
-          ${pointExpr}
-        )
-        LIMIT 1;
-      `;
+      SELECT
+        properties,
+        ST_AsGeoJSON(
+          ST_Simplify(geom, 0.0003)
+        ) AS geom_geojson
+      FROM ${table}
+      WHERE ST_Contains(
+        geom,
+        ${pointExpr}
+      )
+      LIMIT 1;
+    `;
   }
 
   const params =
@@ -120,7 +120,55 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 }
 
 /**
- * Main entry used by planner.controller.
+ * Property parcel lookup – uses the bcc_property_parcels table.
+ *
+ * Note: the import script stored parcels in SRID 4283; we:
+ *   - transform the *point* from 4326 -> 4283 for ST_Contains
+ *   - then transform the parcel geometry back to 4326 for the frontend
+ */
+async function queryPropertyParcel(lng, lat) {
+  if (!pool) return null;
+
+  const sql = `
+    SELECT
+      properties,
+      ST_AsGeoJSON(
+        ST_Transform(
+          ST_Simplify(geom, 0.00003),
+          4326
+        )
+      ) AS geom_json
+    FROM bcc_property_parcels
+    WHERE ST_Contains(
+      geom,
+      ST_Transform(
+        ST_SetSRID(ST_MakePoint($1, $2), 4326),
+        4283
+      )
+    )
+    ORDER BY ST_Area(geom) ASC   -- prefer the smallest containing parcel
+    LIMIT 1;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [lng, lat]);
+    if (!rows || !rows.length) return null;
+    const row = rows[0];
+    return {
+      properties: row.properties || {},
+      geometry: row.geom_json ? JSON.parse(row.geom_json) : null,
+    };
+  } catch (err) {
+    console.error(
+      "[planner] property parcel lookup failed:",
+      (err && err.message) || err
+    );
+    return null;
+  }
+}
+
+/**
+ * Main entry used by planner controller.
  *
  * 1) Geocode the address via Google Maps
  * 2) Query PostGIS tables:
@@ -129,6 +177,7 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
  *    - bcc_np_precincts
  *    - bcc_flood_overland, bcc_flood_creek, bcc_flood_river
  *    - bcc_noise_corridor
+ *    - bcc_property_parcels (NEW – cadastral parcel)
  */
 export async function fetchPlanningData({ address, lotPlan }) {
   if (!process.env.GOOGLE_MAPS_API_KEY) {
@@ -160,6 +209,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
   let floodCreekProps = null;
   let floodRiverProps = null;
   let noiseProps = null;
+
   let npBoundaryGeom = null;
   let npPrecinctGeom = null;
   let floodOverlandGeom = null;
@@ -167,33 +217,41 @@ export async function fetchPlanningData({ address, lotPlan }) {
   let floodRiverGeom = null;
   let noiseGeom = null;
 
-  try {
-    const [zRow, npB, npP, fOverland, fCreek, fRiver, n] = await Promise.all([
-      // ZONING via explicit SQL
-      (async () => {
-        if (!pool) return null;
-        try {
-          const { rows } = await pool.query(zoningSql, [lng, lat]);
-          return rows[0] || null;
-        } catch (err) {
-          console.error(
-            "[planner] zoning lookup failed:",
-            (err && err.message) || err
-          );
-          return null;
-        }
-      })(),
+  let propertyParcelProps = null;
+  let propertyParcelGeom = null;
 
-      // Neighbourhood plan & overlays via generic helper
-      queryOne("bcc_np_boundaries", lng, lat),
-      queryOne("bcc_np_precincts", lng, lat),
-      queryOne("bcc_flood_overland", lng, lat),
-      queryOne("bcc_flood_creek", lng, lat),
-      queryOne("bcc_flood_river", lng, lat),
-      queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
-    ]);
+  try {
+    const [zRow, npB, npP, fOverland, fCreek, fRiver, n, parcel] =
+      await Promise.all([
+        // ZONING via explicit SQL
+        (async () => {
+          if (!pool) return null;
+          try {
+            const { rows } = await pool.query(zoningSql, [lng, lat]);
+            return rows[0] || null;
+          } catch (err) {
+            console.error(
+              "[planner] zoning lookup failed:",
+              (err && err.message) || err
+            );
+            return null;
+          }
+        })(),
+
+        // Neighbourhood plan & overlays via generic helper
+        queryOne("bcc_np_boundaries", lng, lat),
+        queryOne("bcc_np_precincts", lng, lat),
+        queryOne("bcc_flood_overland", lng, lat),
+        queryOne("bcc_flood_creek", lng, lat),
+        queryOne("bcc_flood_river", lng, lat),
+        queryOne("bcc_noise_corridor", lng, lat, 50), // 50m buffer for corridors
+
+        // NEW: cadastral parcel (property boundary)
+        queryPropertyParcel(lng, lat),
+      ]);
 
     zoningRow = zRow;
+
     npBoundaryProps = npB?.properties || null;
     npBoundaryGeom = npB?.geometry || null;
 
@@ -211,6 +269,9 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
     noiseProps = n?.properties || null;
     noiseGeom = n?.geometry || null;
+
+    propertyParcelProps = parcel?.properties || null;
+    propertyParcelGeom = parcel?.geometry || null;
   } catch (err) {
     console.error(
       "[planner] PostGIS lookup failed:",
@@ -324,24 +385,6 @@ export async function fetchPlanningData({ address, lotPlan }) {
       source: "creek_waterway",
       properties: floodCreekProps,
     });
-  }
-
-  if (floodCreekProps) {
-    overlays.push({
-      name: "Flood overlay – creek/waterway",
-      code: "flood_creek_waterway",
-      severity:
-        readProp(floodCreekProps, [
-          "HAZARD",
-          "hazard",
-          "SEVERITY",
-          "severity",
-        ]) || "creek/waterway flood planning area",
-    });
-    rawFloodFeatures.push({
-      source: "creek_waterway",
-      properties: floodCreekProps,
-    });
 
     if (floodCreekGeom) {
       overlayPolygons.push({
@@ -397,6 +440,15 @@ export async function fetchPlanningData({ address, lotPlan }) {
     }
   }
 
+  // Property parcel interpretation
+  const propertyParcel =
+    propertyParcelProps || propertyParcelGeom
+      ? {
+          properties: propertyParcelProps || {},
+          geometry: propertyParcelGeom || null,
+        }
+      : null;
+
   return {
     geocode: {
       lat,
@@ -416,6 +468,10 @@ export async function fetchPlanningData({ address, lotPlan }) {
     hasTransportNoiseCorridor,
     overlays,
     overlayPolygons,
+
+    // NEW: cadastral parcel for the site (draw this as the green outline)
+    siteParcelPolygon: propertyParcelGeom || null,
+    propertyParcel,
 
     // raw debugging info (useful for future tuning / logs / admin UI)
     rawZoningFeature: zoningProps,
