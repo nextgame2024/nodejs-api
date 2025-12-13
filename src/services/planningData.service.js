@@ -122,41 +122,69 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 /**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
- * Note: the import script stored parcels in SRID 4283; we:
- *   - transform the *point* from 4326 -> 4283 for ST_Contains
- *   - then transform the parcel geometry back to 4326 for the frontend
+ * Notes:
+ *  - Parcels are stored in SRID 4283.
+ *  - We search for parcels within ~60 m of the geocoded point
+ *    using ST_DWithin on geography.
+ *  - We explicitly AVOID road / intersection parcels.
+ *  - We PREFER "real" properties (property_type H or U) and the
+ *    closest geometry to the geocode point.
+ *  - Geometry is transformed back to 4326 for the frontend.
  */
 async function queryPropertyParcel(lng, lat) {
   if (!pool) return null;
 
   const sql = `
+    WITH pt AS (
+      SELECT
+        ST_Transform(
+          ST_SetSRID(ST_MakePoint($1, $2), 4326),
+          4283
+        ) AS geom_4283
+    )
     SELECT
-      properties,
+      p.properties,
       ST_AsGeoJSON(
         ST_Transform(
-          ST_Simplify(geom, 0.00003),
+          ST_Simplify(p.geom, 0.00003),
           4326
         )
-      ) AS geom_json
-    FROM bcc_property_parcels
-    WHERE ST_Contains(
-      geom,
-      ST_Transform(
-        ST_SetSRID(ST_MakePoint($1, $2), 4326),
-        4283
+      ) AS geom_geojson
+    FROM bcc_property_parcels p, pt
+    WHERE
+      -- within ~60m of the geocoded point
+      ST_DWithin(
+        p.geom::geography,
+        pt.geom_4283::geography,
+        60
       )
-    )
-    ORDER BY ST_Area(geom) ASC   -- prefer the smallest containing parcel
+      -- avoid ROAD / INTERSECTION parcels
+      AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%road%'
+      AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%intersection%'
+    ORDER BY
+      -- prefer real "property" polygons
+      CASE
+        WHEN p.properties->>'property_type' IN ('H','U') THEN 0
+        ELSE 1
+      END,
+      -- then closest to the point
+      ST_Distance(
+        p.geom::geography,
+        pt.geom_4283::geography
+      ),
+      -- smallest area as final tie-breaker
+      ST_Area(p.geom)
     LIMIT 1;
   `;
 
   try {
     const { rows } = await pool.query(sql, [lng, lat]);
     if (!rows || !rows.length) return null;
+
     const row = rows[0];
     return {
       properties: row.properties || {},
-      geometry: row.geom_json ? JSON.parse(row.geom_json) : null,
+      geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
     };
   } catch (err) {
     console.error(
@@ -469,7 +497,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
     overlays,
     overlayPolygons,
 
-    // NEW: cadastral parcel for the site (draw this as the green outline)
+    // Cadastral parcel for the site (draw this as the green outline)
     siteParcelPolygon: propertyParcelGeom || null,
     propertyParcel,
 
