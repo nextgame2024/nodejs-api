@@ -25,6 +25,22 @@ if (!connectionString) {
 const pool = connectionString ? new Pool({ connectionString }) : null;
 
 /**
+ * Safe property reader for inconsistent upstream schemas.
+ * Returns the first non-empty value found for the provided keys.
+ */
+function readProp(obj, keys) {
+  if (!obj || !keys) return null;
+  for (const k of keys) {
+    if (!k) continue;
+    if (Object.prototype.hasOwnProperty.call(obj, k)) {
+      const v = obj[k];
+      if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+    }
+  }
+  return null;
+}
+
+/**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
  * Goal: pick the *actual lot* (not an aggregated polygon, road parcel, easement, etc.)
@@ -64,6 +80,11 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
           pt.pt4326::geography,
           8
         ) AS within_8m,
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          25
+        ) AS within_25m,
         ST_Distance(
           (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
           pt.pt4326::geography
@@ -110,17 +131,27 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
       ) AS geom_geojson,
       ST_AsGeoJSON(
         ST_PointOnSurface(geom4326)
-      ) AS point_geojson
-    FROM candidates
-    ORDER BY
-      CASE WHEN contains_pt THEN 0 ELSE 1 END,
-      lotplan_rank,
-      CASE WHEN properties->>'property_type' IN ('H','U') THEN 0 ELSE 1 END,
-      CASE WHEN within_8m THEN 0 ELSE 1 END,
-      -- Soft penalty for very large polygons (helps avoid multi-house aggregates)
-      CASE WHEN area_m2 > 15000 THEN 1 ELSE 0 END,
+      ) AS point_geojson,
+      contains_pt,
+      within_8m,
+      within_25m,
       dist_m,
       area_m2
+    FROM candidates
+    ORDER BY
+      -- 1) If the geocode point falls inside multiple polygons, pick the *smallest* one (usually the lot).
+      CASE WHEN contains_pt THEN 0 ELSE 1 END,
+      -- 2) If the user provided a lot/plan hint, prefer matches.
+      lotplan_rank,
+      -- 3) Prefer residential property types when available.
+      CASE WHEN properties->>'property_type' IN ('H','U') THEN 0 ELSE 1 END,
+      -- 4) Otherwise allow a small distance tolerance (street-centre geocodes).
+      CASE WHEN within_8m THEN 0 ELSE 1 END,
+      -- 5) Avoid aggregated polygons unless we have no alternative.
+      CASE WHEN area_m2 > 15000 THEN 1 ELSE 0 END,
+      -- 6) Smallest area first, then closest.
+      area_m2,
+      dist_m
     LIMIT 1;
   `;
 
@@ -133,6 +164,13 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
       properties: row.properties || {},
       geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
       point: row.point_geojson ? JSON.parse(row.point_geojson) : null,
+      debug: {
+        containsPoint: !!row.contains_pt,
+        within8m: !!row.within_8m,
+        within25m: !!row.within_25m,
+        distM: row.dist_m != null ? Number(row.dist_m) : null,
+        areaM2: row.area_m2 != null ? Number(row.area_m2) : null,
+      },
     };
   } catch (err) {
     console.error(
@@ -200,6 +238,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   let propertyParcelProps = null;
   let propertyParcelGeom = null;
+  let propertyParcelDebug = null;
 
   try {
     const [zRow, npB, npP, fOverland, fCreek, fRiver, n] = await Promise.all([
@@ -251,6 +290,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
     propertyParcelProps = parcel?.properties || null;
     propertyParcelGeom = parcel?.geometry || null;
+    propertyParcelDebug = parcel?.debug || null;
   } catch (err) {
     console.error(
       "[planner] PostGIS lookup failed:",
@@ -425,6 +465,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
       ? {
           properties: propertyParcelProps || {},
           geometry: propertyParcelGeom || null,
+          debug: propertyParcelDebug,
         }
       : null;
 
