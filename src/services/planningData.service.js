@@ -25,225 +25,114 @@ if (!connectionString) {
 const pool = connectionString ? new Pool({ connectionString }) : null;
 
 /**
- * Explicit zoning lookup SQL.
- *
- * We extract the key attributes we care about from the bcc_zoning.properties
- * JSON so they are easy to read and debug.
- */
-const zoningSql = `
-  WITH site AS (
-    SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326) AS geom
-  )
-  SELECT
-    (z.properties->>'zone_code')      AS zone_code,
-    (z.properties->>'lvl1_zone')      AS lvl1_zone,
-    (z.properties->>'lvl2_zone')      AS lvl2_zone,
-    (z.properties->>'zone_prec_desc') AS zone_prec_desc,
-    z.properties                      AS properties,
-    ST_AsGeoJSON(
-      ST_Simplify(
-        CASE
-          WHEN ST_SRID(z.geom) = 0 THEN ST_SetSRID(z.geom, 4326)
-          WHEN ST_SRID(z.geom) = 4326 THEN z.geom
-          ELSE ST_Transform(z.geom, 4326)
-        END,
-        0.0003
-      )
-    ) AS geom_geojson
-  FROM bcc_zoning z, site s
-  WHERE ST_Contains(
-    CASE
-      WHEN ST_SRID(z.geom) = 0 THEN ST_SetSRID(z.geom, 4326)
-      WHEN ST_SRID(z.geom) = 4326 THEN z.geom
-      ELSE ST_Transform(z.geom, 4326)
-    END,
-    s.geom
-  )
-  LIMIT 1;
-`;
-
-/**
- * Safely read a property from a JSON object trying multiple keys.
- */
-function readProp(obj, keys) {
-  if (!obj) return null;
-  for (const k of keys) {
-    if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
-      return obj[k];
-    }
-  }
-  return null;
-}
-
-/**
- * Generic spatial lookup helper.
- *
- * - For polygon tables: uses ST_Contains(geom, point)
- * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
- */
-async function queryOne(table, lng, lat, withinDistanceMeters) {
-  if (!pool) return null;
-
-  // Build input point in WGS84 (EPSG:4326)
-  const point4326 = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
-
-  // Normalise table geom to 4326 for output and safe geography operations.
-  const geom4326 = `
-    CASE
-      WHEN ST_SRID(geom) = 0 THEN ST_SetSRID(geom, 4326)
-      WHEN ST_SRID(geom) = 4326 THEN geom
-      ELSE ST_Transform(geom, 4326)
-    END
-  `;
-
-  const geomOut = `
-    ST_AsGeoJSON(
-      ST_SimplifyPreserveTopology(
-        ST_MakeValid(${geom4326}),
-        0.00005
-      )
-    ) AS geom_geojson
-  `;
-
-  let sql;
-  let params;
-
-  if (typeof withinDistanceMeters === "number") {
-    // Distance queries: use geography in 4326 so distance is metres.
-    sql = `
-      SELECT
-        properties,
-        ${geomOut}
-      FROM ${table}
-      WHERE ST_DWithin(
-        (${geom4326})::geography,
-        (${point4326})::geography,
-        $3
-      )
-      LIMIT 1;
-    `;
-    params = [lng, lat, withinDistanceMeters];
-  } else {
-    // Topological predicates require matching SRIDs; compare in 4326.
-    sql = `
-      SELECT
-        properties,
-        ${geomOut}
-      FROM ${table}
-      WHERE ST_Contains(
-        ${geom4326},
-        ${point4326}
-      )
-      LIMIT 1;
-    `;
-    params = [lng, lat];
-  }
-
-  try {
-    const { rows } = await pool.query(sql, params);
-    if (!rows || !rows.length) return null;
-
-    const row = rows[0];
-    return {
-      properties: row.properties || {},
-      geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
-    };
-  } catch (err) {
-    console.error(
-      `[planner] spatial lookup failed for ${table}:`,
-      (err && err.message) || err
-    );
-    return null;
-  }
-}
-
-/**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
- * Notes:
- *  - Parcels are stored in SRID 4283.
- *  - We search for parcels within ~60 m of the geocoded point
- *    using ST_DWithin on geography.
- *  - We explicitly AVOID road / intersection parcels.
- *  - We PREFER "real" properties (property_type H or U) and the
- *    closest geometry to the geocode point.
- *  - Geometry is transformed back to 4326 for the frontend.
+ * Goal: pick the *actual lot* (not an aggregated polygon, road parcel, easement, etc.)
+ * even when the Google geocode lands on the street centreline.
+ *
+ * Strategy:
+ *  - Candidate search within 120m (geography, after transforming geom to 4326).
+ *  - Strongly filter known non-lot parcel types.
+ *  - Prefer parcels that CONTAIN the geocode point.
+ *  - Otherwise prefer parcels within a small tolerance (8m) and closest.
+ *  - Prefer property_type H/U.
+ *  - Prefer smaller area (m²) as a tie-breaker, with a soft penalty for very large polygons.
+ *
+ * Returns:
+ *  - geometry: GeoJSON in EPSG:4326
+ *  - point: an interior point (point-on-surface) in EPSG:4326 for subsequent overlay lookups
  */
-async function queryPropertyParcel(lng, lat) {
+async function queryPropertyParcel(lng, lat, lotPlan) {
   if (!pool) return null;
+
+  const lotPlanText = (lotPlan || "").trim();
 
   const sql = `
     WITH pt AS (
-      SELECT
-        ST_Transform(
-          ST_SetSRID(ST_MakePoint($1, $2), 4326),
-          4283
-        ) AS geom_4283
+      SELECT ${"ST_SetSRID(ST_MakePoint($1, $2), 4326)"} AS pt4326
     ),
     candidates AS (
       SELECT
         p.properties,
-        p.geom,
-        ST_Contains(p.geom, pt.geom_4283) AS contains_pt,
-        ST_Distance(p.geom::geography, pt.geom_4283::geography) AS dist_m,
-        ST_Area(p.geom::geography) AS area_m2
+        ${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"} AS geom4326,
+        ST_Contains(
+          ${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"},
+          pt.pt4326
+        ) AS contains_pt,
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          8
+        ) AS within_8m,
+        ST_Distance(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography
+        ) AS dist_m,
+        ST_Area(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography
+        ) AS area_m2,
+        CASE
+          WHEN $3 <> '' AND p.properties::text ILIKE ('%' || $3 || '%') THEN 0
+          ELSE 1
+        END AS lotplan_rank
       FROM bcc_property_parcels p, pt
       WHERE
-        -- Wider search radius to tolerate street-centre geocodes
-        ST_DWithin(p.geom::geography, pt.geom_4283::geography, 150)
-
-        -- Avoid road / intersection / obvious non-lot parcels
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          120
+        )
+        -- Defensive exclusions: avoid non-lot / transport / corridor parcels
         AND NOT (
           COALESCE(p.properties->>'parcel_typ_desc','') ILIKE ANY (ARRAY[
             '%road%',
             '%intersection%',
+            '%rail%',
             '%easement%',
             '%reserve%',
             '%park%',
             '%water%',
             '%creek%',
-            '%rail%',
-            '%footpath%',
-            '%drain%'
+            '%drain%',
+            '%state%',
+            '%council%',
+            '%footpath%'
           ])
         )
     )
     SELECT
       properties,
       ST_AsGeoJSON(
-        ST_Transform(
-          ST_SimplifyPreserveTopology(
-            ST_MakeValid(geom),
-            0.00001
-          ),
-          4326
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(geom4326),
+          0.000005
         )
       ) AS geom_geojson,
-      ST_X(ST_Transform(ST_PointOnSurface(geom), 4326)) AS parcel_lng,
-      ST_Y(ST_Transform(ST_PointOnSurface(geom), 4326)) AS parcel_lat
+      ST_AsGeoJSON(
+        ST_PointOnSurface(geom4326)
+      ) AS point_geojson
     FROM candidates
     ORDER BY
-      -- If point is inside multiple geometries, take the smallest one.
       CASE WHEN contains_pt THEN 0 ELSE 1 END,
-      area_m2,
-      -- Prefer real property polygons when attribute is present.
+      lotplan_rank,
       CASE WHEN properties->>'property_type' IN ('H','U') THEN 0 ELSE 1 END,
-      dist_m
+      CASE WHEN within_8m THEN 0 ELSE 1 END,
+      -- Soft penalty for very large polygons (helps avoid multi-house aggregates)
+      CASE WHEN area_m2 > 15000 THEN 1 ELSE 0 END,
+      dist_m,
+      area_m2
     LIMIT 1;
   `;
 
   try {
-    const { rows } = await pool.query(sql, [lng, lat]);
+    const { rows } = await pool.query(sql, [lng, lat, lotPlanText]);
     if (!rows || !rows.length) return null;
 
     const row = rows[0];
     return {
       properties: row.properties || {},
       geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
-      pointOnSurface:
-        row.parcel_lat != null && row.parcel_lng != null
-          ? { lat: Number(row.parcel_lat), lng: Number(row.parcel_lng) }
-          : null,
+      point: row.point_geojson ? JSON.parse(row.point_geojson) : null,
     };
   } catch (err) {
     console.error(
@@ -288,6 +177,11 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const lat = result.geometry.location.lat;
   const lng = result.geometry.location.lng;
 
+  // Prefer an interior point from the cadastral parcel (better than street-centre geocode)
+  const parcel = await queryPropertyParcel(lng, lat, lotPlan);
+  const focusLat = parcel?.point?.coordinates?.[1] ?? lat;
+  const focusLng = parcel?.point?.coordinates?.[0] ?? lng;
+
   // 2) Spatial lookups (run in parallel)
   let zoningRow = null;
   let npBoundaryProps = null;
@@ -306,10 +200,6 @@ export async function fetchPlanningData({ address, lotPlan }) {
 
   let propertyParcelProps = null;
   let propertyParcelGeom = null;
-  // 2) Parcel first – provides a reliable in-lot point even if the geocode lands on the street.
-  const parcel = await queryPropertyParcel(lng, lat);
-  const lookupLat = parcel?.pointOnSurface?.lat ?? lat;
-  const lookupLng = parcel?.pointOnSurface?.lng ?? lng;
 
   try {
     const [zRow, npB, npP, fOverland, fCreek, fRiver, n] = await Promise.all([
@@ -317,7 +207,7 @@ export async function fetchPlanningData({ address, lotPlan }) {
       (async () => {
         if (!pool) return null;
         try {
-          const { rows } = await pool.query(zoningSql, [lookupLng, lookupLat]);
+          const { rows } = await pool.query(zoningSql, [focusLng, focusLat]);
           return rows[0] || null;
         } catch (err) {
           console.error(
@@ -329,12 +219,14 @@ export async function fetchPlanningData({ address, lotPlan }) {
       })(),
 
       // Neighbourhood plan & overlays via generic helper
-      queryOne("bcc_np_boundaries", lookupLng, lookupLat),
-      queryOne("bcc_np_precincts", lookupLng, lookupLat),
-      queryOne("bcc_flood_overland", lookupLng, lookupLat),
-      queryOne("bcc_flood_creek", lookupLng, lookupLat),
-      queryOne("bcc_flood_river", lookupLng, lookupLat),
-      queryOne("bcc_noise_corridor", lookupLng, lookupLat, 120),
+      queryOne("bcc_np_boundaries", focusLng, focusLat),
+      queryOne("bcc_np_precincts", focusLng, focusLat),
+      queryOne("bcc_flood_overland", focusLng, focusLat),
+      queryOne("bcc_flood_creek", focusLng, focusLat),
+      queryOne("bcc_flood_river", focusLng, focusLat),
+      queryOne("bcc_noise_corridor", focusLng, focusLat, 50), // 50m buffer for corridors
+
+      // NEW: cadastral parcel (property boundary)
     ]);
 
     zoningRow = zRow;
