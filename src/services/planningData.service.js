@@ -132,6 +132,75 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 }
 
 /**
+ * Spatial lookup using an input geometry (typically the selected parcel) rather than a point.
+ *
+ * - For polygon tables: uses ST_Intersects(geom4326, parcel4326)
+ * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
+ *
+ * Always returns:
+ *   - properties: first matched feature's properties
+ *   - geometry: union geometry (GeoJSON) in EPSG:4326
+ *   - debug: hitCount
+ */
+async function queryOneByGeometry(table, parcelGeoJson, withinDistanceMeters) {
+  if (!pool) return null;
+  if (!parcelGeoJson) return null;
+
+  const geom4326 = geomTo4326Sql("geom");
+  const parcelExpr = "ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)";
+
+  const predicate =
+    typeof withinDistanceMeters === "number"
+      ? `ST_DWithin((${geom4326})::geography, (${parcelExpr})::geography, $2)`
+      : `ST_Intersects(${geom4326}, ${parcelExpr})`;
+
+  const sql = `
+    WITH hits AS (
+      SELECT
+        properties,
+        ${geom4326} AS geom4326
+      FROM ${table}
+      WHERE ${predicate}
+    )
+    SELECT
+      (SELECT properties FROM hits LIMIT 1) AS properties,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(ST_Union(geom4326)),
+          0.00001
+        )
+      ) AS geom_geojson,
+      (SELECT COUNT(*) FROM hits) AS hit_count;
+  `;
+
+  const params =
+    typeof withinDistanceMeters === "number"
+      ? [JSON.stringify(parcelGeoJson), withinDistanceMeters]
+      : [JSON.stringify(parcelGeoJson)];
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    if (!rows || !rows.length) return null;
+
+    const row = rows[0];
+    const hitCount = row.hit_count != null ? Number(row.hit_count) : 0;
+    if (!hitCount) return null;
+
+    return {
+      properties: row.properties || {},
+      geometry: safeJsonParse(row.geom_geojson),
+      debug: { hitCount },
+    };
+  } catch (err) {
+    console.error(
+      `[planner] queryOneByGeometry failed for ${table}:`,
+      (err && err.message) || err
+    );
+    return null;
+  }
+}
+
+/**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
  * Goal: pick the *actual cadastral lot* (not an aggregated polygon, road parcel, easement, etc.)
@@ -274,15 +343,36 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const focusLng = parcel?.point?.coordinates?.[0] ?? lng;
 
   // 3) Spatial lookups
+  // Prefer parcel-intersection lookups to avoid geocode-on-road false negatives.
+  const parcelGeom = parcel?.geometry || null;
+
   const [zoning, npB, npP, fOverland, fCreek, fRiver, noise] =
     await Promise.all([
-      queryOne("bcc_zoning", focusLng, focusLat),
-      queryOne("bcc_np_boundaries", focusLng, focusLat),
-      queryOne("bcc_np_precincts", focusLng, focusLat),
-      queryOne("bcc_flood_overland", focusLng, focusLat),
-      queryOne("bcc_flood_creek", focusLng, focusLat),
-      queryOne("bcc_flood_river", focusLng, focusLat),
-      queryOne("bcc_noise_corridor", focusLng, focusLat, 80), // corridor buffer (meters)
+      parcelGeom
+        ? queryOneByGeometry("bcc_zoning", parcelGeom)
+        : queryOne("bcc_zoning", focusLng, focusLat),
+      parcelGeom
+        ? queryOneByGeometry("bcc_np_boundaries", parcelGeom)
+        : queryOne("bcc_np_boundaries", focusLng, focusLat),
+      parcelGeom
+        ? queryOneByGeometry("bcc_np_precincts", parcelGeom)
+        : queryOne("bcc_np_precincts", focusLng, focusLat),
+
+      // Flood overlays: intersect parcel (preferred)
+      parcelGeom
+        ? queryOneByGeometry("bcc_flood_overland", parcelGeom)
+        : queryOne("bcc_flood_overland", focusLng, focusLat),
+      parcelGeom
+        ? queryOneByGeometry("bcc_flood_creek", parcelGeom)
+        : queryOne("bcc_flood_creek", focusLng, focusLat),
+      parcelGeom
+        ? queryOneByGeometry("bcc_flood_river", parcelGeom)
+        : queryOne("bcc_flood_river", focusLng, focusLat),
+
+      // Noise corridor: within distance of parcel (preferred), else within distance of point
+      parcelGeom
+        ? queryOneByGeometry("bcc_noise_corridor", parcelGeom, 80)
+        : queryOne("bcc_noise_corridor", focusLng, focusLat, 80),
     ]);
 
   const zoningProps = zoning?.properties || null;
@@ -334,48 +424,71 @@ export async function fetchPlanningData({ address, lotPlan }) {
   // Overlays
   const overlays = [];
   const overlayPolygons = [];
+  const overlayDiagnostics = [];
 
-  const pushOverlay = (props, geom, def) => {
+  const pushOverlay = (props, geom, def, hitCount) => {
     if (!props) return;
     overlays.push(def);
     if (geom) overlayPolygons.push({ code: def.code, geometry: geom });
+    overlayDiagnostics.push({
+      code: def.code,
+      name: def.name,
+      hitCount: hitCount ?? null,
+      geometryType: geom?.type ?? null,
+      method: parcelGeom ? "parcel-intersects" : "point-contains",
+    });
   };
 
-  pushOverlay(fOverland?.properties, fOverland?.geometry, {
-    name: "Flood overlay – overland flow",
-    code: "flood_overland_flow",
-    severity:
-      readProp(fOverland?.properties, [
-        "HAZARD",
-        "hazard",
-        "SEVERITY",
-        "severity",
-      ]) || "overland flow",
-  });
+  pushOverlay(
+    fOverland?.properties,
+    fOverland?.geometry,
+    {
+      name: "Flood overlay – overland flow",
+      code: "flood_overland_flow",
+      severity:
+        readProp(fOverland?.properties, [
+          "HAZARD",
+          "hazard",
+          "SEVERITY",
+          "severity",
+        ]) || "overland flow",
+    },
+    fOverland?.debug?.hitCount
+  );
 
-  pushOverlay(fCreek?.properties, fCreek?.geometry, {
-    name: "Flood overlay – creek/waterway",
-    code: "flood_creek_waterway",
-    severity:
-      readProp(fCreek?.properties, [
-        "HAZARD",
-        "hazard",
-        "SEVERITY",
-        "severity",
-      ]) || "creek/waterway flood planning area",
-  });
+  pushOverlay(
+    fCreek?.properties,
+    fCreek?.geometry,
+    {
+      name: "Flood overlay – creek/waterway",
+      code: "flood_creek_waterway",
+      severity:
+        readProp(fCreek?.properties, [
+          "HAZARD",
+          "hazard",
+          "SEVERITY",
+          "severity",
+        ]) || "creek/waterway flood planning area",
+    },
+    fCreek?.debug?.hitCount
+  );
 
-  pushOverlay(fRiver?.properties, fRiver?.geometry, {
-    name: "Flood overlay – Brisbane River flood planning area",
-    code: "flood_brisbane_river",
-    severity:
-      readProp(fRiver?.properties, [
-        "HAZARD",
-        "hazard",
-        "SEVERITY",
-        "severity",
-      ]) || "Brisbane River flood planning area",
-  });
+  pushOverlay(
+    fRiver?.properties,
+    fRiver?.geometry,
+    {
+      name: "Flood overlay – Brisbane River flood planning area",
+      code: "flood_brisbane_river",
+      severity:
+        readProp(fRiver?.properties, [
+          "HAZARD",
+          "hazard",
+          "SEVERITY",
+          "severity",
+        ]) || "Brisbane River flood planning area",
+    },
+    fRiver?.debug?.hitCount
+  );
 
   let hasTransportNoiseCorridor = false;
   if (noise?.properties) {
@@ -397,6 +510,13 @@ export async function fetchPlanningData({ address, lotPlan }) {
         geometry: noise.geometry,
       });
     }
+    overlayDiagnostics.push({
+      code: "transport_noise_corridor",
+      name: "Transport noise corridor",
+      hitCount: noise?.debug?.hitCount ?? null,
+      geometryType: noise?.geometry?.type ?? null,
+      method: parcelGeom ? "parcel-within-distance" : "point-within-distance",
+    });
   }
 
   return {
@@ -418,6 +538,16 @@ export async function fetchPlanningData({ address, lotPlan }) {
     hasTransportNoiseCorridor,
     overlays,
     overlayPolygons,
+
+    diagnostics: {
+      focusPoint: {
+        lat: focusLat,
+        lng: focusLng,
+        source: parcel ? "parcel" : "geocode",
+      },
+      parcel: parcel?.debug || null,
+      overlayDiagnostics,
+    },
 
     // Cadastral parcel for the site (draw this as the green outline)
     siteParcelPolygon: parcel?.geometry || null,
