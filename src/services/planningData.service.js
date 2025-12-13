@@ -66,20 +66,44 @@ function readProp(obj, keys) {
  *
  * - For polygon tables: uses ST_Contains(geom, point)
  * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
+ *
+ * Notes on CRS:
+ * - We always build the input point in EPSG:4326.
+ * - Output geometry is transformed to 4326 if needed, and simplified in a topology-safe way.
  */
 async function queryOne(table, lng, lat, withinDistanceMeters) {
   if (!pool) return null;
 
+  // Always build the query point in WGS84.
   const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
+
+  // Transform to 4326 for the frontend (safe even if already 4326).
+  // If SRID is unknown (0), we do NOT transform to avoid PostGIS errors.
+  const geom4326 = `
+    CASE
+      WHEN ST_SRID(geom) IN (4326, 0) THEN geom
+      ELSE ST_Transform(geom, 4326)
+    END
+  `;
+
+  // Keep payload light but preserve topology so polygons still render.
+  const geomOut = `
+    ST_AsGeoJSON(
+      ST_SimplifyPreserveTopology(
+        ST_MakeValid(${geom4326}),
+        0.00005
+      )
+    ) AS geom_geojson
+  `;
+
   let sql;
 
   if (typeof withinDistanceMeters === "number") {
+    // distance queries use geography to avoid CRS mismatches
     sql = `
       SELECT
         properties,
-        ST_AsGeoJSON(
-          ST_Simplify(geom, 0.0003)
-        ) AS geom_geojson
+        ${geomOut}
       FROM ${table}
       WHERE ST_DWithin(
         geom::geography,
@@ -92,9 +116,7 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
     sql = `
       SELECT
         properties,
-        ST_AsGeoJSON(
-          ST_Simplify(geom, 0.0003)
-        ) AS geom_geojson
+        ${geomOut}
       FROM ${table}
       WHERE ST_Contains(
         geom,
@@ -109,18 +131,26 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
       ? [lng, lat, withinDistanceMeters]
       : [lng, lat];
 
-  const { rows } = await pool.query(sql, params);
-  if (!rows || !rows.length) return null;
+  try {
+    const { rows } = await pool.query(sql, params);
+    if (!rows || !rows.length) return null;
 
-  const row = rows[0];
-  return {
-    properties: row.properties || {},
-    geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
-  };
+    const row = rows[0];
+    return {
+      properties: row.properties || {},
+      geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
+    };
+  } catch (err) {
+    console.error(
+      `[planner] spatial lookup failed for ${table}:`,
+      (err && err.message) || err
+    );
+    return null;
+  }
 }
 
 /**
- * Property parcel lookup – uses the bcc_property_parcels table.
+ * Property parcel lookup – uses the bcc_property_parcels table. – uses the bcc_property_parcels table.
  *
  * Notes:
  *  - Parcels are stored in SRID 4283.
@@ -141,39 +171,53 @@ async function queryPropertyParcel(lng, lat) {
           ST_SetSRID(ST_MakePoint($1, $2), 4326),
           4283
         ) AS geom_4283
+    ),
+    candidates AS (
+      SELECT
+        p.properties,
+        p.geom,
+        ST_Contains(p.geom, pt.geom_4283) AS contains_pt,
+        ST_Distance(p.geom::geography, pt.geom_4283::geography) AS dist_m,
+        ST_Area(p.geom) AS area_deg
+      FROM bcc_property_parcels p, pt
+      WHERE
+        -- Wider search radius to handle street-centre geocodes
+        ST_DWithin(p.geom::geography, pt.geom_4283::geography, 120)
+        -- Avoid road / intersection / non-lot parcels (data varies; be defensive)
+        AND NOT (
+          COALESCE(p.properties->>'parcel_typ_desc','') ILIKE ANY (ARRAY[
+            '%road%',
+            '%intersection%',
+            '%easement%',
+            '%reserve%',
+            '%park%',
+            '%water%',
+            '%creek%',
+            '%rail%'
+          ])
+        )
     )
     SELECT
-      p.properties,
+      properties,
       ST_AsGeoJSON(
         ST_Transform(
-          ST_Simplify(p.geom, 0.00003),
+          ST_SimplifyPreserveTopology(
+            ST_MakeValid(geom),
+            0.00001
+          ),
           4326
         )
       ) AS geom_geojson
-    FROM bcc_property_parcels p, pt
-    WHERE
-      -- within ~60m of the geocoded point
-      ST_DWithin(
-        p.geom::geography,
-        pt.geom_4283::geography,
-        60
-      )
-      -- avoid ROAD / INTERSECTION parcels
-      AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%road%'
-      AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%intersection%'
+    FROM candidates
     ORDER BY
-      -- prefer real "property" polygons
-      CASE
-        WHEN p.properties->>'property_type' IN ('H','U') THEN 0
-        ELSE 1
-      END,
-      -- then closest to the point
-      ST_Distance(
-        p.geom::geography,
-        pt.geom_4283::geography
-      ),
-      -- smallest area as final tie-breaker
-      ST_Area(p.geom)
+      -- If the geocode point falls inside a parcel, that wins.
+      CASE WHEN contains_pt THEN 0 ELSE 1 END,
+      -- Prefer real “property” polygons.
+      CASE WHEN properties->>'property_type' IN ('H','U') THEN 0 ELSE 1 END,
+      -- Then the closest parcel.
+      dist_m,
+      -- Finally, smallest area as tie-breaker.
+      area_deg
     LIMIT 1;
   `;
 
