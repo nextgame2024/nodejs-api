@@ -1,5 +1,4 @@
 // src/services/planningData.service.js
-
 import axios from "axios";
 import pgPkg from "pg";
 
@@ -11,11 +10,11 @@ const GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const connectionString =
   process.env.DATABASE_URL ||
   (process.env.DB_HOST &&
-    `postgres://${encodeURIComponent(process.env.DB_USER)}:${encodeURIComponent(
-      process.env.DB_PASSWORD
-    )}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${
-      process.env.DB_DATABASE
-    }`);
+    `postgres://${encodeURIComponent(
+      process.env.DB_USER
+    )}:${encodeURIComponent(process.env.DB_PASSWORD)}@${
+      process.env.DB_HOST
+    }:${process.env.DB_PORT || 5432}/${process.env.DB_DATABASE}`);
 
 if (!connectionString) {
   console.error(
@@ -25,240 +24,102 @@ if (!connectionString) {
 
 const pool = connectionString ? new Pool({ connectionString }) : null;
 
-function safeJsonParse(maybeJson) {
-  if (!maybeJson) return null;
-  if (typeof maybeJson === "object") return maybeJson;
-  if (typeof maybeJson === "string") {
-    try {
-      return JSON.parse(maybeJson);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 /**
- * Safely read a property from a JSON object trying multiple keys.
+ * Safe property reader for inconsistent upstream schemas.
+ * Returns the first non-empty value found for the provided keys.
  */
 function readProp(obj, keys) {
-  if (!obj) return null;
+  if (!obj || !keys) return null;
   for (const k of keys) {
-    if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
+    if (!k) continue;
+    if (Object.prototype.hasOwnProperty.call(obj, k)) {
       const v = obj[k];
-      if (String(v).trim() !== "") return v;
+      if (v !== undefined && v !== null && String(v).trim() !== "") return v;
     }
   }
   return null;
-}
-
-/**
- * Convert table geom to EPSG:4326 defensively.
- * - If SRID is 4326: keep
- * - If SRID is 0: assume 4326 (best-effort)
- * - Else: transform to 4326
- */
-function geomTo4326Sql(geomCol = "geom") {
-  return `
-    CASE
-      WHEN ST_SRID(${geomCol}) = 4326 THEN ${geomCol}
-      WHEN ST_SRID(${geomCol}) = 0 THEN ST_SetSRID(${geomCol}, 4326)
-      ELSE ST_Transform(${geomCol}, 4326)
-    END
-  `;
-}
-
-/**
- * Generic spatial lookup helper.
- *
- * - For polygon tables: uses ST_Contains(geom4326, point4326)
- * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
- *
- * Always returns GeoJSON geometry in EPSG:4326 (parsed object).
- */
-async function queryOne(table, lng, lat, withinDistanceMeters) {
-  if (!pool) return null;
-
-  // NOTE: table is always a fixed internal constant in this app.
-  const geom4326 = geomTo4326Sql("geom");
-  const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
-
-  const predicate =
-    typeof withinDistanceMeters === "number"
-      ? `ST_DWithin((${geom4326})::geography, (${pointExpr})::geography, $3)`
-      : `ST_Contains(${geom4326}, ${pointExpr})`;
-
-  const orderBy =
-    typeof withinDistanceMeters === "number"
-      ? `ST_Distance((${geom4326})::geography, (${pointExpr})::geography)`
-      : `ST_Area((${geom4326})::geography)`;
-
-  const sql = `
-    SELECT
-      properties,
-      ST_AsGeoJSON(
-        ST_SimplifyPreserveTopology(
-          ST_MakeValid(${geom4326}),
-          0.00001
-        )
-      ) AS geom_geojson
-    FROM ${table}
-    WHERE ${predicate}
-    ORDER BY ${orderBy}
-    LIMIT 1;
-  `;
-
-  const params =
-    typeof withinDistanceMeters === "number"
-      ? [lng, lat, withinDistanceMeters]
-      : [lng, lat];
-
-  try {
-    const { rows } = await pool.query(sql, params);
-    if (!rows || !rows.length) return null;
-
-    const row = rows[0];
-    return {
-      properties: row.properties || {},
-      geometry: safeJsonParse(row.geom_geojson),
-    };
-  } catch (err) {
-    console.error(
-      `[planner] queryOne failed for ${table}:`,
-      (err && err.message) || err
-    );
-    return null;
-  }
-}
-
-/**
- * Spatial lookup using an input geometry (typically the selected parcel) rather than a point.
- *
- * - For polygon tables: uses ST_Intersects(geom4326, parcel4326)
- * - For corridor/line tables: pass withinDistanceMeters to use ST_DWithin(...)
- *
- * Always returns:
- *   - properties: first matched feature's properties
- *   - geometry: union geometry (GeoJSON) in EPSG:4326
- *   - debug: hitCount
- */
-async function queryOneByGeometry(table, parcelGeoJson, withinDistanceMeters) {
-  if (!pool) return null;
-  if (!parcelGeoJson) return null;
-
-  const geom4326 = geomTo4326Sql("geom");
-  const parcelExpr = "ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)";
-
-  const predicate =
-    typeof withinDistanceMeters === "number"
-      ? `ST_DWithin((${geom4326})::geography, (${parcelExpr})::geography, $2)`
-      : `ST_Intersects(${geom4326}, ${parcelExpr})`;
-
-  const sql = `
-    WITH hits AS (
-      SELECT
-        properties,
-        ${geom4326} AS geom4326
-      FROM ${table}
-      WHERE ${predicate}
-    )
-    SELECT
-      (SELECT properties FROM hits LIMIT 1) AS properties,
-      ST_AsGeoJSON(
-        ST_SimplifyPreserveTopology(
-          ST_MakeValid(ST_Union(geom4326)),
-          0.00001
-        )
-      ) AS geom_geojson,
-      (SELECT COUNT(*) FROM hits) AS hit_count;
-  `;
-
-  const params =
-    typeof withinDistanceMeters === "number"
-      ? [JSON.stringify(parcelGeoJson), withinDistanceMeters]
-      : [JSON.stringify(parcelGeoJson)];
-
-  try {
-    const { rows } = await pool.query(sql, params);
-    if (!rows || !rows.length) return null;
-
-    const row = rows[0];
-    const hitCount = row.hit_count != null ? Number(row.hit_count) : 0;
-    if (!hitCount) return null;
-
-    return {
-      properties: row.properties || {},
-      geometry: safeJsonParse(row.geom_geojson),
-      debug: { hitCount },
-    };
-  } catch (err) {
-    console.error(
-      `[planner] queryOneByGeometry failed for ${table}:`,
-      (err && err.message) || err
-    );
-    return null;
-  }
 }
 
 /**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
- * Goal: pick the *actual cadastral lot* (not an aggregated polygon, road parcel, easement, etc.)
+ * Goal: pick the *actual lot* (not an aggregated polygon, road parcel, easement, etc.)
  * even when the Google geocode lands on the street centreline.
  *
- * Strategy (ranked tiers):
- *  0) contains point AND area <= 8,000m²
- *  1) contains point (any size)
- *  2) within 25m AND area <= 8,000m²
- *  3) within 25m (any size)
- *  4) within 120m AND area <= 8,000m²
- *  5) within 120m (any size)
- *
- * Within the tier, prefer:
- *  - lotPlan text match (if provided)
- *  - property_type H/U
- *  - smaller area (m²)
- *  - closer distance
+ * Strategy:
+ *  - Candidate search within 120m (geography, after transforming geom to 4326).
+ *  - Strongly filter known non-lot parcel types.
+ *  - Prefer parcels that CONTAIN the geocode point.
+ *  - Otherwise prefer parcels within a small tolerance (8m) and closest.
+ *  - Prefer property_type H/U.
+ *  - Prefer smaller area (m²) as a tie-breaker, with a soft penalty for very large polygons.
  *
  * Returns:
- *  - geometry: GeoJSON in EPSG:4326 (parsed object)
- *  - point: interior point (point-on-surface) in EPSG:4326
+ *  - geometry: GeoJSON in EPSG:4326
+ *  - point: an interior point (point-on-surface) in EPSG:4326 for subsequent overlay lookups
  */
 async function queryPropertyParcel(lng, lat, lotPlan) {
   if (!pool) return null;
 
   const lotPlanText = (lotPlan || "").trim();
-  const geom4326 = geomTo4326Sql("p.geom");
 
   const sql = `
     WITH pt AS (
-      SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326) AS pt4326
+      SELECT ${"ST_SetSRID(ST_MakePoint($1, $2), 4326)"} AS pt4326
     ),
     candidates AS (
       SELECT
         p.properties,
-        ${geom4326} AS geom4326,
-        ST_Contains(${geom4326}, pt.pt4326) AS contains_pt,
-        ST_DWithin((${geom4326})::geography, pt.pt4326::geography, 25) AS within_25m,
-        ST_DWithin((${geom4326})::geography, pt.pt4326::geography, 120) AS within_120m,
-        ST_Distance((${geom4326})::geography, pt.pt4326::geography) AS dist_m,
-        ST_Area((${geom4326})::geography) AS area_m2,
+        ${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"} AS geom4326,
+        ST_Contains(
+          ${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"},
+          pt.pt4326
+        ) AS contains_pt,
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          8
+        ) AS within_8m,
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          25
+        ) AS within_25m,
+        ST_Distance(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography
+        ) AS dist_m,
+        ST_Area(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography
+        ) AS area_m2,
         CASE
           WHEN $3 <> '' AND p.properties::text ILIKE ('%' || $3 || '%') THEN 0
           ELSE 1
         END AS lotplan_rank
       FROM bcc_property_parcels p, pt
       WHERE
-        ST_DWithin((${geom4326})::geography, pt.pt4326::geography, 120)
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%road%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%intersection%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%rail%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%easement%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%reserve%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%park%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%water%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%creek%'
-        AND COALESCE(p.properties->>'parcel_typ_desc','') NOT ILIKE '%drain%'
+        ST_DWithin(
+          (${"CASE WHEN ST_SRID(p.geom) IN (0,4326) THEN p.geom ELSE ST_Transform(p.geom,4326) END"})::geography,
+          pt.pt4326::geography,
+          120
+        )
+        -- Defensive exclusions: avoid non-lot / transport / corridor parcels
+        AND NOT (
+          COALESCE(p.properties->>'parcel_typ_desc','') ILIKE ANY (ARRAY[
+            '%road%',
+            '%intersection%',
+            '%rail%',
+            '%easement%',
+            '%reserve%',
+            '%park%',
+            '%water%',
+            '%creek%',
+            '%drain%',
+            '%state%',
+            '%council%',
+            '%footpath%'
+          ])
+        )
     )
     SELECT
       properties,
@@ -268,24 +129,27 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
           0.000005
         )
       ) AS geom_geojson,
-      ST_AsGeoJSON(ST_PointOnSurface(geom4326)) AS point_geojson,
+      ST_AsGeoJSON(
+        ST_PointOnSurface(geom4326)
+      ) AS point_geojson,
       contains_pt,
+      within_8m,
       within_25m,
-      within_120m,
       dist_m,
       area_m2
     FROM candidates
     ORDER BY
-      CASE
-        WHEN contains_pt AND area_m2 <= 8000 THEN 0
-        WHEN contains_pt THEN 1
-        WHEN within_25m AND area_m2 <= 8000 THEN 2
-        WHEN within_25m THEN 3
-        WHEN within_120m AND area_m2 <= 8000 THEN 4
-        ELSE 5
-      END,
+      -- 1) If the geocode point falls inside multiple polygons, pick the *smallest* one (usually the lot).
+      CASE WHEN contains_pt THEN 0 ELSE 1 END,
+      -- 2) If the user provided a lot/plan hint, prefer matches.
       lotplan_rank,
+      -- 3) Prefer residential property types when available.
       CASE WHEN properties->>'property_type' IN ('H','U') THEN 0 ELSE 1 END,
+      -- 4) Otherwise allow a small distance tolerance (street-centre geocodes).
+      CASE WHEN within_8m THEN 0 ELSE 1 END,
+      -- 5) Avoid aggregated polygons unless we have no alternative.
+      CASE WHEN area_m2 > 15000 THEN 1 ELSE 0 END,
+      -- 6) Smallest area first, then closest.
       area_m2,
       dist_m
     LIMIT 1;
@@ -298,12 +162,12 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
     const row = rows[0];
     return {
       properties: row.properties || {},
-      geometry: safeJsonParse(row.geom_geojson),
-      point: safeJsonParse(row.point_geojson),
+      geometry: row.geom_geojson ? JSON.parse(row.geom_geojson) : null,
+      point: row.point_geojson ? JSON.parse(row.point_geojson) : null,
       debug: {
         containsPoint: !!row.contains_pt,
+        within8m: !!row.within_8m,
         within25m: !!row.within_25m,
-        within120m: !!row.within_120m,
         distM: row.dist_m != null ? Number(row.dist_m) : null,
         areaM2: row.area_m2 != null ? Number(row.area_m2) : null,
       },
@@ -317,13 +181,25 @@ async function queryPropertyParcel(lng, lat, lotPlan) {
   }
 }
 
+/**
+ * Main entry used by planner controller.
+ *
+ * 1) Geocode the address via Google Maps
+ * 2) Query PostGIS tables:
+ *    - bcc_zoning
+ *    - bcc_np_boundaries
+ *    - bcc_np_precincts
+ *    - bcc_flood_overland, bcc_flood_creek, bcc_flood_river
+ *    - bcc_noise_corridor
+ *    - bcc_property_parcels (NEW – cadastral parcel)
+ */
 export async function fetchPlanningData({ address, lotPlan }) {
   if (!process.env.GOOGLE_MAPS_API_KEY) {
     console.error("[planner] GOOGLE_MAPS_API_KEY is not configured");
     throw new Error("Google Maps API key is required");
   }
 
-  // 1) Geocode address
+  // 1) Geocode
   const { data } = await axios.get(GOOGLE_GEOCODE_URL, {
     params: {
       address,
@@ -331,82 +207,138 @@ export async function fetchPlanningData({ address, lotPlan }) {
     },
   });
 
-  const geocodeResult = data.results && data.results[0];
-  if (!geocodeResult) throw new Error("Unable to geocode address");
+  const result = data.results && data.results[0];
+  if (!result) {
+    throw new Error("Unable to geocode address");
+  }
 
-  const lat = geocodeResult.geometry.location.lat;
-  const lng = geocodeResult.geometry.location.lng;
+  const lat = result.geometry.location.lat;
+  const lng = result.geometry.location.lng;
 
-  // 2) Parcel first, then use a point inside the lot for all other queries.
+  // Prefer an interior point from the cadastral parcel (better than street-centre geocode)
   const parcel = await queryPropertyParcel(lng, lat, lotPlan);
   const focusLat = parcel?.point?.coordinates?.[1] ?? lat;
   const focusLng = parcel?.point?.coordinates?.[0] ?? lng;
 
-  // 3) Spatial lookups
-  // Prefer parcel-intersection lookups to avoid geocode-on-road false negatives.
-  const parcelGeom = parcel?.geometry || null;
+  // 2) Spatial lookups (run in parallel)
+  let zoningRow = null;
+  let npBoundaryProps = null;
+  let npPrecinctProps = null;
+  let floodOverlandProps = null;
+  let floodCreekProps = null;
+  let floodRiverProps = null;
+  let noiseProps = null;
 
-  const [zoning, npB, npP, fOverland, fCreek, fRiver, noise] =
-    await Promise.all([
-      parcelGeom
-        ? queryOneByGeometry("bcc_zoning", parcelGeom)
-        : queryOne("bcc_zoning", focusLng, focusLat),
-      parcelGeom
-        ? queryOneByGeometry("bcc_np_boundaries", parcelGeom)
-        : queryOne("bcc_np_boundaries", focusLng, focusLat),
-      parcelGeom
-        ? queryOneByGeometry("bcc_np_precincts", parcelGeom)
-        : queryOne("bcc_np_precincts", focusLng, focusLat),
+  let npBoundaryGeom = null;
+  let npPrecinctGeom = null;
+  let floodOverlandGeom = null;
+  let floodCreekGeom = null;
+  let floodRiverGeom = null;
+  let noiseGeom = null;
 
-      // Flood overlays: intersect parcel (preferred)
-      parcelGeom
-        ? queryOneByGeometry("bcc_flood_overland", parcelGeom)
-        : queryOne("bcc_flood_overland", focusLng, focusLat),
-      parcelGeom
-        ? queryOneByGeometry("bcc_flood_creek", parcelGeom)
-        : queryOne("bcc_flood_creek", focusLng, focusLat),
-      parcelGeom
-        ? queryOneByGeometry("bcc_flood_river", parcelGeom)
-        : queryOne("bcc_flood_river", focusLng, focusLat),
+  let propertyParcelProps = null;
+  let propertyParcelGeom = null;
+  let propertyParcelDebug = null;
 
-      // Noise corridor: within distance of parcel (preferred), else within distance of point
-      parcelGeom
-        ? queryOneByGeometry("bcc_noise_corridor", parcelGeom, 80)
-        : queryOne("bcc_noise_corridor", focusLng, focusLat, 80),
+  try {
+    const [zRow, npB, npP, fOverland, fCreek, fRiver, n] = await Promise.all([
+      // ZONING via explicit SQL
+      (async () => {
+        if (!pool) return null;
+        try {
+          const { rows } = await pool.query(zoningSql, [focusLng, focusLat]);
+          return rows[0] || null;
+        } catch (err) {
+          console.error(
+            "[planner] zoning lookup failed:",
+            (err && err.message) || err
+          );
+          return null;
+        }
+      })(),
+
+      // Neighbourhood plan & overlays via generic helper
+      queryOne("bcc_np_boundaries", focusLng, focusLat),
+      queryOne("bcc_np_precincts", focusLng, focusLat),
+      queryOne("bcc_flood_overland", focusLng, focusLat),
+      queryOne("bcc_flood_creek", focusLng, focusLat),
+      queryOne("bcc_flood_river", focusLng, focusLat),
+      queryOne("bcc_noise_corridor", focusLng, focusLat, 50), // 50m buffer for corridors
+
+      // NEW: cadastral parcel (property boundary)
     ]);
 
-  const zoningProps = zoning?.properties || null;
-  const zoningPolygon = zoning?.geometry || null;
+    zoningRow = zRow;
 
-  const zoningName =
+    npBoundaryProps = npB?.properties || null;
+    npBoundaryGeom = npB?.geometry || null;
+
+    npPrecinctProps = npP?.properties || null;
+    npPrecinctGeom = npP?.geometry || null;
+
+    floodOverlandProps = fOverland?.properties || null;
+    floodOverlandGeom = fOverland?.geometry || null;
+
+    floodCreekProps = fCreek?.properties || null;
+    floodCreekGeom = fCreek?.geometry || null;
+
+    floodRiverProps = fRiver?.properties || null;
+    floodRiverGeom = fRiver?.geometry || null;
+
+    noiseProps = n?.properties || null;
+    noiseGeom = n?.geometry || null;
+
+    propertyParcelProps = parcel?.properties || null;
+    propertyParcelGeom = parcel?.geometry || null;
+    propertyParcelDebug = parcel?.debug || null;
+  } catch (err) {
+    console.error(
+      "[planner] PostGIS lookup failed:",
+      (err && err.message) || err
+    );
+  }
+
+  // 3) Interpret attributes
+
+  // Zoning – prefer explicit columns from zoningRow, fall back to properties JSON
+  const zoningProps = zoningRow ? zoningRow.properties || {} : null;
+
+  const zoningPolygon =
+    zoningRow && zoningRow.geom_geojson
+      ? JSON.parse(zoningRow.geom_geojson)
+      : null;
+
+  let zoningName =
+    readProp(zoningRow, ["zone_prec_desc"]) ||
     readProp(zoningProps, [
-      "zone_prec_desc",
+      "zone_prec_desc", // "LDR – Low density residential"
       "ZONE_PREC_DESC",
-      "lvl2_zone",
+      "lvl2_zone", // "Low density residential"
       "LVL2_ZONE",
-      "lvl1_zone",
+      "lvl1_zone", // "General residential"
       "LVL1_ZONE",
       "zone_name",
       "ZONE_NAME",
-      "ZONE_DESC",
-      "zone_desc",
-    ]) || "Unknown zoning";
+    ]) ||
+    "Unknown zoning";
 
   const zoningCode =
-    readProp(zoningProps, ["zone_code", "ZONE_CODE", "ZONE", "zone"]) || null;
-
-  const npBoundaryProps = npB?.properties || null;
-  const npPrecinctProps = npP?.properties || null;
-
-  const neighbourhoodPlan =
-    readProp(npPrecinctProps, ["NP_NAME", "np_name", "NAME", "name"]) ||
-    readProp(npBoundaryProps, ["NP_NAME", "np_name", "NAME", "name"]) ||
+    readProp(zoningRow, ["zone_code"]) ||
+    readProp(zoningProps, ["zone_code", "ZONE_CODE"]) ||
     null;
 
-  const neighbourhoodPlanCode =
-    readProp(npPrecinctProps, ["NP_CODE", "np_code"]) ||
-    readProp(npBoundaryProps, ["NP_CODE", "np_code"]) ||
-    null;
+  // Neighbourhood plan (boundary + precinct tables)
+  const npNameBoundary =
+    readProp(npBoundaryProps, ["NP_NAME", "np_name", "NAME", "name"]) || null;
+
+  const npNamePrecinct =
+    readProp(npPrecinctProps, ["NP_NAME", "np_name", "NAME", "name"]) || null;
+
+  const npCodeBoundary =
+    readProp(npBoundaryProps, ["NP_CODE", "np_code"]) || null;
+
+  const npCodePrecinct =
+    readProp(npPrecinctProps, ["NP_CODE", "np_code"]) || null;
 
   const npPrecinctName =
     readProp(npPrecinctProps, [
@@ -421,109 +353,127 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const npPrecinctCode =
     readProp(npPrecinctProps, ["NPP_CODE", "npp_code"]) || null;
 
+  const neighbourhoodPlan = npNamePrecinct || npNameBoundary || null;
+  const neighbourhoodPlanCode = npCodePrecinct || npCodeBoundary || null;
+
   // Overlays
-  const overlays = [];
   const overlayPolygons = [];
-  const overlayDiagnostics = [];
+  const overlays = [];
+  const rawFloodFeatures = [];
+  let rawTransportNoiseFeature = null;
+  let hasTransportNoiseCorridor = false;
 
-  const pushOverlay = (props, geom, def, hitCount) => {
-    if (!props) return;
-    overlays.push(def);
-    if (geom) overlayPolygons.push({ code: def.code, geometry: geom });
-    overlayDiagnostics.push({
-      code: def.code,
-      name: def.name,
-      hitCount: hitCount ?? null,
-      geometryType: geom?.type ?? null,
-      method: parcelGeom ? "parcel-intersects" : "point-contains",
-    });
-  };
-
-  pushOverlay(
-    fOverland?.properties,
-    fOverland?.geometry,
-    {
+  if (floodOverlandProps) {
+    overlays.push({
       name: "Flood overlay – overland flow",
       code: "flood_overland_flow",
       severity:
-        readProp(fOverland?.properties, [
+        readProp(floodOverlandProps, [
           "HAZARD",
           "hazard",
           "SEVERITY",
           "severity",
         ]) || "overland flow",
-    },
-    fOverland?.debug?.hitCount
-  );
+    });
+    rawFloodFeatures.push({
+      source: "overland",
+      properties: floodOverlandProps,
+    });
 
-  pushOverlay(
-    fCreek?.properties,
-    fCreek?.geometry,
-    {
+    if (floodOverlandGeom) {
+      overlayPolygons.push({
+        code: "flood_overland_flow",
+        geometry: floodOverlandGeom,
+      });
+    }
+  }
+
+  if (floodCreekProps) {
+    overlays.push({
       name: "Flood overlay – creek/waterway",
       code: "flood_creek_waterway",
       severity:
-        readProp(fCreek?.properties, [
+        readProp(floodCreekProps, [
           "HAZARD",
           "hazard",
           "SEVERITY",
           "severity",
         ]) || "creek/waterway flood planning area",
-    },
-    fCreek?.debug?.hitCount
-  );
+    });
+    rawFloodFeatures.push({
+      source: "creek_waterway",
+      properties: floodCreekProps,
+    });
 
-  pushOverlay(
-    fRiver?.properties,
-    fRiver?.geometry,
-    {
+    if (floodCreekGeom) {
+      overlayPolygons.push({
+        code: "flood_creek_waterway",
+        geometry: floodCreekGeom,
+      });
+    }
+  }
+
+  if (floodRiverProps) {
+    overlays.push({
       name: "Flood overlay – Brisbane River flood planning area",
       code: "flood_brisbane_river",
       severity:
-        readProp(fRiver?.properties, [
+        readProp(floodRiverProps, [
           "HAZARD",
           "hazard",
           "SEVERITY",
           "severity",
         ]) || "Brisbane River flood planning area",
-    },
-    fRiver?.debug?.hitCount
-  );
+    });
+    rawFloodFeatures.push({
+      source: "brisbane_river",
+      properties: floodRiverProps,
+    });
 
-  let hasTransportNoiseCorridor = false;
-  if (noise?.properties) {
+    if (floodRiverGeom) {
+      overlayPolygons.push({
+        code: "flood_brisbane_river",
+        geometry: floodRiverGeom,
+      });
+    }
+  }
+
+  if (noiseProps) {
     hasTransportNoiseCorridor = true;
     overlays.push({
       name: "Transport noise corridor",
       code: "transport_noise_corridor",
       severity:
-        readProp(noise?.properties, [
-          "CORRIDOR",
-          "corridor",
-          "LEVEL",
-          "level",
-        ]) || "near state-controlled road",
+        readProp(noiseProps, ["CORRIDOR", "corridor", "LEVEL", "level"]) ||
+        "near state-controlled road",
     });
-    if (noise?.geometry) {
+    rawTransportNoiseFeature = {
+      properties: noiseProps,
+    };
+
+    if (noiseGeom) {
       overlayPolygons.push({
         code: "transport_noise_corridor",
-        geometry: noise.geometry,
+        geometry: noiseGeom,
       });
     }
-    overlayDiagnostics.push({
-      code: "transport_noise_corridor",
-      name: "Transport noise corridor",
-      hitCount: noise?.debug?.hitCount ?? null,
-      geometryType: noise?.geometry?.type ?? null,
-      method: parcelGeom ? "parcel-within-distance" : "point-within-distance",
-    });
   }
+
+  // Property parcel interpretation
+  const propertyParcel =
+    propertyParcelProps || propertyParcelGeom
+      ? {
+          properties: propertyParcelProps || {},
+          geometry: propertyParcelGeom || null,
+          debug: propertyParcelDebug,
+        }
+      : null;
 
   return {
     geocode: {
       lat,
       lng,
-      formattedAddress: geocodeResult.formatted_address,
+      formattedAddress: result.formatted_address,
     },
 
     zoning: zoningName,
@@ -539,29 +489,15 @@ export async function fetchPlanningData({ address, lotPlan }) {
     overlays,
     overlayPolygons,
 
-    diagnostics: {
-      focusPoint: {
-        lat: focusLat,
-        lng: focusLng,
-        source: parcel ? "parcel" : "geocode",
-      },
-      parcel: parcel?.debug || null,
-      overlayDiagnostics,
-    },
-
     // Cadastral parcel for the site (draw this as the green outline)
-    siteParcelPolygon: parcel?.geometry || null,
-    propertyParcel: parcel
-      ? {
-          properties: parcel.properties || {},
-          geometry: parcel.geometry || null,
-          debug: parcel.debug || null,
-        }
-      : null,
+    siteParcelPolygon: propertyParcelGeom || null,
+    propertyParcel,
 
-    // Raw debug – optional for logs/admin UI
+    // raw debugging info (useful for future tuning / logs / admin UI)
     rawZoningFeature: zoningProps,
     rawNeighbourhoodPlanBoundary: npBoundaryProps,
     rawNeighbourhoodPlanPrecinct: npPrecinctProps,
+    rawFloodFeatures,
+    rawTransportNoiseFeature,
   };
 }
