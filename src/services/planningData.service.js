@@ -86,7 +86,7 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
   const predicate =
     typeof withinDistanceMeters === "number"
       ? `ST_DWithin((${geom4326})::geography, (${pointExpr})::geography, $3)`
-      : `ST_Contains(${geom4326}, ${pointExpr})`;
+      : `ST_Covers(ST_MakeValid(${geom4326}), ${pointExpr})`;
 
   const orderBy =
     typeof withinDistanceMeters === "number"
@@ -125,6 +125,58 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
   } catch (err) {
     console.error(
       `[planner] queryOne failed for ${table}:`,
+      (err && err.message) || err
+    );
+    return null;
+  }
+}
+
+/**
+ * Spatial lookup for overlays that should be determined by parcel intersection (not just a point).
+ * This is critical for flood layers where a lot can be partially affected but the focus point
+ * (centroid/point-on-surface) may fall outside the flood polygon.
+ *
+ * `parcelGeomGeoJSON` is a GeoJSON Polygon/MultiPolygon in EPSG:4326.
+ */
+async function queryIntersects(table, parcelGeomGeoJSON) {
+  if (!pool) return null;
+  if (!parcelGeomGeoJSON) return null;
+
+  const geom4326 = geomTo4326Sql("geom");
+  const parcelExpr = "ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)";
+
+  const sql = `
+    WITH parcel AS (
+      SELECT ${parcelExpr} AS g
+    )
+    SELECT
+      properties,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(${geom4326}),
+          0.00001
+        )
+      ) AS geom_geojson
+    FROM ${table}, parcel
+    WHERE ST_Intersects(${geom4326}, parcel.g)
+    ORDER BY
+      ST_Area(ST_Intersection(${geom4326}, parcel.g)::geography) DESC NULLS LAST,
+      ST_Area((${geom4326})::geography) DESC
+    LIMIT 1;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [JSON.stringify(parcelGeomGeoJSON)]);
+    if (!rows || !rows.length) return null;
+
+    const row = rows[0];
+    return {
+      properties: row.properties || {},
+      geometry: safeJsonParse(row.geom_geojson),
+    };
+  } catch (err) {
+    console.error(
+      `[planner] queryIntersects(${table}) failed:`,
       (err && err.message) || err
     );
     return null;
@@ -274,15 +326,25 @@ export async function fetchPlanningData({ address, lotPlan }) {
   const focusLng = parcel?.point?.coordinates?.[0] ?? lng;
 
   // 3) Spatial lookups
+  const floodPromises = parcel?.geometry
+    ? [
+        queryIntersects("bcc_flood_overland", parcel.geometry),
+        queryIntersects("bcc_flood_creek", parcel.geometry),
+        queryIntersects("bcc_flood_river", parcel.geometry),
+      ]
+    : [
+        queryOne("bcc_flood_overland", focusLng, focusLat),
+        queryOne("bcc_flood_creek", focusLng, focusLat),
+        queryOne("bcc_flood_river", focusLng, focusLat),
+      ];
+
   const [zoning, npB, npP, fOverland, fCreek, fRiver, noise] =
     await Promise.all([
       queryOne("bcc_zoning", focusLng, focusLat),
       queryOne("bcc_np_boundaries", focusLng, focusLat),
       queryOne("bcc_np_precincts", focusLng, focusLat),
-      queryOne("bcc_flood_overland", focusLng, focusLat),
-      queryOne("bcc_flood_creek", focusLng, focusLat),
-      queryOne("bcc_flood_river", focusLng, focusLat),
-      queryOne("bcc_noise_corridor", focusLng, focusLat, 80), // corridor buffer (meters)
+      ...floodPromises,
+      queryOne("bcc_noise_corridor", focusLng, focusLat, 80),
     ]);
 
   const zoningProps = zoning?.properties || null;
