@@ -12,226 +12,125 @@ const TEXT_MODEL =
   process.env.GEMINI_TEXT_MODEL ||
   "gemini-2.0-flash";
 
-const SCHEMA_VERSION = 2;
-
-function safeText(v, fallback = "") {
-  const s = v == null ? "" : String(v).trim();
-  return s ? s : fallback;
-}
-
-function normalizeStatus(v) {
-  const s = safeText(v, "").toLowerCase();
-  if (["pass", "unknown", "trigger", "fail"].includes(s)) return s;
-  if (["info", "ok", "provided"].includes(s)) return "pass";
-  if (["risk", "attention"].includes(s)) return "trigger";
-  return "unknown";
-}
-
-function stripCodeFences(raw) {
-  let t = String(raw || "").trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```json/i, "").replace(/^```/i, "");
-    t = t.replace(/```$/, "").trim();
-  }
-  return t;
-}
-
-function validateV2(parsed) {
-  if (!parsed || typeof parsed !== "object") return false;
-  if (!parsed.executiveSummary || typeof parsed.executiveSummary !== "object")
-    return false;
-  if (!parsed.planningControls || typeof parsed.planningControls !== "object")
-    return false;
-  if (!Array.isArray(parsed.assessmentChecklist)) return false;
-  if (!Array.isArray(parsed.assumptionsAndUnknowns)) return false;
-  if (typeof parsed.disclaimer !== "string") return false;
-  return true;
-}
-
 /**
- * Fallback deterministic summary (no AI) – schema v2.
+ * Fallback deterministic summary (no AI).
  */
-function buildFallbackSummary({
-  site,
-  planning,
-  proposal,
-  classification,
-  checks,
-}) {
-  const address = safeText(site?.address, "the subject site");
+function buildFallbackSummary({ site, planning, proposal }) {
+  const address = site.address || "the subject site";
+  const zoning = planning.zoning || "Unknown zoning";
+  const np =
+    planning.neighbourhoodPlan ||
+    "No neighbourhood plan identified in this pre-assessment";
 
-  const outcome = {
-    devType: classification?.devType || "Unknown",
-    assessmentLevel: classification?.assessmentLevel || "Unknown",
-    confidence: "low",
-  };
-
-  const overlayHints = Array.isArray(checks?.overlayHints)
-    ? checks.overlayHints
-    : [];
-
-  const keyFindings = [];
-  for (const o of overlayHints.slice(0, 3)) {
-    keyFindings.push({
-      severity: safeText(o?.severity, "info"),
-      title: safeText(o?.name, "Overlay"),
-      detail: safeText(o?.whyItMatters, ""),
-    });
+  const shedDescParts = [];
+  if (proposal.lengthM && proposal.widthM) {
+    shedDescParts.push(`${proposal.lengthM} m × ${proposal.widthM} m`);
   }
-
-  const missing = Array.isArray(checks?.missingInputs)
-    ? checks.missingInputs
-    : [];
-  if (missing.length) {
-    keyFindings.push({
-      severity: "medium",
-      title: "Missing inputs",
-      detail:
-        "Some critical inputs are not provided. This reduces confidence in the assessment.",
-    });
+  if (proposal.heightRidgeM) {
+    shedDescParts.push(`ridge height ${proposal.heightRidgeM} m`);
   }
+  if (proposal.heightWallM) {
+    shedDescParts.push(`wall height ${proposal.heightWallM} m`);
+  }
+  const shedDesc = shedDescParts.join(", ") || "domestic outbuilding";
 
-  const recommendedNextSteps = Array.isArray(checks?.recommendedNextSteps)
-    ? checks.recommendedNextSteps
-    : [
-        "Confirm zoning and overlay mapping using Brisbane City Council City Plan mapping.",
-        "Confirm parcel boundaries and any easements/encumbrances from title and survey information.",
-        "Confirm key proposal inputs (dimensions, height and setbacks) and assess against applicable benchmarks.",
-      ];
-
-  const checklist = Array.isArray(checks?.items)
-    ? checks.items.map((it) => ({
-        topic: safeText(it?.label, "Item"),
-        benchmarkRef: "",
-        status: normalizeStatus(it?.status),
-        evidence: safeText(it?.details, ""),
-        comment:
-          "Confirm against City Plan provisions and/or certifier advice.",
-      }))
-    : [];
+  const overlaysText =
+    planning.overlays && planning.overlays.length
+      ? planning.overlays
+          .map((o) => (o.severity ? `${o.name} (${o.severity})` : o.name))
+          .join("; ")
+      : "No overlays identified in this pre-assessment (subject to detailed search).";
 
   return {
-    schemaVersion: SCHEMA_VERSION,
-    executiveSummary: {
-      headline: `Preliminary pre-assessment for ${address}.`,
-      assessmentOutcome: outcome,
-      keyFindings,
-      recommendedNextSteps,
-    },
-    planningControls: {
-      zoning: {
-        name: safeText(planning?.zoning, "Unknown zoning"),
-        code: safeText(planning?.zoningCode, ""),
-        rationale:
-          "Zoning identified from available mapping; confirm with Council property search.",
+    sections: [
+      {
+        title: "Zoning & Neighbourhood Plan",
+        body: `The site at ${address} is located within the ${zoning} zone under Brisbane City Plan 2014. The applicable neighbourhood plan mapping indicates ${np}. This pre-assessment is based on this zoning context and does not replace a full Council property search.`,
       },
-      neighbourhoodPlan: {
-        name: safeText(planning?.neighbourhoodPlan, ""),
-        precinct: safeText(planning?.neighbourhoodPlanPrecinct, ""),
-        rationale: safeText(planning?.neighbourhoodPlan)
-          ? "Neighbourhood plan mapping identified from available data."
-          : "No neighbourhood plan identified in this lookup; confirm with Council mapping.",
+      {
+        title: "Overlays & Triggers",
+        body: `Based on the preliminary overlay review, the following overlays are noted for the site: ${overlaysText}.\n\nThese overlays may introduce additional assessment benchmarks and/or code triggers. A full City Plan and state mapping search is recommended before lodgement.`,
       },
-      overlays: overlayHints,
-    },
-    assessmentChecklist: checklist,
-    assumptionsAndUnknowns: missing,
-    disclaimer:
-      "This pre-assessment is guidance only and does not constitute planning approval or legal advice. Confirm requirements with Brisbane City Council and a qualified professional.",
+      {
+        title: "Domestic Outbuilding Standards",
+        body: `The proposal is for a ${shedDesc} domestic outbuilding intended for ${
+          proposal.purpose || "domestic storage/ancillary use"
+        }. Materials are described as ${
+          proposal.materials || "typical residential-scale materials"
+        }.\n\nThis pre-assessment does not confirm full compliance with all relevant codes but provides an initial, high-level review.`,
+      },
+      {
+        title: "Setbacks, Height & Site Cover",
+        body: `Submitted setbacks are:\n- Front: ${
+          proposal.setbacks?.front ?? "not provided"
+        } m\n- Side 1: ${
+          proposal.setbacks?.side1 ?? "not provided"
+        } m\n- Side 2: ${
+          proposal.setbacks?.side2 ?? "not provided"
+        } m\n- Rear: ${
+          proposal.setbacks?.rear ?? "not provided"
+        } m\n\nOverall height and bulk appear generally consistent with a typical domestic shed for Low Density Residential zoning, however detailed assessment against all acceptable outcomes and performance outcomes is recommended.`,
+      },
+      {
+        title: "Earthworks & Stormwater",
+        body: `The pre-assessment notes earthworks of ${
+          proposal.earthworks || "minor site regrading only"
+        } and stormwater management described as ${
+          proposal.stormwater || "connection to lawful point of discharge"
+        }.\n\nAny cut/fill or drainage work must be designed to maintain stability of adjoining properties and ensure no worsening of stormwater impacts.`,
+      },
+      {
+        title: "Overall Pre-Assessment",
+        body: `On a preliminary review, the proposal appears capable of being supported in principle as a domestic outbuilding in the ${zoning} zone, subject to confirmation of setbacks, building height, site coverage and overlay responses against City Plan 2014 codes and any state planning interests.\n\nThis document is an initial pre-assessment only and should not be relied upon as a formal planning approval or detailed planning advice.`,
+      },
+    ],
   };
 }
 
 /**
- * Call Gemini to generate a structured JSON summary (schema v2).
+ * Call Gemini to generate a JSON summary. If parsing fails, fall back.
  */
-export async function genPreAssessmentSummary({
-  site,
-  planning,
-  proposal,
-  classification,
-  checks,
-}) {
+export async function genPreAssessmentSummary({ site, planning, proposal }) {
   const prompt = `
-You are a Brisbane town planning assistant producing a professional-style pre-assessment report.
+You are a Brisbane town planning assistant.
 
-The user is proposing a DOMESTIC OUTBUILDING (shed) at a residential property in Brisbane.
+Generate a clear, client-friendly Pre-Assessment Summary for a domestic outbuilding (shed) proposal in Brisbane.
 
-Your job:
-1) Summarise the likely planning context (zoning, neighbourhood plan, overlays).
-2) Provide a concise executive summary with clear findings and next steps.
-3) Provide a structured assessment checklist that flags missing information and likely triggers.
+Use the zoning, neighbourhood plan, overlays (flood, transport noise, etc.) and site details provided.
 
-CRITICAL RULES:
-- Output JSON ONLY.
-- Do NOT output markdown, backticks, commentary or explanations.
-- Do NOT invent numbers, dimensions, heights, setbacks, areas, or claims not present in the input.
-- If information is missing, set status to "unknown" and explain what is required.
-- Use ONLY these status values: "pass", "unknown", "trigger", "fail".
+OUTPUT RULES (very important):
+- Respond with JSON ONLY.
+- DO NOT include Markdown, backticks, commentary, or explanations.
+- The JSON must match this structure exactly:
 
-OUTPUT SCHEMA (must match exactly):
 {
-  "schemaVersion": 2,
-  "executiveSummary": {
-    "headline": "string",
-    "assessmentOutcome": {
-      "devType": "string",
-      "assessmentLevel": "string",
-      "confidence": "low|medium|high"
-    },
-    "keyFindings": [
-      { "severity": "low|medium|high|info", "title": "string", "detail": "string" }
-    ],
-    "recommendedNextSteps": ["string"]
-  },
-  "planningControls": {
-    "zoning": { "name": "string", "code": "string", "rationale": "string" },
-    "neighbourhoodPlan": { "name": "string", "precinct": "string", "rationale": "string" },
-    "overlays": [
-      {
-        "code": "string",
-        "name": "string",
-        "severity": "low|medium|high|info",
-        "whyItMatters": "string",
-        "actions": ["string"]
-      }
-    ]
-  },
-  "assessmentChecklist": [
-    {
-      "topic": "string",
-      "benchmarkRef": "string",
-      "status": "pass|unknown|trigger|fail",
-      "evidence": "string",
-      "comment": "string"
-    }
-  ],
-  "assumptionsAndUnknowns": ["string"],
-  "disclaimer": "string"
+  "sections": [
+    { "title": "Zoning & Neighbourhood Plan", "body": "..." },
+    { "title": "Overlays & Triggers", "body": "..." },
+    { "title": "Domestic Outbuilding Standards", "body": "..." },
+    { "title": "Setbacks, Height & Site Cover", "body": "..." },
+    { "title": "Earthworks & Stormwater", "body": "..." },
+    { "title": "Overall Pre-Assessment", "body": "..." }
+  ]
 }
 
-INPUT DATA (do not repeat verbatim in full; extract what matters):
+SITE DATA:
+${JSON.stringify(site, null, 2)}
 
-SITE:
-${JSON.stringify(site || {}, null, 2)}
+PLANNING DATA (includes geocode + zoning + neighbourhood plan + overlays):
+${JSON.stringify(planning, null, 2)}
 
-PLANNING (includes geocode + zoning + neighbourhood plan + overlays):
-${JSON.stringify(planning || {}, null, 2)}
-
-PROPOSAL:
-${JSON.stringify(proposal || {}, null, 2)}
-
-CLASSIFICATION (deterministic):
-${JSON.stringify(classification || {}, null, 2)}
-
-DETERMINISTIC CHECKS (use these as the factual base):
-${JSON.stringify(checks || {}, null, 2)}
+PROPOSAL DATA:
+${JSON.stringify(proposal, null, 2)}
 `;
 
   try {
     const resp = await ai.models.generateContent({
       model: TEXT_MODEL,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3 },
+      generationConfig: {
+        temperature: 0.4,
+      },
     });
 
     let rawText =
@@ -241,33 +140,26 @@ ${JSON.stringify(checks || {}, null, 2)}
       resp?.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
       "";
 
-    rawText = stripCodeFences(rawText);
+    rawText = String(rawText).trim();
+
+    // Strip ```json ... ``` if model ignores instructions
+    if (rawText.startsWith("```")) {
+      rawText = rawText.replace(/^```json/i, "");
+      rawText = rawText.replace(/^```/, "");
+      rawText = rawText.replace(/```$/, "").trim();
+    }
 
     const parsed = JSON.parse(rawText);
-    if (!validateV2(parsed)) {
-      throw new Error("Parsed JSON did not match schema v2");
+    if (!parsed || !Array.isArray(parsed.sections)) {
+      throw new Error("Parsed JSON missing sections array");
     }
 
-    if (Array.isArray(parsed.assessmentChecklist)) {
-      parsed.assessmentChecklist = parsed.assessmentChecklist.map((c) => ({
-        ...c,
-        status: normalizeStatus(c?.status),
-      }));
-    }
-
-    parsed.schemaVersion = SCHEMA_VERSION;
     return parsed;
   } catch (err) {
     console.error(
       "[planner] Gemini JSON parse failed, using fallback:",
       err?.message || err
     );
-    return buildFallbackSummary({
-      site,
-      planning,
-      proposal,
-      classification,
-      checks,
-    });
+    return buildFallbackSummary({ site, planning, proposal });
   }
 }
