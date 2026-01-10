@@ -15,6 +15,7 @@ import rendersRoutes from "./routes/renders.routes.js";
 import teamRoutes from "./routes/team.routes.js";
 import employeeRoutes from "./routes/employee.routes.js";
 import plannerRoutes from "./routes/planner.routes.js";
+import townplannerV2Routes from "./routes/townplanner_v2.routes.js";
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use("/api", rendersRoutes);
 app.use("/api", teamRoutes);
 app.use("/api", employeeRoutes);
 app.use("/api", plannerRoutes);
+app.use("/api/townplanner/v2", townplannerV2Routes);
 
 // Error handler
 app.use(errorHandler);
