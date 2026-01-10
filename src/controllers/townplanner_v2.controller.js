@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import asyncHandler from "../middlewares/asyncHandler.js";
+import { asyncHandler } from "../middlewares/asyncHandler.js";
 import {
   createReportRequestV2,
   getReportRequestByTokenV2,
