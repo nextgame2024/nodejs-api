@@ -6,6 +6,10 @@ import {
   markReportRequestStatusV2,
 } from "../models/townplanner_v2.model.js";
 import { sendReportLinkEmailV2 } from "../services/reportEmail_v2.service.js";
+import {
+  autocompleteAddresses,
+  getPlaceDetails,
+} from "../services/googlePlaces_v2.service.js";
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
@@ -98,4 +102,16 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
       createdAt: row.created_at,
     },
   });
+});
+
+export const suggestAddresses_v2 = asyncHandler(async (req, res) => {
+  const input = req.query.input || "";
+  const suggestions = await autocompleteAddresses({ input });
+  res.json({ suggestions });
+});
+
+export const placeDetails_v2 = asyncHandler(async (req, res) => {
+  const placeId = req.query.placeId || "";
+  const details = await getPlaceDetails({ placeId });
+  res.json(details);
 });
