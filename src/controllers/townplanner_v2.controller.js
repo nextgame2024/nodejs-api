@@ -105,13 +105,32 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
 });
 
 export const suggestAddresses_v2 = asyncHandler(async (req, res) => {
-  const input = req.query.input || "";
-  const suggestions = await autocompleteAddresses({ input });
+  const input = (req.query.input ?? req.query.q ?? "").toString();
+  const sessionToken = (req.query.sessionToken || "").toString().trim() || null;
+
+  const trimmed = input.trim();
+  if (trimmed.length < 3) return res.json({ suggestions: [] });
+  if (trimmed.length > 120) {
+    res.status(400);
+    throw new Error("Input too long");
+  }
+
+  const suggestions = await autocompleteAddresses({
+    input: trimmed,
+    sessionToken,
+  });
   res.json({ suggestions });
 });
 
 export const placeDetails_v2 = asyncHandler(async (req, res) => {
-  const placeId = req.query.placeId || "";
-  const details = await getPlaceDetails({ placeId });
+  const placeId = (req.query.placeId || "").toString().trim();
+  const sessionToken = (req.query.sessionToken || "").toString().trim() || null;
+
+  if (!placeId) {
+    res.status(400);
+    throw new Error("Missing placeId");
+  }
+
+  const details = await getPlaceDetails({ placeId, sessionToken });
   res.json(details);
 });
