@@ -2,7 +2,8 @@ import axios from "axios";
 import http from "http";
 import https from "https";
 
-const GOOGLE_PLACES_BASE = "https://maps.googleapis.com/maps/api/place";
+// Places API (New) base
+const PLACES_V1_BASE = "https://places.googleapis.com/v1";
 
 // Keep-alive agents (performance)
 const httpAgent = new http.Agent({ keepAlive: true });
@@ -14,14 +15,14 @@ function getGoogleKey() {
     process.env.GOOGLE_PLACES_API_KEY ||
     process.env.GMAPS_API_KEY ||
     "";
-  if (!key)
+  if (!key) {
     throw new Error("Missing GOOGLE_MAPS_API_KEY (or GOOGLE_PLACES_API_KEY)");
+  }
   return key;
 }
 
 /**
  * Small in-memory TTL cache (process-local).
- * Good enough for reducing autocomplete spikes without adding dependencies.
  */
 class TtlCache {
   constructor({ ttlMs, max = 500 }) {
@@ -61,8 +62,11 @@ function normalizeInput(input) {
     .replace(/\s+/g, " ");
 }
 
-// Optional bias toward Brisbane (without hard restricting)
-function getBiasParams() {
+/**
+ * Optional bias toward Brisbane (without hard restricting).
+ * Places API (New) uses "locationBias" in the request body.
+ */
+function getLocationBias() {
   const lat = Number(process.env.PLACES_BIAS_LAT ?? -27.4698);
   const lng = Number(process.env.PLACES_BIAS_LNG ?? 153.0251);
   const radius = Number(process.env.PLACES_BIAS_RADIUS_M ?? 60_000);
@@ -70,60 +74,95 @@ function getBiasParams() {
   if (
     !Number.isFinite(lat) ||
     !Number.isFinite(lng) ||
-    !Number.isFinite(radius)
-  )
-    return {};
+    !Number.isFinite(radius) ||
+    radius <= 0
+  ) {
+    return null;
+  }
+
   return {
-    location: `${lat},${lng}`,
-    radius: String(radius),
+    circle: {
+      center: { latitude: lat, longitude: lng },
+      radius,
+    },
   };
 }
 
+/**
+ * Autocomplete addresses using Places API (New)
+ * POST /v1/places:autocomplete
+ *
+ * Returns: [{ description, placeId }]
+ */
 export async function autocompleteAddresses({ input, sessionToken }) {
   const key = getGoogleKey();
   const trimmed = normalizeInput(input);
 
   if (trimmed.length < 3) return [];
 
-  // Cache by normalized input only (sessionToken should still be forwarded, but cache should remain useful)
+  // Cache by normalized input only
   const cacheKey = `au|address|${trimmed.toLowerCase()}`;
   const cached = suggestCache.get(cacheKey);
   if (cached) return cached;
 
-  const url = `${GOOGLE_PLACES_BASE}/autocomplete/json`;
-  const { data } = await axios.get(url, {
-    params: {
-      input: trimmed,
-      key,
-      components: "country:au",
-      region: "au",
-      language: "en",
-      types: "address",
-      // Bias
-      ...getBiasParams(),
-      // Session token recommended by Google Places billing model
-      ...(sessionToken ? { sessiontoken: sessionToken } : {}),
-    },
-    timeout: 8000,
-    httpAgent,
-    httpsAgent,
-  });
+  const url = `${PLACES_V1_BASE}/places:autocomplete`;
 
-  if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-    throw new Error(
-      `Places autocomplete failed: ${data.status} ${data.error_message || ""}`.trim()
-    );
+  const body = {
+    input: trimmed,
+    languageCode: "en",
+    regionCode: "AU",
+    // If you want to limit to address-like results, you can uncomment:
+    // includedPrimaryTypes: ["street_address", "premise", "subpremise", "route"],
+    ...(sessionToken ? { sessionToken } : {}),
+  };
+
+  const locationBias = getLocationBias();
+  if (locationBias) body.locationBias = locationBias;
+
+  try {
+    const { data } = await axios.post(url, body, {
+      headers: {
+        "X-Goog-Api-Key": key,
+        // Only request what we need for suggestions:
+        "X-Goog-FieldMask":
+          "suggestions.placePrediction.placeId,suggestions.placePrediction.text",
+      },
+      timeout: 8000,
+      httpAgent,
+      httpsAgent,
+    });
+
+    const results = (data?.suggestions || [])
+      .map((s) => s.placePrediction)
+      .filter(Boolean)
+      .slice(0, 8)
+      .map((p) => ({
+        description: p.text?.text || "",
+        placeId: p.placeId,
+      }))
+      .filter((x) => x.placeId && x.description);
+
+    suggestCache.set(cacheKey, results);
+    return results;
+  } catch (err) {
+    // Surface Google’s response in logs for debugging, but throw clean error upward
+    const upstream = err?.response?.data;
+    const msg =
+      upstream?.error?.message ||
+      upstream?.message ||
+      err?.message ||
+      "Unknown error";
+    throw new Error(`Places autocomplete failed: ${msg}`);
   }
-
-  const results = (data.predictions || []).slice(0, 8).map((p) => ({
-    description: p.description,
-    placeId: p.place_id,
-  }));
-
-  suggestCache.set(cacheKey, results);
-  return results;
 }
 
+/**
+ * Place details using Places API (New)
+ * GET /v1/places/{placeId}
+ *
+ * Returns:
+ * { formattedAddress: string|null, lat: number|null, lng: number|null }
+ */
 export async function getPlaceDetails({ placeId, sessionToken }) {
   const key = getGoogleKey();
   const pid = String(placeId || "").trim();
@@ -133,34 +172,38 @@ export async function getPlaceDetails({ placeId, sessionToken }) {
   const cached = detailsCache.get(cacheKey);
   if (cached) return cached;
 
-  const url = `${GOOGLE_PLACES_BASE}/details/json`;
-  const { data } = await axios.get(url, {
-    params: {
-      place_id: pid,
-      key,
-      fields: "formatted_address,geometry",
-      ...(sessionToken ? { sessiontoken: sessionToken } : {}),
-    },
-    timeout: 8000,
-    httpAgent,
-    httpsAgent,
-  });
+  const url = `${PLACES_V1_BASE}/places/${encodeURIComponent(pid)}`;
 
-  if (data.status !== "OK") {
-    throw new Error(
-      `Places details failed: ${data.status} ${data.error_message || ""}`.trim()
-    );
+  try {
+    const { data } = await axios.get(url, {
+      headers: {
+        "X-Goog-Api-Key": key,
+        // Only request what we need:
+        "X-Goog-FieldMask": "formattedAddress,location",
+      },
+      params: sessionToken ? { sessionToken } : undefined,
+      timeout: 8000,
+      httpAgent,
+      httpsAgent,
+    });
+
+    const loc = data?.location;
+
+    const details = {
+      formattedAddress: data?.formattedAddress || null,
+      lat: typeof loc?.latitude === "number" ? loc.latitude : null,
+      lng: typeof loc?.longitude === "number" ? loc.longitude : null,
+    };
+
+    detailsCache.set(cacheKey, details);
+    return details;
+  } catch (err) {
+    const upstream = err?.response?.data;
+    const msg =
+      upstream?.error?.message ||
+      upstream?.message ||
+      err?.message ||
+      "Unknown error";
+    throw new Error(`Places details failed: ${msg}`);
   }
-
-  const r = data.result || {};
-  const loc = r.geometry?.location;
-
-  const details = {
-    formattedAddress: r.formatted_address || null,
-    lat: typeof loc?.lat === "number" ? loc.lat : null,
-    lng: typeof loc?.lng === "number" ? loc.lng : null,
-  };
-
-  detailsCache.set(cacheKey, details);
-  return details;
 }
