@@ -69,13 +69,15 @@ function normalizeInput(input) {
 function getLocationBias() {
   const lat = Number(process.env.PLACES_BIAS_LAT ?? -27.4698);
   const lng = Number(process.env.PLACES_BIAS_LNG ?? 153.0251);
-  const radius = Number(process.env.PLACES_BIAS_RADIUS_M ?? 60_000);
+
+  // Default to 30km; clamp to 50km max for Places API (New)
+  const rawRadius = Number(process.env.PLACES_BIAS_RADIUS_M ?? 30_000);
+  const radius = Math.min(Math.max(rawRadius, 1), 50_000);
 
   if (
     !Number.isFinite(lat) ||
     !Number.isFinite(lng) ||
-    !Number.isFinite(radius) ||
-    radius <= 0
+    !Number.isFinite(rawRadius)
   ) {
     return null;
   }
