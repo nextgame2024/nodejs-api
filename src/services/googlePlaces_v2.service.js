@@ -10,11 +10,11 @@ const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
 
 function getGoogleKey() {
-  const key =
-    process.env.GOOGLE_MAPS_API_KEY ||
-    process.env.GOOGLE_PLACES_API_KEY ||
-    process.env.GMAPS_API_KEY ||
-    "";
+  const key = process.env.GOOGLE_MAPS_API_KEY || "";
+  console.log(
+    "Maps key fingerprint:",
+    key ? `${key.slice(0, 4)}...${key.slice(-4)}` : "MISSING"
+  );
   if (!key) {
     throw new Error("Missing GOOGLE_MAPS_API_KEY (or GOOGLE_PLACES_API_KEY)");
   }
