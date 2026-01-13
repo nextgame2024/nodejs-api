@@ -148,10 +148,10 @@ export async function autocompleteAddresses({ input, sessionToken }) {
     const status = err?.response?.status;
     // Surface Google’s response in logs for debugging, but throw clean error upward
     const upstream = err?.response?.data;
-    console.error("autocompleteAddresses autocomplete upstream error:", {
-      status,
-      upstream,
-    });
+    console.error(
+      "Places upstream-autocompleteAddresses:",
+      JSON.stringify(err?.response?.data, null, 2)
+    );
     const msg =
       upstream?.error?.message ||
       upstream?.message ||
@@ -205,10 +205,10 @@ export async function getPlaceDetails({ placeId, sessionToken }) {
   } catch (err) {
     const status = err?.response?.status;
     const upstream = err?.response?.data;
-    console.error("getPlaceDetails autocomplete upstream error:", {
-      status,
-      upstream,
-    });
+    console.error(
+      "Places upstream-getPlaceDetails:",
+      JSON.stringify(err?.response?.data, null, 2)
+    );
     const msg =
       upstream?.error?.message ||
       upstream?.message ||
