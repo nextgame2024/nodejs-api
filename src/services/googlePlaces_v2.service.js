@@ -145,8 +145,13 @@ export async function autocompleteAddresses({ input, sessionToken }) {
     suggestCache.set(cacheKey, results);
     return results;
   } catch (err) {
+    const status = err?.response?.status;
     // Surface Google’s response in logs for debugging, but throw clean error upward
     const upstream = err?.response?.data;
+    console.error("autocompleteAddresses autocomplete upstream error:", {
+      status,
+      upstream,
+    });
     const msg =
       upstream?.error?.message ||
       upstream?.message ||
@@ -198,7 +203,12 @@ export async function getPlaceDetails({ placeId, sessionToken }) {
     detailsCache.set(cacheKey, details);
     return details;
   } catch (err) {
+    const status = err?.response?.status;
     const upstream = err?.response?.data;
+    console.error("getPlaceDetails autocomplete upstream error:", {
+      status,
+      upstream,
+    });
     const msg =
       upstream?.error?.message ||
       upstream?.message ||
