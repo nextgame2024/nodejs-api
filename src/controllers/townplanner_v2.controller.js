@@ -10,6 +10,7 @@ import {
   autocompleteAddresses,
   getPlaceDetails,
 } from "../services/googlePlaces_v2.service.js";
+import { fetchPlanningDataV2 } from "../services/planningData_v2.service.js";
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
@@ -132,5 +133,27 @@ export const placeDetails_v2 = asyncHandler(async (req, res) => {
   }
 
   const details = await getPlaceDetails({ placeId, sessionToken });
-  res.json(details);
+
+  // Enrich with planning geometries + conventions (V1 parity) when we have lat/lng.
+  // This keeps the V2 frontend flow unchanged: select address -> call /place-details.
+  let planning = null;
+  try {
+    if (typeof details?.lat === "number" && typeof details?.lng === "number") {
+      planning = await fetchPlanningDataV2({
+        lat: details.lat,
+        lng: details.lng,
+      });
+    }
+  } catch (e) {
+    // Non-fatal: return place details even if planning lookup fails.
+    console.error(
+      "[townplanner_v2] planning enrichment failed:",
+      e?.message || e
+    );
+  }
+
+  res.json({
+    ...details,
+    planning, // null if DB not configured or lookup fails
+  });
 });
