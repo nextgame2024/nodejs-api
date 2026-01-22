@@ -291,14 +291,45 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
         queryOne("bcc_flood_river", focusLng, focusLat),
       ];
 
-  const [zoning, npB, npP, fOverland, fCreek, fRiver, noise] =
-    await Promise.all([
-      queryOne("bcc_zoning", focusLng, focusLat),
-      queryOne("bcc_np_boundaries", focusLng, focusLat),
-      queryOne("bcc_np_precincts", focusLng, focusLat),
-      ...floodPromises,
-      queryOne("bcc_noise_corridor", focusLng, focusLat, 80),
-    ]);
+  const [
+    zoning,
+    npB,
+    npP,
+    fOverland,
+    fCreek,
+    fRiver,
+    noise,
+
+    // NEW overlays / layers (ensure these table names match what your importer created)
+    dwellingCharacter,
+    traditionalCharacter,
+    commercialCharacter,
+    pre1911,
+    heritageStateArea,
+    airportHeight,
+    airportOls,
+    lgipNetworkKey,
+  ] = await Promise.all([
+    queryOne("bcc_zoning", focusLng, focusLat),
+    queryOne("bcc_np_boundaries", focusLng, focusLat),
+    queryOne("bcc_np_precincts", focusLng, focusLat),
+    ...floodPromises,
+    queryOne("bcc_noise_corridor", focusLng, focusLat, 80),
+
+    // Character / heritage overlays
+    queryOne("bcc_dwelling_house_character", focusLng, focusLat),
+    queryOne("bcc_traditional_building_character", focusLng, focusLat),
+    queryOne("bcc_commercial_character_building", focusLng, focusLat),
+    queryOne("bcc_pre_1911_building", focusLng, focusLat),
+    queryOne("bcc_heritage_state_heritage_area", focusLng, focusLat),
+
+    // Airport environs overlays
+    queryOne("bcc_airport_height_restriction", focusLng, focusLat),
+    queryOne("bcc_airport_ols_boundary", focusLng, focusLat),
+
+    // Services / infrastructure indicator (LGIP network key)
+    queryOne("bcc_lgip_network_key", focusLng, focusLat),
+  ]);
 
   const zoningProps = zoning?.properties || null;
   const zoningPolygon = zoning?.geometry || null;
@@ -318,8 +349,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     ]) || "Unknown zoning";
 
   const zoningCode =
-    readProp(zoningProps, ["zone_code", "ZONE_CODE", "ZONE", "zone"]) ||
-    null;
+    readProp(zoningProps, ["zone_code", "ZONE_CODE", "ZONE", "zone"]) || null;
 
   const npBoundaryProps = npB?.properties || null;
   const npPrecinctProps = npP?.properties || null;
@@ -400,8 +430,12 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       name: "Transport noise corridor",
       code: "transport_noise_corridor",
       severity:
-        readProp(noise?.properties, ["CORRIDOR", "corridor", "LEVEL", "level"]) ||
-        "near state-controlled road",
+        readProp(noise?.properties, [
+          "CORRIDOR",
+          "corridor",
+          "LEVEL",
+          "level",
+        ]) || "near state-controlled road",
     });
     if (noise?.geometry) {
       overlayPolygons.push({
@@ -410,6 +444,56 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       });
     }
   }
+
+  // NEW: push character / heritage / airport overlays
+  pushOverlay(dwellingCharacter?.properties, dwellingCharacter?.geometry, {
+    name: "Dwelling house character overlay",
+    code: "character_dwelling_house",
+    severity: "mapped overlay",
+  });
+
+  pushOverlay(
+    traditionalCharacter?.properties,
+    traditionalCharacter?.geometry,
+    {
+      name: "Traditional building character overlay",
+      code: "character_traditional_building",
+      severity: "mapped overlay",
+    }
+  );
+
+  pushOverlay(commercialCharacter?.properties, commercialCharacter?.geometry, {
+    name: "Commercial character building overlay",
+    code: "character_commercial_building",
+    severity: "mapped overlay",
+  });
+
+  pushOverlay(pre1911?.properties, pre1911?.geometry, {
+    name: "Pre-1911 building overlay",
+    code: "overlay_pre_1911",
+    severity: "mapped overlay",
+  });
+
+  pushOverlay(heritageStateArea?.properties, heritageStateArea?.geometry, {
+    name: "Heritage overlay – State heritage area",
+    code: "overlay_state_heritage_area",
+    severity: "mapped overlay",
+  });
+
+  pushOverlay(airportHeight?.properties, airportHeight?.geometry, {
+    name: "Airport environs overlay – Height restriction zone",
+    code: "overlay_airport_height",
+    severity: "mapped overlay",
+  });
+
+  pushOverlay(airportOls?.properties, airportOls?.geometry, {
+    name: "Airport environs overlay – OLS boundary",
+    code: "overlay_airport_ols",
+    severity: "mapped overlay",
+  });
+
+  // Services meta for reporting (not necessarily a map overlay page)
+  const rawLgipNetworkKey = lgipNetworkKey?.properties || null;
 
   return {
     // Geocode-like object for consistency (but values are already provided)
@@ -434,12 +518,26 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     // Cadastral parcel for the site (draw this as the green outline)
     siteParcelPolygon: parcel?.geometry || null,
     propertyParcel: parcel
-      ? { properties: parcel.properties || {}, geometry: parcel.geometry || null, debug: parcel.debug || null }
+      ? {
+          properties: parcel.properties || {},
+          geometry: parcel.geometry || null,
+          debug: parcel.debug || null,
+        }
       : null,
 
     // Optional raw debug (useful for admin/logging)
     rawZoningFeature: zoningProps,
     rawNeighbourhoodPlanBoundary: npBoundaryProps,
     rawNeighbourhoodPlanPrecinct: npPrecinctProps,
+
+    // NEW raw overlay fields (for PDF/Gemini data contract)
+    rawCharacterDwelling: dwellingCharacter?.properties || null,
+    rawCharacterTraditional: traditionalCharacter?.properties || null,
+    rawCharacterCommercial: commercialCharacter?.properties || null,
+    rawPre1911: pre1911?.properties || null,
+    rawHeritageStateArea: heritageStateArea?.properties || null,
+    rawAirportHeight: airportHeight?.properties || null,
+    rawAirportOls: airportOls?.properties || null,
+    rawLgipNetworkKey,
   };
 }

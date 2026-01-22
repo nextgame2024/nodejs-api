@@ -11,10 +11,132 @@ import {
   getPlaceDetails,
 } from "../services/googlePlaces_v2.service.js";
 import { fetchPlanningDataV2 } from "../services/planningData_v2.service.js";
+import {
+  findReadyReportByHashV2,
+  markReportRunningV2,
+  markReportReadyV2,
+  markReportFailedV2,
+} from "../models/townplanner_v2.model.js";
+
+import {
+  generateTownPlannerReportV2,
+  computeInputsHashV2,
+} from "../services/townplanner_report_v2.service.js";
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
+
+const inFlight = new Set();
+
+export const generateReportV2Controller = asyncHandler(async (req, res) => {
+  const {
+    token: tokenFromBody,
+    addressLabel,
+    placeId = null,
+    lat,
+    lng,
+    force = false,
+  } = req.body || {};
+
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    res.status(400);
+    throw new Error("lat/lng must be numbers");
+  }
+  if (!addressLabel || typeof addressLabel !== "string") {
+    res.status(400);
+    throw new Error("Missing addressLabel");
+  }
+
+  // Stable cache key
+  const inputsHash = computeInputsHashV2({
+    addressLabel: addressLabel.trim(),
+    placeId: placeId || null,
+    lat,
+    lng,
+    schemeVersion: process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014",
+  });
+
+  if (!force) {
+    const cached = await findReadyReportByHashV2(inputsHash);
+    if (cached?.pdf_url) {
+      return res.json({
+        ok: true,
+        token: cached.token,
+        status: "ready",
+        pdfUrl: cached.pdf_url,
+        cached: true,
+      });
+    }
+  }
+
+  // Create a token if caller didn’t supply one (app flow)
+  const token = tokenFromBody || crypto.randomUUID();
+
+  // If this token already exists, we will just generate against it.
+  // If it does not exist, create a minimal record (email not required for app flow).
+  let row = await getReportRequestByTokenV2(token);
+  if (!row) {
+    row = await createReportRequestV2({
+      token,
+      email: (req.body?.email || "unknown@local")
+        .toString()
+        .trim()
+        .toLowerCase(),
+      addressLabel: addressLabel.trim(),
+      placeId,
+      lat,
+      lng,
+      planningSnapshot: null,
+      inputsHash,
+    });
+  }
+
+  // If already ready, return quickly
+  if (row.status === "ready" && row.pdf_url) {
+    return res.json({
+      ok: true,
+      token: row.token,
+      status: "ready",
+      pdfUrl: row.pdf_url,
+    });
+  }
+
+  // Start job (in-process). For production-hardening, replace with a real queue/worker.
+  if (!inFlight.has(token)) {
+    inFlight.add(token);
+
+    setImmediate(async () => {
+      try {
+        await markReportRunningV2({ token });
+
+        const result = await generateTownPlannerReportV2({
+          token,
+          addressLabel: addressLabel.trim(),
+          placeId,
+          lat,
+          lng,
+        });
+
+        await markReportReadyV2({
+          token,
+          pdfKey: result.pdfKey,
+          pdfUrl: result.pdfUrl,
+          reportJson: result.reportJson,
+        });
+      } catch (e) {
+        await markReportFailedV2({
+          token,
+          errorMessage: e?.message || String(e),
+        });
+      } finally {
+        inFlight.delete(token);
+      }
+    });
+  }
+
+  return res.json({ ok: true, token, status: "running" });
+});
 
 export const createReportRequestV2Controller = asyncHandler(
   async (req, res) => {
@@ -98,9 +220,12 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
       placeId: row.place_id,
       lat: row.lat,
       lng: row.lng,
-      planningSnapshot: row.planning_snapshot, // null in Phase 1
+      planningSnapshot: row.planning_snapshot,
       status: row.status,
+      pdfUrl: row.pdf_url || null,
+      errorMessage: row.error_message || null,
       createdAt: row.created_at,
+      updatedAt: row.updated_at,
     },
   });
 });
