@@ -309,3 +309,11 @@ export async function getParcelOverlayMapImageBufferV2({
 export async function getParcelZoningMapImageBufferV2(opts) {
   return getParcelOverlayMapImageBufferV2(opts);
 }
+
+export async function staticMapParcelOnly(opts) {
+  return getParcelMapImageBufferV2(opts);
+}
+
+export async function staticMapParcelWithOverlay(opts) {
+  return getParcelOverlayMapImageBufferV2(opts);
+}
