@@ -1,22 +1,23 @@
+// src/controllers/townplanner_v2.controller.js
+
 import crypto from "crypto";
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import {
   createReportRequestV2,
   getReportRequestByTokenV2,
   markReportRequestStatusV2,
+  findReadyReportByHashV2,
+  markReportRunningV2,
+  markReportReadyV2,
+  markReportFailedV2,
 } from "../models/townplanner_v2.model.js";
+
 import { sendReportLinkEmailV2 } from "../services/reportEmail_v2.service.js";
 import {
   autocompleteAddresses,
   getPlaceDetails,
 } from "../services/googlePlaces_v2.service.js";
 import { fetchPlanningDataV2 } from "../services/planningData_v2.service.js";
-import {
-  findReadyReportByHashV2,
-  markReportRunningV2,
-  markReportReadyV2,
-  markReportFailedV2,
-} from "../models/townplanner_v2.model.js";
 
 import {
   generateTownPlannerReportV2,
@@ -27,6 +28,7 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
 
+// in-process guard (Render single instance may still restart; DB status is source of truth)
 const inFlight = new Set();
 
 export const generateReportV2Controller = asyncHandler(async (req, res) => {
@@ -37,6 +39,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     lat,
     lng,
     force = false,
+    email = "unknown@local",
   } = req.body || {};
 
   if (typeof lat !== "number" || typeof lng !== "number") {
@@ -48,15 +51,18 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     throw new Error("Missing addressLabel");
   }
 
-  // Stable cache key
+  const schemeVersion =
+    process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
+
   const inputsHash = computeInputsHashV2({
     addressLabel: addressLabel.trim(),
     placeId: placeId || null,
     lat,
     lng,
-    schemeVersion: process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014",
+    schemeVersion,
   });
 
+  // Fast path: reuse a ready report for identical inputs
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
     if (cached?.pdf_url) {
@@ -70,17 +76,14 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     }
   }
 
-  // Create a token if caller didn’t supply one (app flow)
   const token = tokenFromBody || crypto.randomUUID();
 
-  // If this token already exists, we will just generate against it.
-  // If it does not exist, create a minimal record (email not required for app flow).
+  // Ensure row exists (app flow does not require email)
   let row = await getReportRequestByTokenV2(token);
   if (!row) {
     row = await createReportRequestV2({
       token,
-      email: (req.body?.email || "unknown@local")
-        .toString()
+      email: String(email || "unknown@local")
         .trim()
         .toLowerCase(),
       addressLabel: addressLabel.trim(),
@@ -90,9 +93,22 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
       planningSnapshot: null,
       inputsHash,
     });
+  } else {
+    // Ensure inputs_hash is recorded for existing rows
+    if (!row.inputs_hash) {
+      await markReportReadyV2({
+        token,
+        pdfKey: row.pdf_key || null,
+        pdfUrl: row.pdf_url || null,
+        reportJson: row.report_json || null,
+        inputsHash,
+        planningSnapshot: row.planning_snapshot || null,
+      });
+      row = await getReportRequestByTokenV2(token);
+    }
   }
 
-  // If already ready, return quickly
+  // If already ready, return immediately
   if (row.status === "ready" && row.pdf_url) {
     return res.json({
       ok: true,
@@ -102,7 +118,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  // Start job (in-process). For production-hardening, replace with a real queue/worker.
+  // Launch job in-process
   if (!inFlight.has(token)) {
     inFlight.add(token);
 
@@ -123,6 +139,8 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
           pdfKey: result.pdfKey,
           pdfUrl: result.pdfUrl,
           reportJson: result.reportJson,
+          inputsHash,
+          planningSnapshot: result.planningSnapshot || null,
         });
       } catch (e) {
         await markReportFailedV2({
@@ -164,7 +182,8 @@ export const createReportRequestV2Controller = asyncHandler(
       placeId,
       lat,
       lng,
-      planningSnapshot: null, // Phase 2 can populate this
+      planningSnapshot: null,
+      inputsHash: null,
     });
 
     const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || "").replace(
@@ -176,10 +195,8 @@ export const createReportRequestV2Controller = asyncHandler(
       throw new Error("Missing FRONTEND_BASE_URL env var");
     }
 
-    // Example: https://propertease.com.au/townplanner/report/<token>
     const viewUrl = `${frontendBaseUrl}/townplanner/report/${row.token}`;
 
-    // mark sending
     await markReportRequestStatusV2({ token: row.token, status: "sending" });
 
     await sendReportLinkEmailV2({
@@ -190,10 +207,7 @@ export const createReportRequestV2Controller = asyncHandler(
 
     await markReportRequestStatusV2({ token: row.token, status: "sent" });
 
-    res.json({
-      ok: true,
-      token: row.token,
-    });
+    res.json({ ok: true, token: row.token });
   }
 );
 
@@ -226,6 +240,8 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
       errorMessage: row.error_message || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      startedAt: row.started_at || null,
+      completedAt: row.completed_at || null,
     },
   });
 });
@@ -259,8 +275,6 @@ export const placeDetails_v2 = asyncHandler(async (req, res) => {
 
   const details = await getPlaceDetails({ placeId, sessionToken });
 
-  // Enrich with planning geometries + conventions (V1 parity) when we have lat/lng.
-  // This keeps the V2 frontend flow unchanged: select address -> call /place-details.
   let planning = null;
   try {
     if (typeof details?.lat === "number" && typeof details?.lng === "number") {
@@ -270,15 +284,11 @@ export const placeDetails_v2 = asyncHandler(async (req, res) => {
       });
     }
   } catch (e) {
-    // Non-fatal: return place details even if planning lookup fails.
     console.error(
       "[townplanner_v2] planning enrichment failed:",
       e?.message || e
     );
   }
 
-  res.json({
-    ...details,
-    planning, // null if DB not configured or lookup fails
-  });
+  res.json({ ...details, planning });
 });

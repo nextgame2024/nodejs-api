@@ -1,3 +1,5 @@
+// src/services/townplanner_report_v2.service.js
+
 import crypto from "crypto";
 import axios from "axios";
 import { randomUUID } from "crypto";
@@ -17,6 +19,17 @@ const SCHEME_VERSION = process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
 
 function sha256(obj) {
   return crypto.createHash("sha256").update(JSON.stringify(obj)).digest("hex");
+}
+
+function addressSlug(addressLabel) {
+  return (
+    String(addressLabel || "unknown-address")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "unknown-address"
+  );
 }
 
 async function loadLogoBuffer() {
@@ -64,9 +77,7 @@ async function getControlsV2({
 
   // Merge controls in a deterministic order
   const merged = {};
-  for (const r of rows) {
-    Object.assign(merged, r.controls || {});
-  }
+  for (const r of rows) Object.assign(merged, r.controls || {});
 
   return {
     schemeVersion: scheme,
@@ -100,7 +111,7 @@ export async function generateTownPlannerReportV2({
     overlayCodes,
   });
 
-  // Gemini narrative (structured JSON). It should be purely derived from the facts we pass in.
+  // Gemini narrative (structured JSON)
   const narrative = await genTownPlannerReportNarrativeV2({
     schemeVersion: controls.schemeVersion,
     addressLabel,
@@ -126,15 +137,12 @@ export async function generateTownPlannerReportV2({
     logoBuffer,
   });
 
+  const address = addressSlug(addressLabel);
+  const ts = Date.now();
+
   const key =
     S3_PUBLIC_PREFIX +
-    "townplanner-v2/reports/" +
-    (placeId || "no-placeid") +
-    "/" +
-    Date.now() +
-    "-" +
-    randomUUID() +
-    ".pdf";
+    `townplanner-v2/reports/${address}/${ts}-${randomUUID()}.pdf`;
 
   const pdfUrl = await putToS3({
     key,
@@ -156,6 +164,7 @@ export async function generateTownPlannerReportV2({
       narrative,
       generatedAt: new Date().toISOString(),
     },
+    planningSnapshot: planning,
   };
 }
 
