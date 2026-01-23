@@ -1,7 +1,7 @@
 // src/services/googleStaticMaps_v2.service.js
 //
 // Google Static Maps helpers (server-side)
-// - Renders parcel outline (and optional overlay highlight) as paths.
+// - Renders parcel outline and optional highlight geometry (overlay/zoning) as paths.
 // - Uses "visible" bounds to fit content.
 //
 // Requirements:
@@ -11,9 +11,8 @@
 import axios from "axios";
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-if (!GOOGLE_MAPS_API_KEY) {
+if (!GOOGLE_MAPS_API_KEY)
   throw new Error("Missing GOOGLE_MAPS_API_KEY env var");
-}
 
 const STATIC_MAPS_BASE = "https://maps.googleapis.com/maps/api/staticmap";
 
@@ -247,6 +246,7 @@ export async function getParcelOverlayMapImageBufferV2({
   const paths = [];
 
   if (overlayEnc) {
+    // Red highlight (overlay)
     paths.push(
       `fillcolor:0xFF000022|color:0xFF0000FF|weight:3|enc:${overlayEnc}`
     );
@@ -254,6 +254,61 @@ export async function getParcelOverlayMapImageBufferV2({
 
   // Parcel outline on top
   paths.push(`fillcolor:0x00A65112|color:0x00A651FF|weight:4|enc:${parcelEnc}`);
+
+  const url = buildStaticMapUrl({
+    size,
+    scale,
+    maptype,
+    visiblePoints,
+    paths,
+  });
+
+  return fetchPng(url);
+}
+
+/**
+ * Zoning map renderer (parcel + zoning highlight).
+ * Styling differs from overlays (blue).
+ */
+export async function getParcelZoningMapImageBufferV2({
+  parcelGeoJSON,
+  zoningGeoJSON,
+  size = "640x360",
+  maptype = "hybrid",
+  scale = 2,
+}) {
+  const parcelRing = getRingsFromGeoJSON(parcelGeoJSON)?.[0] || null;
+  if (!parcelRing?.length) return null;
+
+  const parcelRingDs = downsampleRingLngLat(parcelRing);
+  const parcelLatLng = toLatLngPairs(parcelRingDs);
+  const parcelEnc = encodePolyline(parcelLatLng);
+
+  const zoningRing = getRingsFromGeoJSON(zoningGeoJSON)?.[0] || null;
+  let zoningEnc = null;
+
+  if (zoningRing?.length) {
+    const zoningRingDs = downsampleRingLngLat(zoningRing);
+    const zoningLatLng = toLatLngPairs(zoningRingDs);
+    zoningEnc = encodePolyline(zoningLatLng);
+  }
+
+  const bboxParcel = bboxFromCoords(parcelRing);
+  const bboxZoning = zoningRing ? bboxFromCoords(zoningRing) : null;
+  const bbox = mergeBboxes(bboxParcel, bboxZoning);
+  const visiblePoints = bbox ? bboxToVisiblePoints(bbox) : [];
+
+  const paths = [];
+
+  if (zoningEnc) {
+    // Blue highlight (zoning)
+    paths.push(
+      `fillcolor:0x1E88E522|color:0x1E88E5FF|weight:3|enc:${zoningEnc}`
+    );
+  }
+
+  // Parcel outline on top
+  paths.push(`fillcolor:0x00A65110|color:0x00A651FF|weight:4|enc:${parcelEnc}`);
 
   const url = buildStaticMapUrl({
     size,
