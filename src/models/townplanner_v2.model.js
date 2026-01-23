@@ -1,5 +1,3 @@
-// src/models/townplanner_v2.model.js
-
 import pool from "../config/db.js";
 
 export async function createReportRequestV2({

@@ -1,5 +1,3 @@
-// src/services/townplanner_report_v2.service.js
-
 import crypto from "crypto";
 import axios from "axios";
 import { randomUUID } from "crypto";
@@ -41,10 +39,6 @@ async function loadLogoBuffer() {
   }
 }
 
-/**
- * Pulls non-spatial planning controls from bcc_planning_controls_v2 and merges them.
- * You can progressively seed controls and this function will automatically start using them.
- */
 async function getControlsV2({
   zoningCode,
   neighbourhoodPlan,
@@ -75,7 +69,6 @@ async function getControlsV2({
 
   const { rows } = await pool.query(sql, params);
 
-  // Merge controls in a deterministic order
   const merged = {};
   for (const r of rows) Object.assign(merged, r.controls || {});
 
@@ -111,7 +104,6 @@ export async function generateTownPlannerReportV2({
     overlayCodes,
   });
 
-  // Gemini narrative (structured JSON)
   const narrative = await genTownPlannerReportNarrativeV2({
     schemeVersion: controls.schemeVersion,
     addressLabel,
@@ -124,7 +116,6 @@ export async function generateTownPlannerReportV2({
 
   const logoBuffer = await loadLogoBuffer();
 
-  // Build PDF buffer with v2 layout
   const pdfBuffer = await buildTownPlannerReportPdfV2({
     schemeVersion: controls.schemeVersion,
     addressLabel,

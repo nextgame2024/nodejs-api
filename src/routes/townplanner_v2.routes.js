@@ -9,10 +9,15 @@ import {
 
 const router = express.Router();
 
-router.post("/report-request", createReportRequestV2Controller);
-router.get("/report/:token", getReportByTokenV2Controller);
-router.post("/report-generate", generateReportV2Controller);
+// Public endpoints for V2 flow
 router.get("/suggest", suggestAddresses_v2);
 router.get("/place-details", placeDetails_v2);
+
+// Email flow (optional)
+router.post("/report-request", createReportRequestV2Controller);
+
+// Report generation (job-style) + polling
+router.post("/report-generate", generateReportV2Controller);
+router.get("/report/:token", getReportByTokenV2Controller);
 
 export default router;

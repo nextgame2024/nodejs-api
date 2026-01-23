@@ -1,5 +1,3 @@
-// src/services/gemini-townplanner_report_v2.service.js
-
 import { GoogleGenAI } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -50,7 +48,6 @@ Rules:
 - Do NOT invent overlay presence; only reference overlays present in planning.overlays.
 - Output MUST be strictly valid JSON (no markdown, no code fences).
 - Use clear, plain-English guidance suitable for a property report.
-- Keep each bullet concise and actionable.
 
 SCHEME VERSION: ${schemeVersion}
 
@@ -72,6 +69,7 @@ Return JSON with this exact structure:
   const resp = await ai.models.generateContent({
     model: TEXT_MODEL,
     contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.4 },
   });
 
   const text =
@@ -80,7 +78,6 @@ Return JSON with this exact structure:
     "";
 
   const parsed = safeJsonParse(text);
-
   if (parsed && typeof parsed === "object") return parsed;
 
   // Safe fallback
@@ -102,6 +99,6 @@ Return JSON with this exact structure:
       { id: "references", title: "References", items: [schemeVersion] },
     ],
     disclaimer:
-      "This report is a general planning guide only and does not constitute legal advice. Verify requirements against Brisbane City Plan 2014 mapping and applicable codes.",
+      "This report is general information only and does not constitute legal advice. Verify requirements against Brisbane City Plan 2014 mapping and applicable codes.",
   };
 }

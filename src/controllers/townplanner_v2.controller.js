@@ -1,5 +1,3 @@
-// src/controllers/townplanner_v2.controller.js
-
 import crypto from "crypto";
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import {
@@ -28,7 +26,7 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
 
-// in-process guard (Render single instance may still restart; DB status is source of truth)
+// In-process guard (DB status is still source of truth)
 const inFlight = new Set();
 
 export const generateReportV2Controller = asyncHandler(async (req, res) => {
@@ -62,7 +60,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     schemeVersion,
   });
 
-  // Fast path: reuse a ready report for identical inputs
+  // Reuse existing ready report for identical inputs (unless forced)
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
     if (cached?.pdf_url) {
@@ -78,7 +76,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
 
   const token = tokenFromBody || crypto.randomUUID();
 
-  // Ensure row exists (app flow does not require email)
+  // Ensure DB row exists
   let row = await getReportRequestByTokenV2(token);
   if (!row) {
     row = await createReportRequestV2({
@@ -93,22 +91,9 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
       planningSnapshot: null,
       inputsHash,
     });
-  } else {
-    // Ensure inputs_hash is recorded for existing rows
-    if (!row.inputs_hash) {
-      await markReportReadyV2({
-        token,
-        pdfKey: row.pdf_key || null,
-        pdfUrl: row.pdf_url || null,
-        reportJson: row.report_json || null,
-        inputsHash,
-        planningSnapshot: row.planning_snapshot || null,
-      });
-      row = await getReportRequestByTokenV2(token);
-    }
   }
 
-  // If already ready, return immediately
+  // If already ready, return
   if (row.status === "ready" && row.pdf_url) {
     return res.json({
       ok: true,
@@ -118,7 +103,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  // Launch job in-process
+  // Launch async job in-process
   if (!inFlight.has(token)) {
     inFlight.add(token);
 
