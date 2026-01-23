@@ -1,319 +1,236 @@
-// src/services/googleStaticMaps_v2.service.js
-//
-// Google Static Maps helpers (server-side)
-// - Renders parcel outline (and optional overlay highlight) as paths.
-// - Uses "visible" bounds to fit content.
-//
-// Requirements:
-// - process.env.GOOGLE_MAPS_API_KEY
-// - Static Maps API enabled + billing in Google Cloud
-//
-// Debug:
-// - set STATIC_MAPS_DEBUG=1 to log URLs + response diagnostics
-
+// googleStaticMaps_v2.service.js
 import axios from "axios";
 
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-if (!GOOGLE_MAPS_API_KEY) {
-  throw new Error("Missing GOOGLE_MAPS_API_KEY env var");
-}
+/**
+ * Utility: Extract a polygon ring (array of [lng,lat]) from a GeoJSON Feature/Geometry.
+ * Supports Polygon and MultiPolygon (takes the largest outer ring).
+ */
+function extractPolygonRing(geojson) {
+  if (!geojson) return null;
 
-const STATIC_MAPS_DEBUG = process.env.STATIC_MAPS_DEBUG === "1";
-const STATIC_MAPS_BASE = "https://maps.googleapis.com/maps/api/staticmap";
+  const geom =
+    geojson?.type === "Feature"
+      ? geojson.geometry
+      : geojson?.geometry || geojson;
 
-function isFiniteNumber(n) {
-  return typeof n === "number" && Number.isFinite(n);
-}
+  if (!geom) return null;
 
-function getRingsFromGeoJSON(geo) {
-  if (!geo) return [];
-  const { type, coordinates } = geo;
-
-  if (type === "Polygon" && Array.isArray(coordinates) && coordinates[0]) {
-    return [coordinates[0]];
+  if (geom.type === "Polygon") {
+    const ring = geom.coordinates?.[0];
+    return Array.isArray(ring) && ring.length ? ring : null;
   }
-  if (type === "MultiPolygon" && Array.isArray(coordinates)) {
+
+  if (geom.type === "MultiPolygon") {
+    const polys = geom.coordinates || [];
+    if (!polys.length) return null;
+
+    // choose the polygon with the biggest ring length as a proxy for "largest"
     let best = null;
     let bestLen = 0;
-    for (const poly of coordinates) {
+    for (const poly of polys) {
       const ring = poly?.[0];
-      if (Array.isArray(ring) && ring.length > bestLen) {
+      const len = Array.isArray(ring) ? ring.length : 0;
+      if (len > bestLen) {
+        bestLen = len;
         best = ring;
-        bestLen = ring.length;
       }
     }
-    return best ? [best] : [];
-  }
-  if (type === "LineString" && Array.isArray(coordinates)) {
-    return [coordinates];
-  }
-  if (
-    type === "MultiLineString" &&
-    Array.isArray(coordinates) &&
-    coordinates[0]
-  ) {
-    return [coordinates[0]];
-  }
-  return [];
-}
-
-function bboxFromCoords(coords) {
-  let minLng = Infinity,
-    minLat = Infinity,
-    maxLng = -Infinity,
-    maxLat = -Infinity;
-
-  for (const c of coords) {
-    const lng = c?.[0];
-    const lat = c?.[1];
-    if (!isFiniteNumber(lng) || !isFiniteNumber(lat)) continue;
-    if (lng < minLng) minLng = lng;
-    if (lat < minLat) minLat = lat;
-    if (lng > maxLng) maxLng = lng;
-    if (lat > maxLat) maxLat = lat;
+    return bestLen ? best : null;
   }
 
-  if (!Number.isFinite(minLng)) return null;
-  return { minLng, minLat, maxLng, maxLat };
+  return null;
 }
 
-function mergeBboxes(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  return {
-    minLng: Math.min(a.minLng, b.minLng),
-    minLat: Math.min(a.minLat, b.minLat),
-    maxLng: Math.max(a.maxLng, b.maxLng),
-    maxLat: Math.max(a.maxLat, b.maxLat),
-  };
-}
-
-function bboxToVisiblePoints(bbox, padFactor = 0.12) {
-  const lngPad = (bbox.maxLng - bbox.minLng) * padFactor;
-  const latPad = (bbox.maxLat - bbox.minLat) * padFactor;
-
-  const minLng = bbox.minLng - lngPad;
-  const maxLng = bbox.maxLng + lngPad;
-  const minLat = bbox.minLat - latPad;
-  const maxLat = bbox.maxLat + latPad;
-
-  return [
-    [minLat, minLng],
-    [minLat, maxLng],
-    [maxLat, minLng],
-    [maxLat, maxLng],
-  ];
-}
-
-// Google encoded polyline helpers
-function encodeSignedNumber(num) {
+/**
+ * Encode a polygon ring to a Google Static Maps polyline path.
+ * Uses Encoded Polyline Algorithm Format.
+ *
+ * NOTE: Google expects lat,lng in encoding sequence (not lng,lat).
+ */
+function encodeSigned(num) {
   let sgnNum = num << 1;
   if (num < 0) sgnNum = ~sgnNum;
-  return encodeNumber(sgnNum);
-}
-function encodeNumber(num) {
   let encoded = "";
-  while (num >= 0x20) {
-    encoded += String.fromCharCode((0x20 | (num & 0x1f)) + 63);
-    num >>= 5;
+  while (sgnNum >= 0x20) {
+    encoded += String.fromCharCode((0x20 | (sgnNum & 0x1f)) + 63);
+    sgnNum >>= 5;
   }
-  encoded += String.fromCharCode(num + 63);
+  encoded += String.fromCharCode(sgnNum + 63);
   return encoded;
 }
-function encodePolyline(points) {
-  let prevLat = 0;
-  let prevLng = 0;
+
+function encodePolyline(pointsLatLng) {
+  let lastLat = 0;
+  let lastLng = 0;
   let result = "";
 
-  for (const p of points) {
-    const lat = Math.round(p[0] * 1e5);
-    const lng = Math.round(p[1] * 1e5);
+  for (const [lat, lng] of pointsLatLng) {
+    const latE5 = Math.round(lat * 1e5);
+    const lngE5 = Math.round(lng * 1e5);
 
-    const dLat = lat - prevLat;
-    const dLng = lng - prevLng;
+    const dLat = latE5 - lastLat;
+    const dLng = lngE5 - lastLng;
 
-    prevLat = lat;
-    prevLng = lng;
+    lastLat = latE5;
+    lastLng = lngE5;
 
-    result += encodeSignedNumber(dLat) + encodeSignedNumber(dLng);
+    result += encodeSigned(dLat);
+    result += encodeSigned(dLng);
   }
+
   return result;
 }
 
-function downsampleRingLngLat(ringLngLat, maxPoints = 320) {
-  if (!Array.isArray(ringLngLat) || ringLngLat.length <= maxPoints)
-    return ringLngLat;
-  const step = Math.ceil(ringLngLat.length / maxPoints);
-  const out = [];
-  for (let i = 0; i < ringLngLat.length; i += step) out.push(ringLngLat[i]);
-  const first = out[0];
-  const last = out[out.length - 1];
-  if (first && last && (first[0] !== last[0] || first[1] !== last[1]))
-    out.push(first);
-  return out;
-}
+function ringToEncodedPath(ringLngLat) {
+  // Convert [lng,lat] -> [lat,lng]
+  const pts = ringLngLat.map(([lng, lat]) => [lat, lng]);
 
-function toLatLngPairs(ringLngLat) {
-  return ringLngLat
-    .map((c) => [c[1], c[0]])
-    .filter((p) => isFiniteNumber(p[0]) && isFiniteNumber(p[1]));
-}
-
-function buildStaticMapUrl({ size, scale, maptype, visiblePoints, paths }) {
-  const params = new URLSearchParams();
-
-  params.set("size", size);
-  params.set("scale", String(scale));
-  params.set("maptype", maptype);
-  params.set("format", "png");
-  params.set("key", GOOGLE_MAPS_API_KEY);
-
-  if (visiblePoints?.length) {
-    params.set(
-      "visible",
-      visiblePoints.map((p) => `${p[0]},${p[1]}`).join("|")
-    );
+  // Ensure closed ring (Google paths don’t require it, but it helps consistency)
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
+    pts.push([first[0], first[1]]);
   }
 
-  for (const p of paths || []) params.append("path", p);
-
-  return `${STATIC_MAPS_BASE}?${params.toString()}`;
+  return `enc:${encodePolyline(pts)}`;
 }
 
-function firstBytesHex(buf, n = 16) {
-  return Buffer.isBuffer(buf) ? buf.subarray(0, n).toString("hex") : "";
+function centroidFromRing(ringLngLat) {
+  // simple average centroid (good enough for centering static maps)
+  let sumLng = 0;
+  let sumLat = 0;
+  let n = 0;
+
+  for (const [lng, lat] of ringLngLat) {
+    sumLng += lng;
+    sumLat += lat;
+    n += 1;
+  }
+
+  if (!n) return null;
+  return { lng: sumLng / n, lat: sumLat / n };
 }
 
-async function fetchPng(url) {
-  if (STATIC_MAPS_DEBUG) console.log("[staticmaps] url:", url);
+function isImagePng(resp) {
+  const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
+  return typeof ct === "string" && ct.toLowerCase().includes("image/png");
+}
 
+async function fetchStaticMapPngBuffer(url) {
   const resp = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 30000,
-    validateStatus: () => true, // we validate ourselves to log useful error bodies
+    timeout: 20000,
+    validateStatus: () => true,
   });
 
-  const ct = String(resp.headers?.["content-type"] || "").toLowerCase();
-  const buf = Buffer.from(resp.data || Buffer.alloc(0));
-
-  if (STATIC_MAPS_DEBUG) {
-    console.log(
-      "[staticmaps] status:",
-      resp.status,
-      "ct:",
-      ct,
-      "firstBytes:",
-      firstBytesHex(buf)
-    );
-  }
-
-  if (resp.status < 200 || resp.status >= 300) {
-    // Often JSON/text explaining restriction (referrer/IP/billing/quota)
-    const preview = buf.toString("utf8", 0, Math.min(buf.length, 500));
-    throw new Error(
-      `Static Maps HTTP ${resp.status}. content-type=${ct}. bodyPreview=${preview}`
-    );
-  }
-
-  // Must be a PNG (or at least an image) for PDFKit
-  if (!ct.includes("image/png") && !ct.startsWith("image/")) {
-    const preview = buf.toString("utf8", 0, Math.min(buf.length, 500));
-    throw new Error(
-      `Static Maps returned non-image. content-type=${ct}. bodyPreview=${preview}`
-    );
-  }
-
-  return buf;
+  if (resp.status !== 200 || !isImagePng(resp) || !resp.data) return null;
+  return Buffer.from(resp.data);
 }
 
+/**
+ * Parcel-only map
+ */
 export async function getParcelMapImageBufferV2({
-  parcelGeoJSON,
+  apiKey,
+  center, // {lat,lng} optional
+  zoom = 19,
   size = "640x360",
-  maptype = "hybrid",
   scale = 2,
+  maptype = "hybrid",
+  parcelGeoJson, // Feature with Polygon/MultiPolygon
 }) {
-  const ring = getRingsFromGeoJSON(parcelGeoJSON)?.[0];
-  if (!ring?.length) return null;
+  if (!apiKey) return null;
 
-  const ringDs = downsampleRingLngLat(ring);
-  const latLng = toLatLngPairs(ringDs);
-  const enc = encodePolyline(latLng);
+  const ring = extractPolygonRing(parcelGeoJson);
+  if (!ring) return null;
 
-  const bbox = bboxFromCoords(ring);
-  const visiblePoints = bbox ? bboxToVisiblePoints(bbox) : [];
+  const c = center || centroidFromRing(ring);
+  if (!c) return null;
 
-  const parcelPath = `fillcolor:0x00A65122|color:0x00A651FF|weight:4|enc:${enc}`;
+  const parcelPath = ringToEncodedPath(ring);
 
-  const url = buildStaticMapUrl({
-    size,
-    scale,
-    maptype,
-    visiblePoints,
-    paths: [parcelPath],
-  });
+  // Green-ish parcel outline + light fill (similar to your legend)
+  const path = [
+    `fillcolor:0x2ecc7133`,
+    `color:0x2ecc71ff`,
+    `weight:4`,
+    parcelPath,
+  ].join("|");
 
-  return fetchPng(url);
+  // Keep URL concise. Avoid adding a lot of style params here.
+  const url =
+    `https://maps.googleapis.com/maps/api/staticmap` +
+    `?size=${encodeURIComponent(size)}` +
+    `&scale=${encodeURIComponent(scale)}` +
+    `&maptype=${encodeURIComponent(maptype)}` +
+    `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
+    `&zoom=${encodeURIComponent(zoom)}` +
+    `&path=${encodeURIComponent(path)}` +
+    `&key=${encodeURIComponent(apiKey)}`;
+
+  return fetchStaticMapPngBuffer(url);
 }
 
+/**
+ * Parcel + overlay map
+ */
 export async function getParcelOverlayMapImageBufferV2({
-  parcelGeoJSON,
-  overlayGeoJSON,
+  apiKey,
+  center, // {lat,lng} optional
+  zoom = 17,
   size = "640x360",
-  maptype = "hybrid",
   scale = 2,
+  maptype = "hybrid",
+  parcelGeoJson, // Feature with Polygon/MultiPolygon
+  overlayGeoJson, // Feature with Polygon/MultiPolygon
+  overlayColor = "0xff7f00ff", // orange outline
+  overlayFill = "0xff7f0033", // orange transparent
 }) {
-  const parcelRing = getRingsFromGeoJSON(parcelGeoJSON)?.[0] || null;
-  if (!parcelRing?.length) return null;
+  if (!apiKey) return null;
 
-  const parcelRingDs = downsampleRingLngLat(parcelRing);
-  const parcelLatLng = toLatLngPairs(parcelRingDs);
-  const parcelEnc = encodePolyline(parcelLatLng);
+  const parcelRing = extractPolygonRing(parcelGeoJson);
+  if (!parcelRing) return null;
 
-  const overlayRing = getRingsFromGeoJSON(overlayGeoJSON)?.[0] || null;
-  let overlayEnc = null;
+  const overlayRing = extractPolygonRing(overlayGeoJson);
+  if (!overlayRing) return null;
 
-  if (overlayRing?.length) {
-    const overlayRingDs = downsampleRingLngLat(overlayRing);
-    const overlayLatLng = toLatLngPairs(overlayRingDs);
-    overlayEnc = encodePolyline(overlayLatLng);
-  }
+  const c =
+    center || centroidFromRing(parcelRing) || centroidFromRing(overlayRing);
+  if (!c) return null;
 
-  const bboxParcel = bboxFromCoords(parcelRing);
-  const bboxOverlay = overlayRing ? bboxFromCoords(overlayRing) : null;
-  const bbox = mergeBboxes(bboxParcel, bboxOverlay);
-  const visiblePoints = bbox ? bboxToVisiblePoints(bbox) : [];
+  const parcelPathEnc = ringToEncodedPath(parcelRing);
+  const overlayPathEnc = ringToEncodedPath(overlayRing);
 
-  const paths = [];
+  const parcelPath = [
+    `fillcolor:0x2ecc7133`,
+    `color:0x2ecc71ff`,
+    `weight:4`,
+    parcelPathEnc,
+  ].join("|");
 
-  if (overlayEnc) {
-    paths.push(
-      `fillcolor:0xFF000022|color:0xFF0000FF|weight:3|enc:${overlayEnc}`
-    );
-  }
+  const overlayPath = [
+    `fillcolor:${overlayFill}`,
+    `color:${overlayColor}`,
+    `weight:4`,
+    overlayPathEnc,
+  ].join("|");
 
-  // Parcel outline on top
-  paths.push(`fillcolor:0x00A65112|color:0x00A651FF|weight:4|enc:${parcelEnc}`);
+  const url =
+    `https://maps.googleapis.com/maps/api/staticmap` +
+    `?size=${encodeURIComponent(size)}` +
+    `&scale=${encodeURIComponent(scale)}` +
+    `&maptype=${encodeURIComponent(maptype)}` +
+    `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
+    `&zoom=${encodeURIComponent(zoom)}` +
+    `&path=${encodeURIComponent(parcelPath)}` +
+    `&path=${encodeURIComponent(overlayPath)}` +
+    `&key=${encodeURIComponent(apiKey)}`;
 
-  const url = buildStaticMapUrl({
-    size,
-    scale,
-    maptype,
-    visiblePoints,
-    paths,
-  });
-
-  return fetchPng(url);
+  return fetchStaticMapPngBuffer(url);
 }
 
-// Convenience: zoning is just an "overlay" highlight
-export async function getParcelZoningMapImageBufferV2(opts) {
-  return getParcelOverlayMapImageBufferV2(opts);
-}
-
-export async function staticMapParcelOnly(opts) {
-  return getParcelMapImageBufferV2(opts);
-}
-
-export async function staticMapParcelWithOverlay(opts) {
-  return getParcelOverlayMapImageBufferV2(opts);
-}
+/**
+ * Backwards-compatible aliases (prevents Render crash if older imports exist)
+ */
+export const staticMapParcelOnly = getParcelMapImageBufferV2;
+export const staticMapParcelOverlay = getParcelOverlayMapImageBufferV2;
