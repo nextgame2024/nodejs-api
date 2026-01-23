@@ -85,7 +85,7 @@ function ringToEncodedPath(ringLngLat) {
   // Convert [lng,lat] -> [lat,lng]
   const pts = ringLngLat.map(([lng, lat]) => [lat, lng]);
 
-  // Ensure closed ring (Google paths don’t require it, but it helps consistency)
+  // Ensure closed ring
   const first = pts[0];
   const last = pts[pts.length - 1];
   if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
@@ -96,7 +96,6 @@ function ringToEncodedPath(ringLngLat) {
 }
 
 function centroidFromRing(ringLngLat) {
-  // simple average centroid (good enough for centering static maps)
   let sumLng = 0;
   let sumLat = 0;
   let n = 0;
@@ -127,6 +126,20 @@ async function fetchStaticMapPngBuffer(url) {
   return Buffer.from(resp.data);
 }
 
+function appendStylesAndMapId(url, styles, mapId) {
+  let out = url;
+  if (mapId) {
+    out += `&map_id=${encodeURIComponent(String(mapId))}`;
+  }
+  if (Array.isArray(styles)) {
+    for (const s of styles) {
+      const str = String(s || "").trim();
+      if (str) out += `&style=${encodeURIComponent(str)}`;
+    }
+  }
+  return out;
+}
+
 /**
  * Parcel-only map
  */
@@ -138,6 +151,10 @@ export async function getParcelMapImageBufferV2({
   scale = 2,
   maptype = "hybrid",
   parcelGeoJson, // Feature with Polygon/MultiPolygon
+
+  // NEW (optional):
+  styles = null, // array of Google Static Map "style" strings
+  mapId = null, // Google Cloud Map ID (if you use cloud styling)
 }) {
   if (!apiKey) return null;
 
@@ -149,18 +166,17 @@ export async function getParcelMapImageBufferV2({
 
   const parcelPath = ringToEncodedPath(ring);
 
-  // Green-ish parcel outline + light fill (similar to your legend)
   const path = [
-    `fillcolor:0x2ecc7133`,
+    `fillcolor:0x2ecc7130`,
     `color:0x2ecc71ff`,
     `weight:4`,
     parcelPath,
   ].join("|");
 
-  // Keep URL concise. Avoid adding a lot of style params here.
-  const url =
+  let url =
     `https://maps.googleapis.com/maps/api/staticmap` +
-    `?size=${encodeURIComponent(size)}` +
+    `?format=png` +
+    `&size=${encodeURIComponent(size)}` +
     `&scale=${encodeURIComponent(scale)}` +
     `&maptype=${encodeURIComponent(maptype)}` +
     `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
@@ -168,6 +184,7 @@ export async function getParcelMapImageBufferV2({
     `&path=${encodeURIComponent(path)}` +
     `&key=${encodeURIComponent(apiKey)}`;
 
+  url = appendStylesAndMapId(url, styles, mapId);
   return fetchStaticMapPngBuffer(url);
 }
 
@@ -181,10 +198,15 @@ export async function getParcelOverlayMapImageBufferV2({
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
-  parcelGeoJson, // Feature with Polygon/MultiPolygon
-  overlayGeoJson, // Feature with Polygon/MultiPolygon
-  overlayColor = "0xff7f00ff", // orange outline
-  overlayFill = "0xff7f0033", // orange transparent
+  parcelGeoJson,
+  overlayGeoJson,
+
+  overlayColor = "0xff7f00ff",
+  overlayFill = "0xff7f0030",
+
+  // NEW (optional):
+  styles = null,
+  mapId = null,
 }) {
   if (!apiKey) return null;
 
@@ -202,7 +224,7 @@ export async function getParcelOverlayMapImageBufferV2({
   const overlayPathEnc = ringToEncodedPath(overlayRing);
 
   const parcelPath = [
-    `fillcolor:0x2ecc7133`,
+    `fillcolor:0x2ecc7130`,
     `color:0x2ecc71ff`,
     `weight:4`,
     parcelPathEnc,
@@ -215,9 +237,10 @@ export async function getParcelOverlayMapImageBufferV2({
     overlayPathEnc,
   ].join("|");
 
-  const url =
+  let url =
     `https://maps.googleapis.com/maps/api/staticmap` +
-    `?size=${encodeURIComponent(size)}` +
+    `?format=png` +
+    `&size=${encodeURIComponent(size)}` +
     `&scale=${encodeURIComponent(scale)}` +
     `&maptype=${encodeURIComponent(maptype)}` +
     `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
@@ -226,11 +249,12 @@ export async function getParcelOverlayMapImageBufferV2({
     `&path=${encodeURIComponent(overlayPath)}` +
     `&key=${encodeURIComponent(apiKey)}`;
 
+  url = appendStylesAndMapId(url, styles, mapId);
   return fetchStaticMapPngBuffer(url);
 }
 
 /**
- * Backwards-compatible aliases (prevents Render crash if older imports exist)
+ * Backwards-compatible aliases
  */
 export const staticMapParcelOnly = getParcelMapImageBufferV2;
 export const staticMapParcelOverlay = getParcelOverlayMapImageBufferV2;

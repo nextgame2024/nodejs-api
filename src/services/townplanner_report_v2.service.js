@@ -1,3 +1,4 @@
+// townplanner_report_v2.service.js
 import crypto from "crypto";
 import axios from "axios";
 import { randomUUID } from "crypto";
@@ -115,6 +116,7 @@ export async function generateTownPlannerReportV2({
   });
 
   const logoBuffer = await loadLogoBuffer();
+  const generatedAt = new Date().toISOString();
 
   const pdfBuffer = await buildTownPlannerReportPdfV2({
     schemeVersion: controls.schemeVersion,
@@ -126,6 +128,7 @@ export async function generateTownPlannerReportV2({
     controls,
     narrative,
     logoBuffer,
+    generatedAt, // NEW: explicit for PDF cover/header consistency
   });
 
   const address = addressSlug(addressLabel);
@@ -153,7 +156,7 @@ export async function generateTownPlannerReportV2({
       planning,
       controls,
       narrative,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
     },
     planningSnapshot: planning,
   };
