@@ -1,9 +1,13 @@
 // googleStaticMaps_v2.service.js
 import axios from "axios";
 
+const MAX_URL_LEN = 7600; // conservative under typical 8KB proxy limits
+const MAX_RING_POINTS = 240; // keep paths small and reliable
+const DEFAULT_TIMEOUT_MS = 20000;
+
 /**
- * Utility: Extract a polygon ring (array of [lng,lat]) from a GeoJSON Feature/Geometry.
- * Supports Polygon and MultiPolygon (takes the largest outer ring).
+ * Extract outer ring (array of [lng,lat]) from GeoJSON Feature/Geometry.
+ * Supports Polygon and MultiPolygon (chooses the largest outer ring).
  */
 function extractPolygonRing(geojson) {
   if (!geojson) return null;
@@ -24,7 +28,6 @@ function extractPolygonRing(geojson) {
     const polys = geom.coordinates || [];
     if (!polys.length) return null;
 
-    // choose the polygon with the biggest ring length as a proxy for "largest"
     let best = null;
     let bestLen = 0;
     for (const poly of polys) {
@@ -41,11 +44,120 @@ function extractPolygonRing(geojson) {
   return null;
 }
 
+function round6(n) {
+  return Math.round(Number(n) * 1e6) / 1e6;
+}
+
+/** Remove consecutive duplicates, invalid points, and close ring. */
+function normalizeRing(ringLngLat) {
+  if (!Array.isArray(ringLngLat) || ringLngLat.length < 4) return null;
+
+  const cleaned = [];
+  let prev = null;
+
+  for (const p of ringLngLat) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const lng = round6(p[0]);
+    const lat = round6(p[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+
+    const cur = [lng, lat];
+    if (!prev || prev[0] !== cur[0] || prev[1] !== cur[1]) {
+      cleaned.push(cur);
+      prev = cur;
+    }
+  }
+
+  if (cleaned.length < 4) return null;
+
+  // close ring
+  const first = cleaned[0];
+  const last = cleaned[cleaned.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1])
+    cleaned.push([first[0], first[1]]);
+
+  return cleaned.length >= 4 ? cleaned : null;
+}
+
 /**
- * Encode a polygon ring to a Google Static Maps polyline path.
- * Uses Encoded Polyline Algorithm Format.
- *
- * NOTE: Google expects lat,lng in encoding sequence (not lng,lat).
+ * Ramer–Douglas–Peucker simplification (degrees).
+ * Works fine for our goal: reduce URL/path size reliably.
+ */
+function perpendicularDistance(p, a, b) {
+  const [x, y] = p;
+  const [x1, y1] = a;
+  const [x2, y2] = b;
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  if (dx === 0 && dy === 0) {
+    const ddx = x - x1;
+    const ddy = y - y1;
+    return Math.sqrt(ddx * ddx + ddy * ddy);
+  }
+
+  const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+
+  const ddx = x - projX;
+  const ddy = y - projY;
+  return Math.sqrt(ddx * ddx + ddy * ddy);
+}
+
+function rdp(points, epsilon) {
+  if (!Array.isArray(points) || points.length < 3) return points;
+
+  let dmax = 0;
+  let index = 0;
+  const end = points.length - 1;
+
+  for (let i = 1; i < end; i++) {
+    const d = perpendicularDistance(points[i], points[0], points[end]);
+    if (d > dmax) {
+      index = i;
+      dmax = d;
+    }
+  }
+
+  if (dmax > epsilon) {
+    const rec1 = rdp(points.slice(0, index + 1), epsilon);
+    const rec2 = rdp(points.slice(index, end + 1), epsilon);
+    return rec1.slice(0, rec1.length - 1).concat(rec2);
+  }
+
+  return [points[0], points[end]];
+}
+
+function simplifyRing(ringLngLat, epsilonDeg, maxPoints) {
+  const ring = normalizeRing(ringLngLat);
+  if (!ring) return null;
+
+  // Remove closing point for simplification, then re-close
+  const open = ring.slice(0, -1);
+
+  let simplified = rdp(open, epsilonDeg);
+
+  // If still too many points, downsample deterministically
+  if (simplified.length > maxPoints) {
+    const step = Math.ceil(simplified.length / maxPoints);
+    simplified = simplified.filter((_, i) => i % step === 0);
+    if (simplified.length < 3) simplified = open.slice(0, maxPoints);
+  }
+
+  // Re-close
+  const first = simplified[0];
+  const last = simplified[simplified.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1])
+    simplified.push([first[0], first[1]]);
+
+  return simplified.length >= 4 ? simplified : null;
+}
+
+/**
+ * Polyline encoding helpers (Google Encoded Polyline Algorithm).
+ * Google expects encoding in lat,lng order.
  */
 function encodeSigned(num) {
   let sgnNum = num << 1;
@@ -77,22 +189,12 @@ function encodePolyline(pointsLatLng) {
     result += encodeSigned(dLat);
     result += encodeSigned(dLng);
   }
-
   return result;
 }
 
 function ringToEncodedPath(ringLngLat) {
-  // Convert [lng,lat] -> [lat,lng]
-  const pts = ringLngLat.map(([lng, lat]) => [lat, lng]);
-
-  // Ensure closed ring
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-  if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
-    pts.push([first[0], first[1]]);
-  }
-
-  return `enc:${encodePolyline(pts)}`;
+  const ptsLatLng = ringLngLat.map(([lng, lat]) => [lat, lng]);
+  return `enc:${encodePolyline(ptsLatLng)}`;
 }
 
 function centroidFromRing(ringLngLat) {
@@ -105,39 +207,94 @@ function centroidFromRing(ringLngLat) {
     sumLat += lat;
     n += 1;
   }
-
   if (!n) return null;
   return { lng: sumLng / n, lat: sumLat / n };
 }
 
-function isImagePng(resp) {
+function isImage(resp) {
   const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
-  return typeof ct === "string" && ct.toLowerCase().includes("image/png");
+  return typeof ct === "string" && ct.toLowerCase().startsWith("image/");
 }
 
-async function fetchStaticMapPngBuffer(url) {
+function maskKey(url) {
+  return String(url).replace(/([?&]key=)[^&]+/i, "$1***");
+}
+
+async function fetchStaticMapImageBuffer(url) {
   const resp = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 20000,
+    timeout: DEFAULT_TIMEOUT_MS,
     validateStatus: () => true,
   });
 
-  if (resp.status !== 200 || !isImagePng(resp) || !resp.data) return null;
-  return Buffer.from(resp.data);
+  if (resp.status === 200 && isImage(resp) && resp.data) {
+    return Buffer.from(resp.data);
+  }
+
+  // Diagnostic (do not log full key)
+  const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
+  const bodyPreview =
+    typeof resp?.data === "string"
+      ? resp.data.slice(0, 180)
+      : Buffer.isBuffer(resp?.data)
+        ? resp.data.toString("utf8", 0, 180)
+        : "";
+
+  console.error("[static-maps] failed", {
+    status: resp.status,
+    contentType: ct,
+    urlLen: String(url).length,
+    url: maskKey(url),
+    bodyPreview,
+  });
+
+  return null;
 }
 
-function appendStylesAndMapId(url, styles, mapId) {
-  let out = url;
-  if (mapId) {
-    out += `&map_id=${encodeURIComponent(String(mapId))}`;
+function buildStaticMapUrl({
+  apiKey,
+  center,
+  zoom,
+  size,
+  scale,
+  maptype,
+  paths, // array of encoded path strings already style-prefixed
+}) {
+  const c = `${center.lat},${center.lng}`;
+
+  let url =
+    `https://maps.googleapis.com/maps/api/staticmap` +
+    `?format=png` +
+    `&size=${encodeURIComponent(size)}` +
+    `&scale=${encodeURIComponent(scale)}` +
+    `&maptype=${encodeURIComponent(maptype)}` +
+    `&center=${encodeURIComponent(c)}` +
+    `&zoom=${encodeURIComponent(zoom)}`;
+
+  for (const p of paths) url += `&path=${encodeURIComponent(p)}`;
+
+  url += `&key=${encodeURIComponent(apiKey)}`;
+  return url;
+}
+
+/**
+ * Attempt multiple simplification levels until URL length is safe.
+ */
+function buildPathWithBackoff({
+  ringLngLat,
+  stylePrefix, // e.g. "fillcolor:...|color:...|weight:4|"
+  epsilonCandidates,
+  maxPoints = MAX_RING_POINTS,
+}) {
+  for (const eps of epsilonCandidates) {
+    const simplified = simplifyRing(ringLngLat, eps, maxPoints);
+    if (!simplified) continue;
+    const enc = ringToEncodedPath(simplified);
+    const path = `${stylePrefix}${enc}`;
+    // caller checks URL length; we just return best first
+    return { path, simplifiedPoints: simplified.length };
   }
-  if (Array.isArray(styles)) {
-    for (const s of styles) {
-      const str = String(s || "").trim();
-      if (str) out += `&style=${encodeURIComponent(str)}`;
-    }
-  }
-  return out;
+  return { path: null, simplifiedPoints: 0 };
 }
 
 /**
@@ -150,42 +307,64 @@ export async function getParcelMapImageBufferV2({
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
-  parcelGeoJson, // Feature with Polygon/MultiPolygon
-
-  // NEW (optional):
-  styles = null, // array of Google Static Map "style" strings
-  mapId = null, // Google Cloud Map ID (if you use cloud styling)
+  parcelGeoJson,
 }) {
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.error("[static-maps] missing apiKey");
+    return null;
+  }
 
-  const ring = extractPolygonRing(parcelGeoJson);
-  if (!ring) return null;
+  const ringRaw = extractPolygonRing(parcelGeoJson);
+  if (!ringRaw) return null;
 
-  const c = center || centroidFromRing(ring);
+  const c = center || centroidFromRing(ringRaw);
   if (!c) return null;
 
-  const parcelPath = ringToEncodedPath(ring);
+  const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
 
-  const path = [
-    `fillcolor:0x2ecc7130`,
-    `color:0x2ecc71ff`,
-    `weight:4`,
-    parcelPath,
-  ].join("|");
+  // try small epsilon first; increase if needed
+  const epsList = [0.000003, 0.000008, 0.00002, 0.00005, 0.0001];
 
-  let url =
-    `https://maps.googleapis.com/maps/api/staticmap` +
-    `?format=png` +
-    `&size=${encodeURIComponent(size)}` +
-    `&scale=${encodeURIComponent(scale)}` +
-    `&maptype=${encodeURIComponent(maptype)}` +
-    `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
-    `&zoom=${encodeURIComponent(zoom)}` +
-    `&path=${encodeURIComponent(path)}` +
-    `&key=${encodeURIComponent(apiKey)}`;
+  let best = null;
 
-  url = appendStylesAndMapId(url, styles, mapId);
-  return fetchStaticMapPngBuffer(url);
+  for (const eps of epsList) {
+    const simplified = simplifyRing(ringRaw, eps, MAX_RING_POINTS);
+    if (!simplified) continue;
+
+    const parcelPath = `${parcelPrefix}${ringToEncodedPath(simplified)}`;
+
+    const url = buildStaticMapUrl({
+      apiKey,
+      center: { lat: c.lat, lng: c.lng },
+      zoom,
+      size,
+      scale,
+      maptype,
+      paths: [parcelPath],
+    });
+
+    if (url.length > MAX_URL_LEN) continue;
+
+    best = await fetchStaticMapImageBuffer(url);
+    if (best) return best;
+  }
+
+  // If URL length was always too big, last resort: force coarse simplification + fewer points
+  const simplified = simplifyRing(ringRaw, 0.0002, 140);
+  if (!simplified) return null;
+
+  const url = buildStaticMapUrl({
+    apiKey,
+    center: { lat: c.lat, lng: c.lng },
+    zoom,
+    size,
+    scale,
+    maptype,
+    paths: [`${parcelPrefix}${ringToEncodedPath(simplified)}`],
+  });
+
+  if (url.length > MAX_URL_LEN) return null;
+  return fetchStaticMapImageBuffer(url);
 }
 
 /**
@@ -193,68 +372,83 @@ export async function getParcelMapImageBufferV2({
  */
 export async function getParcelOverlayMapImageBufferV2({
   apiKey,
-  center, // {lat,lng} optional
+  center,
   zoom = 17,
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
   parcelGeoJson,
   overlayGeoJson,
-
   overlayColor = "0xff7f00ff",
-  overlayFill = "0xff7f0030",
-
-  // NEW (optional):
-  styles = null,
-  mapId = null,
+  overlayFill = "0xff7f0033",
 }) {
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.error("[static-maps] missing apiKey");
+    return null;
+  }
 
-  const parcelRing = extractPolygonRing(parcelGeoJson);
-  if (!parcelRing) return null;
-
-  const overlayRing = extractPolygonRing(overlayGeoJson);
-  if (!overlayRing) return null;
+  const parcelRingRaw = extractPolygonRing(parcelGeoJson);
+  const overlayRingRaw = extractPolygonRing(overlayGeoJson);
+  if (!parcelRingRaw || !overlayRingRaw) return null;
 
   const c =
-    center || centroidFromRing(parcelRing) || centroidFromRing(overlayRing);
+    center ||
+    centroidFromRing(parcelRingRaw) ||
+    centroidFromRing(overlayRingRaw);
   if (!c) return null;
 
-  const parcelPathEnc = ringToEncodedPath(parcelRing);
-  const overlayPathEnc = ringToEncodedPath(overlayRing);
+  const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
+  const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:4|`;
 
-  const parcelPath = [
-    `fillcolor:0x2ecc7130`,
-    `color:0x2ecc71ff`,
-    `weight:4`,
-    parcelPathEnc,
-  ].join("|");
+  // overlay often has more points; back off more aggressively
+  const epsList = [0.000005, 0.000015, 0.00004, 0.00008, 0.00016, 0.0003];
 
-  const overlayPath = [
-    `fillcolor:${overlayFill}`,
-    `color:${overlayColor}`,
-    `weight:4`,
-    overlayPathEnc,
-  ].join("|");
+  for (const eps of epsList) {
+    const parcelRing = simplifyRing(parcelRingRaw, eps, 220);
+    const overlayRing = simplifyRing(overlayRingRaw, eps, 220);
+    if (!parcelRing || !overlayRing) continue;
 
-  let url =
-    `https://maps.googleapis.com/maps/api/staticmap` +
-    `?format=png` +
-    `&size=${encodeURIComponent(size)}` +
-    `&scale=${encodeURIComponent(scale)}` +
-    `&maptype=${encodeURIComponent(maptype)}` +
-    `&center=${encodeURIComponent(`${c.lat},${c.lng}`)}` +
-    `&zoom=${encodeURIComponent(zoom)}` +
-    `&path=${encodeURIComponent(parcelPath)}` +
-    `&path=${encodeURIComponent(overlayPath)}` +
-    `&key=${encodeURIComponent(apiKey)}`;
+    const parcelPath = `${parcelPrefix}${ringToEncodedPath(parcelRing)}`;
+    const overlayPath = `${overlayPrefix}${ringToEncodedPath(overlayRing)}`;
 
-  url = appendStylesAndMapId(url, styles, mapId);
-  return fetchStaticMapPngBuffer(url);
+    const url = buildStaticMapUrl({
+      apiKey,
+      center: { lat: c.lat, lng: c.lng },
+      zoom,
+      size,
+      scale,
+      maptype,
+      paths: [parcelPath, overlayPath],
+    });
+
+    if (url.length > MAX_URL_LEN) continue;
+
+    const buf = await fetchStaticMapImageBuffer(url);
+    if (buf) return buf;
+  }
+
+  // last resort: fewer points
+  const parcelRing = simplifyRing(parcelRingRaw, 0.0004, 120);
+  const overlayRing = simplifyRing(overlayRingRaw, 0.0004, 120);
+  if (!parcelRing || !overlayRing) return null;
+
+  const url = buildStaticMapUrl({
+    apiKey,
+    center: { lat: c.lat, lng: c.lng },
+    zoom,
+    size,
+    scale,
+    maptype,
+    paths: [
+      `${parcelPrefix}${ringToEncodedPath(parcelRing)}`,
+      `${overlayPrefix}${ringToEncodedPath(overlayRing)}`,
+    ],
+  });
+
+  if (url.length > MAX_URL_LEN) return null;
+  return fetchStaticMapImageBuffer(url);
 }
 
-/**
- * Backwards-compatible aliases
- */
+// Backwards-compatible aliases
 export const staticMapParcelOnly = getParcelMapImageBufferV2;
 export const staticMapParcelOverlay = getParcelOverlayMapImageBufferV2;

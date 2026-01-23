@@ -56,40 +56,24 @@ function formatCoords(lat, lng) {
  * previously used by the PDF generator. This alias map makes the PDF robust across code changes.
  */
 const OVERLAY_CODE_ALIASES = {
-  // Flood
   flood_overland: ["flood_overland_flow", "flood_overland_flow_planning_area"],
   flood_creek: ["flood_creek_waterway"],
   flood_river: ["flood_brisbane_river"],
-
-  // Airport
   airport_height_restriction: ["overlay_airport_height"],
   airport_ols_boundary: ["overlay_airport_ols"],
-
-  // Character / heritage
-  dwelling_house_character: ["character_dwelling_house"],
-  traditional_building_character: ["character_traditional_building"],
-  commercial_character_building: ["character_commercial_building"],
-  pre_1911: ["overlay_pre_1911"],
-  heritage_state_area: ["overlay_state_heritage_area"],
-
-  // Noise
   transport_noise_corridor: ["transport_noise_corridor"],
 };
 
 function findOverlayGeometry(planningSnapshot, code) {
   const arr = planningSnapshot?.overlayPolygons;
-  if (!Array.isArray(arr) || !arr.length) return null;
+  if (!Array.isArray(arr)) return null;
 
   const codes = [code, ...(OVERLAY_CODE_ALIASES[code] || [])].filter(Boolean);
-
   for (const c of codes) {
     const hit = arr.find((o) => o?.code === c && o?.geometry);
     if (hit?.geometry) return hit.geometry;
   }
-
-  // fallback: if code already matches something in arr
-  const direct = arr.find((o) => o?.code === code && o?.geometry);
-  return direct?.geometry || null;
+  return null;
 }
 
 function computeIntersectionAreaM2(parcelGeom, overlayGeom) {

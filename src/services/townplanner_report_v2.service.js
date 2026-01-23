@@ -97,6 +97,27 @@ export async function generateTownPlannerReportV2({
 }) {
   const planning = await fetchPlanningDataV2({ lat, lng });
 
+  if (!planning || !planning.siteParcelPolygon) {
+    const details = {
+      hasPlanning: !!planning,
+      hasParcel: !!planning?.siteParcelPolygon,
+      hasZoning: !!planning?.zoningPolygon,
+      zoning: planning?.zoning,
+      lat,
+      lng,
+      placeId,
+      addressLabel,
+    };
+    console.error(
+      "[townplanner_v2] planning snapshot incomplete; refusing PDF",
+      details
+    );
+    throw new Error(
+      "Planning layers not available for this location (parcel boundary missing). " +
+        "Please try again or verify the cadastral dataset is loaded."
+    );
+  }
+
   const overlayCodes = (planning?.overlays || []).map((o) => o.code);
   const controls = await getControlsV2({
     zoningCode: planning?.zoningCode,
