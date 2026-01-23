@@ -10,6 +10,25 @@
 
 import pool from "../config/db.js";
 
+const _tableExistsCache = new Map();
+
+async function tableExists(tableName) {
+  if (!tableName) return false;
+  if (_tableExistsCache.has(tableName)) return _tableExistsCache.get(tableName);
+
+  try {
+    const { rows } = await pool.query(`SELECT to_regclass($1) AS regclass`, [
+      tableName,
+    ]);
+    const ok = !!rows?.[0]?.regclass;
+    _tableExistsCache.set(tableName, ok);
+    return ok;
+  } catch {
+    _tableExistsCache.set(tableName, false);
+    return false;
+  }
+}
+
 function safeJsonParse(maybeJson) {
   if (!maybeJson) return null;
   if (typeof maybeJson === "object") return maybeJson;
@@ -62,7 +81,9 @@ function geomTo4326Sql(geomCol = "geom") {
 async function queryOne(table, lng, lat, withinDistanceMeters) {
   if (!pool) return null;
 
-  // NOTE: `table` is always a fixed internal constant in this app.
+  // NEW: skip missing tables cleanly
+  if (!(await tableExists(table))) return null;
+
   const geom4326 = geomTo4326Sql("geom");
   const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
 
@@ -121,6 +142,9 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
 async function queryIntersects(table, parcelGeomGeoJSON) {
   if (!pool) return null;
   if (!parcelGeomGeoJSON) return null;
+
+  // NEW: skip missing tables cleanly
+  if (!(await tableExists(table))) return null;
 
   const geom4326 = geomTo4326Sql("geom");
   const parcelExpr = "ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)";
