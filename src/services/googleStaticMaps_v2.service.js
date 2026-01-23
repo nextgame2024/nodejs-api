@@ -1,19 +1,24 @@
 // src/services/googleStaticMaps_v2.service.js
 //
 // Google Static Maps helpers (server-side)
-// - Renders parcel outline and optional highlight geometry (overlay/zoning) as paths.
+// - Renders parcel outline (and optional overlay highlight) as paths.
 // - Uses "visible" bounds to fit content.
 //
 // Requirements:
 // - process.env.GOOGLE_MAPS_API_KEY
 // - Static Maps API enabled + billing in Google Cloud
+//
+// Debug:
+// - set STATIC_MAPS_DEBUG=1 to log URLs + response diagnostics
 
 import axios from "axios";
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-if (!GOOGLE_MAPS_API_KEY)
+if (!GOOGLE_MAPS_API_KEY) {
   throw new Error("Missing GOOGLE_MAPS_API_KEY env var");
+}
 
+const STATIC_MAPS_DEBUG = process.env.STATIC_MAPS_DEBUG === "1";
 const STATIC_MAPS_BASE = "https://maps.googleapis.com/maps/api/staticmap";
 
 function isFiniteNumber(n) {
@@ -100,13 +105,12 @@ function bboxToVisiblePoints(bbox, padFactor = 0.12) {
   ];
 }
 
-// Google encoded polyline
+// Google encoded polyline helpers
 function encodeSignedNumber(num) {
   let sgnNum = num << 1;
   if (num < 0) sgnNum = ~sgnNum;
   return encodeNumber(sgnNum);
 }
-
 function encodeNumber(num) {
   let encoded = "";
   while (num >= 0x20) {
@@ -116,7 +120,6 @@ function encodeNumber(num) {
   encoded += String.fromCharCode(num + 63);
   return encoded;
 }
-
 function encodePolyline(points) {
   let prevLat = 0;
   let prevLng = 0;
@@ -177,13 +180,50 @@ function buildStaticMapUrl({ size, scale, maptype, visiblePoints, paths }) {
   return `${STATIC_MAPS_BASE}?${params.toString()}`;
 }
 
+function firstBytesHex(buf, n = 16) {
+  return Buffer.isBuffer(buf) ? buf.subarray(0, n).toString("hex") : "";
+}
+
 async function fetchPng(url) {
+  if (STATIC_MAPS_DEBUG) console.log("[staticmaps] url:", url);
+
   const resp = await axios.get(url, {
     responseType: "arraybuffer",
     timeout: 30000,
-    validateStatus: (s) => s >= 200 && s < 300,
+    validateStatus: () => true, // we validate ourselves to log useful error bodies
   });
-  return Buffer.from(resp.data);
+
+  const ct = String(resp.headers?.["content-type"] || "").toLowerCase();
+  const buf = Buffer.from(resp.data || Buffer.alloc(0));
+
+  if (STATIC_MAPS_DEBUG) {
+    console.log(
+      "[staticmaps] status:",
+      resp.status,
+      "ct:",
+      ct,
+      "firstBytes:",
+      firstBytesHex(buf)
+    );
+  }
+
+  if (resp.status < 200 || resp.status >= 300) {
+    // Often JSON/text explaining restriction (referrer/IP/billing/quota)
+    const preview = buf.toString("utf8", 0, Math.min(buf.length, 500));
+    throw new Error(
+      `Static Maps HTTP ${resp.status}. content-type=${ct}. bodyPreview=${preview}`
+    );
+  }
+
+  // Must be a PNG (or at least an image) for PDFKit
+  if (!ct.includes("image/png") && !ct.startsWith("image/")) {
+    const preview = buf.toString("utf8", 0, Math.min(buf.length, 500));
+    throw new Error(
+      `Static Maps returned non-image. content-type=${ct}. bodyPreview=${preview}`
+    );
+  }
+
+  return buf;
 }
 
 export async function getParcelMapImageBufferV2({
@@ -246,7 +286,6 @@ export async function getParcelOverlayMapImageBufferV2({
   const paths = [];
 
   if (overlayEnc) {
-    // Red highlight (overlay)
     paths.push(
       `fillcolor:0xFF000022|color:0xFF0000FF|weight:3|enc:${overlayEnc}`
     );
@@ -266,57 +305,7 @@ export async function getParcelOverlayMapImageBufferV2({
   return fetchPng(url);
 }
 
-/**
- * Zoning map renderer (parcel + zoning highlight).
- * Styling differs from overlays (blue).
- */
-export async function getParcelZoningMapImageBufferV2({
-  parcelGeoJSON,
-  zoningGeoJSON,
-  size = "640x360",
-  maptype = "hybrid",
-  scale = 2,
-}) {
-  const parcelRing = getRingsFromGeoJSON(parcelGeoJSON)?.[0] || null;
-  if (!parcelRing?.length) return null;
-
-  const parcelRingDs = downsampleRingLngLat(parcelRing);
-  const parcelLatLng = toLatLngPairs(parcelRingDs);
-  const parcelEnc = encodePolyline(parcelLatLng);
-
-  const zoningRing = getRingsFromGeoJSON(zoningGeoJSON)?.[0] || null;
-  let zoningEnc = null;
-
-  if (zoningRing?.length) {
-    const zoningRingDs = downsampleRingLngLat(zoningRing);
-    const zoningLatLng = toLatLngPairs(zoningRingDs);
-    zoningEnc = encodePolyline(zoningLatLng);
-  }
-
-  const bboxParcel = bboxFromCoords(parcelRing);
-  const bboxZoning = zoningRing ? bboxFromCoords(zoningRing) : null;
-  const bbox = mergeBboxes(bboxParcel, bboxZoning);
-  const visiblePoints = bbox ? bboxToVisiblePoints(bbox) : [];
-
-  const paths = [];
-
-  if (zoningEnc) {
-    // Blue highlight (zoning)
-    paths.push(
-      `fillcolor:0x1E88E522|color:0x1E88E5FF|weight:3|enc:${zoningEnc}`
-    );
-  }
-
-  // Parcel outline on top
-  paths.push(`fillcolor:0x00A65110|color:0x00A651FF|weight:4|enc:${parcelEnc}`);
-
-  const url = buildStaticMapUrl({
-    size,
-    scale,
-    maptype,
-    visiblePoints,
-    paths,
-  });
-
-  return fetchPng(url);
+// Convenience: zoning is just an "overlay" highlight
+export async function getParcelZoningMapImageBufferV2(opts) {
+  return getParcelOverlayMapImageBufferV2(opts);
 }
