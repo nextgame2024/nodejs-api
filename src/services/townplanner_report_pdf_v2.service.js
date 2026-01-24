@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-01-24"; // IMPORTANT: visible stamp to verify deploy
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-01-24";
 
 function safeJsonParse(v) {
   if (!v) return null;

@@ -5,7 +5,10 @@ import { randomUUID } from "crypto";
 
 import { fetchPlanningDataV2 } from "./planningData_v2.service.js";
 import { putToS3 } from "./s3.js";
-import { buildTownPlannerReportPdfV2 } from "./townplanner_report_pdf_v2.service.js";
+import {
+  buildTownPlannerReportPdfV2,
+  PDF_ENGINE_VERSION,
+} from "./townplanner_report_pdf_v2.service.js";
 import { genTownPlannerReportNarrativeV2 } from "./gemini-townplanner_report_v2.service.js";
 import pool from "../config/db.js";
 
@@ -15,6 +18,12 @@ const PDF_LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/sophiaAi-logo.png";
 
 const SCHEME_VERSION = process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
+
+// Use env override if desired, otherwise use PDF generator’s version stamp
+export const REPORT_TEMPLATE_VERSION =
+  process.env.TOWNPLANNER_REPORT_TEMPLATE_VERSION ||
+  PDF_ENGINE_VERSION ||
+  "TPR-PDFKIT-V3";
 
 function sha256(obj) {
   return crypto.createHash("sha256").update(JSON.stringify(obj)).digest("hex");
@@ -29,6 +38,13 @@ function addressSlug(addressLabel) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 80) || "unknown-address"
   );
+}
+
+function versionSlug(v) {
+  return String(v || "unknown")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .slice(0, 80);
 }
 
 async function loadLogoBuffer() {
@@ -97,6 +113,7 @@ export async function generateTownPlannerReportV2({
 }) {
   const planning = await fetchPlanningDataV2({ lat, lng });
 
+  // Keep your existing “must have parcel boundary” guard
   if (!planning || !planning.siteParcelPolygon) {
     const details = {
       hasPlanning: !!planning,
@@ -139,6 +156,11 @@ export async function generateTownPlannerReportV2({
   const logoBuffer = await loadLogoBuffer();
   const generatedAt = new Date().toISOString();
 
+  console.info("[townplanner_v2] generating PDF with engine:", {
+    token,
+    REPORT_TEMPLATE_VERSION,
+  });
+
   const pdfBuffer = await buildTownPlannerReportPdfV2({
     schemeVersion: controls.schemeVersion,
     addressLabel,
@@ -149,15 +171,17 @@ export async function generateTownPlannerReportV2({
     controls,
     narrative,
     logoBuffer,
-    generatedAt, // NEW: explicit for PDF cover/header consistency
+    generatedAt,
   });
 
   const address = addressSlug(addressLabel);
   const ts = Date.now();
+  const vslug = versionSlug(REPORT_TEMPLATE_VERSION);
 
+  // IMPORTANT: versioned key path so old PDFs are obviously old
   const key =
     S3_PUBLIC_PREFIX +
-    `townplanner-v2/reports/${address}/${ts}-${randomUUID()}.pdf`;
+    `townplanner-v2/reports/${vslug}/${address}/${ts}-${randomUUID()}.pdf`;
 
   const pdfUrl = await putToS3({
     key,
@@ -169,6 +193,7 @@ export async function generateTownPlannerReportV2({
     pdfKey: key,
     pdfUrl,
     reportJson: {
+      templateVersion: REPORT_TEMPLATE_VERSION,
       schemeVersion: controls.schemeVersion,
       addressLabel,
       placeId,

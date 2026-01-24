@@ -20,6 +20,7 @@ import { fetchPlanningDataV2 } from "../services/planningData_v2.service.js";
 import {
   generateTownPlannerReportV2,
   computeInputsHashV2,
+  REPORT_TEMPLATE_VERSION,
 } from "../services/townplanner_report_v2.service.js";
 
 function isValidEmail(email) {
@@ -28,6 +29,13 @@ function isValidEmail(email) {
 
 // In-process guard (DB status is still source of truth)
 const inFlight = new Set();
+
+function isCachedPdfCurrent(cachedRow) {
+  // cachedRow has pdf_key from findReadyReportByHashV2
+  const key = String(cachedRow?.pdf_key || "");
+  // We now store version in the key path, so this check is reliable.
+  return key.includes(REPORT_TEMPLATE_VERSION);
+}
 
 export const generateReportV2Controller = asyncHandler(async (req, res) => {
   const {
@@ -52,24 +60,28 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
   const schemeVersion =
     process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
 
+  // CRITICAL: include template version so cache is invalidated when PDF changes
   const inputsHash = computeInputsHashV2({
     addressLabel: addressLabel.trim(),
     placeId: placeId || null,
     lat,
     lng,
     schemeVersion,
+    templateVersion: REPORT_TEMPLATE_VERSION,
   });
 
   // Reuse existing ready report for identical inputs (unless forced)
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
-    if (cached?.pdf_url) {
+    // SAFETY: if cached PDF exists but is from a different engine version, regenerate
+    if (cached?.pdf_url && isCachedPdfCurrent(cached)) {
       return res.json({
         ok: true,
         token: cached.token,
         status: "ready",
         pdfUrl: cached.pdf_url,
         cached: true,
+        templateVersion: REPORT_TEMPLATE_VERSION,
       });
     }
   }
@@ -93,13 +105,14 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  // If already ready, return
+  // If already ready, return (NOTE: this is token-based, not hash-based; keep behavior)
   if (row.status === "ready" && row.pdf_url) {
     return res.json({
       ok: true,
       token: row.token,
       status: "ready",
       pdfUrl: row.pdf_url,
+      templateVersion: REPORT_TEMPLATE_VERSION,
     });
   }
 
@@ -138,7 +151,12 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  return res.json({ ok: true, token, status: "running" });
+  return res.json({
+    ok: true,
+    token,
+    status: "running",
+    templateVersion: REPORT_TEMPLATE_VERSION,
+  });
 });
 
 export const createReportRequestV2Controller = asyncHandler(
@@ -227,6 +245,7 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
       updatedAt: row.updated_at,
       startedAt: row.started_at || null,
       completedAt: row.completed_at || null,
+      templateVersion: REPORT_TEMPLATE_VERSION,
     },
   });
 });
