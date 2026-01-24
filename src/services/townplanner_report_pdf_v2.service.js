@@ -65,9 +65,6 @@ const PAGE = {
 function contentW(doc) {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
-function contentH(doc) {
-  return doc.page.height - doc.page.margins.top - doc.page.margins.bottom;
-}
 function X(doc) {
   return doc.page.margins.left;
 }
@@ -96,6 +93,54 @@ function box(
   rr(doc, x, y, w, h, r);
   doc.strokeColor(stroke).lineWidth(1).stroke();
   doc.restore();
+}
+
+/**
+ * PDFKit does NOT clip text to a "height" option. If text exceeds page height,
+ * PDFKit will auto-add pages. This helper prevents auto-flow by limiting lines.
+ */
+function boundedText(
+  doc,
+  text,
+  x,
+  y,
+  w,
+  h,
+  {
+    font = "Helvetica",
+    fontSize = 9,
+    color = BRAND.muted,
+    lineGap = 2,
+    ellipsis = true,
+    align = "left",
+  } = {}
+) {
+  const s = String(text ?? "");
+  doc.font(font).fontSize(fontSize).fillColor(color);
+
+  const lineH = fontSize + lineGap;
+  const maxLines = Math.max(1, Math.floor(h / lineH));
+
+  // splitTextToSize exists in PDFKit
+  const lines = doc.splitTextToSize(s, w) || [];
+  const clipped = lines.slice(0, maxLines);
+
+  // Add ellipsis if clipped
+  if (ellipsis && lines.length > maxLines && clipped.length) {
+    const last = clipped[clipped.length - 1];
+    const trimmed = String(last).replace(/\s+$/, "");
+    clipped[clipped.length - 1] = trimmed.endsWith("…")
+      ? trimmed
+      : trimmed.replace(/[.]{3,}$/, "").trimEnd() + "…";
+  }
+
+  // Draw line-by-line without triggering new pages
+  let yy = y;
+  for (const ln of clipped) {
+    doc.text(ln, x, yy, { width: w, align, lineBreak: false });
+    yy += lineH;
+    if (yy > y + h - lineH / 2) break;
+  }
 }
 
 function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
@@ -138,12 +183,13 @@ function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
     .fontSize(8)
     .text(schemeVersion || "", x, y + 12, { width: w - 14, align: "right" });
 
-  // Address line under header band
-  doc
-    .fillColor(BRAND.muted)
-    .font("Helvetica")
-    .fontSize(9)
-    .text(addressLabel || "", x, y + 46, { width: w });
+  // Address line under header band (bounded)
+  boundedText(doc, addressLabel || "", x, y + 46, w, 16, {
+    font: "Helvetica",
+    fontSize: 9,
+    color: BRAND.muted,
+    ellipsis: true,
+  });
 
   // thin rule
   doc.save();
@@ -162,6 +208,7 @@ function footerAllPages(doc, schemeVersion) {
 
   for (let i = range.start; i < range.start + range.count; i += 1) {
     doc.switchToPage(i);
+
     const x = X(doc);
     const w = contentW(doc);
     const y = doc.page.height - doc.page.margins.bottom + 18;
@@ -204,10 +251,26 @@ function computeIntersectionAreaM2(parcelGeom, overlayGeom) {
   }
 }
 
-/**
- * IMPORTANT: Always draw within fixed page regions.
- * Never rely on doc.y auto-flow.
- */
+/** Draw an image cropped-to-fill (cover) inside a rounded container. */
+function drawCoverImageInRoundedBox(doc, img, x, y, w, h, r = 14) {
+  box(doc, x, y, w, h, { fill: BRAND.light, stroke: BRAND.border, r });
+  if (!img) return;
+
+  // Clip to rounded rect and cover-fill (crop) to remove right-side whitespace
+  doc.save();
+  rr(doc, x, y, w, h, r);
+  doc.clip();
+  try {
+    doc.image(img, x, y, { cover: [w, h] });
+  } catch {
+    // fallback: fit
+    try {
+      doc.image(img, x, y, { fit: [w, h] });
+    } catch {}
+  }
+  doc.restore();
+}
+
 export async function buildTownPlannerReportPdfV2(
   reportPayload = {},
   opts = {}
@@ -277,6 +340,7 @@ export async function buildTownPlannerReportPdfV2(
       planningSnapshot.siteParcelPolygon,
       planningSnapshot?.propertyParcel?.geometry
     ) || null;
+
   const zoningGeom =
     pickFirst(
       planningSnapshot.zoningPolygon,
@@ -289,8 +353,6 @@ export async function buildTownPlannerReportPdfV2(
   const areaM2 =
     planningSnapshot?.propertyParcel?.debug?.areaM2 ??
     planningSnapshot?.propertyParcel?.debug?.area_m2 ??
-    planningSnapshot?.propertyParcel?.debug?.areaM2 ??
-    planningSnapshot?.propertyParcel?.debug?.areaM2 ??
     null;
 
   const center =
@@ -384,7 +446,6 @@ export async function buildTownPlannerReportPdfV2(
           }).catch(() => null)
         : null;
 
-    // Narrative summary fallback
     let narrativeSummary = "";
     const cautions = narrative?.sections?.find((s) => s?.id === "cautions");
     if (cautions?.items?.length) {
@@ -476,7 +537,9 @@ export async function buildTownPlannerReportPdfV2(
         `Generated ${formatDateAU(generatedAt)} • ${schemeVersion}`,
         x + 18,
         y + 126,
-        { width: w - 36 }
+        {
+          width: w - 36,
+        }
       );
 
     doc
@@ -488,7 +551,7 @@ export async function buildTownPlannerReportPdfV2(
         opacity: 0.9,
       });
 
-    // Hero map
+    // Hero map (cover fill)
     const mapY = y + 190;
     const mapH = 330;
     if (siteContextMap) {
@@ -496,8 +559,12 @@ export async function buildTownPlannerReportPdfV2(
       rr(doc, x, mapY, w, mapH, 20);
       doc.clip();
       try {
-        doc.image(siteContextMap, x, mapY, { fit: [w, mapH] });
-      } catch {}
+        doc.image(siteContextMap, x, mapY, { cover: [w, mapH] });
+      } catch {
+        try {
+          doc.image(siteContextMap, x, mapY, { fit: [w, mapH] });
+        } catch {}
+      }
       doc.restore();
     } else {
       box(doc, x, mapY, w, mapH, { fill: BRAND.light });
@@ -519,16 +586,17 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(11)
       .text("Report inputs", x + 16, bY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        `Place ID: ${placeId || "N/A"}\nCoordinates: ${formatCoords(lat, lng)}`,
-        x + 16,
-        bY + 32,
-        { width: w - 32, height: 60 }
-      );
+
+    // Bounded placeId prevents auto-page creation
+    boundedText(
+      doc,
+      `Place ID: ${placeId || "N/A"}\nCoordinates: ${formatCoords(lat, lng)}`,
+      x + 16,
+      bY + 32,
+      w - 32,
+      48,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
   }
 
   // ========== PAGE 2: CONTENTS ==========
@@ -545,6 +613,7 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(20)
       .text("Report contents", x, top);
+
     doc
       .fillColor(BRAND.muted)
       .font("Helvetica")
@@ -554,39 +623,63 @@ export async function buildTownPlannerReportPdfV2(
     const listY = top + 64;
     box(doc, x, listY, w, 520);
 
-    let y = listY + 18;
+    const rowLeftX = x + 18;
+    const pageRightX = x + w - 18;
+    const leaderMinGap = 10;
+
+    let y = listY + 22;
+
     for (const row of toc) {
+      // label
+      doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(11);
+      doc.text(row.label, rowLeftX, y);
+
+      const labelWidth = doc.widthOfString(row.label);
+      const leaderStart = rowLeftX + labelWidth + leaderMinGap;
+      const leaderEnd = pageRightX - 24;
+
+      // dotted leader as dashed stroke (no wrapping)
+      if (leaderEnd > leaderStart + 20) {
+        doc.save();
+        doc
+          .strokeColor(BRAND.border)
+          .lineWidth(1)
+          .dash(1, { space: 3 })
+          .moveTo(leaderStart, y + 10)
+          .lineTo(leaderEnd, y + 10)
+          .stroke();
+        doc.undash();
+        doc.restore();
+      }
+
+      // page number
       doc
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
         .fontSize(11)
-        .text(row.label, x + 18, y, { continued: true });
-      // dot leaders (drawn as text for simplicity but bounded)
-      const dots = ".".repeat(120);
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(10)
-        .text(dots, x + 160, y + 1, { width: w - 230, continued: true });
-      doc
-        .fillColor(BRAND.text)
-        .font("Helvetica-Bold")
-        .fontSize(11)
-        .text(String(row.page), x, y, { width: w - 18, align: "right" });
+        .text(String(row.page), pageRightX - 2, y, {
+          width: 20,
+          align: "right",
+        });
+
       y += 32;
-      if (y > listY + 520 - 40) break;
     }
 
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        "Maps are indicative only. For authoritative mapping and controls, verify against Brisbane City Plan mapping and relevant codes.",
-        x,
-        listY + 520 - 44,
-        { width: w, align: "center" }
-      );
+    boundedText(
+      doc,
+      "Maps are indicative only. For authoritative mapping and controls, verify against Brisbane City Plan mapping and relevant codes.",
+      x,
+      listY + 520 - 44,
+      w,
+      36,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        align: "center",
+        ellipsis: true,
+      }
+    );
   }
 
   // ========== PAGE 3: EXECUTIVE SUMMARY ==========
@@ -609,27 +702,11 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(20)
       .text("Planning summary", x, top);
 
+    // Map should fill container (cover) to remove right whitespace
     const mapY = top + 50;
     const mapH = 270;
-    box(doc, x, mapY, w, mapH);
-    if (parcelRoadMap) {
-      try {
-        doc.image(parcelRoadMap, x + 10, mapY + 10, {
-          fit: [w - 20, mapH - 20],
-        });
-      } catch {}
-    } else {
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(10)
-        .text("Map not available.", x, mapY + mapH / 2 - 6, {
-          width: w,
-          align: "center",
-        });
-    }
+    drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
 
-    // Summary tiles
     const tilesY = mapY + mapH + 16;
     const gap = 12;
     const tileW = (w - gap) / 2;
@@ -647,29 +724,30 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Zoning", x + 14, tilesY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text("Zone code", x + 14, tilesY + 34);
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(13)
-      .text(String(zoningCode), x + 14, tilesY + 48);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text("Zone name", x + 14, tilesY + 74);
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text(String(zoningText), x + 14, tilesY + 88, {
-        width: tileW - 28,
-        height: 40,
-      });
+    boundedText(doc, "Zone code", x + 14, tilesY + 34, tileW - 28, 14, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: false,
+    });
+    boundedText(doc, String(zoningCode), x + 14, tilesY + 48, tileW - 28, 20, {
+      font: "Helvetica-Bold",
+      fontSize: 13,
+      color: BRAND.text,
+      ellipsis: true,
+    });
+    boundedText(doc, "Zone name", x + 14, tilesY + 74, tileW - 28, 14, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: false,
+    });
+    boundedText(doc, String(zoningText), x + 14, tilesY + 88, tileW - 28, 44, {
+      font: "Helvetica-Bold",
+      fontSize: 11,
+      color: BRAND.text,
+      ellipsis: true,
+    });
 
     box(doc, x + tileW + gap, tilesY, tileW, tileH);
     doc
@@ -677,34 +755,63 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Neighbourhood plan", x + tileW + gap + 14, tilesY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text("Plan", x + tileW + gap + 14, tilesY + 34);
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text(String(np), x + tileW + gap + 14, tilesY + 48, {
-        width: tileW - 28,
-        height: 34,
-      });
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text("Precinct", x + tileW + gap + 14, tilesY + 84);
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text(String(precinct), x + tileW + gap + 14, tilesY + 98, {
-        width: tileW - 28,
-        height: 34,
-      });
+    boundedText(
+      doc,
+      "Plan",
+      x + tileW + gap + 14,
+      tilesY + 34,
+      tileW - 28,
+      14,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: false,
+      }
+    );
+    boundedText(
+      doc,
+      String(np),
+      x + tileW + gap + 14,
+      tilesY + 48,
+      tileW - 28,
+      34,
+      {
+        font: "Helvetica-Bold",
+        fontSize: 11,
+        color: BRAND.text,
+        ellipsis: true,
+      }
+    );
+    boundedText(
+      doc,
+      "Precinct",
+      x + tileW + gap + 14,
+      tilesY + 84,
+      tileW - 28,
+      14,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: false,
+      }
+    );
+    boundedText(
+      doc,
+      String(precinct),
+      x + tileW + gap + 14,
+      tilesY + 98,
+      tileW - 28,
+      34,
+      {
+        font: "Helvetica-Bold",
+        fontSize: 11,
+        color: BRAND.text,
+        ellipsis: true,
+      }
+    );
 
-    // Cautions list (bounded)
     const cY = tilesY + tileH + 16;
     box(doc, x, cY, w, 130);
     doc
@@ -716,11 +823,13 @@ export async function buildTownPlannerReportPdfV2(
     const list = overlayItems.length
       ? overlayItems.slice(0, 6).map((o) => `• ${o.name}`)
       : ["• No overlays returned for this site."];
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(list.join("\n"), x + 14, cY + 34, { width: w - 28, height: 86 });
+
+    boundedText(doc, list.join("\n"), x + 14, cY + 34, w - 28, 86, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
   }
 
   // ========== PAGE 4: ZONING ==========
@@ -740,21 +849,7 @@ export async function buildTownPlannerReportPdfV2(
 
     const mapY = top + 46;
     const mapH = 420;
-    box(doc, x, mapY, w, mapH);
-    if (zoningMap) {
-      try {
-        doc.image(zoningMap, x + 10, mapY + 10, { fit: [w - 20, mapH - 20] });
-      } catch {}
-    } else {
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(10)
-        .text("Zoning map not available.", x, mapY + mapH / 2 - 6, {
-          width: w,
-          align: "center",
-        });
-    }
+    drawCoverImageInRoundedBox(doc, zoningMap, x, mapY, w, mapH, 14);
 
     const noteY = mapY + mapH + 14;
     box(doc, x, noteY, w, 120);
@@ -763,16 +858,16 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Notes", x + 14, noteY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        `Mapped zoning: ${planningSnapshot?.zoning || "Not mapped"}.\nConfirm boundaries and zone intent against Brisbane City Plan mapping and applicable codes.`,
-        x + 14,
-        noteY + 34,
-        { width: w - 28, height: 80 }
-      );
+
+    boundedText(
+      doc,
+      `Mapped zoning: ${planningSnapshot?.zoning || "Not mapped"}.\nConfirm boundaries and zone intent against Brisbane City Plan mapping and applicable codes.`,
+      x + 14,
+      noteY + 34,
+      w - 28,
+      80,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
   }
 
   // ========== PAGE 5: DEVELOPMENT CONTROLS ==========
@@ -794,16 +889,15 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(20)
       .text("Key development controls", x, top);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(10)
-      .text(
-        "Populated from bcc_planning_controls_v2 where available.",
-        x,
-        top + 26,
-        { width: w }
-      );
+    boundedText(
+      doc,
+      "Populated from bcc_planning_controls_v2 where available.",
+      x,
+      top + 26,
+      w,
+      18,
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+    );
 
     const cardY = top + 60;
     const gap = 12;
@@ -821,21 +915,20 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Lot & built form", x + 14, cardY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        [
-          `Maximum building height: ${get("maximumHeight")}`,
-          `Maximum site coverage: ${get("maximumSiteCoverage")}`,
-          `Plot ratio / GFA: ${get("plotRatio")}`,
-          `Density (if applicable): ${get("density")}`,
-        ].join("\n"),
-        x + 14,
-        cardY + 36,
-        { width: cardW - 28, height: cardH - 50 }
-      );
+    boundedText(
+      doc,
+      [
+        `Maximum building height: ${get("maximumHeight")}`,
+        `Maximum site coverage: ${get("maximumSiteCoverage")}`,
+        `Plot ratio / GFA: ${get("plotRatio")}`,
+        `Density (if applicable): ${get("density")}`,
+      ].join("\n"),
+      x + 14,
+      cardY + 36,
+      cardW - 28,
+      cardH - 54,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
 
     box(doc, x + cardW + gap, cardY, cardW, cardH);
     doc
@@ -843,23 +936,21 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Subdivision & dimensions", x + cardW + gap + 14, cardY + 12);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        [
-          `Minimum lot size: ${get("minimumLotSize")}`,
-          `Minimum frontage: ${get("minimumFrontage")}`,
-          `Site area (approx.): ${formatAreaM2(areaM2)}`,
-          `Coordinates: ${formatCoords(lat, lng)}`,
-        ].join("\n"),
-        x + cardW + gap + 14,
-        cardY + 36,
-        { width: cardW - 28, height: cardH - 50 }
-      );
+    boundedText(
+      doc,
+      [
+        `Minimum lot size: ${get("minimumLotSize")}`,
+        `Minimum frontage: ${get("minimumFrontage")}`,
+        `Site area (approx.): ${formatAreaM2(areaM2)}`,
+        `Coordinates: ${formatCoords(lat, lng)}`,
+      ].join("\n"),
+      x + cardW + gap + 14,
+      cardY + 36,
+      cardW - 28,
+      cardH - 54,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
 
-    // Sources
     const srcY = cardY + cardH + 14;
     box(doc, x, srcY, w, 280);
     doc
@@ -879,14 +970,12 @@ export async function buildTownPlannerReportPdfV2(
           "• No matching control records were returned for this site. Populate bcc_planning_controls_v2 to enrich this section.",
         ];
 
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(srcLines.join("\n"), x + 14, srcY + 34, {
-        width: w - 28,
-        height: 220,
-      });
+    boundedText(doc, srcLines.join("\n"), x + 14, srcY + 34, w - 28, 180, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
 
     const devBullets =
       narrative?.sections?.find((s) => s?.id === "development")?.bullets || [];
@@ -897,11 +986,12 @@ export async function buildTownPlannerReportPdfV2(
           .join("\n")
       : "";
     if (note) {
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(9)
-        .text(note, x + 14, srcY + 220, { width: w - 28, height: 60 });
+      boundedText(doc, note, x + 14, srcY + 220, w - 28, 50, {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: true,
+      });
     }
   }
 
@@ -924,16 +1014,15 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(20)
       .text("Potential cautions", x, top);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(10)
-      .text(
-        "Overlays returned by current spatial inputs. Verify against authoritative mapping.",
-        x,
-        top + 26,
-        { width: w }
-      );
+    boundedText(
+      doc,
+      "Overlays returned by current spatial inputs. Verify against authoritative mapping.",
+      x,
+      top + 26,
+      w,
+      18,
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+    );
 
     const blockTopY = top + 60;
     const blockH = 300;
@@ -954,82 +1043,90 @@ export async function buildTownPlannerReportPdfV2(
         return;
       }
 
+      // Title + meta
       doc
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
         .fontSize(12)
-        .text(item.name, x + 14, y + 12, { width: w - 28, height: 18 });
+        .text(item.name, x + 14, y + 12, { width: w - 28 });
 
       const areaText =
         item.areaIntersectM2 == null
           ? "N/A"
           : `${Math.round(item.areaIntersectM2).toLocaleString("en-AU")} m²`;
 
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(9)
-        .text(
-          `Overlay code: ${item.code || "N/A"}   •   Intersect area: ${areaText}`,
-          x + 14,
-          y + 32,
-          { width: w - 28, height: 14 }
-        );
+      boundedText(
+        doc,
+        `Overlay code: ${item.code || "N/A"}   •   Intersect area: ${areaText}`,
+        x + 14,
+        y + 32,
+        w - 28,
+        16,
+        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      );
 
-      // Map container
-      const mapY = y + 54;
-      const mapH = 170;
-      box(doc, x + 14, mapY, w - 28, mapH, {
+      // Two-column layout: map left, text right
+      const innerY = y + 54;
+      const innerH = 228;
+      const innerX = x + 14;
+      const innerW = w - 28;
+      const colGap = 12;
+      const mapW = Math.floor(innerW * 0.62);
+      const textW = innerW - mapW - colGap;
+
+      // Map (cover-fill to remove right whitespace)
+      drawCoverImageInRoundedBox(
+        doc,
+        item.mapBuffer,
+        innerX,
+        innerY,
+        mapW,
+        innerH,
+        12
+      );
+
+      // Text panel
+      box(doc, innerX + mapW + colGap, innerY, textW, innerH, {
         fill: BRAND.white,
         stroke: BRAND.border,
         r: 12,
       });
 
-      if (item.mapBuffer) {
-        try {
-          doc.image(item.mapBuffer, x + 22, mapY + 8, {
-            fit: [w - 44, mapH - 16],
-          });
-        } catch {
-          doc
-            .fillColor(BRAND.muted)
-            .font("Helvetica")
-            .fontSize(10)
-            .text("Map could not be rendered.", x, mapY + mapH / 2 - 6, {
-              width: w,
-              align: "center",
-            });
-        }
-      } else {
-        doc
-          .fillColor(BRAND.muted)
-          .font("Helvetica")
-          .fontSize(10)
-          .text("Map not available for this overlay.", x, mapY + mapH / 2 - 6, {
-            width: w,
-            align: "center",
-          });
-      }
-
-      // Narrative / notes
-      const noteY = mapY + mapH + 10;
-      box(doc, x + 14, noteY, w - 28, 56, {
-        fill: BRAND.light,
-        stroke: BRAND.border,
-        r: 12,
-      });
-
-      const text =
+      const summary =
         item.narrativeSummary ||
         (item.severity
           ? `Mapped overlay. Notes: ${item.severity}.`
           : "Mapped overlay. Review relevant City Plan codes and mapping legend.");
 
-      doc
-        .fillColor(BRAND.muted)
-        .font("Helvetica")
-        .fontSize(9)
-        .text(text, x + 24, noteY + 12, { width: w - 48, height: 40 });
+      boundedText(
+        doc,
+        "Summary",
+        innerX + mapW + colGap + 12,
+        innerY + 12,
+        textW - 24,
+        16,
+        {
+          font: "Helvetica-Bold",
+          fontSize: 10,
+          color: BRAND.teal2,
+          ellipsis: false,
+        }
+      );
+
+      boundedText(
+        doc,
+        summary,
+        innerX + mapW + colGap + 12,
+        innerY + 32,
+        textW - 24,
+        innerH - 44,
+        {
+          font: "Helvetica",
+          fontSize: 9,
+          color: BRAND.muted,
+          ellipsis: true,
+        }
+      );
     };
 
     const i1 = overlayItems[p * 2] || null;
@@ -1076,19 +1173,18 @@ export async function buildTownPlannerReportPdfV2(
       ...refsFromNarrative.map((r) => String(r)),
     ].filter(Boolean);
 
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        refs
-          .slice(0, 10)
-          .map((r) => `• ${r}`)
-          .join("\n"),
-        x + 14,
-        bY + 34,
-        { width: w - 28, height: 210 }
-      );
+    boundedText(
+      doc,
+      refs
+        .slice(0, 10)
+        .map((r) => `• ${r}`)
+        .join("\n"),
+      x + 14,
+      bY + 34,
+      w - 28,
+      210,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
 
     const dY = bY + 276;
     box(doc, x, dY, w, 250);
@@ -1102,22 +1198,22 @@ export async function buildTownPlannerReportPdfV2(
       narrative?.disclaimer ||
       "This report is based solely on the provided factual inputs and Brisbane City Plan mapping. It does not constitute professional planning advice. Verify requirements against authoritative sources and obtain professional advice for specific development proposals.";
 
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(disclaimer, x + 14, dY + 34, { width: w - 28, height: 190 });
+    boundedText(doc, disclaimer, x + 14, dY + 34, w - 28, 160, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
 
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        "Maps are indicative only. For authoritative mapping and rules, refer to Brisbane City Plan mapping and applicable codes.",
-        x + 14,
-        dY + 210,
-        { width: w - 28, height: 40 }
-      );
+    boundedText(
+      doc,
+      "Maps are indicative only. For authoritative mapping and rules, refer to Brisbane City Plan mapping and applicable codes.",
+      x + 14,
+      dY + 202,
+      w - 28,
+      40,
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
   }
 
   // Footers after all pages exist
