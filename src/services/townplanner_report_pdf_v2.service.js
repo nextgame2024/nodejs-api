@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-01-24";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-01-24.1";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -238,7 +238,10 @@ function footerAllPages(doc, schemeVersion) {
 
     const x = X(doc);
     const w = contentW(doc);
-    const y = doc.page.height - doc.page.margins.bottom + 18;
+    // IMPORTANT: PDFKit will auto-add a new page if you draw text below maxY
+    // (page height minus bottom margin). Keeping the footer within the text
+    // boundary prevents PDFKit from creating trailing blank pages.
+    const y = doc.page.height - doc.page.margins.bottom - 18;
 
     doc
       .font("Helvetica")
