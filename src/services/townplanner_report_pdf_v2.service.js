@@ -115,32 +115,59 @@ function boundedText(
     align = "left",
   } = {}
 ) {
-  const s = String(text ?? "");
+  const full = String(text ?? "");
+
   doc.font(font).fontSize(fontSize).fillColor(color);
 
-  const lineH = fontSize + lineGap;
-  const maxLines = Math.max(1, Math.floor(h / lineH));
+  const measureOpts = { width: w, align, lineGap };
 
-  // splitTextToSize exists in PDFKit
-  const lines = doc.splitTextToSize(s, w) || [];
-  const clipped = lines.slice(0, maxLines);
-
-  // Add ellipsis if clipped
-  if (ellipsis && lines.length > maxLines && clipped.length) {
-    const last = clipped[clipped.length - 1];
-    const trimmed = String(last).replace(/\s+$/, "");
-    clipped[clipped.length - 1] = trimmed.endsWith("…")
-      ? trimmed
-      : trimmed.replace(/[.]{3,}$/, "").trimEnd() + "…";
+  // If it fits, render as-is
+  try {
+    const fullHeight = doc.heightOfString(full, measureOpts);
+    if (fullHeight <= h) {
+      doc.text(full, x, y, measureOpts);
+      return;
+    }
+  } catch {
+    // continue to fallback fitting
   }
 
-  // Draw line-by-line without triggering new pages
-  let yy = y;
-  for (const ln of clipped) {
-    doc.text(ln, x, yy, { width: w, align, lineBreak: false });
-    yy += lineH;
-    if (yy > y + h - lineH / 2) break;
+  // Binary search to find the largest substring that fits into height
+  const suffix = ellipsis ? "…" : "";
+  let lo = 0;
+  let hi = full.length;
+  let best = "";
+
+  const fits = (s) => {
+    try {
+      return doc.heightOfString(s, measureOpts) <= h;
+    } catch {
+      return false;
+    }
+  };
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    let candidate = full.slice(0, mid);
+
+    // Avoid cutting mid-word: trim to last whitespace if possible
+    if (candidate.length < full.length) {
+      const trimmed = candidate.replace(/\s+\S*$/, "");
+      if (trimmed.length > 0) candidate = trimmed;
+    }
+
+    const withSuffix = candidate + suffix;
+
+    if (fits(withSuffix)) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
+
+  const out = (best || full.slice(0, 1)) + suffix;
+  doc.text(out, x, y, measureOpts);
 }
 
 function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
