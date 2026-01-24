@@ -1,212 +1,282 @@
 import crypto from "crypto";
-import asyncHandler from "express-async-handler";
+import { asyncHandler } from "../middlewares/asyncHandler.js";
 
 import {
-  computeInputsHashV2,
-  generateTownPlannerReportV2,
-} from "./townplanner_report_v2.service.js";
-import {
   createReportRequestV2,
+  getReportRequestByTokenV2,
+  markReportRequestStatusV2,
   findReadyReportByHashV2,
-  getReportRequestV2,
-  updateReportRequestV2,
-} from "./townplanner_v2.model.js";
+  markReportRunningV2,
+  markReportReadyV2,
+  markReportFailedV2,
+} from "../models/townplanner_v2.model.js";
+
+import { sendReportLinkEmailV2 } from "../services/reportEmail_v2.service.js";
+import {
+  autocompleteAddresses,
+  getPlaceDetails,
+} from "../services/googlePlaces_v2.service.js";
+import { fetchPlanningDataV2 } from "../services/planningData_v2.service.js";
+
+import {
+  generateTownPlannerReportV2,
+  computeInputsHashV2,
+} from "../services/townplanner_report_v2.service.js";
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
 
 // In-process guard (DB status is still source of truth)
 const inFlight = new Set();
-
-function isSameUtcDay(a, b) {
-  if (!a || !b) return false;
-  const da = new Date(a);
-  const db = new Date(b);
-  return da.toISOString().slice(0, 10) === db.toISOString().slice(0, 10);
-}
 
 export const generateReportV2Controller = asyncHandler(async (req, res) => {
   const {
     token: tokenFromBody,
     addressLabel,
-    placeId,
+    placeId = null,
     lat,
     lng,
-    // client can request a "force" refresh; otherwise we use cache rules
     force = false,
+    email = "unknown@local",
   } = req.body || {};
 
-  if (
-    !addressLabel ||
-    !placeId ||
-    typeof lat !== "number" ||
-    typeof lng !== "number"
-  ) {
-    return res.status(400).json({
-      ok: false,
-      error: "Missing required fields: addressLabel, placeId, lat, lng",
-    });
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    res.status(400);
+    throw new Error("lat/lng must be numbers");
+  }
+  if (!addressLabel || typeof addressLabel !== "string") {
+    res.status(400);
+    throw new Error("Missing addressLabel");
   }
 
   const schemeVersion =
     process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
 
-  // Bump this env var whenever the PDF layout changes to avoid serving a stale
-  // cached PDF for identical inputs.
-  const reportTemplateVersion =
-    process.env.REPORT_TEMPLATE_VERSION ||
-    process.env.PDF_ENGINE_VERSION ||
-    "TPR-PDFKIT-V3";
-
+  // IMPORTANT: Keep caching behavior "as before":
+  // - reuse cached ready report for identical inputs unless force=true
   const inputsHash = computeInputsHashV2({
-    addressLabel,
-    placeId,
+    addressLabel: addressLabel.trim(),
+    placeId: placeId || null,
     lat,
     lng,
     schemeVersion,
-    reportTemplateVersion,
   });
 
-  // 1) Prefer same-day cached report for identical inputs (unless forced)
+  // Reuse existing ready report for identical inputs (unless forced)
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
     if (cached?.pdf_url) {
       return res.json({
         ok: true,
-        status: "ready",
         token: cached.token,
+        status: "ready",
         pdfUrl: cached.pdf_url,
         cached: true,
       });
     }
   }
 
-  // Token handling:
-  // - If the client reuses an old token, we may have an old "ready" row from a previous day.
-  // - We must not return that stale PDF (rule: cache only same day), and we also should not
-  //   overwrite that historical row. Instead, we mint a fresh token.
-  let token = tokenFromBody || crypto.randomUUID();
+  const token = tokenFromBody || crypto.randomUUID();
 
-  let row = tokenFromBody ? await getReportRequestV2(tokenFromBody) : null;
-
-  if (row?.status === "ready" && row?.pdf_url) {
-    const today = new Date();
-    const isFresh = row.updated_at && isSameUtcDay(row.updated_at, today);
-
-    if (isFresh && !force) {
-      // Already handled by inputsHash cache, but keep as safety net for token-based clients.
-      return res.json({
-        ok: true,
-        status: "ready",
-        token: row.token,
-        pdfUrl: row.pdf_url,
-        cached: true,
-      });
-    }
-
-    // Stale -> mint a new token + new row
-    const freshToken = crypto.randomUUID();
-    row = await createReportRequestV2({
-      token: freshToken,
-      addressLabel,
-      placeId,
-      lat,
-      lng,
-      status: "queued",
-      pdfUrl: null,
-      pdfKey: null,
-      reportJson: null,
-      planningSnapshot: null,
-      inputsHash,
-    });
-
-    // Ensure downstream logic uses the fresh token.
-    req.body.token = freshToken;
-    token = freshToken;
-  }
-
-  // If no existing row or row not usable, ensure there is a DB row
+  // Ensure DB row exists
+  let row = await getReportRequestByTokenV2(token);
   if (!row) {
     row = await createReportRequestV2({
       token,
-      addressLabel,
+      email: String(email || "unknown@local")
+        .trim()
+        .toLowerCase(),
+      addressLabel: addressLabel.trim(),
       placeId,
       lat,
       lng,
-      status: "queued",
-      pdfUrl: null,
-      pdfKey: null,
-      reportJson: null,
       planningSnapshot: null,
       inputsHash,
     });
-  } else if (row.status === "running" || row.status === "queued") {
-    // If it's already in progress, return early.
-    return res.json({
-      ok: true,
-      status: row.status,
-      token: row.token,
-      pdfUrl: row.pdf_url || null,
-      cached: false,
-    });
-  } else {
-    // Ensure hash is current (template version or scheme changes can alter hash)
-    if (row.inputs_hash !== inputsHash) {
-      await updateReportRequestV2(row.token, {
-        inputs_hash: inputsHash,
-        status: "queued",
-        pdf_url: null,
-        pdf_key: null,
-        report_json: null,
-        planning_snapshot: null,
-      });
-      row = await getReportRequestV2(row.token);
-    }
   }
 
-  // 2) Launch async job in-process (fire-and-forget)
+  // If already ready, return
+  if (row.status === "ready" && row.pdf_url) {
+    return res.json({
+      ok: true,
+      token: row.token,
+      status: "ready",
+      pdfUrl: row.pdf_url,
+    });
+  }
+
+  // Launch async job in-process
   if (!inFlight.has(token)) {
     inFlight.add(token);
 
     setImmediate(async () => {
       try {
-        const token = req.body.token || crypto.randomUUID();
-
-        await updateReportRequestV2(token, { status: "running" });
+        await markReportRunningV2({ token });
 
         const result = await generateTownPlannerReportV2({
           token,
-          addressLabel,
+          addressLabel: addressLabel.trim(),
           placeId,
           lat,
           lng,
-          schemeVersion,
-          reportTemplateVersion,
         });
 
-        await updateReportRequestV2(token, {
-          status: "ready",
-          pdf_url: result.pdfUrl,
-          pdf_key: result.pdfKey,
-          report_json: result.reportJson,
-          planning_snapshot: result.planningSnapshot,
+        await markReportReadyV2({
+          token,
+          pdfKey: result.pdfKey,
+          pdfUrl: result.pdfUrl,
+          reportJson: result.reportJson,
+          inputsHash,
+          planningSnapshot: result.planningSnapshot || null,
         });
-      } catch (err) {
-        const token = req.body.token;
-        if (token) {
-          await updateReportRequestV2(token, {
-            status: "failed",
-          });
-        }
-        console.error("[townplanner_v2] report generation failed:", err);
+      } catch (e) {
+        await markReportFailedV2({
+          token,
+          errorMessage: e?.message || String(e),
+        });
       } finally {
-        inFlight.delete(req.body.token);
+        inFlight.delete(token);
       }
     });
   }
 
-  return res.json({
+  return res.json({ ok: true, token, status: "running" });
+});
+
+export const createReportRequestV2Controller = asyncHandler(
+  async (req, res) => {
+    const { email, addressLabel, placeId = null, lat, lng } = req.body || {};
+
+    if (!isValidEmail(email)) {
+      res.status(400);
+      throw new Error("Invalid email");
+    }
+    if (!addressLabel || typeof addressLabel !== "string") {
+      res.status(400);
+      throw new Error("Missing addressLabel");
+    }
+    if (typeof lat !== "number" || typeof lng !== "number") {
+      res.status(400);
+      throw new Error("lat/lng must be numbers");
+    }
+
+    const token = crypto.randomUUID();
+
+    const row = await createReportRequestV2({
+      token,
+      email: email.trim().toLowerCase(),
+      addressLabel: addressLabel.trim(),
+      placeId,
+      lat,
+      lng,
+      planningSnapshot: null,
+      inputsHash: null,
+    });
+
+    const frontendBaseUrl = (process.env.FRONTEND_BASE_URL || "").replace(
+      /\/$/,
+      ""
+    );
+    if (!frontendBaseUrl) {
+      res.status(500);
+      throw new Error("Missing FRONTEND_BASE_URL env var");
+    }
+
+    const viewUrl = `${frontendBaseUrl}/townplanner/report/${row.token}`;
+
+    await markReportRequestStatusV2({ token: row.token, status: "sending" });
+
+    await sendReportLinkEmailV2({
+      toEmail: row.email,
+      addressLabel: row.address_label,
+      viewUrl,
+    });
+
+    await markReportRequestStatusV2({ token: row.token, status: "sent" });
+
+    res.json({ ok: true, token: row.token });
+  }
+);
+
+export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
+  const { token } = req.params;
+
+  const row = await getReportRequestByTokenV2(token);
+  if (!row) {
+    res.status(404);
+    throw new Error("Report not found");
+  }
+
+  const now = new Date();
+  if (row.expires_at && new Date(row.expires_at) < now) {
+    res.status(410);
+    throw new Error("Report link expired");
+  }
+
+  res.json({
     ok: true,
-    status: "queued",
-    token,
-    pdfUrl: null,
-    cached: false,
+    report: {
+      token: row.token,
+      addressLabel: row.address_label,
+      placeId: row.place_id,
+      lat: row.lat,
+      lng: row.lng,
+      planningSnapshot: row.planning_snapshot,
+      status: row.status,
+      pdfUrl: row.pdf_url || null,
+      errorMessage: row.error_message || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      startedAt: row.started_at || null,
+      completedAt: row.completed_at || null,
+    },
   });
+});
+
+export const suggestAddresses_v2 = asyncHandler(async (req, res) => {
+  const input = (req.query.input ?? req.query.q ?? "").toString();
+  const sessionToken = (req.query.sessionToken || "").toString().trim() || null;
+
+  const trimmed = input.trim();
+  if (trimmed.length < 3) return res.json({ suggestions: [] });
+  if (trimmed.length > 120) {
+    res.status(400);
+    throw new Error("Input too long");
+  }
+
+  const suggestions = await autocompleteAddresses({
+    input: trimmed,
+    sessionToken,
+  });
+  res.json({ suggestions });
+});
+
+export const placeDetails_v2 = asyncHandler(async (req, res) => {
+  const placeId = (req.query.placeId || "").toString().trim();
+  const sessionToken = (req.query.sessionToken || "").toString().trim() || null;
+
+  if (!placeId) {
+    res.status(400);
+    throw new Error("Missing placeId");
+  }
+
+  const details = await getPlaceDetails({ placeId, sessionToken });
+
+  let planning = null;
+  try {
+    if (typeof details?.lat === "number" && typeof details?.lng === "number") {
+      planning = await fetchPlanningDataV2({
+        lat: details.lat,
+        lng: details.lng,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "[townplanner_v2] planning enrichment failed:",
+      e?.message || e
+    );
+  }
+
+  res.json({ ...details, planning });
 });
