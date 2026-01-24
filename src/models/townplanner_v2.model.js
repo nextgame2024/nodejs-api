@@ -53,6 +53,11 @@ export async function markReportRequestStatusV2({ token, status }) {
   return rows[0] || null;
 }
 
+/**
+ * SAME-DAY CACHE POLICY:
+ * Reuse cached PDF only if it was generated/updated today.
+ * Otherwise, force generation of a new report (even if inputs_hash matches).
+ */
 export async function findReadyReportByHashV2(inputsHash) {
   if (!inputsHash) return null;
 
@@ -63,6 +68,7 @@ export async function findReadyReportByHashV2(inputsHash) {
     WHERE inputs_hash = $1
       AND status = 'ready'
       AND pdf_url IS NOT NULL
+      AND updated_at >= date_trunc('day', NOW())
     ORDER BY updated_at DESC
     LIMIT 1;
     `,

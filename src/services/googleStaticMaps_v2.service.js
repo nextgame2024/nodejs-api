@@ -5,6 +5,106 @@ const MAX_URL_LEN = 7600; // conservative under typical 8KB proxy limits
 const MAX_RING_POINTS = 240; // keep paths small and reliable
 const DEFAULT_TIMEOUT_MS = 20000;
 
+const WEB_MERCATOR_MAX_LAT = 85.05112878;
+
+function clampLat(lat) {
+  return Math.max(-WEB_MERCATOR_MAX_LAT, Math.min(WEB_MERCATOR_MAX_LAT, lat));
+}
+
+function parseSize(sizeStr) {
+  const m = String(sizeStr || "").match(/^(\d+)x(\d+)$/);
+  if (!m) return { w: 640, h: 360 };
+  return { w: Number(m[1]) || 640, h: Number(m[2]) || 360 };
+}
+
+/**
+ * Convert lat/lng to "world coordinates" in Web Mercator at zoom 0.
+ * x,y in [0..1] range.
+ */
+function latLngToWorld(lat, lng) {
+  const clampedLat = clampLat(lat);
+  const sin = Math.sin((clampedLat * Math.PI) / 180);
+  const x = (lng + 180) / 360;
+  const y = 0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI);
+  return { x, y };
+}
+
+function boundsFromRings(ringsLngLat) {
+  let minLat = 90,
+    maxLat = -90,
+    minLng = 180,
+    maxLng = -180;
+
+  let has = false;
+
+  for (const ring of ringsLngLat) {
+    if (!Array.isArray(ring)) continue;
+    for (const p of ring) {
+      if (!Array.isArray(p) || p.length < 2) continue;
+      const lng = Number(p[0]);
+      const lat = Number(p[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+      has = true;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  if (!has) return null;
+
+  // Clamp lat range to avoid Mercator blow-ups
+  minLat = clampLat(minLat);
+  maxLat = clampLat(maxLat);
+
+  return { minLat, maxLat, minLng, maxLng };
+}
+
+function centerFromBounds(b) {
+  if (!b) return null;
+  return {
+    lat: (b.minLat + b.maxLat) / 2,
+    lng: (b.minLng + b.maxLng) / 2,
+  };
+}
+
+/**
+ * Compute a zoom level that fits the bounds into the image size (px),
+ * with padding (px) on all sides.
+ *
+ * Google tiles are 256px at zoom 0.
+ */
+function fitZoomForBounds({
+  bounds,
+  size,
+  scale,
+  paddingPx = 80,
+  maxZoom = 20,
+}) {
+  if (!bounds) return Math.min(maxZoom, 17);
+
+  const { w, h } = parseSize(size);
+  const mapW = Math.max(64, w * (Number(scale) || 1) - 2 * paddingPx);
+  const mapH = Math.max(64, h * (Number(scale) || 1) - 2 * paddingPx);
+
+  // Handle nearly-point bounds
+  const sw = latLngToWorld(bounds.minLat, bounds.minLng);
+  const ne = latLngToWorld(bounds.maxLat, bounds.maxLng);
+
+  const dx = Math.max(1e-9, Math.abs(ne.x - sw.x));
+  const dy = Math.max(1e-9, Math.abs(ne.y - sw.y));
+
+  // pixels = worldDelta * 256 * 2^z
+  const zoomX = Math.log2(mapW / (256 * dx));
+  const zoomY = Math.log2(mapH / (256 * dy));
+  const z = Math.floor(Math.min(zoomX, zoomY));
+
+  // Keep sane bounds
+  return Math.max(3, Math.min(maxZoom, z));
+}
+
 /**
  * Extract outer ring (array of [lng,lat]) from GeoJSON Feature/Geometry.
  * Supports Polygon and MultiPolygon (chooses the largest outer ring).
@@ -231,7 +331,6 @@ async function fetchStaticMapImageBuffer(url) {
     return Buffer.from(resp.data);
   }
 
-  // Diagnostic (do not log full key)
   const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
   const bodyPreview =
     typeof resp?.data === "string"
@@ -258,7 +357,8 @@ function buildStaticMapUrl({
   size,
   scale,
   maptype,
-  paths, // array of encoded path strings already style-prefixed
+  paths,
+  styles,
 }) {
   const c = `${center.lat},${center.lng}`;
 
@@ -271,6 +371,10 @@ function buildStaticMapUrl({
     `&center=${encodeURIComponent(c)}` +
     `&zoom=${encodeURIComponent(zoom)}`;
 
+  if (Array.isArray(styles)) {
+    for (const s of styles) url += `&style=${encodeURIComponent(s)}`;
+  }
+
   for (const p of paths) url += `&path=${encodeURIComponent(p)}`;
 
   url += `&key=${encodeURIComponent(apiKey)}`;
@@ -278,36 +382,18 @@ function buildStaticMapUrl({
 }
 
 /**
- * Attempt multiple simplification levels until URL length is safe.
- */
-function buildPathWithBackoff({
-  ringLngLat,
-  stylePrefix, // e.g. "fillcolor:...|color:...|weight:4|"
-  epsilonCandidates,
-  maxPoints = MAX_RING_POINTS,
-}) {
-  for (const eps of epsilonCandidates) {
-    const simplified = simplifyRing(ringLngLat, eps, maxPoints);
-    if (!simplified) continue;
-    const enc = ringToEncodedPath(simplified);
-    const path = `${stylePrefix}${enc}`;
-    // caller checks URL length; we just return best first
-    return { path, simplifiedPoints: simplified.length };
-  }
-  return { path: null, simplifiedPoints: 0 };
-}
-
-/**
  * Parcel-only map
  */
 export async function getParcelMapImageBufferV2({
   apiKey,
-  center, // {lat,lng} optional
-  zoom = 19,
+  center,
+  zoom = 19, // treated as MAX zoom now
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
   parcelGeoJson,
+  paddingPx = 90,
+  styles = null,
 }) {
   if (!apiKey) {
     console.error("[static-maps] missing apiKey");
@@ -317,15 +403,21 @@ export async function getParcelMapImageBufferV2({
   const ringRaw = extractPolygonRing(parcelGeoJson);
   if (!ringRaw) return null;
 
-  const c = center || centroidFromRing(ringRaw);
+  const bounds = boundsFromRings([ringRaw]);
+  const autoCenter = centerFromBounds(bounds) || centroidFromRing(ringRaw);
+  const c = center || autoCenter;
   if (!c) return null;
 
+  const fitZoom = fitZoomForBounds({
+    bounds,
+    size,
+    scale,
+    paddingPx,
+    maxZoom: zoom,
+  });
+
   const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
-
-  // try small epsilon first; increase if needed
   const epsList = [0.000003, 0.000008, 0.00002, 0.00005, 0.0001];
-
-  let best = null;
 
   for (const eps of epsList) {
     const simplified = simplifyRing(ringRaw, eps, MAX_RING_POINTS);
@@ -336,30 +428,31 @@ export async function getParcelMapImageBufferV2({
     const url = buildStaticMapUrl({
       apiKey,
       center: { lat: c.lat, lng: c.lng },
-      zoom,
+      zoom: fitZoom,
       size,
       scale,
       maptype,
+      styles,
       paths: [parcelPath],
     });
 
     if (url.length > MAX_URL_LEN) continue;
 
-    best = await fetchStaticMapImageBuffer(url);
-    if (best) return best;
+    const buf = await fetchStaticMapImageBuffer(url);
+    if (buf) return buf;
   }
 
-  // If URL length was always too big, last resort: force coarse simplification + fewer points
   const simplified = simplifyRing(ringRaw, 0.0002, 140);
   if (!simplified) return null;
 
   const url = buildStaticMapUrl({
     apiKey,
     center: { lat: c.lat, lng: c.lng },
-    zoom,
+    zoom: fitZoom,
     size,
     scale,
     maptype,
+    styles,
     paths: [`${parcelPrefix}${ringToEncodedPath(simplified)}`],
   });
 
@@ -373,7 +466,7 @@ export async function getParcelMapImageBufferV2({
 export async function getParcelOverlayMapImageBufferV2({
   apiKey,
   center,
-  zoom = 17,
+  zoom = 17, // treated as MAX zoom now
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
@@ -381,6 +474,8 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayGeoJson,
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
+  paddingPx = 110,
+  styles = null,
 }) {
   if (!apiKey) {
     console.error("[static-maps] missing apiKey");
@@ -391,16 +486,27 @@ export async function getParcelOverlayMapImageBufferV2({
   const overlayRingRaw = extractPolygonRing(overlayGeoJson);
   if (!parcelRingRaw || !overlayRingRaw) return null;
 
-  const c =
-    center ||
+  const bounds = boundsFromRings([parcelRingRaw, overlayRingRaw]);
+
+  const autoCenter =
+    centerFromBounds(bounds) ||
     centroidFromRing(parcelRingRaw) ||
     centroidFromRing(overlayRingRaw);
+
+  const c = center || autoCenter;
   if (!c) return null;
+
+  const fitZoom = fitZoomForBounds({
+    bounds,
+    size,
+    scale,
+    paddingPx,
+    maxZoom: zoom,
+  });
 
   const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
   const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:4|`;
 
-  // overlay often has more points; back off more aggressively
   const epsList = [0.000005, 0.000015, 0.00004, 0.00008, 0.00016, 0.0003];
 
   for (const eps of epsList) {
@@ -414,10 +520,11 @@ export async function getParcelOverlayMapImageBufferV2({
     const url = buildStaticMapUrl({
       apiKey,
       center: { lat: c.lat, lng: c.lng },
-      zoom,
+      zoom: fitZoom,
       size,
       scale,
       maptype,
+      styles,
       paths: [parcelPath, overlayPath],
     });
 
@@ -427,7 +534,6 @@ export async function getParcelOverlayMapImageBufferV2({
     if (buf) return buf;
   }
 
-  // last resort: fewer points
   const parcelRing = simplifyRing(parcelRingRaw, 0.0004, 120);
   const overlayRing = simplifyRing(overlayRingRaw, 0.0004, 120);
   if (!parcelRing || !overlayRing) return null;
@@ -435,10 +541,11 @@ export async function getParcelOverlayMapImageBufferV2({
   const url = buildStaticMapUrl({
     apiKey,
     center: { lat: c.lat, lng: c.lng },
-    zoom,
+    zoom: fitZoom,
     size,
     scale,
     maptype,
+    styles,
     paths: [
       `${parcelPrefix}${ringToEncodedPath(parcelRing)}`,
       `${overlayPrefix}${ringToEncodedPath(overlayRing)}`,

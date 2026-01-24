@@ -70,9 +70,13 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     templateVersion: REPORT_TEMPLATE_VERSION,
   });
 
-  // Reuse existing ready report for identical inputs (unless forced)
+  /**
+   * SAME-DAY CACHE POLICY (implemented in DB query):
+   * findReadyReportByHashV2 only returns a cached PDF if updated_at is today.
+   */
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
+
     // SAFETY: if cached PDF exists but is from a different engine version, regenerate
     if (cached?.pdf_url && isCachedPdfCurrent(cached)) {
       return res.json({
@@ -105,7 +109,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  // If already ready, return (NOTE: this is token-based, not hash-based; keep behavior)
+  // If already ready, return (token-based; keep behavior)
   if (row.status === "ready" && row.pdf_url) {
     return res.json({
       ok: true,

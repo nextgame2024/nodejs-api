@@ -97,7 +97,7 @@ function box(
 
 /**
  * PDFKit does NOT clip text to a "height" option. If text exceeds page height,
- * PDFKit will auto-add pages. This helper prevents auto-flow by limiting lines.
+ * PDFKit will auto-add pages. This helper prevents auto-flow by limiting content.
  */
 function boundedText(
   doc,
@@ -564,9 +564,7 @@ export async function buildTownPlannerReportPdfV2(
         `Generated ${formatDateAU(generatedAt)} • ${schemeVersion}`,
         x + 18,
         y + 126,
-        {
-          width: w - 36,
-        }
+        { width: w - 36 }
       );
 
     doc
@@ -654,6 +652,11 @@ export async function buildTownPlannerReportPdfV2(
     const pageRightX = x + w - 18;
     const leaderMinGap = 10;
 
+    // Right margin + number column sizing (prevents numbers hugging leader/edge)
+    const numBoxW = 24;
+    const rightPad = 12; // breathing room from box border
+    const numX = pageRightX - rightPad - numBoxW;
+
     let y = listY + 22;
 
     for (const row of toc) {
@@ -663,9 +666,9 @@ export async function buildTownPlannerReportPdfV2(
 
       const labelWidth = doc.widthOfString(row.label);
       const leaderStart = rowLeftX + labelWidth + leaderMinGap;
-      const leaderEnd = pageRightX - 24;
 
-      // dotted leader as dashed stroke (no wrapping)
+      // dotted leader as dashed stroke (stop before number column)
+      const leaderEnd = numX - 12;
       if (leaderEnd > leaderStart + 20) {
         doc.save();
         doc
@@ -679,15 +682,12 @@ export async function buildTownPlannerReportPdfV2(
         doc.restore();
       }
 
-      // page number
+      // page number (aligned with spacing)
       doc
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
         .fontSize(11)
-        .text(String(row.page), pageRightX - 2, y, {
-          width: 20,
-          align: "right",
-        });
+        .text(String(row.page), numX, y, { width: numBoxW, align: "right" });
 
       y += 32;
     }
@@ -789,12 +789,7 @@ export async function buildTownPlannerReportPdfV2(
       tilesY + 34,
       tileW - 28,
       14,
-      {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: false,
-      }
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: false }
     );
     boundedText(
       doc,
@@ -817,12 +812,7 @@ export async function buildTownPlannerReportPdfV2(
       tilesY + 84,
       tileW - 28,
       14,
-      {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: false,
-      }
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: false }
     );
     boundedText(
       doc,
