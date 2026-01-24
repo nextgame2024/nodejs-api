@@ -4,6 +4,8 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-01-24";
+
 /**
  * Town Planner Report PDF (PDFKit)
  *
