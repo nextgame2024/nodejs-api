@@ -23,7 +23,6 @@ import bmPricingRoutes from "./routes/bm.pricing.routes.js";
 import bmSuppliersRoutes from "./routes/bm.suppliers.routes.js";
 import bmProjectsRoutes from "./routes/bm.projects.routes.js";
 import bmDocumentsRoutes from "./routes/bm.documents.routes.js";
-import bmProjectsRoutes from "./routes/bm.projects.routes.js";
 
 const app = express();
 
@@ -75,7 +74,6 @@ app.use("/api", bmPricingRoutes);
 app.use("/api", bmSuppliersRoutes);
 app.use("/api", bmProjectsRoutes);
 app.use("/api", bmDocumentsRoutes);
-app.use("/api", bmProjectsRoutes);
 app.use("/api/townplanner/v2", townplannerV2Routes);
 
 // Error handler
