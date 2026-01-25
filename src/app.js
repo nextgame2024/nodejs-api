@@ -16,6 +16,8 @@ import teamRoutes from "./routes/team.routes.js";
 import employeeRoutes from "./routes/employee.routes.js";
 import plannerRoutes from "./routes/planner.routes.js";
 import townplannerV2Routes from "./routes/townplanner_v2.routes.js";
+import bmClientsRoutes from "./routes/bm.clients.routes.js";
+import bmMaterialsRoutes from "./routes/bm.materials.routes.js";
 
 const app = express();
 
@@ -60,6 +62,8 @@ app.use("/api", rendersRoutes);
 app.use("/api", teamRoutes);
 app.use("/api", employeeRoutes);
 app.use("/api", plannerRoutes);
+app.use("/api", bmClientsRoutes);
+app.use("/api", bmMaterialsRoutes);
 app.use("/api/townplanner/v2", townplannerV2Routes);
 
 // Error handler
