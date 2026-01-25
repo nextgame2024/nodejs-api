@@ -169,15 +169,14 @@ const CONTACT_SELECT = `
 `;
 
 export async function listClientContacts(userId, clientId) {
-  // userId is used to ensure tenancy via join
   const { rows } = await pool.query(
     `
-    SELECT c.${CONTACT_SELECT}
-    FROM bm_client_contacts c
-    JOIN bm_clients cl ON cl.client_id = c.client_id
-    WHERE cl.user_id = $1 AND c.client_id = $2
-    ORDER BY c.createdat DESC
-    `,
+      SELECT ${CONTACT_SELECT}
+      FROM bm_client_contacts c
+      JOIN bm_clients cl ON cl.client_id = c.client_id
+      WHERE cl.user_id = $1 AND c.client_id = $2
+      ORDER BY c.createdat DESC
+      `,
     [userId, clientId]
   );
   return rows;
