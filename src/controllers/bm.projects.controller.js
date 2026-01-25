@@ -1,5 +1,26 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.projects.service.js";
+import * as docsService from "../services/bm.documents.service.js";
+
+export const createDocumentFromProject = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { projectId } = req.params;
+
+  const payload = req.body?.document || req.body || {};
+  const type = payload.type; // 'quote' | 'invoice'
+  if (!type)
+    return res.status(400).json({ error: "type is required (quote|invoice)" });
+
+  const result = await docsService.createDocumentFromProject(
+    userId,
+    projectId,
+    payload
+  );
+  if (!result) return res.status(404).json({ error: "Project not found" });
+
+  // Return header + lines for immediate UI use
+  res.status(201).json(result); // { document, materialLines, laborLines }
+});
 
 export const listProjects = asyncHandler(async (req, res) => {
   const userId = req.user.id;

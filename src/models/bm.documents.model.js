@@ -621,3 +621,243 @@ export async function recalcDocumentTotals(userId, documentId) {
 
   return getDocument(userId, documentId);
 }
+
+// Helper: allocate next doc number in a transaction
+async function allocateDocNumber(client, userId, docType) {
+  // increment counter and return allocated number
+  const { rows } = await client.query(
+    `
+      INSERT INTO bm_doc_counters (user_id, doc_type, next_number)
+      VALUES ($1, $2, 2)
+      ON CONFLICT (user_id, doc_type)
+      DO UPDATE SET next_number = bm_doc_counters.next_number + 1
+      RETURNING (bm_doc_counters.next_number - 1) AS allocated
+      `,
+    [userId, docType]
+  );
+
+  const n = rows[0]?.allocated ?? 1;
+  const prefix = docType === "quote" ? "Q" : "I";
+  const padded = String(n).padStart(6, "0");
+  return `${prefix}-${padded}`;
+}
+
+async function resolvePricing(client, userId, projectId) {
+  // Priority:
+  // 1) project pricing profile if default_pricing=false and pricing_profile_id set
+  // 2) user's default pricing profile
+  // 3) fallback
+  const { rows } = await client.query(
+    `
+      SELECT
+        COALESCE(
+          (
+            SELECT pp.material_markup
+            FROM bm_projects p
+            JOIN bm_pricing_profiles pp ON pp.pricing_profile_id = p.pricing_profile_id
+            WHERE p.user_id = $1 AND p.project_id = $2
+              AND p.default_pricing = false
+              AND p.pricing_profile_id IS NOT NULL
+              AND pp.status = 'active'
+            LIMIT 1
+          ),
+          (
+            SELECT material_markup
+            FROM bm_pricing_profiles
+            WHERE user_id = $1 AND is_default = true AND status = 'active'
+            ORDER BY updatedat DESC
+            LIMIT 1
+          ),
+          0
+        )::numeric(7,4) AS material_markup,
+        COALESCE(
+          (
+            SELECT pp.labor_markup
+            FROM bm_projects p
+            JOIN bm_pricing_profiles pp ON pp.pricing_profile_id = p.pricing_profile_id
+            WHERE p.user_id = $1 AND p.project_id = $2
+              AND p.default_pricing = false
+              AND p.pricing_profile_id IS NOT NULL
+              AND pp.status = 'active'
+            LIMIT 1
+          ),
+          (
+            SELECT labor_markup
+            FROM bm_pricing_profiles
+            WHERE user_id = $1 AND is_default = true AND status = 'active'
+            ORDER BY updatedat DESC
+            LIMIT 1
+          ),
+          0
+        )::numeric(7,4) AS labor_markup
+      `,
+    [userId, projectId]
+  );
+
+  return {
+    materialMarkup: Number(rows[0]?.material_markup ?? 0),
+    laborMarkup: Number(rows[0]?.labor_markup ?? 0),
+  };
+}
+
+export async function createDocumentFromProject(userId, projectId, payload) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 1) Validate project + get client_id
+    const { rows: projRows } = await client.query(
+      `
+        SELECT project_id, client_id
+        FROM bm_projects
+        WHERE user_id = $1 AND project_id = $2
+        LIMIT 1
+        `,
+      [userId, projectId]
+    );
+    if (!projRows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const docType = payload.type;
+    if (docType !== "quote" && docType !== "invoice") {
+      const err = new Error("type must be quote or invoice");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const clientId = projRows[0].client_id;
+
+    // 2) Doc number (if not provided)
+    const docNumber =
+      payload.doc_number && String(payload.doc_number).trim()
+        ? String(payload.doc_number).trim()
+        : await allocateDocNumber(client, userId, docType);
+
+    // 3) Create document header
+    const { rows: docRows } = await client.query(
+      `
+        INSERT INTO bm_documents (
+          document_id, user_id, client_id, project_id, type, doc_number,
+          issue_date, due_date, notes, status
+        )
+        VALUES (
+          gen_random_uuid(), $1, $2, $3, $4, $5,
+          COALESCE($6, CURRENT_DATE), $7, $8, COALESCE($9, 'draft')
+        )
+        RETURNING document_id
+        `,
+      [
+        userId,
+        clientId,
+        projectId,
+        docType,
+        docNumber,
+        payload.issue_date ?? null,
+        payload.due_date ?? null,
+        payload.notes ?? null,
+        payload.status ?? null,
+      ]
+    );
+
+    const documentId = docRows[0].document_id;
+
+    // 4) Resolve pricing (markups) for unit_price computation
+    const { materialMarkup, laborMarkup } = await resolvePricing(
+      client,
+      userId,
+      projectId
+    );
+
+    // 5) Clone project materials into document material lines
+    // unit_price resolution:
+    // - if project line sell_cost_override -> use it
+    // - else if material.sell_cost -> use it
+    // - else unit_cost * (1 + materialMarkup)
+    await client.query(
+      `
+        INSERT INTO bm_document_material_lines (
+          line_id, document_id, material_id, description, quantity, unit_price, line_total
+        )
+        SELECT
+          gen_random_uuid(),
+          $3,
+          pm.material_id,
+          m.material_name,
+          pm.quantity,
+          COALESCE(
+            pm.sell_cost_override,
+            m.sell_cost,
+            ROUND((m.unit_cost * (1 + $4))::numeric, 2)
+          ) AS unit_price,
+          ROUND( (pm.quantity * COALESCE(pm.sell_cost_override, m.sell_cost, (m.unit_cost * (1 + $4))))::numeric, 2) AS line_total
+        FROM bm_project_materials pm
+        JOIN bm_projects p ON p.project_id = pm.project_id
+        JOIN bm_materials m ON m.material_id = pm.material_id
+        WHERE p.user_id = $1
+          AND p.project_id = $2
+          AND m.user_id = $1
+        `,
+      [userId, projectId, documentId, materialMarkup]
+    );
+
+    // 6) Clone project labor into document labor lines
+    // unit_price resolution:
+    // - if project line sell_cost_override -> use it
+    // - else if labor.sell_cost -> use it
+    // - else unit_cost * (1 + laborMarkup)
+    await client.query(
+      `
+        INSERT INTO bm_document_labor_lines (
+          line_id, document_id, labor_id, description, quantity, unit_type, unit_price, line_total
+        )
+        SELECT
+          gen_random_uuid(),
+          $3,
+          pl.labor_id,
+          l.labor_name,
+          pl.quantity,
+          l.unit_type,
+          COALESCE(
+            pl.sell_cost_override,
+            l.sell_cost,
+            ROUND((l.unit_cost * (1 + $4))::numeric, 2)
+          ) AS unit_price,
+          ROUND( (pl.quantity * COALESCE(pl.sell_cost_override, l.sell_cost, (l.unit_cost * (1 + $4))))::numeric, 2) AS line_total
+        FROM bm_project_labor pl
+        JOIN bm_projects p ON p.project_id = pl.project_id
+        JOIN bm_labor l ON l.labor_id = pl.labor_id
+        WHERE p.user_id = $1
+          AND p.project_id = $2
+          AND l.user_id = $1
+        `,
+      [userId, projectId, documentId, laborMarkup]
+    );
+
+    // 7) Recalculate totals (reuse existing function already in your model)
+    await client.query("COMMIT");
+
+    // Return document + lines (using your existing public functions that use pool)
+    // (no need to re-open transaction)
+    const document = await getDocument(userId, documentId);
+    const materialLines = await listDocumentMaterialLines(userId, documentId);
+    const laborLines = await listDocumentLaborLines(userId, documentId);
+
+    // Optionally recalc totals now via existing method (recommended)
+    const finalDoc = await recalcDocumentTotals(userId, documentId);
+
+    return {
+      document: finalDoc || document,
+      materialLines,
+      laborLines,
+    };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}

@@ -1,5 +1,57 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.documents.service.js";
+import * as model from "../models/bm.documents.model.js";
+
+export async function createDocumentFromProject(userId, projectId, payload) {
+  // payload: { type, issue_date, due_date, notes, status, doc_number }
+  return model.createDocumentFromProject(userId, projectId, payload);
+}
+
+// Basic status transition guardrails
+const ALLOWED_TRANSITIONS = {
+  draft: new Set(["sent", "void"]),
+  sent: new Set(["accepted", "rejected", "void"]),
+  accepted: new Set(["paid", "void"]),
+  rejected: new Set(["void"]),
+  paid: new Set([]),
+  void: new Set([]),
+};
+
+export async function updateDocument(userId, documentId, payload) {
+  // If status is changing, validate transitions
+  if (payload.status !== undefined) {
+    const current = await model.getDocument(userId, documentId);
+    if (!current) return null;
+
+    const from = current.status;
+    const to = payload.status;
+
+    if (to !== from) {
+      const allowed = ALLOWED_TRANSITIONS[from] || new Set();
+      if (!allowed.has(to)) {
+        const msg = `Invalid status transition: ${from} -> ${to}`;
+        const err = new Error(msg);
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
+    // Optional: only allow changing type while in draft
+    if (
+      payload.type !== undefined &&
+      current.type !== payload.type &&
+      from !== "draft"
+    ) {
+      const err = new Error(
+        "Document type can only be changed while status is draft"
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  return model.updateDocument(userId, documentId, payload);
+}
 
 export const listDocuments = asyncHandler(async (req, res) => {
   const userId = req.user.id;

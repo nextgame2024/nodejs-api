@@ -12,6 +12,7 @@ import {
   listProjectLabor,
   upsertProjectLabor,
   removeProjectLabor,
+  createDocumentFromProject,
 } from "../controllers/bm.projects.controller.js";
 
 const router = Router();
@@ -22,6 +23,11 @@ router.post("/bm/projects", authRequired, createProject);
 router.get("/bm/projects/:projectId", authRequired, getProject);
 router.put("/bm/projects/:projectId", authRequired, updateProject);
 router.delete("/bm/projects/:projectId", authRequired, archiveProject);
+router.post(
+  "/bm/projects/:projectId/create-document",
+  authRequired,
+  createDocumentFromProject
+);
 
 // Project materials (PK: project_id + material_id)
 router.get(
