@@ -3,6 +3,29 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { findByEmail } from "../models/user.model.js";
 import { generateToken } from "../utils/generateToken.js";
 
+const toISO = (v) => (v ? new Date(v).toISOString() : null);
+
+const mapUserResponse = (u, token) => ({
+  id: u.id,
+  email: u.email,
+  username: u.username,
+  image: u.image || "",
+  bio: u.bio || "",
+
+  // New fields (optional, backward-compatible)
+  name: u.name ?? null,
+  address: u.address ?? null,
+  cel: u.cel ?? null,
+  tel: u.tel ?? null,
+  contacts: u.contacts ?? null,
+  type: u.type ?? null,
+  status: u.status ?? null,
+
+  createdAt: toISO(u.createdAt),
+  updatedAt: toISO(u.updatedAt),
+  token,
+});
+
 export const login = asyncHandler(async (req, res) => {
   const { user } = req.body || {};
   const email = user?.email;
@@ -31,23 +54,5 @@ export const login = asyncHandler(async (req, res) => {
     username: found.username,
   });
 
-  const createdAtISO = found.createdAt
-    ? new Date(found.createdAt).toISOString()
-    : null;
-  const updatedAtISO = found.updatedAt
-    ? new Date(found.updatedAt).toISOString()
-    : null;
-
-  return res.json({
-    user: {
-      id: found.id,
-      email: found.email,
-      username: found.username,
-      image: found.image || "",
-      bio: found.bio || "",
-      createdAt: createdAtISO,
-      updatedAt: updatedAtISO,
-      token,
-    },
-  });
+  return res.json({ user: mapUserResponse(found, token) });
 });
