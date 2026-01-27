@@ -95,3 +95,20 @@ export const archivePricingProfile = asyncHandler(async (req, res) => {
 
   res.status(204).send();
 });
+
+export const setDefaultPricingProfile = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { pricingProfileId } = req.params;
+  const existing = await service.getPricingProfile(companyId, pricingProfileId);
+  if (!existing) {
+    return res.status(404).json({ error: "Pricing profile not found" });
+  }
+
+  await service.clearDefaultPricingProfiles(companyId);
+  const updated = await service.setDefaultPricingProfile(
+    companyId,
+    pricingProfileId
+  );
+
+  res.json({ pricingProfile: updated });
+});
