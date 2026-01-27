@@ -1,7 +1,9 @@
+// src/models/bm.documents.model.js
 import pool from "../config/db.js";
 
 const DOC_SELECT = `
   d.document_id AS "documentId",
+  d.company_id AS "companyId",
   d.user_id AS "userId",
   d.client_id AS "clientId",
   c.client_name AS "clientName",
@@ -22,21 +24,21 @@ const DOC_SELECT = `
   d.updatedat AS "updatedAt"
 `;
 
-export async function documentExists(userId, documentId) {
+export async function documentExists(companyId, documentId) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM bm_documents WHERE user_id = $1 AND document_id = $2 LIMIT 1`,
-    [userId, documentId]
+    `SELECT 1 FROM bm_documents WHERE company_id = $1 AND document_id = $2 LIMIT 1`,
+    [companyId, documentId]
   );
   return rows.length > 0;
 }
 
 export async function listDocuments(
-  userId,
+  companyId,
   { q, status, type, clientId, projectId, limit, offset }
 ) {
-  const params = [userId];
+  const params = [companyId];
   let i = 2;
-  const where = [`d.user_id = $1`];
+  const where = [`d.company_id = $1`];
 
   if (status) {
     where.push(`d.status = $${i++}`);
@@ -66,8 +68,12 @@ export async function listDocuments(
     `
     SELECT ${DOC_SELECT}
     FROM bm_documents d
-    JOIN bm_clients c ON c.client_id = d.client_id
-    LEFT JOIN bm_projects p ON p.project_id = d.project_id
+    JOIN bm_clients c
+      ON c.client_id = d.client_id
+     AND c.company_id = d.company_id
+    LEFT JOIN bm_projects p
+      ON p.project_id = d.project_id
+     AND p.company_id = d.company_id
     WHERE ${where.join(" AND ")}
     ORDER BY d.createdat DESC
     LIMIT $${i++} OFFSET $${i}
@@ -79,12 +85,12 @@ export async function listDocuments(
 }
 
 export async function countDocuments(
-  userId,
+  companyId,
   { q, status, type, clientId, projectId }
 ) {
-  const params = [userId];
+  const params = [companyId];
   let i = 2;
-  const where = [`d.user_id = $1`];
+  const where = [`d.company_id = $1`];
 
   if (status) {
     where.push(`d.status = $${i++}`);
@@ -112,7 +118,9 @@ export async function countDocuments(
     `
     SELECT COUNT(*)::int AS total
     FROM bm_documents d
-    JOIN bm_clients c ON c.client_id = d.client_id
+    JOIN bm_clients c
+      ON c.client_id = d.client_id
+     AND c.company_id = d.company_id
     WHERE ${where.join(" AND ")}
     `,
     params
@@ -121,40 +129,54 @@ export async function countDocuments(
   return rows[0]?.total ?? 0;
 }
 
-export async function getDocument(userId, documentId) {
+export async function getDocument(companyId, documentId) {
   const { rows } = await pool.query(
     `
     SELECT ${DOC_SELECT}
     FROM bm_documents d
-    JOIN bm_clients c ON c.client_id = d.client_id
-    LEFT JOIN bm_projects p ON p.project_id = d.project_id
-    WHERE d.user_id = $1 AND d.document_id = $2
+    JOIN bm_clients c
+      ON c.client_id = d.client_id
+     AND c.company_id = d.company_id
+    LEFT JOIN bm_projects p
+      ON p.project_id = d.project_id
+     AND p.company_id = d.company_id
+    WHERE d.company_id = $1 AND d.document_id = $2
     LIMIT 1
     `,
-    [userId, documentId]
+    [companyId, documentId]
   );
   return rows[0];
 }
 
-export async function createDocument(userId, payload) {
-  // Validate client belongs to user; validate project (if provided) belongs to user and matches client (optional rule).
+export async function createDocument(companyId, userId, payload) {
+  // Validate client belongs to company; validate project (if provided) belongs to company.
+  // Optional (recommended): project must belong to same client if provided.
   const { rows } = await pool.query(
     `
     INSERT INTO bm_documents (
-      document_id, user_id, client_id, project_id, type, doc_number,
+      document_id, company_id, user_id, client_id, project_id, type, doc_number,
       issue_date, due_date, notes, status
     )
     SELECT
-      gen_random_uuid(), $1, $2, $3, $4, $5,
-      COALESCE($6, CURRENT_DATE), $7, $8, COALESCE($9, 'draft')
-    WHERE EXISTS (SELECT 1 FROM bm_clients WHERE user_id = $1 AND client_id = $2)
-      AND (
-        $3 IS NULL
-        OR EXISTS (SELECT 1 FROM bm_projects WHERE user_id = $1 AND project_id = $3)
+      gen_random_uuid(), $1, $2, $3, $4, $5, $6,
+      COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')
+    WHERE EXISTS (
+      SELECT 1 FROM bm_clients
+      WHERE company_id = $1 AND client_id = $3
+    )
+    AND (
+      $4 IS NULL
+      OR EXISTS (
+        SELECT 1 FROM bm_projects
+        WHERE company_id = $1
+          AND project_id = $4
+          AND client_id = $3
       )
+    )
     RETURNING document_id
     `,
     [
+      companyId,
       userId,
       payload.client_id,
       payload.project_id ?? null,
@@ -168,12 +190,12 @@ export async function createDocument(userId, payload) {
   );
 
   if (!rows[0]) return null;
-  return getDocument(userId, rows[0].document_id);
+  return getDocument(companyId, rows[0].document_id);
 }
 
-export async function updateDocument(userId, documentId, payload) {
+export async function updateDocument(companyId, documentId, payload) {
   const sets = [];
-  const params = [userId, documentId];
+  const params = [companyId, documentId];
   let i = 3;
 
   const map = {
@@ -190,28 +212,36 @@ export async function updateDocument(userId, documentId, payload) {
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       if (k === "client_id") {
-        // must belong to user
+        // must belong to same company
         sets.push(
-          `${col} = (SELECT client_id FROM bm_clients WHERE user_id = $1 AND client_id = $${i})`
+          `${col} = (SELECT client_id FROM bm_clients WHERE company_id = $1 AND client_id = $${i})`
         );
         params.push(payload[k]);
         i++;
         continue;
       }
+
       if (k === "project_id") {
-        // allow null, else must belong to user
-        sets.push(`${col} = CASE WHEN $${i} IS NULL THEN NULL
-          ELSE (SELECT project_id FROM bm_projects WHERE user_id = $1 AND project_id = $${i}) END`);
+        // allow null, else must belong to company (and ideally match client_id)
+        // NOTE: if client_id is also being updated in this request, we can’t reference the new value safely here.
+        // We keep it safe by validating company scope only. (Client/project pairing is enforced on create.)
+        sets.push(
+          `${col} = CASE
+            WHEN $${i} IS NULL THEN NULL
+            ELSE (SELECT project_id FROM bm_projects WHERE company_id = $1 AND project_id = $${i})
+          END`
+        );
         params.push(payload[k]);
         i++;
         continue;
       }
+
       sets.push(`${col} = $${i++}`);
       params.push(payload[k]);
     }
   }
 
-  if (!sets.length) return getDocument(userId, documentId);
+  if (!sets.length) return getDocument(companyId, documentId);
 
   sets.push(`updatedat = NOW()`);
 
@@ -219,20 +249,22 @@ export async function updateDocument(userId, documentId, payload) {
     `
     UPDATE bm_documents
     SET ${sets.join(", ")}
-    WHERE user_id = $1 AND document_id = $2
+    WHERE company_id = $1 AND document_id = $2
     RETURNING document_id
     `,
     params
   );
 
-  return rows[0] ? getDocument(userId, documentId) : null;
+  return rows[0] ? getDocument(companyId, documentId) : null;
 }
 
-export async function archiveDocument(userId, documentId) {
+export async function archiveDocument(companyId, documentId) {
+  // "archive deletes": we set status instead of deleting
   const res = await pool.query(
-    `UPDATE bm_documents SET status = 'void', updatedat = NOW()
-     WHERE user_id = $1 AND document_id = $2`,
-    [userId, documentId]
+    `UPDATE bm_documents
+     SET status = 'void', updatedat = NOW()
+     WHERE company_id = $1 AND document_id = $2`,
+    [companyId, documentId]
   );
   return res.rowCount > 0;
 }
@@ -249,34 +281,59 @@ const MAT_LINE_SELECT = `
   l.line_total AS "lineTotal"
 `;
 
-export async function listDocumentMaterialLines(userId, documentId) {
+export async function listDocumentMaterialLines(companyId, documentId) {
   const { rows } = await pool.query(
     `
     SELECT ${MAT_LINE_SELECT}
     FROM bm_document_material_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_materials m ON m.material_id = l.material_id
-    WHERE d.user_id = $1 AND l.document_id = $2
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_materials m
+      ON m.material_id = l.material_id
+     AND m.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2
     ORDER BY l.line_id ASC
     `,
-    [userId, documentId]
+    [companyId, documentId]
   );
   return rows;
 }
 
-export async function createDocumentMaterialLine(userId, documentId, payload) {
+export async function createDocumentMaterialLine(
+  companyId,
+  documentId,
+  payload
+) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_document_material_lines (
-      line_id, document_id, material_id, description, quantity, unit_price, line_total
+      line_id, company_id, document_id, material_id, description, quantity, unit_price, line_total
     )
     SELECT
-      gen_random_uuid(), $2, $3, $4, COALESCE($5, 1), $6, (COALESCE($5, 1) * $6)
-    WHERE EXISTS (SELECT 1 FROM bm_documents WHERE user_id = $1 AND document_id = $2)
+      gen_random_uuid(),
+      $1,
+      $2,
+      $3,
+      $4,
+      COALESCE($5, 1),
+      $6,
+      (COALESCE($5, 1) * $6)
+    WHERE EXISTS (
+      SELECT 1 FROM bm_documents
+      WHERE company_id = $1 AND document_id = $2
+    )
+    AND (
+      $3 IS NULL
+      OR EXISTS (
+        SELECT 1 FROM bm_materials
+        WHERE company_id = $1 AND material_id = $3
+      )
+    )
     RETURNING line_id
     `,
     [
-      userId,
+      companyId,
       documentId,
       payload.material_id ?? null,
       payload.description ?? null,
@@ -291,28 +348,43 @@ export async function createDocumentMaterialLine(userId, documentId, payload) {
     `
     SELECT ${MAT_LINE_SELECT}
     FROM bm_document_material_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_materials m ON m.material_id = l.material_id
-    WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_materials m
+      ON m.material_id = l.material_id
+     AND m.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
     LIMIT 1
     `,
-    [userId, documentId, rows[0].line_id]
+    [companyId, documentId, rows[0].line_id]
   );
   return out[0] || null;
 }
 
 export async function updateDocumentMaterialLine(
-  userId,
+  companyId,
   documentId,
   lineId,
   payload
 ) {
   const sets = [];
-  const params = [userId, documentId, lineId];
+  const params = [companyId, documentId, lineId];
   let i = 4;
 
+  // For material_id, validate company scope
+  if (payload.material_id !== undefined) {
+    sets.push(
+      `material_id = CASE
+        WHEN $${i} IS NULL THEN NULL
+        ELSE (SELECT material_id FROM bm_materials WHERE company_id = $1 AND material_id = $${i})
+      END`
+    );
+    params.push(payload.material_id);
+    i++;
+  }
+
   const map = {
-    material_id: "material_id",
     description: "description",
     quantity: "quantity",
     unit_price: "unit_price",
@@ -330,24 +402,28 @@ export async function updateDocumentMaterialLine(
       `
       SELECT ${MAT_LINE_SELECT}
       FROM bm_document_material_lines l
-      JOIN bm_documents d ON d.document_id = l.document_id
-      LEFT JOIN bm_materials m ON m.material_id = l.material_id
-      WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+      JOIN bm_documents d
+        ON d.document_id = l.document_id
+       AND d.company_id = l.company_id
+      LEFT JOIN bm_materials m
+        ON m.material_id = l.material_id
+       AND m.company_id = d.company_id
+      WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
       LIMIT 1
       `,
-      [userId, documentId, lineId]
+      [companyId, documentId, lineId]
     );
     return rows[0] || null;
   }
 
-  // ensure line_total stays consistent
   const sql = `
     UPDATE bm_document_material_lines l
     SET ${sets.join(", ")},
         line_total = (COALESCE(quantity, 1) * COALESCE(unit_price, 0))
     FROM bm_documents d
     WHERE d.document_id = l.document_id
-      AND d.user_id = $1
+      AND d.company_id = $1
+      AND l.company_id = $1
       AND l.document_id = $2
       AND l.line_id = $3
     RETURNING l.line_id
@@ -360,27 +436,36 @@ export async function updateDocumentMaterialLine(
     `
     SELECT ${MAT_LINE_SELECT}
     FROM bm_document_material_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_materials m ON m.material_id = l.material_id
-    WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_materials m
+      ON m.material_id = l.material_id
+     AND m.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
     LIMIT 1
     `,
-    [userId, documentId, lineId]
+    [companyId, documentId, lineId]
   );
   return out[0] || null;
 }
 
-export async function deleteDocumentMaterialLine(userId, documentId, lineId) {
+export async function deleteDocumentMaterialLine(
+  companyId,
+  documentId,
+  lineId
+) {
   const res = await pool.query(
     `
     DELETE FROM bm_document_material_lines l
     USING bm_documents d
     WHERE d.document_id = l.document_id
-      AND d.user_id = $1
+      AND d.company_id = $1
+      AND l.company_id = $1
       AND l.document_id = $2
       AND l.line_id = $3
     `,
-    [userId, documentId, lineId]
+    [companyId, documentId, lineId]
   );
   return res.rowCount > 0;
 }
@@ -398,34 +483,56 @@ const LAB_LINE_SELECT = `
   l.line_total AS "lineTotal"
 `;
 
-export async function listDocumentLaborLines(userId, documentId) {
+export async function listDocumentLaborLines(companyId, documentId) {
   const { rows } = await pool.query(
     `
     SELECT ${LAB_LINE_SELECT}
     FROM bm_document_labor_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_labor lb ON lb.labor_id = l.labor_id
-    WHERE d.user_id = $1 AND l.document_id = $2
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_labor lb
+      ON lb.labor_id = l.labor_id
+     AND lb.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2
     ORDER BY l.line_id ASC
     `,
-    [userId, documentId]
+    [companyId, documentId]
   );
   return rows;
 }
 
-export async function createDocumentLaborLine(userId, documentId, payload) {
+export async function createDocumentLaborLine(companyId, documentId, payload) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_document_labor_lines (
-      line_id, document_id, labor_id, description, quantity, unit_type, unit_price, line_total
+      line_id, company_id, document_id, labor_id, description, quantity, unit_type, unit_price, line_total
     )
     SELECT
-      gen_random_uuid(), $2, $3, $4, COALESCE($5, 1), $6, $7, (COALESCE($5, 1) * $7)
-    WHERE EXISTS (SELECT 1 FROM bm_documents WHERE user_id = $1 AND document_id = $2)
+      gen_random_uuid(),
+      $1,
+      $2,
+      $3,
+      $4,
+      COALESCE($5, 1),
+      $6,
+      $7,
+      (COALESCE($5, 1) * $7)
+    WHERE EXISTS (
+      SELECT 1 FROM bm_documents
+      WHERE company_id = $1 AND document_id = $2
+    )
+    AND (
+      $3 IS NULL
+      OR EXISTS (
+        SELECT 1 FROM bm_labor
+        WHERE company_id = $1 AND labor_id = $3
+      )
+    )
     RETURNING line_id
     `,
     [
-      userId,
+      companyId,
       documentId,
       payload.labor_id ?? null,
       payload.description ?? null,
@@ -441,28 +548,43 @@ export async function createDocumentLaborLine(userId, documentId, payload) {
     `
     SELECT ${LAB_LINE_SELECT}
     FROM bm_document_labor_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_labor lb ON lb.labor_id = l.labor_id
-    WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_labor lb
+      ON lb.labor_id = l.labor_id
+     AND lb.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
     LIMIT 1
     `,
-    [userId, documentId, rows[0].line_id]
+    [companyId, documentId, rows[0].line_id]
   );
   return out[0] || null;
 }
 
 export async function updateDocumentLaborLine(
-  userId,
+  companyId,
   documentId,
   lineId,
   payload
 ) {
   const sets = [];
-  const params = [userId, documentId, lineId];
+  const params = [companyId, documentId, lineId];
   let i = 4;
 
+  // For labor_id, validate company scope
+  if (payload.labor_id !== undefined) {
+    sets.push(
+      `labor_id = CASE
+        WHEN $${i} IS NULL THEN NULL
+        ELSE (SELECT labor_id FROM bm_labor WHERE company_id = $1 AND labor_id = $${i})
+      END`
+    );
+    params.push(payload.labor_id);
+    i++;
+  }
+
   const map = {
-    labor_id: "labor_id",
     description: "description",
     quantity: "quantity",
     unit_type: "unit_type",
@@ -481,12 +603,16 @@ export async function updateDocumentLaborLine(
       `
       SELECT ${LAB_LINE_SELECT}
       FROM bm_document_labor_lines l
-      JOIN bm_documents d ON d.document_id = l.document_id
-      LEFT JOIN bm_labor lb ON lb.labor_id = l.labor_id
-      WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+      JOIN bm_documents d
+        ON d.document_id = l.document_id
+       AND d.company_id = l.company_id
+      LEFT JOIN bm_labor lb
+        ON lb.labor_id = l.labor_id
+       AND lb.company_id = d.company_id
+      WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
       LIMIT 1
       `,
-      [userId, documentId, lineId]
+      [companyId, documentId, lineId]
     );
     return rows[0] || null;
   }
@@ -497,7 +623,8 @@ export async function updateDocumentLaborLine(
         line_total = (COALESCE(quantity, 1) * COALESCE(unit_price, 0))
     FROM bm_documents d
     WHERE d.document_id = l.document_id
-      AND d.user_id = $1
+      AND d.company_id = $1
+      AND l.company_id = $1
       AND l.document_id = $2
       AND l.line_id = $3
     RETURNING l.line_id
@@ -510,27 +637,32 @@ export async function updateDocumentLaborLine(
     `
     SELECT ${LAB_LINE_SELECT}
     FROM bm_document_labor_lines l
-    JOIN bm_documents d ON d.document_id = l.document_id
-    LEFT JOIN bm_labor lb ON lb.labor_id = l.labor_id
-    WHERE d.user_id = $1 AND l.document_id = $2 AND l.line_id = $3
+    JOIN bm_documents d
+      ON d.document_id = l.document_id
+     AND d.company_id = l.company_id
+    LEFT JOIN bm_labor lb
+      ON lb.labor_id = l.labor_id
+     AND lb.company_id = d.company_id
+    WHERE d.company_id = $1 AND l.document_id = $2 AND l.line_id = $3
     LIMIT 1
     `,
-    [userId, documentId, lineId]
+    [companyId, documentId, lineId]
   );
   return out[0] || null;
 }
 
-export async function deleteDocumentLaborLine(userId, documentId, lineId) {
+export async function deleteDocumentLaborLine(companyId, documentId, lineId) {
   const res = await pool.query(
     `
     DELETE FROM bm_document_labor_lines l
     USING bm_documents d
     WHERE d.document_id = l.document_id
-      AND d.user_id = $1
+      AND d.company_id = $1
+      AND l.company_id = $1
       AND l.document_id = $2
       AND l.line_id = $3
     `,
-    [userId, documentId, lineId]
+    [companyId, documentId, lineId]
   );
   return res.rowCount > 0;
 }
@@ -538,13 +670,16 @@ export async function deleteDocumentLaborLine(userId, documentId, lineId) {
 /* Totals recalculation
    GST rate resolution priority:
    1) Project pricing profile gst_rate (if project exists and default_pricing=false and pricing_profile_id set)
-   2) User default pricing profile (is_default=true, active)
+   2) Company default pricing profile (is_default=true, active)
    3) Fallback 0.10
 */
-export async function recalcDocumentTotals(userId, documentId) {
+export async function recalcDocumentTotals(companyId, documentId) {
   const { rows: docRows } = await pool.query(
-    `SELECT document_id, project_id FROM bm_documents WHERE user_id = $1 AND document_id = $2 LIMIT 1`,
-    [userId, documentId]
+    `SELECT document_id, project_id
+     FROM bm_documents
+     WHERE company_id = $1 AND document_id = $2
+     LIMIT 1`,
+    [companyId, documentId]
   );
   if (!docRows[0]) return null;
 
@@ -555,24 +690,23 @@ export async function recalcDocumentTotals(userId, documentId) {
     WITH mat AS (
       SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
       FROM bm_document_material_lines
-      WHERE document_id = $1
+      WHERE company_id = $1 AND document_id = $2
     ),
     lab AS (
       SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS labor_total
       FROM bm_document_labor_lines
-      WHERE document_id = $1
+      WHERE company_id = $1 AND document_id = $2
     )
     SELECT mat.material_total, lab.labor_total
     FROM mat, lab
     `,
-    [documentId]
+    [companyId, documentId]
   );
 
   const materialTotal = sumRows[0].material_total;
   const laborTotal = sumRows[0].labor_total;
   const subtotal = Number(materialTotal) + Number(laborTotal);
 
-  // Resolve GST rate
   const { rows: gstRows } = await pool.query(
     `
     SELECT
@@ -580,8 +714,10 @@ export async function recalcDocumentTotals(userId, documentId) {
         (
           SELECT pp.gst_rate
           FROM bm_projects p
-          JOIN bm_pricing_profiles pp ON pp.pricing_profile_id = p.pricing_profile_id
-          WHERE p.user_id = $1
+          JOIN bm_pricing_profiles pp
+            ON pp.pricing_profile_id = p.pricing_profile_id
+           AND pp.company_id = p.company_id
+          WHERE p.company_id = $1
             AND p.project_id = $2
             AND p.default_pricing = false
             AND p.pricing_profile_id IS NOT NULL
@@ -591,14 +727,14 @@ export async function recalcDocumentTotals(userId, documentId) {
         (
           SELECT gst_rate
           FROM bm_pricing_profiles
-          WHERE user_id = $1 AND is_default = true AND status = 'active'
-          ORDER BY updatedat DESC
+          WHERE company_id = $1 AND is_default = true AND status = 'active'
+          ORDER BY updatedat DESC NULLS LAST, createdat DESC
           LIMIT 1
         ),
         0.10
       )::numeric(7,4) AS gst_rate
     `,
-    [userId, projectId]
+    [companyId, projectId]
   );
 
   const gstRate = Number(gstRows[0].gst_rate);
@@ -614,26 +750,36 @@ export async function recalcDocumentTotals(userId, documentId) {
         gst = $6,
         total_amount = $7,
         updatedat = NOW()
-    WHERE user_id = $1 AND document_id = $2
+    WHERE company_id = $1 AND document_id = $2
     `,
-    [userId, documentId, materialTotal, laborTotal, subtotal, gst, totalAmount]
+    [
+      companyId,
+      documentId,
+      materialTotal,
+      laborTotal,
+      subtotal,
+      gst,
+      totalAmount,
+    ]
   );
 
-  return getDocument(userId, documentId);
+  return getDocument(companyId, documentId);
 }
 
-// Helper: allocate next doc number in a transaction
-async function allocateDocNumber(client, userId, docType) {
-  // increment counter and return allocated number
+/* ---- Optional helpers for future features (doc number + create from project) ---- */
+
+// Allocate next doc number in a transaction.
+// bm_doc_counters PK is (company_id, doc_type)
+async function allocateDocNumber(client, companyId, userId, docType) {
   const { rows } = await client.query(
     `
-      INSERT INTO bm_doc_counters (user_id, doc_type, next_number)
-      VALUES ($1, $2, 2)
-      ON CONFLICT (user_id, doc_type)
+      INSERT INTO bm_doc_counters (company_id, user_id, doc_type, next_number)
+      VALUES ($1, $2, $3, 2)
+      ON CONFLICT (company_id, doc_type)
       DO UPDATE SET next_number = bm_doc_counters.next_number + 1
       RETURNING (bm_doc_counters.next_number - 1) AS allocated
-      `,
-    [userId, docType]
+    `,
+    [companyId, userId ?? null, docType]
   );
 
   const n = rows[0]?.allocated ?? 1;
@@ -642,11 +788,7 @@ async function allocateDocNumber(client, userId, docType) {
   return `${prefix}-${padded}`;
 }
 
-async function resolvePricing(client, userId, projectId) {
-  // Priority:
-  // 1) project pricing profile if default_pricing=false and pricing_profile_id set
-  // 2) user's default pricing profile
-  // 3) fallback
+async function resolvePricing(client, companyId, projectId) {
   const { rows } = await client.query(
     `
       SELECT
@@ -654,8 +796,11 @@ async function resolvePricing(client, userId, projectId) {
           (
             SELECT pp.material_markup
             FROM bm_projects p
-            JOIN bm_pricing_profiles pp ON pp.pricing_profile_id = p.pricing_profile_id
-            WHERE p.user_id = $1 AND p.project_id = $2
+            JOIN bm_pricing_profiles pp
+              ON pp.pricing_profile_id = p.pricing_profile_id
+             AND pp.company_id = p.company_id
+            WHERE p.company_id = $1
+              AND p.project_id = $2
               AND p.default_pricing = false
               AND p.pricing_profile_id IS NOT NULL
               AND pp.status = 'active'
@@ -664,8 +809,8 @@ async function resolvePricing(client, userId, projectId) {
           (
             SELECT material_markup
             FROM bm_pricing_profiles
-            WHERE user_id = $1 AND is_default = true AND status = 'active'
-            ORDER BY updatedat DESC
+            WHERE company_id = $1 AND is_default = true AND status = 'active'
+            ORDER BY updatedat DESC NULLS LAST, createdat DESC
             LIMIT 1
           ),
           0
@@ -674,8 +819,11 @@ async function resolvePricing(client, userId, projectId) {
           (
             SELECT pp.labor_markup
             FROM bm_projects p
-            JOIN bm_pricing_profiles pp ON pp.pricing_profile_id = p.pricing_profile_id
-            WHERE p.user_id = $1 AND p.project_id = $2
+            JOIN bm_pricing_profiles pp
+              ON pp.pricing_profile_id = p.pricing_profile_id
+             AND pp.company_id = p.company_id
+            WHERE p.company_id = $1
+              AND p.project_id = $2
               AND p.default_pricing = false
               AND p.pricing_profile_id IS NOT NULL
               AND pp.status = 'active'
@@ -684,14 +832,14 @@ async function resolvePricing(client, userId, projectId) {
           (
             SELECT labor_markup
             FROM bm_pricing_profiles
-            WHERE user_id = $1 AND is_default = true AND status = 'active'
-            ORDER BY updatedat DESC
+            WHERE company_id = $1 AND is_default = true AND status = 'active'
+            ORDER BY updatedat DESC NULLS LAST, createdat DESC
             LIMIT 1
           ),
           0
         )::numeric(7,4) AS labor_markup
-      `,
-    [userId, projectId]
+    `,
+    [companyId, projectId]
   );
 
   return {
@@ -700,20 +848,25 @@ async function resolvePricing(client, userId, projectId) {
   };
 }
 
-export async function createDocumentFromProject(userId, projectId, payload) {
+// Not currently routed, but kept ready for next phase.
+export async function createDocumentFromProject(
+  companyId,
+  userId,
+  projectId,
+  payload
+) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // 1) Validate project + get client_id
     const { rows: projRows } = await client.query(
       `
         SELECT project_id, client_id
         FROM bm_projects
-        WHERE user_id = $1 AND project_id = $2
+        WHERE company_id = $1 AND project_id = $2
         LIMIT 1
-        `,
-      [userId, projectId]
+      `,
+      [companyId, projectId]
     );
     if (!projRows[0]) {
       await client.query("ROLLBACK");
@@ -729,26 +882,25 @@ export async function createDocumentFromProject(userId, projectId, payload) {
 
     const clientId = projRows[0].client_id;
 
-    // 2) Doc number (if not provided)
     const docNumber =
       payload.doc_number && String(payload.doc_number).trim()
         ? String(payload.doc_number).trim()
-        : await allocateDocNumber(client, userId, docType);
+        : await allocateDocNumber(client, companyId, userId, docType);
 
-    // 3) Create document header
     const { rows: docRows } = await client.query(
       `
         INSERT INTO bm_documents (
-          document_id, user_id, client_id, project_id, type, doc_number,
+          document_id, company_id, user_id, client_id, project_id, type, doc_number,
           issue_date, due_date, notes, status
         )
         VALUES (
-          gen_random_uuid(), $1, $2, $3, $4, $5,
-          COALESCE($6, CURRENT_DATE), $7, $8, COALESCE($9, 'draft')
+          gen_random_uuid(), $1, $2, $3, $4, $5, $6,
+          COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')
         )
         RETURNING document_id
-        `,
+      `,
       [
+        companyId,
         userId,
         clientId,
         projectId,
@@ -763,58 +915,56 @@ export async function createDocumentFromProject(userId, projectId, payload) {
 
     const documentId = docRows[0].document_id;
 
-    // 4) Resolve pricing (markups) for unit_price computation
     const { materialMarkup, laborMarkup } = await resolvePricing(
       client,
-      userId,
+      companyId,
       projectId
     );
 
-    // 5) Clone project materials into document material lines
-    // unit_price resolution:
-    // - if project line sell_cost_override -> use it
-    // - else if material.sell_cost -> use it
-    // - else unit_cost * (1 + materialMarkup)
     await client.query(
       `
         INSERT INTO bm_document_material_lines (
-          line_id, document_id, material_id, description, quantity, unit_price, line_total
+          line_id, company_id, document_id, material_id, description, quantity, unit_price, line_total
         )
         SELECT
           gen_random_uuid(),
-          $3,
+          $1,
+          $4,
           pm.material_id,
           m.material_name,
           pm.quantity,
           COALESCE(
             pm.sell_cost_override,
             m.sell_cost,
-            ROUND((m.unit_cost * (1 + $4))::numeric, 2)
+            ROUND((m.unit_cost * (1 + $5))::numeric, 2)
           ) AS unit_price,
-          ROUND( (pm.quantity * COALESCE(pm.sell_cost_override, m.sell_cost, (m.unit_cost * (1 + $4))))::numeric, 2) AS line_total
+          ROUND(
+            (pm.quantity * COALESCE(pm.sell_cost_override, m.sell_cost, (m.unit_cost * (1 + $5))))::numeric,
+            2
+          ) AS line_total
         FROM bm_project_materials pm
-        JOIN bm_projects p ON p.project_id = pm.project_id
-        JOIN bm_materials m ON m.material_id = pm.material_id
-        WHERE p.user_id = $1
+        JOIN bm_projects p
+          ON p.project_id = pm.project_id
+         AND p.company_id = pm.company_id
+        JOIN bm_materials m
+          ON m.material_id = pm.material_id
+         AND m.company_id = p.company_id
+        WHERE p.company_id = $1
           AND p.project_id = $2
-          AND m.user_id = $1
-        `,
-      [userId, projectId, documentId, materialMarkup]
+          AND pm.company_id = $1
+      `,
+      [companyId, projectId, userId, documentId, materialMarkup]
     );
 
-    // 6) Clone project labor into document labor lines
-    // unit_price resolution:
-    // - if project line sell_cost_override -> use it
-    // - else if labor.sell_cost -> use it
-    // - else unit_cost * (1 + laborMarkup)
     await client.query(
       `
         INSERT INTO bm_document_labor_lines (
-          line_id, document_id, labor_id, description, quantity, unit_type, unit_price, line_total
+          line_id, company_id, document_id, labor_id, description, quantity, unit_type, unit_price, line_total
         )
         SELECT
           gen_random_uuid(),
-          $3,
+          $1,
+          $4,
           pl.labor_id,
           l.labor_name,
           pl.quantity,
@@ -822,30 +972,35 @@ export async function createDocumentFromProject(userId, projectId, payload) {
           COALESCE(
             pl.sell_cost_override,
             l.sell_cost,
-            ROUND((l.unit_cost * (1 + $4))::numeric, 2)
+            ROUND((l.unit_cost * (1 + $5))::numeric, 2)
           ) AS unit_price,
-          ROUND( (pl.quantity * COALESCE(pl.sell_cost_override, l.sell_cost, (l.unit_cost * (1 + $4))))::numeric, 2) AS line_total
+          ROUND(
+            (pl.quantity * COALESCE(pl.sell_cost_override, l.sell_cost, (l.unit_cost * (1 + $5))))::numeric,
+            2
+          ) AS line_total
         FROM bm_project_labor pl
-        JOIN bm_projects p ON p.project_id = pl.project_id
-        JOIN bm_labor l ON l.labor_id = pl.labor_id
-        WHERE p.user_id = $1
+        JOIN bm_projects p
+          ON p.project_id = pl.project_id
+         AND p.company_id = pl.company_id
+        JOIN bm_labor l
+          ON l.labor_id = pl.labor_id
+         AND l.company_id = p.company_id
+        WHERE p.company_id = $1
           AND p.project_id = $2
-          AND l.user_id = $1
-        `,
-      [userId, projectId, documentId, laborMarkup]
+          AND pl.company_id = $1
+      `,
+      [companyId, projectId, userId, documentId, laborMarkup]
     );
 
-    // 7) Recalculate totals (reuse existing function already in your model)
     await client.query("COMMIT");
 
-    // Return document + lines (using your existing public functions that use pool)
-    // (no need to re-open transaction)
-    const document = await getDocument(userId, documentId);
-    const materialLines = await listDocumentMaterialLines(userId, documentId);
-    const laborLines = await listDocumentLaborLines(userId, documentId);
-
-    // Optionally recalc totals now via existing method (recommended)
-    const finalDoc = await recalcDocumentTotals(userId, documentId);
+    const document = await getDocument(companyId, documentId);
+    const materialLines = await listDocumentMaterialLines(
+      companyId,
+      documentId
+    );
+    const laborLines = await listDocumentLaborLines(companyId, documentId);
+    const finalDoc = await recalcDocumentTotals(companyId, documentId);
 
     return {
       document: finalDoc || document,

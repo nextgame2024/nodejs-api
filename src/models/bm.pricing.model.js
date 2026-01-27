@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const PRICING_SELECT = `
   pricing_profile_id AS "pricingProfileId",
+  company_id AS "companyId",
   user_id AS "userId",
   profile_name AS "profileName",
   material_markup AS "materialMarkup",
@@ -14,12 +15,12 @@ const PRICING_SELECT = `
 `;
 
 export async function listPricingProfiles(
-  userId,
+  companyId,
   { q, status, limit, offset }
 ) {
-  const params = [userId];
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -47,10 +48,10 @@ export async function listPricingProfiles(
   return rows;
 }
 
-export async function countPricingProfiles(userId, { q, status }) {
-  const params = [userId];
+export async function countPricingProfiles(companyId, { q, status }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -71,27 +72,28 @@ export async function countPricingProfiles(userId, { q, status }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getPricingProfile(userId, pricingProfileId) {
+export async function getPricingProfile(companyId, pricingProfileId) {
   const { rows } = await pool.query(
     `SELECT ${PRICING_SELECT}
      FROM bm_pricing_profiles
-     WHERE user_id = $1 AND pricing_profile_id = $2
+     WHERE company_id = $1 AND pricing_profile_id = $2
      LIMIT 1`,
-    [userId, pricingProfileId]
+    [companyId, pricingProfileId]
   );
   return rows[0];
 }
 
-export async function createPricingProfile(userId, payload) {
+export async function createPricingProfile(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_pricing_profiles (
-        pricing_profile_id, user_id, profile_name,
+        pricing_profile_id, company_id, user_id, profile_name,
         material_markup, labor_markup, gst_rate, is_default
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
      )
      RETURNING ${PRICING_SELECT}`,
     [
+      companyId,
       userId,
       payload.profile_name,
       payload.material_markup ?? 0,
@@ -103,9 +105,13 @@ export async function createPricingProfile(userId, payload) {
   return rows[0];
 }
 
-export async function updatePricingProfile(userId, pricingProfileId, payload) {
+export async function updatePricingProfile(
+  companyId,
+  pricingProfileId,
+  payload
+) {
   const sets = [];
-  const params = [userId, pricingProfileId];
+  const params = [companyId, pricingProfileId];
   let i = 3;
 
   const map = {
@@ -124,46 +130,46 @@ export async function updatePricingProfile(userId, pricingProfileId, payload) {
     }
   }
 
-  if (!sets.length) return getPricingProfile(userId, pricingProfileId);
+  if (!sets.length) return getPricingProfile(companyId, pricingProfileId);
 
   sets.push(`updatedat = NOW()`);
 
   const { rows } = await pool.query(
     `UPDATE bm_pricing_profiles
      SET ${sets.join(", ")}
-     WHERE user_id = $1 AND pricing_profile_id = $2
+     WHERE company_id = $1 AND pricing_profile_id = $2
      RETURNING ${PRICING_SELECT}`,
     params
   );
   return rows[0];
 }
 
-export async function archivePricingProfile(userId, pricingProfileId) {
+export async function archivePricingProfile(companyId, pricingProfileId) {
   const res = await pool.query(
     `UPDATE bm_pricing_profiles
      SET status = 'archived', updatedat = NOW()
-     WHERE user_id = $1 AND pricing_profile_id = $2`,
-    [userId, pricingProfileId]
+     WHERE company_id = $1 AND pricing_profile_id = $2`,
+    [companyId, pricingProfileId]
   );
   return res.rowCount > 0;
 }
 
-export async function clearDefaultPricingProfiles(userId) {
+export async function clearDefaultPricingProfiles(companyId) {
   await pool.query(
     `UPDATE bm_pricing_profiles
      SET is_default = false, updatedat = NOW()
-     WHERE user_id = $1`,
-    [userId]
+     WHERE company_id = $1`,
+    [companyId]
   );
 }
 
-export async function setDefaultPricingProfile(userId, pricingProfileId) {
+export async function setDefaultPricingProfile(companyId, pricingProfileId) {
   const { rows } = await pool.query(
     `UPDATE bm_pricing_profiles
      SET is_default = true, updatedat = NOW()
-     WHERE user_id = $1 AND pricing_profile_id = $2
+     WHERE company_id = $1 AND pricing_profile_id = $2
      RETURNING ${PRICING_SELECT}`,
-    [userId, pricingProfileId]
+    [companyId, pricingProfileId]
   );
   return rows[0];
 }

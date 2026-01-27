@@ -3,7 +3,7 @@ import * as model from "../models/bm.projects.model.js";
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
 export async function listProjects(
-  userId,
+  companyId,
   { q, status, clientId, page, limit }
 ) {
   const safeLimit = clamp(Number(limit) || 20, 1, 100);
@@ -11,48 +11,54 @@ export async function listProjects(
   const offset = (safePage - 1) * safeLimit;
 
   const [projects, total] = await Promise.all([
-    model.listProjects(userId, {
+    model.listProjects(companyId, {
       q,
       status,
       clientId,
       limit: safeLimit,
       offset,
     }),
-    model.countProjects(userId, { q, status, clientId }),
+    model.countProjects(companyId, { q, status, clientId }),
   ]);
 
   return { projects, page: safePage, limit: safeLimit, total };
 }
 
-export const getProject = (userId, projectId) =>
-  model.getProject(userId, projectId);
-export const createProject = (userId, payload) =>
-  model.createProject(userId, payload);
-export const updateProject = (userId, projectId, payload) =>
-  model.updateProject(userId, projectId, payload);
-export const archiveProject = (userId, projectId) =>
-  model.archiveProject(userId, projectId);
+export const getProject = (companyId, projectId) =>
+  model.getProject(companyId, projectId);
+export const createProject = (companyId, userId, payload) =>
+  model.createProject(companyId, userId, payload);
+export const updateProject = (companyId, projectId, payload) =>
+  model.updateProject(companyId, projectId, payload);
+export const archiveProject = (companyId, projectId) =>
+  model.archiveProject(companyId, projectId);
 
-export async function listProjectMaterials(userId, projectId) {
-  const exists = await model.projectExists(userId, projectId);
+// Project materials
+export async function listProjectMaterials(companyId, projectId) {
+  const exists = await model.projectExists(companyId, projectId);
   if (!exists) return null;
-  return model.listProjectMaterials(userId, projectId);
+  return model.listProjectMaterials(companyId, projectId);
 }
 
-export const upsertProjectMaterial = (userId, projectId, materialId, payload) =>
-  model.upsertProjectMaterial(userId, projectId, materialId, payload);
+export const upsertProjectMaterial = (
+  companyId,
+  projectId,
+  materialId,
+  payload
+) => model.upsertProjectMaterial(companyId, projectId, materialId, payload);
 
-export const removeProjectMaterial = (userId, projectId, materialId) =>
-  model.removeProjectMaterial(userId, projectId, materialId);
+export const removeProjectMaterial = (companyId, projectId, materialId) =>
+  model.removeProjectMaterial(companyId, projectId, materialId);
 
-export async function listProjectLabor(userId, projectId) {
-  const exists = await model.projectExists(userId, projectId);
+// Project labor
+export async function listProjectLabor(companyId, projectId) {
+  const exists = await model.projectExists(companyId, projectId);
   if (!exists) return null;
-  return model.listProjectLabor(userId, projectId);
+  return model.listProjectLabor(companyId, projectId);
 }
 
-export const upsertProjectLabor = (userId, projectId, laborId, payload) =>
-  model.upsertProjectLabor(userId, projectId, laborId, payload);
+export const upsertProjectLabor = (companyId, projectId, laborId, payload) =>
+  model.upsertProjectLabor(companyId, projectId, laborId, payload);
 
-export const removeProjectLabor = (userId, projectId, laborId) =>
-  model.removeProjectLabor(userId, projectId, laborId);
+export const removeProjectLabor = (companyId, projectId, laborId) =>
+  model.removeProjectLabor(companyId, projectId, laborId);

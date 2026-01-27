@@ -2,63 +2,64 @@ import * as model from "../models/bm.suppliers.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-export async function listSuppliers(userId, { q, status, page, limit }) {
+export async function listSuppliers(companyId, { q, status, page, limit }) {
   const safeLimit = clamp(Number(limit) || 20, 1, 100);
   const safePage = clamp(Number(page) || 1, 1, 10_000);
   const offset = (safePage - 1) * safeLimit;
 
   const [suppliers, total] = await Promise.all([
-    model.listSuppliers(userId, { q, status, limit: safeLimit, offset }),
-    model.countSuppliers(userId, { q, status }),
+    model.listSuppliers(companyId, { q, status, limit: safeLimit, offset }),
+    model.countSuppliers(companyId, { q, status }),
   ]);
 
   return { suppliers, page: safePage, limit: safeLimit, total };
 }
 
-export const getSupplier = (userId, supplierId) =>
-  model.getSupplier(userId, supplierId);
-export const createSupplier = (userId, payload) =>
-  model.createSupplier(userId, payload);
-export const updateSupplier = (userId, supplierId, payload) =>
-  model.updateSupplier(userId, supplierId, payload);
-export const archiveSupplier = (userId, supplierId) =>
-  model.archiveSupplier(userId, supplierId);
+export const getSupplier = (companyId, supplierId) =>
+  model.getSupplier(companyId, supplierId);
+export const createSupplier = (companyId, userId, payload) =>
+  model.createSupplier(companyId, userId, payload);
+export const updateSupplier = (companyId, supplierId, payload) =>
+  model.updateSupplier(companyId, supplierId, payload);
+export const archiveSupplier = (companyId, supplierId) =>
+  model.archiveSupplier(companyId, supplierId);
 
 // Contacts
-export async function listSupplierContacts(userId, supplierId) {
-  const exists = await model.supplierExists(userId, supplierId);
+export async function listSupplierContacts(companyId, supplierId) {
+  const exists = await model.supplierExists(companyId, supplierId);
   if (!exists) return null;
-  return model.listSupplierContacts(userId, supplierId);
+  return model.listSupplierContacts(companyId, supplierId);
 }
 
-export async function createSupplierContact(userId, supplierId, payload) {
-  const exists = await model.supplierExists(userId, supplierId);
+export const createSupplierContact = (companyId, supplierId, payload) =>
+  model.createSupplierContact(companyId, supplierId, payload);
+
+export const updateSupplierContact = (
+  companyId,
+  supplierId,
+  contactId,
+  payload
+) => model.updateSupplierContact(companyId, supplierId, contactId, payload);
+
+export const deleteSupplierContact = (companyId, supplierId, contactId) =>
+  model.deleteSupplierContact(companyId, supplierId, contactId);
+
+// Supplier ↔ materials
+export async function listSupplierMaterials(companyId, supplierId) {
+  const exists = await model.supplierExists(companyId, supplierId);
   if (!exists) return null;
-  return model.createSupplierContact(userId, supplierId, payload);
+  return model.listSupplierMaterials(companyId, supplierId);
 }
 
-export const updateSupplierContact = (userId, supplierId, contactId, payload) =>
-  model.updateSupplierContact(userId, supplierId, contactId, payload);
-
-export const deleteSupplierContact = (userId, supplierId, contactId) =>
-  model.deleteSupplierContact(userId, supplierId, contactId);
-
-// Supplier materials mapping
-export async function listSupplierMaterials(userId, supplierId) {
-  const exists = await model.supplierExists(userId, supplierId);
-  if (!exists) return null;
-  return model.listSupplierMaterials(userId, supplierId);
-}
-
-export const addSupplierMaterial = (userId, supplierId, payload) =>
-  model.addSupplierMaterial(userId, supplierId, payload);
+export const addSupplierMaterial = (companyId, supplierId, payload) =>
+  model.addSupplierMaterial(companyId, supplierId, payload);
 
 export const updateSupplierMaterial = (
-  userId,
+  companyId,
   supplierId,
   materialId,
   payload
-) => model.updateSupplierMaterial(userId, supplierId, materialId, payload);
+) => model.updateSupplierMaterial(companyId, supplierId, materialId, payload);
 
-export const removeSupplierMaterial = (userId, supplierId, materialId) =>
-  model.removeSupplierMaterial(userId, supplierId, materialId);
+export const removeSupplierMaterial = (companyId, supplierId, materialId) =>
+  model.removeSupplierMaterial(companyId, supplierId, materialId);

@@ -2,52 +2,40 @@ import * as model from "../models/bm.clients.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-export async function listClients(userId, { q, status, page, limit }) {
+export async function listClients(companyId, { q, status, page, limit }) {
   const safeLimit = clamp(Number(limit) || 20, 1, 100);
   const safePage = clamp(Number(page) || 1, 1, 10_000);
   const offset = (safePage - 1) * safeLimit;
 
   const [clients, total] = await Promise.all([
-    model.listClients(userId, { q, status, limit: safeLimit, offset }),
-    model.countClients(userId, { q, status }),
+    model.listClients(companyId, { q, status, limit: safeLimit, offset }),
+    model.countClients(companyId, { q, status }),
   ]);
 
   return { clients, page: safePage, limit: safeLimit, total };
 }
 
-export function getClient(userId, clientId) {
-  return model.getClient(userId, clientId);
-}
+export const getClient = (companyId, clientId) =>
+  model.getClient(companyId, clientId);
+export const createClient = (companyId, userId, payload) =>
+  model.createClient(companyId, userId, payload);
+export const updateClient = (companyId, clientId, payload) =>
+  model.updateClient(companyId, clientId, payload);
+export const archiveClient = (companyId, clientId) =>
+  model.archiveClient(companyId, clientId);
 
-export function createClient(userId, payload) {
-  return model.createClient(userId, payload);
-}
-
-export function updateClient(userId, clientId, payload) {
-  return model.updateClient(userId, clientId, payload);
-}
-
-export function archiveClient(userId, clientId) {
-  return model.archiveClient(userId, clientId);
-}
-
-// Contacts: return null when client does not exist for this user
-export async function listClientContacts(userId, clientId) {
-  const exists = await model.clientExists(userId, clientId);
+// Contacts
+export async function listClientContacts(companyId, clientId) {
+  const exists = await model.clientExists(companyId, clientId);
   if (!exists) return null;
-  return model.listClientContacts(userId, clientId);
+  return model.listClientContacts(companyId, clientId);
 }
 
-export async function createClientContact(userId, clientId, payload) {
-  const exists = await model.clientExists(userId, clientId);
-  if (!exists) return null;
-  return model.createClientContact(userId, clientId, payload);
-}
+export const createClientContact = (companyId, clientId, payload) =>
+  model.createClientContact(companyId, clientId, payload);
 
-export function updateClientContact(userId, clientId, contactId, payload) {
-  return model.updateClientContact(userId, clientId, contactId, payload);
-}
+export const updateClientContact = (companyId, clientId, contactId, payload) =>
+  model.updateClientContact(companyId, clientId, contactId, payload);
 
-export function deleteClientContact(userId, clientId, contactId) {
-  return model.deleteClientContact(userId, clientId, contactId);
-}
+export const deleteClientContact = (companyId, clientId, contactId) =>
+  model.deleteClientContact(companyId, clientId, contactId);

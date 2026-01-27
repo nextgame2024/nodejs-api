@@ -2,10 +2,10 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.materials.service.js";
 
 export const listMaterials = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { q, status, page = "1", limit = "20" } = req.query;
 
-  const result = await service.listMaterials(userId, {
+  const result = await service.listMaterials(companyId, {
     q,
     status,
     page: Number(page),
@@ -16,16 +16,17 @@ export const listMaterials = asyncHandler(async (req, res) => {
 });
 
 export const getMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { materialId } = req.params;
 
-  const material = await service.getMaterial(userId, materialId);
+  const material = await service.getMaterial(companyId, materialId);
   if (!material) return res.status(404).json({ error: "Material not found" });
 
   res.json({ material });
 });
 
 export const createMaterial = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
   const userId = req.user.id;
   const payload = req.body?.material || req.body || {};
 
@@ -34,26 +35,26 @@ export const createMaterial = asyncHandler(async (req, res) => {
   if (payload.unit_cost === undefined)
     return res.status(400).json({ error: "unit_cost is required" });
 
-  const material = await service.createMaterial(userId, payload);
+  const material = await service.createMaterial(companyId, userId, payload);
   res.status(201).json({ material });
 });
 
 export const updateMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { materialId } = req.params;
   const payload = req.body?.material || req.body || {};
 
-  const material = await service.updateMaterial(userId, materialId, payload);
+  const material = await service.updateMaterial(companyId, materialId, payload);
   if (!material) return res.status(404).json({ error: "Material not found" });
 
   res.json({ material });
 });
 
 export const archiveMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { materialId } = req.params;
 
-  const ok = await service.archiveMaterial(userId, materialId);
+  const ok = await service.archiveMaterial(companyId, materialId);
   if (!ok) return res.status(404).json({ error: "Material not found" });
 
   res.status(204).send();

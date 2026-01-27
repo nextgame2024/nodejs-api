@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const CLIENT_SELECT = `
   client_id AS "clientId",
+  company_id AS "companyId",
   user_id AS "userId",
   client_name AS "clientName",
   address,
@@ -14,10 +15,10 @@ const CLIENT_SELECT = `
   updatedat AS "updatedAt"
 `;
 
-export async function listClients(userId, { q, status, limit, offset }) {
-  const params = [userId];
+export async function listClients(companyId, { q, status, limit, offset }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -45,10 +46,10 @@ export async function listClients(userId, { q, status, limit, offset }) {
   return rows;
 }
 
-export async function countClients(userId, { q, status }) {
-  const params = [userId];
+export async function countClients(companyId, { q, status }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -70,34 +71,35 @@ export async function countClients(userId, { q, status }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getClient(userId, clientId) {
+export async function getClient(companyId, clientId) {
   const { rows } = await pool.query(
     `SELECT ${CLIENT_SELECT}
      FROM bm_clients
-     WHERE user_id = $1 AND client_id = $2
+     WHERE company_id = $1 AND client_id = $2
      LIMIT 1`,
-    [userId, clientId]
+    [companyId, clientId]
   );
   return rows[0];
 }
 
-export async function clientExists(userId, clientId) {
+export async function clientExists(companyId, clientId) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM bm_clients WHERE user_id = $1 AND client_id = $2 LIMIT 1`,
-    [userId, clientId]
+    `SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $2 LIMIT 1`,
+    [companyId, clientId]
   );
   return rows.length > 0;
 }
 
-export async function createClient(userId, payload) {
+export async function createClient(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_clients (
-        client_id, user_id, client_name, address, email, cel, tel, notes
+        client_id, company_id, user_id, client_name, address, email, cel, tel, notes
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
      )
      RETURNING ${CLIENT_SELECT}`,
     [
+      companyId,
       userId,
       payload.client_name,
       payload.address ?? null,
@@ -110,9 +112,9 @@ export async function createClient(userId, payload) {
   return rows[0];
 }
 
-export async function updateClient(userId, clientId, payload) {
+export async function updateClient(companyId, clientId, payload) {
   const sets = [];
-  const params = [userId, clientId];
+  const params = [companyId, clientId];
   let i = 3;
 
   const map = {
@@ -132,26 +134,26 @@ export async function updateClient(userId, clientId, payload) {
     }
   }
 
-  if (!sets.length) return getClient(userId, clientId);
+  if (!sets.length) return getClient(companyId, clientId);
 
   sets.push(`updatedat = NOW()`);
 
   const { rows } = await pool.query(
     `UPDATE bm_clients
      SET ${sets.join(", ")}
-     WHERE user_id = $1 AND client_id = $2
+     WHERE company_id = $1 AND client_id = $2
      RETURNING ${CLIENT_SELECT}`,
     params
   );
   return rows[0];
 }
 
-export async function archiveClient(userId, clientId) {
+export async function archiveClient(companyId, clientId) {
   const res = await pool.query(
     `UPDATE bm_clients
      SET status = 'archived', updatedat = NOW()
-     WHERE user_id = $1 AND client_id = $2`,
-    [userId, clientId]
+     WHERE company_id = $1 AND client_id = $2`,
+    [companyId, clientId]
   );
   return res.rowCount > 0;
 }
@@ -159,6 +161,7 @@ export async function archiveClient(userId, clientId) {
 /* Contacts */
 const CONTACT_SELECT = `
   id AS "contactId",
+  company_id AS "companyId",
   client_id AS "clientId",
   name,
   role_title AS "roleTitle",
@@ -168,32 +171,32 @@ const CONTACT_SELECT = `
   createdat AS "createdAt"
 `;
 
-export async function listClientContacts(userId, clientId) {
+export async function listClientContacts(companyId, clientId) {
   const { rows } = await pool.query(
     `
       SELECT ${CONTACT_SELECT}
       FROM bm_client_contacts c
       JOIN bm_clients cl ON cl.client_id = c.client_id
-      WHERE cl.user_id = $1 AND c.client_id = $2
+      WHERE cl.company_id = $1 AND c.client_id = $2
       ORDER BY c.createdat DESC
       `,
-    [userId, clientId]
+    [companyId, clientId]
   );
   return rows;
 }
 
-export async function createClientContact(userId, clientId, payload) {
+export async function createClientContact(companyId, clientId, payload) {
   const { rows } = await pool.query(
     `
-    INSERT INTO bm_client_contacts (id, client_id, name, role_title, email, cel, tel)
-    SELECT gen_random_uuid(), $2, $3, $4, $5, $6, $7
+    INSERT INTO bm_client_contacts (id, company_id, client_id, name, role_title, email, cel, tel)
+    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
     WHERE EXISTS (
-      SELECT 1 FROM bm_clients WHERE user_id = $1 AND client_id = $2
+      SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $2
     )
     RETURNING ${CONTACT_SELECT}
     `,
     [
-      userId,
+      companyId,
       clientId,
       payload.name,
       payload.role_title ?? null,
@@ -206,13 +209,13 @@ export async function createClientContact(userId, clientId, payload) {
 }
 
 export async function updateClientContact(
-  userId,
+  companyId,
   clientId,
   contactId,
   payload
 ) {
   const sets = [];
-  const params = [userId, clientId, contactId];
+  const params = [companyId, clientId, contactId];
   let i = 4;
 
   const map = {
@@ -236,10 +239,10 @@ export async function updateClientContact(
       SELECT ${CONTACT_SELECT}
       FROM bm_client_contacts c
       JOIN bm_clients cl ON cl.client_id = c.client_id
-      WHERE cl.user_id = $1 AND c.client_id = $2 AND c.id = $3
+      WHERE cl.company_id = $1 AND c.client_id = $2 AND c.id = $3
       LIMIT 1
       `,
-      [userId, clientId, contactId]
+      [companyId, clientId, contactId]
     );
     return rows[0] || null;
   }
@@ -250,7 +253,7 @@ export async function updateClientContact(
     SET ${sets.join(", ")}
     FROM bm_clients cl
     WHERE cl.client_id = c.client_id
-      AND cl.user_id = $1
+      AND cl.company_id = $1
       AND c.client_id = $2
       AND c.id = $3
     RETURNING ${CONTACT_SELECT}
@@ -261,17 +264,17 @@ export async function updateClientContact(
   return rows[0] || null;
 }
 
-export async function deleteClientContact(userId, clientId, contactId) {
+export async function deleteClientContact(companyId, clientId, contactId) {
   const res = await pool.query(
     `
     DELETE FROM bm_client_contacts c
     USING bm_clients cl
     WHERE cl.client_id = c.client_id
-      AND cl.user_id = $1
+      AND cl.company_id = $1
       AND c.client_id = $2
       AND c.id = $3
     `,
-    [userId, clientId, contactId]
+    [companyId, clientId, contactId]
   );
   return res.rowCount > 0;
 }

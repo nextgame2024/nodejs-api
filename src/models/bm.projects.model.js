@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const PROJECT_SELECT = `
   p.project_id AS "projectId",
+  p.company_id AS "companyId",
   p.user_id AS "userId",
   p.client_id AS "clientId",
   c.client_name AS "clientName",
@@ -15,12 +16,12 @@ const PROJECT_SELECT = `
 `;
 
 export async function listProjects(
-  userId,
+  companyId,
   { q, status, clientId, limit, offset }
 ) {
-  const params = [userId];
+  const params = [companyId];
   let i = 2;
-  const where = [`p.user_id = $1`];
+  const where = [`p.company_id = $1`];
 
   if (status) {
     where.push(`p.status = $${i++}`);
@@ -42,7 +43,9 @@ export async function listProjects(
     `
     SELECT ${PROJECT_SELECT}
     FROM bm_projects p
-    JOIN bm_clients c ON c.client_id = p.client_id
+    JOIN bm_clients c
+      ON c.client_id = p.client_id
+     AND c.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     ORDER BY p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
@@ -53,10 +56,10 @@ export async function listProjects(
   return rows;
 }
 
-export async function countProjects(userId, { q, status, clientId }) {
-  const params = [userId];
+export async function countProjects(companyId, { q, status, clientId }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`p.user_id = $1`];
+  const where = [`p.company_id = $1`];
 
   if (status) {
     where.push(`p.status = $${i++}`);
@@ -76,7 +79,9 @@ export async function countProjects(userId, { q, status, clientId }) {
     `
     SELECT COUNT(*)::int AS total
     FROM bm_projects p
-    JOIN bm_clients c ON c.client_id = p.client_id
+    JOIN bm_clients c
+      ON c.client_id = p.client_id
+     AND c.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     `,
     params
@@ -85,42 +90,44 @@ export async function countProjects(userId, { q, status, clientId }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getProject(userId, projectId) {
+export async function getProject(companyId, projectId) {
   const { rows } = await pool.query(
     `
     SELECT ${PROJECT_SELECT}
     FROM bm_projects p
-    JOIN bm_clients c ON c.client_id = p.client_id
-    WHERE p.user_id = $1 AND p.project_id = $2
+    JOIN bm_clients c
+      ON c.client_id = p.client_id
+     AND c.company_id = p.company_id
+    WHERE p.company_id = $1 AND p.project_id = $2
     LIMIT 1
     `,
-    [userId, projectId]
+    [companyId, projectId]
   );
   return rows[0];
 }
 
-export async function projectExists(userId, projectId) {
+export async function projectExists(companyId, projectId) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM bm_projects WHERE user_id = $1 AND project_id = $2 LIMIT 1`,
-    [userId, projectId]
+    `SELECT 1 FROM bm_projects WHERE company_id = $1 AND project_id = $2 LIMIT 1`,
+    [companyId, projectId]
   );
   return rows.length > 0;
 }
 
-export async function createProject(userId, payload) {
-  // Ensure client belongs to user
+export async function createProject(companyId, userId, payload) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_projects (
-      project_id, user_id, client_id, project_name, description, status, default_pricing, pricing_profile_id
+      project_id, company_id, user_id, client_id, project_name, description, status, default_pricing, pricing_profile_id
     )
-    SELECT gen_random_uuid(), $1, $2, $3, $4, COALESCE($5, 'to_do'), COALESCE($6, true), $7
+    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, COALESCE($6, 'to_do'), COALESCE($7, true), $8
     WHERE EXISTS (
-      SELECT 1 FROM bm_clients WHERE user_id = $1 AND client_id = $2
+      SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
     )
     RETURNING project_id
     `,
     [
+      companyId,
       userId,
       payload.client_id,
       payload.project_name,
@@ -132,12 +139,12 @@ export async function createProject(userId, payload) {
   );
 
   if (!rows[0]) return null;
-  return getProject(userId, rows[0].project_id);
+  return getProject(companyId, rows[0].project_id);
 }
 
-export async function updateProject(userId, projectId, payload) {
+export async function updateProject(companyId, projectId, payload) {
   const sets = [];
-  const params = [userId, projectId];
+  const params = [companyId, projectId];
   let i = 3;
 
   const map = {
@@ -152,9 +159,8 @@ export async function updateProject(userId, projectId, payload) {
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       if (k === "client_id") {
-        // Validate new client belongs to user by setting via subquery
         sets.push(
-          `${col} = (SELECT client_id FROM bm_clients WHERE user_id = $1 AND client_id = $${i})`
+          `${col} = (SELECT client_id FROM bm_clients WHERE company_id = $1 AND client_id = $${i})`
         );
         params.push(payload[k]);
         i++;
@@ -165,7 +171,7 @@ export async function updateProject(userId, projectId, payload) {
     }
   }
 
-  if (!sets.length) return getProject(userId, projectId);
+  if (!sets.length) return getProject(companyId, projectId);
 
   sets.push(`updatedat = NOW()`);
 
@@ -173,23 +179,23 @@ export async function updateProject(userId, projectId, payload) {
     `
     UPDATE bm_projects
     SET ${sets.join(", ")}
-    WHERE user_id = $1 AND project_id = $2
+    WHERE company_id = $1 AND project_id = $2
     RETURNING project_id
     `,
     params
   );
 
-  return rows[0] ? getProject(userId, projectId) : null;
+  return rows[0] ? getProject(companyId, projectId) : null;
 }
 
-export async function archiveProject(userId, projectId) {
+export async function archiveProject(companyId, projectId) {
   const res = await pool.query(
     `
     UPDATE bm_projects
     SET status = 'cancelled', updatedat = NOW()
-    WHERE user_id = $1 AND project_id = $2
+    WHERE company_id = $1 AND project_id = $2
     `,
-    [userId, projectId]
+    [companyId, projectId]
   );
   return res.rowCount > 0;
 }
@@ -205,23 +211,23 @@ const PROJECT_MATERIAL_SELECT = `
   pm.notes
 `;
 
-export async function listProjectMaterials(userId, projectId) {
+export async function listProjectMaterials(companyId, projectId) {
   const { rows } = await pool.query(
     `
     SELECT ${PROJECT_MATERIAL_SELECT}
     FROM bm_project_materials pm
     JOIN bm_projects p ON p.project_id = pm.project_id
     JOIN bm_materials m ON m.material_id = pm.material_id
-    WHERE p.user_id = $1 AND pm.project_id = $2 AND m.user_id = $1
+    WHERE p.company_id = $1 AND pm.project_id = $2 AND m.company_id = $1
     ORDER BY m.material_name ASC
     `,
-    [userId, projectId]
+    [companyId, projectId]
   );
   return rows;
 }
 
 export async function upsertProjectMaterial(
-  userId,
+  companyId,
   projectId,
   materialId,
   payload
@@ -229,11 +235,11 @@ export async function upsertProjectMaterial(
   const { rows } = await pool.query(
     `
     INSERT INTO bm_project_materials (
-      project_id, material_id, quantity, unit_cost_override, sell_cost_override, notes
+      company_id, project_id, material_id, quantity, unit_cost_override, sell_cost_override, notes
     )
-    SELECT $2, $3, COALESCE($4, 1), $5, $6, $7
-    WHERE EXISTS (SELECT 1 FROM bm_projects WHERE user_id = $1 AND project_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_materials WHERE user_id = $1 AND material_id = $3)
+    SELECT $1, $2, $3, COALESCE($4, 1), $5, $6, $7
+    WHERE EXISTS (SELECT 1 FROM bm_projects WHERE company_id = $1 AND project_id = $2)
+      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
     ON CONFLICT (project_id, material_id) DO UPDATE SET
       quantity = EXCLUDED.quantity,
       unit_cost_override = EXCLUDED.unit_cost_override,
@@ -242,7 +248,7 @@ export async function upsertProjectMaterial(
     RETURNING project_id, material_id
     `,
     [
-      userId,
+      companyId,
       projectId,
       materialId,
       payload.quantity ?? 1,
@@ -260,26 +266,26 @@ export async function upsertProjectMaterial(
     FROM bm_project_materials pm
     JOIN bm_projects p ON p.project_id = pm.project_id
     JOIN bm_materials m ON m.material_id = pm.material_id
-    WHERE p.user_id = $1 AND pm.project_id = $2 AND pm.material_id = $3
+    WHERE p.company_id = $1 AND pm.project_id = $2 AND pm.material_id = $3
     LIMIT 1
     `,
-    [userId, projectId, materialId]
+    [companyId, projectId, materialId]
   );
 
   return out[0] || null;
 }
 
-export async function removeProjectMaterial(userId, projectId, materialId) {
+export async function removeProjectMaterial(companyId, projectId, materialId) {
   const res = await pool.query(
     `
     DELETE FROM bm_project_materials pm
     USING bm_projects p
     WHERE pm.project_id = p.project_id
-      AND p.user_id = $1
+      AND p.company_id = $1
       AND pm.project_id = $2
       AND pm.material_id = $3
     `,
-    [userId, projectId, materialId]
+    [companyId, projectId, materialId]
   );
   return res.rowCount > 0;
 }
@@ -296,30 +302,35 @@ const PROJECT_LABOR_SELECT = `
   pl.notes
 `;
 
-export async function listProjectLabor(userId, projectId) {
+export async function listProjectLabor(companyId, projectId) {
   const { rows } = await pool.query(
     `
     SELECT ${PROJECT_LABOR_SELECT}
     FROM bm_project_labor pl
     JOIN bm_projects p ON p.project_id = pl.project_id
     JOIN bm_labor l ON l.labor_id = pl.labor_id
-    WHERE p.user_id = $1 AND pl.project_id = $2 AND l.user_id = $1
+    WHERE p.company_id = $1 AND pl.project_id = $2 AND l.company_id = $1
     ORDER BY l.labor_name ASC
     `,
-    [userId, projectId]
+    [companyId, projectId]
   );
   return rows;
 }
 
-export async function upsertProjectLabor(userId, projectId, laborId, payload) {
+export async function upsertProjectLabor(
+  companyId,
+  projectId,
+  laborId,
+  payload
+) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_project_labor (
-      project_id, labor_id, quantity, unit_cost_override, sell_cost_override, notes
+      company_id, project_id, labor_id, quantity, unit_cost_override, sell_cost_override, notes
     )
-    SELECT $2, $3, COALESCE($4, 1), $5, $6, $7
-    WHERE EXISTS (SELECT 1 FROM bm_projects WHERE user_id = $1 AND project_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_labor WHERE user_id = $1 AND labor_id = $3)
+    SELECT $1, $2, $3, COALESCE($4, 1), $5, $6, $7
+    WHERE EXISTS (SELECT 1 FROM bm_projects WHERE company_id = $1 AND project_id = $2)
+      AND EXISTS (SELECT 1 FROM bm_labor WHERE company_id = $1 AND labor_id = $3)
     ON CONFLICT (project_id, labor_id) DO UPDATE SET
       quantity = EXCLUDED.quantity,
       unit_cost_override = EXCLUDED.unit_cost_override,
@@ -328,7 +339,7 @@ export async function upsertProjectLabor(userId, projectId, laborId, payload) {
     RETURNING project_id, labor_id
     `,
     [
-      userId,
+      companyId,
       projectId,
       laborId,
       payload.quantity ?? 1,
@@ -346,26 +357,26 @@ export async function upsertProjectLabor(userId, projectId, laborId, payload) {
     FROM bm_project_labor pl
     JOIN bm_projects p ON p.project_id = pl.project_id
     JOIN bm_labor l ON l.labor_id = pl.labor_id
-    WHERE p.user_id = $1 AND pl.project_id = $2 AND pl.labor_id = $3
+    WHERE p.company_id = $1 AND pl.project_id = $2 AND pl.labor_id = $3
     LIMIT 1
     `,
-    [userId, projectId, laborId]
+    [companyId, projectId, laborId]
   );
 
   return out[0] || null;
 }
 
-export async function removeProjectLabor(userId, projectId, laborId) {
+export async function removeProjectLabor(companyId, projectId, laborId) {
   const res = await pool.query(
     `
     DELETE FROM bm_project_labor pl
     USING bm_projects p
     WHERE pl.project_id = p.project_id
-      AND p.user_id = $1
+      AND p.company_id = $1
       AND pl.project_id = $2
       AND pl.labor_id = $3
     `,
-    [userId, projectId, laborId]
+    [companyId, projectId, laborId]
   );
   return res.rowCount > 0;
 }

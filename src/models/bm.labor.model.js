@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const LABOR_SELECT = `
   labor_id AS "laborId",
+  company_id AS "companyId",
   user_id AS "userId",
   labor_name AS "laborName",
   unit_type AS "unitType",
@@ -14,10 +15,10 @@ const LABOR_SELECT = `
   updatedat AS "updatedAt"
 `;
 
-export async function listLabor(userId, { q, status, limit, offset }) {
-  const params = [userId];
+export async function listLabor(companyId, { q, status, limit, offset }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -45,10 +46,10 @@ export async function listLabor(userId, { q, status, limit, offset }) {
   return rows;
 }
 
-export async function countLabor(userId, { q, status }) {
-  const params = [userId];
+export async function countLabor(companyId, { q, status }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -69,27 +70,28 @@ export async function countLabor(userId, { q, status }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getLabor(userId, laborId) {
+export async function getLabor(companyId, laborId) {
   const { rows } = await pool.query(
     `SELECT ${LABOR_SELECT}
      FROM bm_labor
-     WHERE user_id = $1 AND labor_id = $2
+     WHERE company_id = $1 AND labor_id = $2
      LIMIT 1`,
-    [userId, laborId]
+    [companyId, laborId]
   );
   return rows[0];
 }
 
-export async function createLabor(userId, payload) {
+export async function createLabor(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_labor (
-        labor_id, user_id, labor_name, unit_type, unit_cost, sell_cost,
+        labor_id, company_id, user_id, labor_name, unit_type, unit_cost, sell_cost,
         unit_productivity, productivity_unit
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
      )
      RETURNING ${LABOR_SELECT}`,
     [
+      companyId,
       userId,
       payload.labor_name,
       payload.unit_type ?? "hour",
@@ -102,9 +104,9 @@ export async function createLabor(userId, payload) {
   return rows[0];
 }
 
-export async function updateLabor(userId, laborId, payload) {
+export async function updateLabor(companyId, laborId, payload) {
   const sets = [];
-  const params = [userId, laborId];
+  const params = [companyId, laborId];
   let i = 3;
 
   const map = {
@@ -124,14 +126,14 @@ export async function updateLabor(userId, laborId, payload) {
     }
   }
 
-  if (!sets.length) return getLabor(userId, laborId);
+  if (!sets.length) return getLabor(companyId, laborId);
 
   sets.push(`updatedat = NOW()`);
 
   const { rows } = await pool.query(
     `UPDATE bm_labor
      SET ${sets.join(", ")}
-     WHERE user_id = $1 AND labor_id = $2
+     WHERE company_id = $1 AND labor_id = $2
      RETURNING ${LABOR_SELECT}`,
     params
   );
@@ -139,12 +141,12 @@ export async function updateLabor(userId, laborId, payload) {
   return rows[0];
 }
 
-export async function archiveLabor(userId, laborId) {
+export async function archiveLabor(companyId, laborId) {
   const res = await pool.query(
     `UPDATE bm_labor
      SET status = 'archived', updatedat = NOW()
-     WHERE user_id = $1 AND labor_id = $2`,
-    [userId, laborId]
+     WHERE company_id = $1 AND labor_id = $2`,
+    [companyId, laborId]
   );
   return res.rowCount > 0;
 }

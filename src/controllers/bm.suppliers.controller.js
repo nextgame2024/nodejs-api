@@ -2,56 +2,57 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.suppliers.service.js";
 
 export const listSuppliers = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { q, status, page = "1", limit = "20" } = req.query;
 
-  const result = await service.listSuppliers(userId, {
+  const result = await service.listSuppliers(companyId, {
     q,
     status,
     page: Number(page),
     limit: Number(limit),
   });
 
-  res.json(result); // { suppliers, page, limit, total }
+  res.json(result);
 });
 
 export const getSupplier = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
 
-  const supplier = await service.getSupplier(userId, supplierId);
+  const supplier = await service.getSupplier(companyId, supplierId);
   if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
   res.json({ supplier });
 });
 
 export const createSupplier = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
   const userId = req.user.id;
   const payload = req.body?.supplier || req.body || {};
 
   if (!payload.supplier_name)
     return res.status(400).json({ error: "supplier_name is required" });
 
-  const supplier = await service.createSupplier(userId, payload);
+  const supplier = await service.createSupplier(companyId, userId, payload);
   res.status(201).json({ supplier });
 });
 
 export const updateSupplier = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
   const payload = req.body?.supplier || req.body || {};
 
-  const supplier = await service.updateSupplier(userId, supplierId, payload);
+  const supplier = await service.updateSupplier(companyId, supplierId, payload);
   if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
   res.json({ supplier });
 });
 
 export const archiveSupplier = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
 
-  const ok = await service.archiveSupplier(userId, supplierId);
+  const ok = await service.archiveSupplier(companyId, supplierId);
   if (!ok) return res.status(404).json({ error: "Supplier not found" });
 
   res.status(204).send();
@@ -59,10 +60,10 @@ export const archiveSupplier = asyncHandler(async (req, res) => {
 
 // Contacts
 export const listSupplierContacts = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
 
-  const contacts = await service.listSupplierContacts(userId, supplierId);
+  const contacts = await service.listSupplierContacts(companyId, supplierId);
   if (contacts === null)
     return res.status(404).json({ error: "Supplier not found" });
 
@@ -70,7 +71,7 @@ export const listSupplierContacts = asyncHandler(async (req, res) => {
 });
 
 export const createSupplierContact = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
   const payload = req.body?.contact || req.body || {};
 
@@ -78,7 +79,7 @@ export const createSupplierContact = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "contact name is required" });
 
   const contact = await service.createSupplierContact(
-    userId,
+    companyId,
     supplierId,
     payload
   );
@@ -88,12 +89,12 @@ export const createSupplierContact = asyncHandler(async (req, res) => {
 });
 
 export const updateSupplierContact = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId, contactId } = req.params;
   const payload = req.body?.contact || req.body || {};
 
   const contact = await service.updateSupplierContact(
-    userId,
+    companyId,
     supplierId,
     contactId,
     payload
@@ -104,21 +105,25 @@ export const updateSupplierContact = asyncHandler(async (req, res) => {
 });
 
 export const deleteSupplierContact = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId, contactId } = req.params;
 
-  const ok = await service.deleteSupplierContact(userId, supplierId, contactId);
+  const ok = await service.deleteSupplierContact(
+    companyId,
+    supplierId,
+    contactId
+  );
   if (!ok) return res.status(404).json({ error: "Contact not found" });
 
   res.status(204).send();
 });
 
-// Supplier materials mapping
+// Supplier ↔ Materials
 export const listSupplierMaterials = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
 
-  const materials = await service.listSupplierMaterials(userId, supplierId);
+  const materials = await service.listSupplierMaterials(companyId, supplierId);
   if (materials === null)
     return res.status(404).json({ error: "Supplier not found" });
 
@@ -126,14 +131,14 @@ export const listSupplierMaterials = asyncHandler(async (req, res) => {
 });
 
 export const addSupplierMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId } = req.params;
   const payload = req.body?.supplierMaterial || req.body || {};
 
   if (!payload.material_id)
     return res.status(400).json({ error: "material_id is required" });
 
-  const row = await service.addSupplierMaterial(userId, supplierId, payload);
+  const row = await service.addSupplierMaterial(companyId, supplierId, payload);
   if (!row)
     return res
       .status(404)
@@ -143,12 +148,12 @@ export const addSupplierMaterial = asyncHandler(async (req, res) => {
 });
 
 export const updateSupplierMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId, materialId } = req.params;
   const payload = req.body?.supplierMaterial || req.body || {};
 
   const row = await service.updateSupplierMaterial(
-    userId,
+    companyId,
     supplierId,
     materialId,
     payload
@@ -162,11 +167,11 @@ export const updateSupplierMaterial = asyncHandler(async (req, res) => {
 });
 
 export const removeSupplierMaterial = asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const companyId = req.user.companyId;
   const { supplierId, materialId } = req.params;
 
   const ok = await service.removeSupplierMaterial(
-    userId,
+    companyId,
     supplierId,
     materialId
   );

@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const MATERIAL_SELECT = `
   material_id AS "materialId",
+  company_id AS "companyId",
   user_id AS "userId",
   type,
   material_name AS "materialName",
@@ -15,10 +16,10 @@ const MATERIAL_SELECT = `
   updatedat AS "updatedAt"
 `;
 
-export async function listMaterials(userId, { q, status, limit, offset }) {
-  const params = [userId];
+export async function listMaterials(companyId, { q, status, limit, offset }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -48,10 +49,10 @@ export async function listMaterials(userId, { q, status, limit, offset }) {
   return rows;
 }
 
-export async function countMaterials(userId, { q, status }) {
-  const params = [userId];
+export async function countMaterials(companyId, { q, status }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -72,26 +73,27 @@ export async function countMaterials(userId, { q, status }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getMaterial(userId, materialId) {
+export async function getMaterial(companyId, materialId) {
   const { rows } = await pool.query(
     `SELECT ${MATERIAL_SELECT}
      FROM bm_materials
-     WHERE user_id = $1 AND material_id = $2
+     WHERE company_id = $1 AND material_id = $2
      LIMIT 1`,
-    [userId, materialId]
+    [companyId, materialId]
   );
   return rows[0];
 }
 
-export async function createMaterial(userId, payload) {
+export async function createMaterial(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_materials (
-        material_id, user_id, type, material_name, unit_cost, sell_cost, code, category, notes
+        material_id, company_id, user_id, type, material_name, unit_cost, sell_cost, code, category, notes
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9
      )
      RETURNING ${MATERIAL_SELECT}`,
     [
+      companyId,
       userId,
       payload.type ?? null,
       payload.material_name,
@@ -105,9 +107,9 @@ export async function createMaterial(userId, payload) {
   return rows[0];
 }
 
-export async function updateMaterial(userId, materialId, payload) {
+export async function updateMaterial(companyId, materialId, payload) {
   const sets = [];
-  const params = [userId, materialId];
+  const params = [companyId, materialId];
   let i = 3;
 
   const map = {
@@ -128,25 +130,25 @@ export async function updateMaterial(userId, materialId, payload) {
     }
   }
 
-  if (!sets.length) return getMaterial(userId, materialId);
+  if (!sets.length) return getMaterial(companyId, materialId);
   sets.push(`updatedat = NOW()`);
 
   const { rows } = await pool.query(
     `UPDATE bm_materials
      SET ${sets.join(", ")}
-     WHERE user_id = $1 AND material_id = $2
+     WHERE company_id = $1 AND material_id = $2
      RETURNING ${MATERIAL_SELECT}`,
     params
   );
   return rows[0];
 }
 
-export async function archiveMaterial(userId, materialId) {
+export async function archiveMaterial(companyId, materialId) {
   const res = await pool.query(
     `UPDATE bm_materials
      SET status = 'archived', updatedat = NOW()
-     WHERE user_id = $1 AND material_id = $2`,
-    [userId, materialId]
+     WHERE company_id = $1 AND material_id = $2`,
+    [companyId, materialId]
   );
   return res.rowCount > 0;
 }

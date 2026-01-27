@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 const SUPPLIER_SELECT = `
   supplier_id AS "supplierId",
+  company_id AS "companyId",
   user_id AS "userId",
   supplier_name AS "supplierName",
   address,
@@ -14,10 +15,10 @@ const SUPPLIER_SELECT = `
   updatedat AS "updatedAt"
 `;
 
-export async function listSuppliers(userId, { q, status, limit, offset }) {
-  const params = [userId];
+export async function listSuppliers(companyId, { q, status, limit, offset }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -45,10 +46,10 @@ export async function listSuppliers(userId, { q, status, limit, offset }) {
   return rows;
 }
 
-export async function countSuppliers(userId, { q, status }) {
-  const params = [userId];
+export async function countSuppliers(companyId, { q, status }) {
+  const params = [companyId];
   let i = 2;
-  const where = [`user_id = $1`];
+  const where = [`company_id = $1`];
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -70,34 +71,35 @@ export async function countSuppliers(userId, { q, status }) {
   return rows[0]?.total ?? 0;
 }
 
-export async function getSupplier(userId, supplierId) {
+export async function getSupplier(companyId, supplierId) {
   const { rows } = await pool.query(
     `SELECT ${SUPPLIER_SELECT}
      FROM bm_suppliers
-     WHERE user_id = $1 AND supplier_id = $2
+     WHERE company_id = $1 AND supplier_id = $2
      LIMIT 1`,
-    [userId, supplierId]
+    [companyId, supplierId]
   );
   return rows[0];
 }
 
-export async function supplierExists(userId, supplierId) {
+export async function supplierExists(companyId, supplierId) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM bm_suppliers WHERE user_id = $1 AND supplier_id = $2 LIMIT 1`,
-    [userId, supplierId]
+    `SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2 LIMIT 1`,
+    [companyId, supplierId]
   );
   return rows.length > 0;
 }
 
-export async function createSupplier(userId, payload) {
+export async function createSupplier(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_suppliers (
-        supplier_id, user_id, supplier_name, address, email, cel, tel, notes
+        supplier_id, company_id, user_id, supplier_name, address, email, cel, tel, notes
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
      )
      RETURNING ${SUPPLIER_SELECT}`,
     [
+      companyId,
       userId,
       payload.supplier_name,
       payload.address ?? null,
@@ -110,9 +112,9 @@ export async function createSupplier(userId, payload) {
   return rows[0];
 }
 
-export async function updateSupplier(userId, supplierId, payload) {
+export async function updateSupplier(companyId, supplierId, payload) {
   const sets = [];
-  const params = [userId, supplierId];
+  const params = [companyId, supplierId];
   let i = 3;
 
   const map = {
@@ -132,26 +134,26 @@ export async function updateSupplier(userId, supplierId, payload) {
     }
   }
 
-  if (!sets.length) return getSupplier(userId, supplierId);
+  if (!sets.length) return getSupplier(companyId, supplierId);
 
   sets.push(`updatedat = NOW()`);
 
   const { rows } = await pool.query(
     `UPDATE bm_suppliers
      SET ${sets.join(", ")}
-     WHERE user_id = $1 AND supplier_id = $2
+     WHERE company_id = $1 AND supplier_id = $2
      RETURNING ${SUPPLIER_SELECT}`,
     params
   );
   return rows[0];
 }
 
-export async function archiveSupplier(userId, supplierId) {
+export async function archiveSupplier(companyId, supplierId) {
   const res = await pool.query(
     `UPDATE bm_suppliers
      SET status = 'archived', updatedat = NOW()
-     WHERE user_id = $1 AND supplier_id = $2`,
-    [userId, supplierId]
+     WHERE company_id = $1 AND supplier_id = $2`,
+    [companyId, supplierId]
   );
   return res.rowCount > 0;
 }
@@ -159,6 +161,7 @@ export async function archiveSupplier(userId, supplierId) {
 /* Contacts */
 const CONTACT_SELECT = `
   id AS "contactId",
+  company_id AS "companyId",
   supplier_id AS "supplierId",
   name,
   role_title AS "roleTitle",
@@ -168,32 +171,32 @@ const CONTACT_SELECT = `
   createdat AS "createdAt"
 `;
 
-export async function listSupplierContacts(userId, supplierId) {
+export async function listSupplierContacts(companyId, supplierId) {
   const { rows } = await pool.query(
     `
     SELECT ${CONTACT_SELECT}
     FROM bm_supplier_contacts c
     JOIN bm_suppliers s ON s.supplier_id = c.supplier_id
-    WHERE s.user_id = $1 AND c.supplier_id = $2
+    WHERE s.company_id = $1 AND c.supplier_id = $2
     ORDER BY c.createdat DESC
     `,
-    [userId, supplierId]
+    [companyId, supplierId]
   );
   return rows;
 }
 
-export async function createSupplierContact(userId, supplierId, payload) {
+export async function createSupplierContact(companyId, supplierId, payload) {
   const { rows } = await pool.query(
     `
-    INSERT INTO bm_supplier_contacts (id, supplier_id, name, role_title, email, cel, tel)
-    SELECT gen_random_uuid(), $2, $3, $4, $5, $6, $7
+    INSERT INTO bm_supplier_contacts (id, company_id, supplier_id, name, role_title, email, cel, tel)
+    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
     WHERE EXISTS (
-      SELECT 1 FROM bm_suppliers WHERE user_id = $1 AND supplier_id = $2
+      SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2
     )
     RETURNING ${CONTACT_SELECT}
     `,
     [
-      userId,
+      companyId,
       supplierId,
       payload.name,
       payload.role_title ?? null,
@@ -206,13 +209,13 @@ export async function createSupplierContact(userId, supplierId, payload) {
 }
 
 export async function updateSupplierContact(
-  userId,
+  companyId,
   supplierId,
   contactId,
   payload
 ) {
   const sets = [];
-  const params = [userId, supplierId, contactId];
+  const params = [companyId, supplierId, contactId];
   let i = 4;
 
   const map = {
@@ -236,10 +239,10 @@ export async function updateSupplierContact(
       SELECT ${CONTACT_SELECT}
       FROM bm_supplier_contacts c
       JOIN bm_suppliers s ON s.supplier_id = c.supplier_id
-      WHERE s.user_id = $1 AND c.supplier_id = $2 AND c.id = $3
+      WHERE s.company_id = $1 AND c.supplier_id = $2 AND c.id = $3
       LIMIT 1
       `,
-      [userId, supplierId, contactId]
+      [companyId, supplierId, contactId]
     );
     return rows[0] || null;
   }
@@ -250,7 +253,7 @@ export async function updateSupplierContact(
     SET ${sets.join(", ")}
     FROM bm_suppliers s
     WHERE s.supplier_id = c.supplier_id
-      AND s.user_id = $1
+      AND s.company_id = $1
       AND c.supplier_id = $2
       AND c.id = $3
     RETURNING ${CONTACT_SELECT}
@@ -261,17 +264,17 @@ export async function updateSupplierContact(
   return rows[0] || null;
 }
 
-export async function deleteSupplierContact(userId, supplierId, contactId) {
+export async function deleteSupplierContact(companyId, supplierId, contactId) {
   const res = await pool.query(
     `
     DELETE FROM bm_supplier_contacts c
     USING bm_suppliers s
     WHERE s.supplier_id = c.supplier_id
-      AND s.user_id = $1
+      AND s.company_id = $1
       AND c.supplier_id = $2
       AND c.id = $3
     `,
-    [userId, supplierId, contactId]
+    [companyId, supplierId, contactId]
   );
   return res.rowCount > 0;
 }
@@ -286,31 +289,30 @@ const SUPPLIER_MATERIAL_SELECT = `
   sm.createdat AS "createdAt"
 `;
 
-export async function listSupplierMaterials(userId, supplierId) {
+export async function listSupplierMaterials(companyId, supplierId) {
   const { rows } = await pool.query(
     `
     SELECT ${SUPPLIER_MATERIAL_SELECT}
     FROM bm_supplier_materials sm
     JOIN bm_suppliers s ON s.supplier_id = sm.supplier_id
     JOIN bm_materials m ON m.material_id = sm.material_id
-    WHERE s.user_id = $1 AND sm.supplier_id = $2 AND m.user_id = $1
+    WHERE s.company_id = $1 AND sm.supplier_id = $2 AND m.company_id = $1
     ORDER BY sm.createdat DESC
     `,
-    [userId, supplierId]
+    [companyId, supplierId]
   );
   return rows;
 }
 
-export async function addSupplierMaterial(userId, supplierId, payload) {
-  // Ensure: supplier belongs to user; material belongs to user
+export async function addSupplierMaterial(companyId, supplierId, payload) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_supplier_materials (
-      supplier_id, material_id, supplier_sku, lead_time_days, unit_cost_override
+      company_id, supplier_id, material_id, supplier_sku, lead_time_days, unit_cost_override
     )
-    SELECT $2, $3, $4, $5, $6
-    WHERE EXISTS (SELECT 1 FROM bm_suppliers WHERE user_id = $1 AND supplier_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_materials WHERE user_id = $1 AND material_id = $3)
+    SELECT $1, $2, $3, $4, $5, $6
+    WHERE EXISTS (SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2)
+      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
     ON CONFLICT (supplier_id, material_id) DO UPDATE SET
       supplier_sku = EXCLUDED.supplier_sku,
       lead_time_days = EXCLUDED.lead_time_days,
@@ -324,7 +326,7 @@ export async function addSupplierMaterial(userId, supplierId, payload) {
       createdat AS "createdAt"
     `,
     [
-      userId,
+      companyId,
       supplierId,
       payload.material_id,
       payload.supplier_sku ?? null,
@@ -337,13 +339,13 @@ export async function addSupplierMaterial(userId, supplierId, payload) {
 }
 
 export async function updateSupplierMaterial(
-  userId,
+  companyId,
   supplierId,
   materialId,
   payload
 ) {
   const sets = [];
-  const params = [userId, supplierId, materialId];
+  const params = [companyId, supplierId, materialId];
   let i = 4;
 
   const map = {
@@ -366,10 +368,10 @@ export async function updateSupplierMaterial(
       FROM bm_supplier_materials sm
       JOIN bm_suppliers s ON s.supplier_id = sm.supplier_id
       JOIN bm_materials m ON m.material_id = sm.material_id
-      WHERE s.user_id = $1 AND sm.supplier_id = $2 AND sm.material_id = $3 AND m.user_id = $1
+      WHERE s.company_id = $1 AND sm.supplier_id = $2 AND sm.material_id = $3 AND m.company_id = $1
       LIMIT 1
       `,
-      [userId, supplierId, materialId]
+      [companyId, supplierId, materialId]
     );
     return rows[0] || null;
   }
@@ -381,8 +383,8 @@ export async function updateSupplierMaterial(
     FROM bm_suppliers s, bm_materials m
     WHERE sm.supplier_id = s.supplier_id
       AND sm.material_id = m.material_id
-      AND s.user_id = $1
-      AND m.user_id = $1
+      AND s.company_id = $1
+      AND m.company_id = $1
       AND sm.supplier_id = $2
       AND sm.material_id = $3
     RETURNING
@@ -399,19 +401,23 @@ export async function updateSupplierMaterial(
   return rows[0] || null;
 }
 
-export async function removeSupplierMaterial(userId, supplierId, materialId) {
+export async function removeSupplierMaterial(
+  companyId,
+  supplierId,
+  materialId
+) {
   const res = await pool.query(
     `
     DELETE FROM bm_supplier_materials sm
     USING bm_suppliers s, bm_materials m
     WHERE sm.supplier_id = s.supplier_id
       AND sm.material_id = m.material_id
-      AND s.user_id = $1
-      AND m.user_id = $1
+      AND s.company_id = $1
+      AND m.company_id = $1
       AND sm.supplier_id = $2
       AND sm.material_id = $3
     `,
-    [userId, supplierId, materialId]
+    [companyId, supplierId, materialId]
   );
   return res.rowCount > 0;
 }
