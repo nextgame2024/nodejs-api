@@ -1,3 +1,4 @@
+// src/controllers/bm.projects.controller.js
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.projects.service.js";
 
@@ -143,4 +144,37 @@ export const removeProjectLabor = asyncHandler(async (req, res) => {
   if (!ok) return res.status(404).json({ error: "Project labor not found" });
 
   res.status(204).send();
+});
+
+/**
+ * POST /api/bm/projects/:projectId/create-document
+ * Body: { type: "quote"|"invoice", doc_number?, issue_date?, due_date?, notes?, status? }
+ */
+export const createDocumentFromProject = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const userId = req.user.id;
+  const { projectId } = req.params;
+
+  const payload = req.body?.document || req.body || {};
+
+  if (!payload.type) {
+    return res.status(400).json({ error: "type is required (quote|invoice)" });
+  }
+  if (payload.type !== "quote" && payload.type !== "invoice") {
+    return res.status(400).json({ error: "type must be 'quote' or 'invoice'" });
+  }
+
+  const result = await service.createDocumentFromProject(
+    companyId,
+    userId,
+    projectId,
+    payload
+  );
+
+  if (!result) {
+    return res.status(404).json({ error: "Project not found" });
+  }
+
+  // result: { document, materialLines, laborLines }
+  res.status(201).json(result);
 });

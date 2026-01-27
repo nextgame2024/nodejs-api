@@ -1,4 +1,6 @@
+// src/services/bm.projects.service.js
 import * as model from "../models/bm.projects.model.js";
+import { createDocumentFromProject as createDocFromProject } from "../models/bm.documents.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
@@ -62,3 +64,16 @@ export const upsertProjectLabor = (companyId, projectId, laborId, payload) =>
 
 export const removeProjectLabor = (companyId, projectId, laborId) =>
   model.removeProjectLabor(companyId, projectId, laborId);
+
+/**
+ * Create a quote/invoice from a project using its materials/labor.
+ * Delegates to bm.documents.model.js helper.
+ */
+export async function createDocumentFromProject(
+  companyId,
+  userId,
+  projectId,
+  payload
+) {
+  return createDocFromProject(companyId, userId, projectId, payload);
+}
