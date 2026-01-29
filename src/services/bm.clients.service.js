@@ -17,10 +17,13 @@ export async function listClients(companyId, { q, status, page, limit }) {
 
 export const getClient = (companyId, clientId) =>
   model.getClient(companyId, clientId);
+
 export const createClient = (companyId, userId, payload) =>
   model.createClient(companyId, userId, payload);
+
 export const updateClient = (companyId, clientId, payload) =>
   model.updateClient(companyId, clientId, payload);
+
 export const archiveClient = (companyId, clientId) =>
   model.archiveClient(companyId, clientId);
 
