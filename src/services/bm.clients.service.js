@@ -1,4 +1,7 @@
-import * as model from "../models/bm.clients.model.js";
+import * as modelNS from "../models/bm.clients.model.js";
+
+// Support both ESM named exports and CJS/interop default exports
+const model = modelNS.default ?? modelNS;
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
