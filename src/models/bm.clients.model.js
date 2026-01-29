@@ -175,6 +175,8 @@ export async function archiveClient(companyId, clientId) {
 }
 
 /* Contacts */
+
+// For SELECT/UPDATE queries where we DO have alias `c`
 const CONTACT_SELECT = `
   c.id AS "contactId",
   c.company_id AS "companyId",
@@ -185,6 +187,19 @@ const CONTACT_SELECT = `
   c.cel,
   c.tel,
   c.createdat AS "createdAt"
+`;
+
+// For INSERT ... RETURNING (NO alias allowed)
+const CONTACT_RETURNING = `
+  id AS "contactId",
+  company_id AS "companyId",
+  client_id AS "clientId",
+  name,
+  role_title AS "roleTitle",
+  email,
+  cel,
+  tel,
+  createdat AS "createdAt"
 `;
 
 export async function listClientContacts(companyId, clientId) {
@@ -213,7 +228,7 @@ export async function createClientContact(companyId, clientId, payload) {
     WHERE EXISTS (
       SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $2
     )
-    RETURNING ${CONTACT_SELECT}
+    RETURNING ${CONTACT_RETURNING}
     `,
     [
       companyId,
@@ -304,10 +319,6 @@ export async function deleteClientContact(companyId, clientId, contactId) {
   return res.rowCount > 0;
 }
 
-/**
- * Optional: default export for compatibility (prevents "model.listClients is not a function"
- * if this file is ever loaded via CJS interop).
- */
 export default {
   listClients,
   countClients,
