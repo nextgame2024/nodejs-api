@@ -38,7 +38,7 @@ export async function listPricingProfiles(
     SELECT ${PRICING_SELECT}
     FROM bm_pricing_profiles
     WHERE ${where.join(" AND ")}
-    ORDER BY createdat DESC
+    ORDER BY profile_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params

@@ -37,7 +37,7 @@ export async function listLabor(companyId, { q, status, limit, offset }) {
     SELECT ${LABOR_SELECT}
     FROM bm_labor
     WHERE ${where.join(" AND ")}
-    ORDER BY createdat DESC
+    ORDER BY labor_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params

@@ -214,7 +214,7 @@ export async function listUsersByCompany({
        ${USER_SELECT}
      FROM users
      WHERE ${filters.join(" AND ")}
-     ORDER BY createdat DESC
+     ORDER BY username ASC NULLS LAST, createdat DESC
      LIMIT $${i++} OFFSET $${i}`,
     params,
   );

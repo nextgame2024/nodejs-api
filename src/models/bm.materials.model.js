@@ -40,7 +40,7 @@ export async function listMaterials(companyId, { q, status, limit, offset }) {
     SELECT ${MATERIAL_SELECT}
     FROM bm_materials
     WHERE ${where.join(" AND ")}
-    ORDER BY createdat DESC
+    ORDER BY material_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params

@@ -37,7 +37,7 @@ export async function listClients(companyId, { q, status, limit, offset }) {
     SELECT ${CLIENT_SELECT}
     FROM bm_clients
     WHERE ${where.join(" AND ")}
-    ORDER BY createdat DESC
+    ORDER BY client_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -215,7 +215,7 @@ export async function listClientContacts(
     WHERE cl.company_id = $1
       AND c.company_id = $1
       AND c.client_id = $2
-    ORDER BY c.createdat DESC
+    ORDER BY c.name ASC NULLS LAST, c.createdat DESC
     LIMIT $3 OFFSET $4
     `,
     [companyId, clientId, limit, offset]
