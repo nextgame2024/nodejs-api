@@ -8,7 +8,6 @@ const PRICING_SELECT = `
   material_markup AS "materialMarkup",
   labor_markup AS "laborMarkup",
   gst_rate AS "gstRate",
-  is_default AS "isDefault",
   status,
   createdat AS "createdAt",
   updatedat AS "updatedAt"
@@ -39,7 +38,7 @@ export async function listPricingProfiles(
     SELECT ${PRICING_SELECT}
     FROM bm_pricing_profiles
     WHERE ${where.join(" AND ")}
-    ORDER BY is_default DESC, createdat DESC
+    ORDER BY createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -87,9 +86,9 @@ export async function createPricingProfile(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_pricing_profiles (
         pricing_profile_id, company_id, user_id, profile_name,
-        material_markup, labor_markup, gst_rate, is_default
+        material_markup, labor_markup, gst_rate
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6
      )
      RETURNING ${PRICING_SELECT}`,
     [
@@ -99,7 +98,6 @@ export async function createPricingProfile(companyId, userId, payload) {
       payload.material_markup ?? 0,
       payload.labor_markup ?? 0,
       payload.gst_rate ?? 0.1,
-      payload.is_default ?? false,
     ]
   );
   return rows[0];
@@ -119,7 +117,6 @@ export async function updatePricingProfile(
     material_markup: "material_markup",
     labor_markup: "labor_markup",
     gst_rate: "gst_rate",
-    is_default: "is_default",
     status: "status",
   };
 
@@ -152,24 +149,4 @@ export async function archivePricingProfile(companyId, pricingProfileId) {
     [companyId, pricingProfileId]
   );
   return res.rowCount > 0;
-}
-
-export async function clearDefaultPricingProfiles(companyId) {
-  await pool.query(
-    `UPDATE bm_pricing_profiles
-     SET is_default = false, updatedat = NOW()
-     WHERE company_id = $1`,
-    [companyId]
-  );
-}
-
-export async function setDefaultPricingProfile(companyId, pricingProfileId) {
-  const { rows } = await pool.query(
-    `UPDATE bm_pricing_profiles
-     SET is_default = true, updatedat = NOW()
-     WHERE company_id = $1 AND pricing_profile_id = $2
-     RETURNING ${PRICING_SELECT}`,
-    [companyId, pricingProfileId]
-  );
-  return rows[0];
 }

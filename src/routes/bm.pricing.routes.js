@@ -6,7 +6,6 @@ import {
   createPricingProfile,
   updatePricingProfile,
   archivePricingProfile,
-  setDefaultPricingProfile,
 } from "../controllers/bm.pricing.controller.js";
 
 const router = Router();
@@ -27,13 +26,6 @@ router.delete(
   "/bm/pricing-profiles/:pricingProfileId",
   authRequired,
   archivePricingProfile
-);
-
-// optional helper endpoint
-router.post(
-  "/bm/pricing-profiles/:pricingProfileId/set-default",
-  authRequired,
-  setDefaultPricingProfile
 );
 
 export default router;

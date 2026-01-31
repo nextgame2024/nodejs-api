@@ -43,20 +43,6 @@ export const createPricingProfile = asyncHandler(async (req, res) => {
     payload
   );
 
-  // If they set is_default=true, enforce single default
-  if (pricingProfile?.isDefault) {
-    await service.clearDefaultPricingProfiles(companyId);
-    await service.setDefaultPricingProfile(
-      companyId,
-      pricingProfile.pricingProfileId
-    );
-    const refreshed = await service.getPricingProfile(
-      companyId,
-      pricingProfile.pricingProfileId
-    );
-    return res.status(201).json({ pricingProfile: refreshed });
-  }
-
   res.status(201).json({ pricingProfile });
 });
 
@@ -73,16 +59,6 @@ export const updatePricingProfile = asyncHandler(async (req, res) => {
   if (!pricingProfile)
     return res.status(404).json({ error: "Pricing profile not found" });
 
-  if (payload.is_default === true) {
-    await service.clearDefaultPricingProfiles(companyId);
-    await service.setDefaultPricingProfile(companyId, pricingProfileId);
-    const refreshed = await service.getPricingProfile(
-      companyId,
-      pricingProfileId
-    );
-    return res.json({ pricingProfile: refreshed });
-  }
-
   res.json({ pricingProfile });
 });
 
@@ -94,21 +70,4 @@ export const archivePricingProfile = asyncHandler(async (req, res) => {
   if (!ok) return res.status(404).json({ error: "Pricing profile not found" });
 
   res.status(204).send();
-});
-
-export const setDefaultPricingProfile = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
-  const { pricingProfileId } = req.params;
-  const existing = await service.getPricingProfile(companyId, pricingProfileId);
-  if (!existing) {
-    return res.status(404).json({ error: "Pricing profile not found" });
-  }
-
-  await service.clearDefaultPricingProfiles(companyId);
-  const updated = await service.setDefaultPricingProfile(
-    companyId,
-    pricingProfileId
-  );
-
-  res.json({ pricingProfile: updated });
 });

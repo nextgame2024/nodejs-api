@@ -670,7 +670,7 @@ export async function deleteDocumentLaborLine(companyId, documentId, lineId) {
 /* Totals recalculation
    GST rate resolution priority:
    1) Project pricing profile gst_rate (if project exists and default_pricing=false and pricing_profile_id set)
-   2) Company default pricing profile (is_default=true, active)
+   2) Most recent active pricing profile for company
    3) Fallback 0.10
 */
 export async function recalcDocumentTotals(companyId, documentId) {
@@ -727,7 +727,7 @@ export async function recalcDocumentTotals(companyId, documentId) {
         (
           SELECT gst_rate
           FROM bm_pricing_profiles
-          WHERE company_id = $1 AND is_default = true AND status = 'active'
+          WHERE company_id = $1 AND status = 'active'
           ORDER BY updatedat DESC NULLS LAST, createdat DESC
           LIMIT 1
         ),
@@ -809,7 +809,7 @@ async function resolvePricing(client, companyId, projectId) {
           (
             SELECT material_markup
             FROM bm_pricing_profiles
-            WHERE company_id = $1 AND is_default = true AND status = 'active'
+            WHERE company_id = $1 AND status = 'active'
             ORDER BY updatedat DESC NULLS LAST, createdat DESC
             LIMIT 1
           ),
@@ -832,7 +832,7 @@ async function resolvePricing(client, companyId, projectId) {
           (
             SELECT labor_markup
             FROM bm_pricing_profiles
-            WHERE company_id = $1 AND is_default = true AND status = 'active'
+            WHERE company_id = $1 AND status = 'active'
             ORDER BY updatedat DESC NULLS LAST, createdat DESC
             LIMIT 1
           ),

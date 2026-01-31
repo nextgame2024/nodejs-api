@@ -34,9 +34,3 @@ export const updatePricingProfile = (companyId, pricingProfileId, payload) =>
 
 export const archivePricingProfile = (companyId, pricingProfileId) =>
   model.archivePricingProfile(companyId, pricingProfileId);
-
-export const clearDefaultPricingProfiles = (companyId) =>
-  model.clearDefaultPricingProfiles(companyId);
-
-export const setDefaultPricingProfile = (companyId, pricingProfileId) =>
-  model.setDefaultPricingProfile(companyId, pricingProfileId);
