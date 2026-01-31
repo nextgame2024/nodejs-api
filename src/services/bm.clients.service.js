@@ -31,10 +31,27 @@ export const archiveClient = (companyId, clientId) =>
   model.archiveClient(companyId, clientId);
 
 // Contacts
-export async function listClientContacts(companyId, clientId) {
+export async function listClientContacts(
+  companyId,
+  clientId,
+  { page, limit }
+) {
   const exists = await model.clientExists(companyId, clientId);
   if (!exists) return null;
-  return model.listClientContacts(companyId, clientId);
+
+  const safeLimit = clamp(Number(limit) || 20, 1, 100);
+  const safePage = clamp(Number(page) || 1, 1, 10_000);
+  const offset = (safePage - 1) * safeLimit;
+
+  const [contacts, total] = await Promise.all([
+    model.listClientContacts(companyId, clientId, {
+      limit: safeLimit,
+      offset,
+    }),
+    model.countClientContacts(companyId, clientId),
+  ]);
+
+  return { contacts, page: safePage, limit: safeLimit, total };
 }
 
 export const createClientContact = (companyId, clientId, payload) =>

@@ -63,12 +63,16 @@ export const archiveClient = asyncHandler(async (req, res) => {
 export const listClientContacts = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { clientId } = req.params;
+  const { page = "1", limit = "20" } = req.query;
 
-  const contacts = await service.listClientContacts(companyId, clientId);
-  if (contacts === null)
+  const result = await service.listClientContacts(companyId, clientId, {
+    page: Number(page),
+    limit: Number(limit),
+  });
+  if (result === null)
     return res.status(404).json({ error: "Client not found" });
 
-  res.json({ contacts });
+  res.json(result);
 });
 
 export const createClientContact = asyncHandler(async (req, res) => {

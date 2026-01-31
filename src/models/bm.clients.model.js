@@ -202,7 +202,11 @@ const CONTACT_RETURNING = `
   createdat AS "createdAt"
 `;
 
-export async function listClientContacts(companyId, clientId) {
+export async function listClientContacts(
+  companyId,
+  clientId,
+  { limit, offset }
+) {
   const { rows } = await pool.query(
     `
     SELECT ${CONTACT_SELECT}
@@ -212,10 +216,26 @@ export async function listClientContacts(companyId, clientId) {
       AND c.company_id = $1
       AND c.client_id = $2
     ORDER BY c.createdat DESC
+    LIMIT $3 OFFSET $4
+    `,
+    [companyId, clientId, limit, offset]
+  );
+  return rows;
+}
+
+export async function countClientContacts(companyId, clientId) {
+  const { rows } = await pool.query(
+    `
+    SELECT COUNT(*)::int AS total
+    FROM bm_client_contacts c
+    JOIN bm_clients cl ON cl.client_id = c.client_id
+    WHERE cl.company_id = $1
+      AND c.company_id = $1
+      AND c.client_id = $2
     `,
     [companyId, clientId]
   );
-  return rows;
+  return rows[0]?.total ?? 0;
 }
 
 export async function createClientContact(companyId, clientId, payload) {
