@@ -348,6 +348,7 @@ export default {
   updateClient,
   archiveClient,
   listClientContacts,
+  countClientContacts,
   createClientContact,
   updateClientContact,
   deleteClientContact,
