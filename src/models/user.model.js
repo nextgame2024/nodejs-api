@@ -14,6 +14,7 @@ const USER_SELECT = `
   contacts,
   type,
   status,
+  company_id AS "companyId",
   createdat AS "createdAt",
   updatedat AS "updatedAt"
 `;
@@ -26,7 +27,7 @@ export async function findByEmail(email) {
      FROM users
      WHERE email = $1
      LIMIT 1`,
-    [email]
+    [email],
   );
   return rows[0];
 }
@@ -39,7 +40,7 @@ export async function findByUsername(username) {
      FROM users
      WHERE username = $1
      LIMIT 1`,
-    [username]
+    [username],
   );
   return rows[0];
 }
@@ -51,7 +52,7 @@ export async function findById(id) {
      FROM users
      WHERE id = $1
      LIMIT 1`,
-    [id]
+    [id],
   );
   return rows[0];
 }
@@ -91,7 +92,7 @@ export async function createUser({
       cel,
       tel,
       contacts,
-    ]
+    ],
   );
   return rows[0];
 }
@@ -111,7 +112,7 @@ export async function updateUserById(
     tel,
     contacts,
     // Intentionally not allowing type/status here unless you explicitly add it later
-  }
+  },
 ) {
   const sets = [];
   const params = [];
@@ -170,15 +171,93 @@ export async function updateUserById(
      WHERE id = $${i}
      RETURNING
        ${USER_SELECT}`,
-    params
+    params,
   );
   return rows[0];
+}
+
+/** List users by company (company‑scoped) */
+export async function listUsersByCompany({
+  companyId,
+  q,
+  status,
+  type,
+  limit,
+  offset,
+}) {
+  const filters = [`company_id = $1`];
+  const params = [companyId];
+  let i = 2;
+
+  if (q) {
+    filters.push(
+      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i})`,
+    );
+    params.push(`%${q}%`);
+    i++;
+  }
+
+  if (status) {
+    filters.push(`status = $${i++}`);
+    params.push(status);
+  }
+
+  if (type) {
+    filters.push(`type = $${i++}`);
+    params.push(type);
+  }
+
+  params.push(limit, offset);
+
+  const { rows } = await pool.query(
+    `SELECT
+       ${USER_SELECT}
+     FROM users
+     WHERE ${filters.join(" AND ")}
+     ORDER BY createdat DESC
+     LIMIT $${i++} OFFSET $${i}`,
+    params,
+  );
+  return rows;
+}
+
+/** Count users by company (for pagination) */
+export async function countUsersByCompany({ companyId, q, status, type }) {
+  const filters = [`company_id = $1`];
+  const params = [companyId];
+  let i = 2;
+
+  if (q) {
+    filters.push(
+      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i})`,
+    );
+    params.push(`%${q}%`);
+    i++;
+  }
+
+  if (status) {
+    filters.push(`status = $${i++}`);
+    params.push(status);
+  }
+
+  if (type) {
+    filters.push(`type = $${i++}`);
+    params.push(type);
+  }
+
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM users
+     WHERE ${filters.join(" AND ")}`,
+    params,
+  );
+  return rows[0]?.total ?? 0;
 }
 
 export async function isFollowing(followerId, followeeId) {
   const { rows } = await pool.query(
     `SELECT 1 FROM follows WHERE follower_id = $1 AND followee_id = $2 LIMIT 1`,
-    [followerId, followeeId]
+    [followerId, followeeId],
   );
   return rows.length > 0;
 }
@@ -189,7 +268,7 @@ export async function followUser(followerId, followeeId) {
      VALUES ($1, $2)
      ON CONFLICT (follower_id, followee_id) DO NOTHING
      RETURNING follower_id`,
-    [followerId, followeeId]
+    [followerId, followeeId],
   );
   return rows.length > 0;
 }
@@ -197,7 +276,7 @@ export async function followUser(followerId, followeeId) {
 export async function unfollowUser(followerId, followeeId) {
   const res = await pool.query(
     `DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2`,
-    [followerId, followeeId]
+    [followerId, followeeId],
   );
   return res.rowCount > 0;
 }
@@ -215,7 +294,7 @@ export async function getProfileWithFollowing(username, viewerId) {
      FROM users u
      WHERE u.username = $1
      LIMIT 1`,
-    [username, viewerId]
+    [username, viewerId],
   );
   return rows[0];
 }
@@ -249,7 +328,7 @@ export async function getSuggestedAuthors({
     ORDER BY l.last_post DESC NULLS LAST, u.username ASC
     LIMIT $2
     `,
-    [viewerId, Math.max(1, Math.min(20, Number(limit))), defaultAvatar]
+    [viewerId, Math.max(1, Math.min(20, Number(limit))), defaultAvatar],
   );
   return rows;
 }

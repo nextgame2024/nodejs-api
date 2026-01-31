@@ -1,7 +1,13 @@
 import bcrypt from "bcryptjs";
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { generateToken } from "../utils/generateToken.js";
-import { createUser, findById, updateUserById } from "../models/user.model.js";
+import {
+  createUser,
+  findById,
+  updateUserById,
+  listUsersByCompany,
+  countUsersByCompany,
+} from "../models/user.model.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
 
@@ -74,6 +80,38 @@ export const registerUser = asyncHandler(async (req, res) => {
     }
     throw e;
   }
+});
+
+/** GET /api/users — list users in company (auth required) */
+export const listUsers = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+
+  const page = Math.max(1, Number(req.query.page || 1));
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));
+  const offset = (page - 1) * limit;
+
+  const q = (req.query.q || "").toString().trim();
+  const status = (req.query.status || "").toString().trim() || null;
+  const type = (req.query.type || "").toString().trim() || null;
+
+  const [users, total] = await Promise.all([
+    listUsersByCompany({
+      companyId,
+      q,
+      status,
+      type,
+      limit,
+      offset,
+    }),
+    countUsersByCompany({ companyId, q, status, type }),
+  ]);
+
+  return res.json({
+    users,
+    page,
+    limit,
+    total,
+  });
 });
 
 /** GET /api/user — current user (auth required) */
