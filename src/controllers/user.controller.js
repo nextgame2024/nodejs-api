@@ -149,8 +149,6 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
   };
 
   // Security: do NOT allow changing type/status here
-  // (If you later want admin-only endpoints, we add separate routes.)
-
   if (payload.password) {
     next.passwordHash = await bcrypt.hash(payload.password, 10);
   }
@@ -165,6 +163,53 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
     });
 
     return res.json({ user: mapUserResponse(updated, token) });
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      return res
+        .status(409)
+        .json({ error: "Email or username already in use" });
+    }
+    throw e;
+  }
+});
+
+/** PUT /api/users/:id — update any user in company (auth required) */
+export const updateUserByAdmin = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const userId = req.params.id;
+  const payload = req.body?.user || {};
+
+  const target = await findById(userId);
+  if (!target) return res.status(404).json({ error: "User not found" });
+
+  // company guard
+  if (target.companyId && target.companyId !== companyId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const next = {
+    email: payload.email,
+    username: payload.username,
+    image: payload.image,
+    bio: payload.bio,
+
+    name: payload.name,
+    address: payload.address,
+    cel: payload.cel,
+    tel: payload.tel,
+    contacts: payload.contacts,
+    type: payload.type,
+    status: payload.status,
+  };
+
+  if (payload.password) {
+    next.passwordHash = await bcrypt.hash(payload.password, 10);
+  }
+
+  try {
+    const updated = await updateUserById(userId, next);
+
+    return res.json({ user: mapUserResponse(updated) });
   } catch (e) {
     if (isUniqueViolation(e)) {
       return res
