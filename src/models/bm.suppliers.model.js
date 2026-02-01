@@ -37,7 +37,7 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
     SELECT ${SUPPLIER_SELECT}
     FROM bm_suppliers
     WHERE ${where.join(" AND ")}
-    ORDER BY createdat DESC
+    ORDER BY supplier_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -160,6 +160,18 @@ export async function archiveSupplier(companyId, supplierId) {
 
 /* Contacts */
 const CONTACT_SELECT = `
+  c.id AS "contactId",
+  c.company_id AS "companyId",
+  c.supplier_id AS "supplierId",
+  c.name,
+  c.role_title AS "roleTitle",
+  c.email,
+  c.cel,
+  c.tel,
+  c.createdat AS "createdAt"
+`;
+
+const CONTACT_RETURNING = `
   id AS "contactId",
   company_id AS "companyId",
   supplier_id AS "supplierId",
@@ -178,7 +190,7 @@ export async function listSupplierContacts(companyId, supplierId) {
     FROM bm_supplier_contacts c
     JOIN bm_suppliers s ON s.supplier_id = c.supplier_id
     WHERE s.company_id = $1 AND c.supplier_id = $2
-    ORDER BY c.createdat DESC
+    ORDER BY c.name ASC NULLS LAST, c.createdat DESC
     `,
     [companyId, supplierId]
   );
@@ -193,7 +205,7 @@ export async function createSupplierContact(companyId, supplierId, payload) {
     WHERE EXISTS (
       SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2
     )
-    RETURNING ${CONTACT_SELECT}
+    RETURNING ${CONTACT_RETURNING}
     `,
     [
       companyId,
@@ -285,7 +297,8 @@ const SUPPLIER_MATERIAL_SELECT = `
   sm.material_id AS "materialId",
   sm.supplier_sku AS "supplierSku",
   sm.lead_time_days AS "leadTimeDays",
-  sm.unit_cost_override AS "unitCostOverride",
+  sm.unit_cost_override AS "unitCost",
+  sm.sell_cost AS "sellCost",
   sm.createdat AS "createdAt"
 `;
 
@@ -308,21 +321,29 @@ export async function addSupplierMaterial(companyId, supplierId, payload) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_supplier_materials (
-      company_id, supplier_id, material_id, supplier_sku, lead_time_days, unit_cost_override
+      company_id,
+      supplier_id,
+      material_id,
+      supplier_sku,
+      lead_time_days,
+      unit_cost_override,
+      sell_cost
     )
-    SELECT $1, $2, $3, $4, $5, $6
+    SELECT $1, $2, $3, $4, $5, $6, $7
     WHERE EXISTS (SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2)
       AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
     ON CONFLICT (supplier_id, material_id) DO UPDATE SET
       supplier_sku = EXCLUDED.supplier_sku,
       lead_time_days = EXCLUDED.lead_time_days,
-      unit_cost_override = EXCLUDED.unit_cost_override
+      unit_cost_override = EXCLUDED.unit_cost_override,
+      sell_cost = EXCLUDED.sell_cost
     RETURNING
       supplier_id AS "supplierId",
       material_id AS "materialId",
       supplier_sku AS "supplierSku",
       lead_time_days AS "leadTimeDays",
-      unit_cost_override AS "unitCostOverride",
+      unit_cost_override AS "unitCost",
+      sell_cost AS "sellCost",
       createdat AS "createdAt"
     `,
     [
@@ -331,7 +352,8 @@ export async function addSupplierMaterial(companyId, supplierId, payload) {
       payload.material_id,
       payload.supplier_sku ?? null,
       payload.lead_time_days ?? null,
-      payload.unit_cost_override ?? null,
+      payload.unit_cost ?? payload.unit_cost_override ?? null,
+      payload.sell_cost ?? null,
     ]
   );
 
@@ -344,6 +366,11 @@ export async function updateSupplierMaterial(
   materialId,
   payload
 ) {
+  const normalized =
+    payload?.unit_cost === undefined && payload?.unit_cost_override !== undefined
+      ? { ...payload, unit_cost: payload.unit_cost_override }
+      : payload;
+
   const sets = [];
   const params = [companyId, supplierId, materialId];
   let i = 4;
@@ -351,13 +378,14 @@ export async function updateSupplierMaterial(
   const map = {
     supplier_sku: "supplier_sku",
     lead_time_days: "lead_time_days",
-    unit_cost_override: "unit_cost_override",
+    unit_cost: "unit_cost_override",
+    sell_cost: "sell_cost",
   };
 
   for (const [k, col] of Object.entries(map)) {
-    if (payload[k] !== undefined) {
+    if (normalized[k] !== undefined) {
       sets.push(`${col} = $${i++}`);
-      params.push(payload[k]);
+      params.push(normalized[k]);
     }
   }
 
@@ -392,7 +420,8 @@ export async function updateSupplierMaterial(
       sm.material_id AS "materialId",
       sm.supplier_sku AS "supplierSku",
       sm.lead_time_days AS "leadTimeDays",
-      sm.unit_cost_override AS "unitCostOverride",
+      sm.unit_cost_override AS "unitCost",
+      sm.sell_cost AS "sellCost",
       sm.createdat AS "createdAt"
     `,
     params
