@@ -24,7 +24,7 @@ export async function listProjects(
   const where = [`p.company_id = $1`];
 
   if (status) {
-    where.push(`p.status = $${i++}`);
+    where.push(`p.status = $${i++}::bm_project_status`);
     params.push(status);
   }
   if (clientId) {
@@ -62,7 +62,7 @@ export async function countProjects(companyId, { q, status, clientId }) {
   const where = [`p.company_id = $1`];
 
   if (status) {
-    where.push(`p.status = $${i++}`);
+    where.push(`p.status = $${i++}::bm_project_status`);
     params.push(status);
   }
   if (clientId) {
@@ -120,7 +120,7 @@ export async function createProject(companyId, userId, payload) {
     INSERT INTO bm_projects (
       project_id, company_id, user_id, client_id, project_name, description, status, default_pricing, pricing_profile_id
     )
-    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, COALESCE($6, 'to_do'), COALESCE($7, true), $8
+    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, COALESCE($6::bm_project_status, 'to_do'::bm_project_status), COALESCE($7, true), $8
     WHERE EXISTS (
       SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
     )
@@ -164,6 +164,11 @@ export async function updateProject(companyId, projectId, payload) {
         );
         params.push(payload[k]);
         i++;
+        continue;
+      }
+      if (k === "status") {
+        sets.push(`${col} = $${i++}::bm_project_status`);
+        params.push(payload[k]);
         continue;
       }
       sets.push(`${col} = $${i++}`);
