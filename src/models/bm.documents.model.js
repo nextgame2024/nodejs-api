@@ -935,11 +935,11 @@ export async function createDocumentFromProject(
           pm.quantity,
           COALESCE(
             pm.sell_cost_override,
-            m.sell_cost,
-            ROUND((m.unit_cost * (1 + $5))::numeric, 2)
+            ROUND((pm.unit_cost_override * (1 + $5))::numeric, 2),
+            0
           ) AS unit_price,
           ROUND(
-            (pm.quantity * COALESCE(pm.sell_cost_override, m.sell_cost, (m.unit_cost * (1 + $5))))::numeric,
+            (pm.quantity * COALESCE(pm.sell_cost_override, (pm.unit_cost_override * (1 + $5)), 0))::numeric,
             2
           ) AS line_total
         FROM bm_project_materials pm

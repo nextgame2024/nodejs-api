@@ -32,8 +32,6 @@ export const createMaterial = asyncHandler(async (req, res) => {
 
   if (!payload.material_name)
     return res.status(400).json({ error: "material_name is required" });
-  if (payload.unit_cost === undefined)
-    return res.status(400).json({ error: "unit_cost is required" });
 
   const material = await service.createMaterial(companyId, userId, payload);
   res.status(201).json({ material });

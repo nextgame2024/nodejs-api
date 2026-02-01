@@ -62,12 +62,16 @@ export const archiveSupplier = asyncHandler(async (req, res) => {
 export const listSupplierContacts = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { supplierId } = req.params;
+  const { page = "1", limit = "20" } = req.query;
 
-  const contacts = await service.listSupplierContacts(companyId, supplierId);
-  if (contacts === null)
+  const result = await service.listSupplierContacts(companyId, supplierId, {
+    page: Number(page),
+    limit: Number(limit),
+  });
+  if (result === null)
     return res.status(404).json({ error: "Supplier not found" });
 
-  res.json({ contacts });
+  res.json(result);
 });
 
 export const createSupplierContact = asyncHandler(async (req, res) => {
@@ -122,12 +126,16 @@ export const deleteSupplierContact = asyncHandler(async (req, res) => {
 export const listSupplierMaterials = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { supplierId } = req.params;
+  const { page = "1", limit = "20" } = req.query;
 
-  const materials = await service.listSupplierMaterials(companyId, supplierId);
-  if (materials === null)
+  const result = await service.listSupplierMaterials(companyId, supplierId, {
+    page: Number(page),
+    limit: Number(limit),
+  });
+  if (result === null)
     return res.status(404).json({ error: "Supplier not found" });
 
-  res.json({ materials });
+  res.json(result);
 });
 
 export const addSupplierMaterial = asyncHandler(async (req, res) => {

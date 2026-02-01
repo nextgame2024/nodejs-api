@@ -6,8 +6,6 @@ const MATERIAL_SELECT = `
   user_id AS "userId",
   type,
   material_name AS "materialName",
-  unit_cost AS "unitCost",
-  sell_cost AS "sellCost",
   code,
   category,
   notes,
@@ -87,9 +85,9 @@ export async function getMaterial(companyId, materialId) {
 export async function createMaterial(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_materials (
-        material_id, company_id, user_id, type, material_name, unit_cost, sell_cost, code, category, notes
+        material_id, company_id, user_id, type, material_name, code, category, notes
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
      )
      RETURNING ${MATERIAL_SELECT}`,
     [
@@ -97,8 +95,6 @@ export async function createMaterial(companyId, userId, payload) {
       userId,
       payload.type ?? null,
       payload.material_name,
-      payload.unit_cost,
-      payload.sell_cost ?? null,
       payload.code ?? null,
       payload.category ?? null,
       payload.notes ?? null,
@@ -115,8 +111,6 @@ export async function updateMaterial(companyId, materialId, payload) {
   const map = {
     type: "type",
     material_name: "material_name",
-    unit_cost: "unit_cost",
-    sell_cost: "sell_cost",
     code: "code",
     category: "category",
     notes: "notes",
