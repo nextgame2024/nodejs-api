@@ -209,6 +209,8 @@ export async function archiveProject(companyId, projectId) {
 const PROJECT_MATERIAL_SELECT = `
   pm.project_id AS "projectId",
   pm.material_id AS "materialId",
+  pm.supplier_id AS "supplierId",
+  s.supplier_name AS "supplierName",
   m.material_name AS "materialName",
   pm.quantity,
   pm.unit_cost_override AS "unitCostOverride",
@@ -223,6 +225,9 @@ export async function listProjectMaterials(companyId, projectId) {
     FROM bm_project_materials pm
     JOIN bm_projects p ON p.project_id = pm.project_id
     JOIN bm_materials m ON m.material_id = pm.material_id
+    LEFT JOIN bm_suppliers s
+      ON s.supplier_id = pm.supplier_id
+      AND s.company_id = $1
     WHERE p.company_id = $1 AND pm.project_id = $2 AND m.company_id = $1
     ORDER BY m.material_name ASC
     `,
@@ -237,15 +242,28 @@ export async function upsertProjectMaterial(
   materialId,
   payload
 ) {
+  const supplierId = payload?.supplier_id ?? null;
   const { rows } = await pool.query(
     `
     INSERT INTO bm_project_materials (
-      company_id, project_id, material_id, quantity, unit_cost_override, sell_cost_override, notes
+      company_id, project_id, supplier_id, material_id, quantity, unit_cost_override, sell_cost_override, notes
     )
-    SELECT $1, $2, $3, COALESCE($4, 1), $5, $6, $7
+    SELECT $1, $2, $3, $4, COALESCE($5, 1), $6, $7, $8
     WHERE EXISTS (SELECT 1 FROM bm_projects WHERE company_id = $1 AND project_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
+      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $4)
+      AND (
+        $3 IS NULL OR EXISTS (
+          SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $3
+        )
+      )
+      AND (
+        $3 IS NULL OR EXISTS (
+          SELECT 1 FROM bm_supplier_materials sm
+          WHERE sm.company_id = $1 AND sm.supplier_id = $3 AND sm.material_id = $4
+        )
+      )
     ON CONFLICT (project_id, material_id) DO UPDATE SET
+      supplier_id = EXCLUDED.supplier_id,
       quantity = EXCLUDED.quantity,
       unit_cost_override = EXCLUDED.unit_cost_override,
       sell_cost_override = EXCLUDED.sell_cost_override,
@@ -255,6 +273,7 @@ export async function upsertProjectMaterial(
     [
       companyId,
       projectId,
+      supplierId,
       materialId,
       payload.quantity ?? 1,
       payload.unit_cost_override ?? null,
@@ -271,6 +290,9 @@ export async function upsertProjectMaterial(
     FROM bm_project_materials pm
     JOIN bm_projects p ON p.project_id = pm.project_id
     JOIN bm_materials m ON m.material_id = pm.material_id
+    LEFT JOIN bm_suppliers s
+      ON s.supplier_id = pm.supplier_id
+      AND s.company_id = $1
     WHERE p.company_id = $1 AND pm.project_id = $2 AND pm.material_id = $3
     LIMIT 1
     `,
