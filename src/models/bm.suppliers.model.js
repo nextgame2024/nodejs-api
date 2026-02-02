@@ -309,6 +309,8 @@ export async function deleteSupplierContact(companyId, supplierId, contactId) {
 const SUPPLIER_MATERIAL_SELECT = `
   sm.supplier_id AS "supplierId",
   sm.material_id AS "materialId",
+  m.material_name AS "materialName",
+  m.code AS "materialCode",
   sm.supplier_sku AS "supplierSku",
   sm.lead_time_days AS "leadTimeDays",
   sm.unit_cost_override AS "unitCost",
