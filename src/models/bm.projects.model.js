@@ -248,18 +248,18 @@ export async function upsertProjectMaterial(
     INSERT INTO bm_project_materials (
       company_id, project_id, supplier_id, material_id, quantity, unit_cost_override, sell_cost_override, notes
     )
-    SELECT $1, $2, $3, $4, COALESCE($5, 1), $6, $7, $8
+    SELECT $1, $2, $3::uuid, $4::uuid, COALESCE($5, 1), $6, $7, $8
     WHERE EXISTS (SELECT 1 FROM bm_projects WHERE company_id = $1 AND project_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $4)
+      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $4::uuid)
       AND (
-        $3 IS NULL OR EXISTS (
-          SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $3
+        $3::uuid IS NULL OR EXISTS (
+          SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $3::uuid
         )
       )
       AND (
-        $3 IS NULL OR EXISTS (
+        $3::uuid IS NULL OR EXISTS (
           SELECT 1 FROM bm_supplier_materials sm
-          WHERE sm.company_id = $1 AND sm.supplier_id = $3 AND sm.material_id = $4
+          WHERE sm.company_id = $1 AND sm.supplier_id = $3::uuid AND sm.material_id = $4::uuid
         )
       )
     ON CONFLICT (project_id, material_id) DO UPDATE SET
