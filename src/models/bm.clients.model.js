@@ -283,7 +283,7 @@ export async function updateClientContact(
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
-      sets.push(`c.${col} = $${i++}`);
+      sets.push(`${col} = $${i++}`);
       params.push(payload[k]);
     }
   }
