@@ -7,11 +7,12 @@ import {
   updateUserByAdmin,
 } from "../controllers/user.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
+import { authOptional } from "../middlewares/authOptional.js";
 
 const router = Router();
 
-// Register (no auth)
-router.post("/users", registerUser);
+// Register (no auth) or admin create (optional auth to set company_id)
+router.post("/users", authOptional, registerUser);
 
 // Users list (auth, company scoped)
 router.get("/users", authRequired, listUsers);

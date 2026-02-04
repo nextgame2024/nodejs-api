@@ -8,6 +8,7 @@ import {
   listUsersByCompany,
   countUsersByCompany,
 } from "../models/user.model.js";
+import pool from "../config/db.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
 
@@ -47,6 +48,20 @@ export const registerUser = asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
+  let companyId = null;
+
+  if (req.user?.id) {
+    const { rows } = await pool.query(
+      `SELECT company_id FROM users WHERE id = $1 LIMIT 1`,
+      [req.user.id],
+    );
+    companyId = rows[0]?.company_id ?? null;
+    if (!companyId) {
+      return res
+        .status(403)
+        .json({ error: "User is not assigned to a company" });
+    }
+  }
 
   // New optional fields (safe; do not break existing clients)
   const optional = {
@@ -62,6 +77,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       username,
       email,
       passwordHash,
+      companyId,
       ...optional,
     });
 

@@ -61,6 +61,7 @@ export async function createUser({
   email,
   username,
   passwordHash,
+  companyId = null,
   image = "",
   bio = "",
   // New fields (optional) — safe defaults; will not break existing callers
@@ -72,16 +73,17 @@ export async function createUser({
 }) {
   const { rows } = await pool.query(
     `INSERT INTO users (
-        id, email, username, password, image, bio,
+        id, company_id, email, username, password, image, bio,
         name, address, cel, tel, contacts
      )
      VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10
+        $6, $7, $8, $9, $10, $11
      )
      RETURNING
        ${USER_SELECT}`,
     [
+      companyId,
       email,
       username,
       passwordHash,
