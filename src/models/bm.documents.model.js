@@ -918,7 +918,7 @@ export async function createDocumentFromProject(
         )
         VALUES (
           gen_random_uuid(), $1, $2, $3, $4, $5, $6,
-          COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')
+          COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status
         )
         RETURNING document_id
       `,
