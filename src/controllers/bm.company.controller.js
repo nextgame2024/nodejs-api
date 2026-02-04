@@ -1,8 +1,11 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.company.service.js";
 
+const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
+const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
+
 export const listCompanies = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId = isSuperAdmin(req) ? null : req.user.companyId;
   const { q, status, page = "1", limit = "20" } = req.query;
 
   const result = await service.listCompanies(companyId, {
@@ -16,7 +19,9 @@ export const listCompanies = asyncHandler(async (req, res) => {
 });
 
 export const getCompany = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId = isSuperAdmin(req)
+    ? req.params.companyId
+    : req.user.companyId;
   const { companyId: targetCompanyId } = req.params;
 
   const company = await service.getCompany(companyId, targetCompanyId);
@@ -26,7 +31,10 @@ export const getCompany = asyncHandler(async (req, res) => {
 });
 
 export const createCompany = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  if (!isSuperAdmin(req)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  const companyId = null;
   const userId = req.user.id;
   const payload = req.body?.company || req.body || {};
 
@@ -39,7 +47,9 @@ export const createCompany = asyncHandler(async (req, res) => {
 });
 
 export const updateCompany = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId = isSuperAdmin(req)
+    ? req.params.companyId
+    : req.user.companyId;
   const { companyId: targetCompanyId } = req.params;
   const payload = req.body?.company || req.body || {};
 
@@ -54,7 +64,10 @@ export const updateCompany = asyncHandler(async (req, res) => {
 });
 
 export const archiveCompany = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  if (!isSuperAdmin(req)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  const companyId = req.params.companyId;
   const { companyId: targetCompanyId } = req.params;
 
   const ok = await service.archiveCompany(companyId, targetCompanyId);

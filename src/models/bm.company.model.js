@@ -18,9 +18,14 @@ const COMPANY_SELECT = `
 `;
 
 export async function listCompanies(companyId, { q, status, limit, offset }) {
-  const params = [companyId];
-  let i = 2;
-  const where = [`company_id = $1`];
+  const params = [];
+  let i = 1;
+  const where = [];
+
+  if (companyId) {
+    where.push(`company_id = $${i++}`);
+    params.push(companyId);
+  }
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -40,7 +45,7 @@ export async function listCompanies(companyId, { q, status, limit, offset }) {
     `
     SELECT ${COMPANY_SELECT}
     FROM bm_company
-    WHERE ${where.join(" AND ")}
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY company_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
@@ -51,9 +56,14 @@ export async function listCompanies(companyId, { q, status, limit, offset }) {
 }
 
 export async function countCompanies(companyId, { q, status }) {
-  const params = [companyId];
-  let i = 2;
-  const where = [`company_id = $1`];
+  const params = [];
+  let i = 1;
+  const where = [];
+
+  if (companyId) {
+    where.push(`company_id = $${i++}`);
+    params.push(companyId);
+  }
 
   if (status) {
     where.push(`status = $${i++}`);
@@ -67,8 +77,9 @@ export async function countCompanies(companyId, { q, status }) {
     i++;
   }
 
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS total FROM bm_company WHERE ${where.join(" AND ")}`,
+    `SELECT COUNT(*)::int AS total FROM bm_company ${whereSql}`,
     params,
   );
   return rows[0]?.total ?? 0;
@@ -101,7 +112,7 @@ export async function createCompany(companyId, userId, payload) {
         tel,
         cel
      ) VALUES (
-        $1,
+        COALESCE($1::uuid, gen_random_uuid()),
         $2,
         $3,
         $4,
@@ -117,7 +128,7 @@ export async function createCompany(companyId, userId, payload) {
      RETURNING ${COMPANY_SELECT}`,
     [
       companyId,
-      userId,
+      payload.owner_user_id ?? userId,
       payload.company_name,
       payload.status ?? "active",
       payload.legal_name ?? null,
