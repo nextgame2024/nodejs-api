@@ -7,6 +7,7 @@ import {
   updateDocument,
   archiveDocument,
   recalcDocumentTotals,
+  getDocumentQuotePdf,
   listDocumentMaterialLines,
   createDocumentMaterialLine,
   updateDocumentMaterialLine,
@@ -31,6 +32,12 @@ router.post(
   "/bm/documents/:documentId/recalculate",
   authRequired,
   recalcDocumentTotals
+);
+
+router.get(
+  "/bm/documents/:documentId/quote-pdf",
+  authRequired,
+  getDocumentQuotePdf
 );
 
 // Material lines

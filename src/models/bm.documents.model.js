@@ -24,6 +24,29 @@ const DOC_SELECT = `
   d.updatedat AS "updatedAt"
 `;
 
+const COMPANY_SELECT = `
+  company_id AS "companyId",
+  legal_name AS "legalName",
+  trading_name AS "tradingName",
+  abn,
+  address,
+  email,
+  COALESCE(phone, tel, cel) AS "phone"
+`;
+
+export async function getCompanyProfile(companyId) {
+  const { rows } = await pool.query(
+    `
+    SELECT ${COMPANY_SELECT}
+    FROM bm_company
+    WHERE company_id = $1
+    LIMIT 1
+    `,
+    [companyId]
+  );
+  return rows[0] || null;
+}
+
 export async function documentExists(companyId, documentId) {
   const { rows } = await pool.query(
     `SELECT 1 FROM bm_documents WHERE company_id = $1 AND document_id = $2 LIMIT 1`,
@@ -933,13 +956,15 @@ export async function createDocumentFromProject(
           pm.material_id,
           m.material_name,
           pm.quantity,
-          COALESCE(
-            pm.sell_cost_override,
-            ROUND((pm.unit_cost_override * (1 + $5))::numeric, 2),
-            0
-          ) AS unit_price,
+          CASE
+            WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
+            ELSE COALESCE(ROUND((pm.unit_cost_override * (1 + $5))::numeric, 2), 0)
+          END AS unit_price,
           ROUND(
-            (pm.quantity * COALESCE(pm.sell_cost_override, (pm.unit_cost_override * (1 + $5)), 0))::numeric,
+            (pm.quantity * CASE
+              WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
+              ELSE COALESCE((pm.unit_cost_override * (1 + $5)), 0)
+            END)::numeric,
             2
           ) AS line_total
         FROM bm_project_materials pm
@@ -969,13 +994,15 @@ export async function createDocumentFromProject(
           l.labor_name,
           pl.quantity,
           l.unit_type,
-          COALESCE(
-            pl.sell_cost_override,
-            l.sell_cost,
-            ROUND((l.unit_cost * (1 + $5))::numeric, 2)
-          ) AS unit_price,
+          CASE
+            WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
+            ELSE COALESCE(ROUND((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $5))::numeric, 2), 0)
+          END AS unit_price,
           ROUND(
-            (pl.quantity * COALESCE(pl.sell_cost_override, l.sell_cost, (l.unit_cost * (1 + $5))))::numeric,
+            (pl.quantity * CASE
+              WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
+              ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $5)), 0)
+            END)::numeric,
             2
           ) AS line_total
         FROM bm_project_labor pl

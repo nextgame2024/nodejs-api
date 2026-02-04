@@ -1,6 +1,8 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.documents.service.js";
 import * as model from "../models/bm.documents.model.js";
+import * as clientsModel from "../models/bm.clients.model.js";
+import { buildQuotePdf } from "../services/bm.quote_pdf.service.js";
 
 // Basic status transition guardrails
 const ALLOWED_TRANSITIONS = {
@@ -134,6 +136,41 @@ export const recalcDocumentTotals = asyncHandler(async (req, res) => {
   if (!doc) return res.status(404).json({ error: "Document not found" });
 
   res.json({ document: doc });
+});
+
+export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { documentId } = req.params;
+
+  const doc = await service.getDocument(companyId, documentId);
+  if (!doc) return res.status(404).json({ error: "Document not found" });
+  if (doc.type !== "quote") {
+    return res.status(400).json({ error: "Document is not a quote" });
+  }
+
+  const [materialLines, laborLines, company, client] = await Promise.all([
+    service.listDocumentMaterialLines(companyId, documentId),
+    service.listDocumentLaborLines(companyId, documentId),
+    service.getCompanyProfile(companyId),
+    clientsModel.getClient(companyId, doc.clientId),
+  ]);
+
+  const refreshed = await service.recalcDocumentTotals(companyId, documentId);
+  const document = refreshed || doc;
+
+  const pdfBuffer = await buildQuotePdf({
+    document,
+    company: company || {},
+    client: client || {},
+    project: doc.projectName ? { projectName: doc.projectName } : null,
+    materialLines,
+    laborLines,
+  });
+
+  const filename = `Quote-${doc.docNumber || doc.documentId}.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.send(pdfBuffer);
 });
 
 // Material lines

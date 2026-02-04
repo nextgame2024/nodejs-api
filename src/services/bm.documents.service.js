@@ -29,6 +29,9 @@ export async function listDocuments(
 export const getDocument = (companyId, documentId) =>
   model.getDocument(companyId, documentId);
 
+export const getCompanyProfile = (companyId) =>
+  model.getCompanyProfile(companyId);
+
 export const createDocument = (companyId, userId, payload) =>
   model.createDocument(companyId, userId, payload);
 
