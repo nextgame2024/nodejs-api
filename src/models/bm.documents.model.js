@@ -952,18 +952,18 @@ export async function createDocumentFromProject(
         SELECT
           gen_random_uuid(),
           $1,
-          $4,
+          $3,
           pm.material_id,
           m.material_name,
           pm.quantity,
           CASE
             WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
-            ELSE COALESCE(ROUND((pm.unit_cost_override * (1 + $5))::numeric, 2), 0)
+            ELSE COALESCE(ROUND((pm.unit_cost_override * (1 + $4))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
             (pm.quantity * CASE
               WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
-              ELSE COALESCE((pm.unit_cost_override * (1 + $5)), 0)
+              ELSE COALESCE((pm.unit_cost_override * (1 + $4)), 0)
             END)::numeric,
             2
           ) AS line_total
@@ -978,7 +978,7 @@ export async function createDocumentFromProject(
           AND p.project_id = $2
           AND pm.company_id = $1
       `,
-      [companyId, projectId, userId, documentId, materialMarkup]
+      [companyId, projectId, documentId, materialMarkup]
     );
 
     await client.query(
@@ -989,19 +989,19 @@ export async function createDocumentFromProject(
         SELECT
           gen_random_uuid(),
           $1,
-          $4,
+          $3,
           pl.labor_id,
           l.labor_name,
           pl.quantity,
           l.unit_type,
           CASE
             WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
-            ELSE COALESCE(ROUND((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $5))::numeric, 2), 0)
+            ELSE COALESCE(ROUND((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $4))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
             (pl.quantity * CASE
               WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
-              ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $5)), 0)
+              ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1 + $4)), 0)
             END)::numeric,
             2
           ) AS line_total
@@ -1016,7 +1016,7 @@ export async function createDocumentFromProject(
           AND p.project_id = $2
           AND pl.company_id = $1
       `,
-      [companyId, projectId, userId, documentId, laborMarkup]
+      [companyId, projectId, documentId, laborMarkup]
     );
 
     await client.query("COMMIT");
