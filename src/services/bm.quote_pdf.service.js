@@ -73,20 +73,20 @@ function drawHeader(doc, { title, logoBuffer }) {
 
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, x + 14, y + 6, { height: 18 });
+      doc.image(logoBuffer, x + 14, y + 4, { height: 24 });
     } catch {
       doc
         .fillColor(BRAND.white)
         .font("Helvetica-Bold")
-        .fontSize(12)
-        .text("sophiaAi", x + 14, y + 9);
+        .fontSize(13)
+        .text("sophiaAi", x + 14, y + 10);
     }
   } else {
     doc
       .fillColor(BRAND.white)
       .font("Helvetica-Bold")
-      .fontSize(12)
-      .text("sophiaAi", x + 14, y + 9);
+      .fontSize(13)
+      .text("sophiaAi", x + 14, y + 10);
   }
 
   doc
@@ -240,10 +240,10 @@ export async function buildQuotePdf({
 
   const tableW = contentW(doc);
   const columns = [
-    { key: "description", label: "Description", width: tableW * 0.5 },
+    { key: "description", label: "Description", width: tableW * 0.46 },
     { key: "quantity", label: "Qty", width: tableW * 0.12, align: "right" },
     { key: "unitPrice", label: "Unit", width: tableW * 0.18, align: "right" },
-    { key: "lineTotal", label: "Total", width: tableW * 0.2, align: "right" },
+    { key: "lineTotal", label: "Total", width: tableW * 0.24, align: "right" },
   ];
 
   drawTable(
@@ -277,8 +277,8 @@ export async function buildQuotePdf({
   const total = Number(document.totalAmount ?? subtotal + gst);
   const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
 
-  const totalsX = X(doc) + contentW(doc) * 0.55;
-  const totalsW = contentW(doc) * 0.45;
+  const totalsX = X(doc) + contentW(doc) * 0.5;
+  const totalsW = contentW(doc) * 0.5;
 
   doc
     .fillColor(BRAND.teal2)
