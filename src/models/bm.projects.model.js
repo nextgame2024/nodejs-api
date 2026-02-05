@@ -10,6 +10,8 @@ const PROJECT_SELECT = `
   p.description,
   p.status,
   p.default_pricing AS "defaultPricing",
+  p.project_type_id AS "projectTypeId",
+  pt.name AS "projectTypeName",
   p.pricing_profile_id AS "pricingProfileId",
   p.createdat AS "createdAt",
   p.updatedat AS "updatedAt"
@@ -46,6 +48,9 @@ export async function listProjects(
     JOIN bm_clients c
       ON c.client_id = p.client_id
      AND c.company_id = p.company_id
+    LEFT JOIN bm_project_types pt
+      ON pt.project_type_id = p.project_type_id
+     AND pt.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     ORDER BY p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
@@ -82,6 +87,9 @@ export async function countProjects(companyId, { q, status, clientId }) {
     JOIN bm_clients c
       ON c.client_id = p.client_id
      AND c.company_id = p.company_id
+    LEFT JOIN bm_project_types pt
+      ON pt.project_type_id = p.project_type_id
+     AND pt.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     `,
     params
@@ -98,6 +106,9 @@ export async function getProject(companyId, projectId) {
     JOIN bm_clients c
       ON c.client_id = p.client_id
      AND c.company_id = p.company_id
+    LEFT JOIN bm_project_types pt
+      ON pt.project_type_id = p.project_type_id
+     AND pt.company_id = p.company_id
     WHERE p.company_id = $1 AND p.project_id = $2
     LIMIT 1
     `,
@@ -115,31 +126,75 @@ export async function projectExists(companyId, projectId) {
 }
 
 export async function createProject(companyId, userId, payload) {
-  const { rows } = await pool.query(
-    `
-    INSERT INTO bm_projects (
-      project_id, company_id, user_id, client_id, project_name, description, status, default_pricing, pricing_profile_id
-    )
-    SELECT gen_random_uuid(), $1, $2, $3, $4, $5, COALESCE($6::bm_project_status, 'to_do'::bm_project_status), COALESCE($7, true), $8
-    WHERE EXISTS (
-      SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
-    )
-    RETURNING project_id
-    `,
-    [
-      companyId,
-      userId,
-      payload.client_id,
-      payload.project_name,
-      payload.description ?? null,
-      payload.status ?? null,
-      payload.default_pricing ?? true,
-      payload.pricing_profile_id ?? null,
-    ]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `
+      INSERT INTO bm_projects (
+        project_id,
+        company_id,
+        user_id,
+        client_id,
+        project_name,
+        description,
+        status,
+        default_pricing,
+        project_type_id,
+        pricing_profile_id
+      )
+      SELECT
+        gen_random_uuid(),
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        COALESCE($6::bm_project_status, 'to_do'::bm_project_status),
+        COALESCE($7, true),
+        (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $8),
+        $9
+      WHERE EXISTS (
+        SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
+      )
+      RETURNING project_id
+      `,
+      [
+        companyId,
+        userId,
+        payload.client_id,
+        payload.project_name,
+        payload.description ?? null,
+        payload.status ?? null,
+        payload.default_pricing ?? true,
+        payload.project_type_id ?? null,
+        payload.pricing_profile_id ?? null,
+      ]
+    );
 
-  if (!rows[0]) return null;
-  return getProject(companyId, rows[0].project_id);
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const projectId = rows[0].project_id;
+    if (payload.project_type_id) {
+      await applyProjectTypeToProjectTx(
+        client,
+        companyId,
+        projectId,
+        payload.project_type_id
+      );
+    }
+
+    await client.query("COMMIT");
+    return getProject(companyId, projectId);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateProject(companyId, projectId, payload) {
@@ -154,6 +209,7 @@ export async function updateProject(companyId, projectId, payload) {
     default_pricing: "default_pricing",
     pricing_profile_id: "pricing_profile_id",
     client_id: "client_id",
+    project_type_id: "project_type_id",
   };
 
   for (const [k, col] of Object.entries(map)) {
@@ -161,6 +217,18 @@ export async function updateProject(companyId, projectId, payload) {
       if (k === "client_id") {
         sets.push(
           `${col} = (SELECT client_id FROM bm_clients WHERE company_id = $1 AND client_id = $${i})`
+        );
+        params.push(payload[k]);
+        i++;
+        continue;
+      }
+      if (k === "project_type_id") {
+        if (payload[k] === null) {
+          sets.push(`${col} = NULL`);
+          continue;
+        }
+        sets.push(
+          `${col} = (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $${i})`
         );
         params.push(payload[k]);
         i++;
@@ -180,17 +248,131 @@ export async function updateProject(companyId, projectId, payload) {
 
   sets.push(`updatedat = NOW()`);
 
-  const { rows } = await pool.query(
+  const shouldApplyProjectType =
+    payload.project_type_id !== undefined && payload.project_type_id !== null;
+
+  if (!shouldApplyProjectType) {
+    const { rows } = await pool.query(
+      `
+      UPDATE bm_projects
+      SET ${sets.join(", ")}
+      WHERE company_id = $1 AND project_id = $2
+      RETURNING project_id
+      `,
+      params
+    );
+
+    return rows[0] ? getProject(companyId, projectId) : null;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `
+      UPDATE bm_projects
+      SET ${sets.join(", ")}
+      WHERE company_id = $1 AND project_id = $2
+      RETURNING project_id
+      `,
+      params
+    );
+
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await applyProjectTypeToProjectTx(
+      client,
+      companyId,
+      projectId,
+      payload.project_type_id
+    );
+
+    await client.query("COMMIT");
+    return getProject(companyId, projectId);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function applyProjectTypeToProjectTx(
+  client,
+  companyId,
+  projectId,
+  projectTypeId
+) {
+  await client.query(
     `
-    UPDATE bm_projects
-    SET ${sets.join(", ")}
-    WHERE company_id = $1 AND project_id = $2
-    RETURNING project_id
+    DELETE FROM bm_project_materials
+    WHERE project_id = $2 AND company_id = $1
     `,
-    params
+    [companyId, projectId]
   );
 
-  return rows[0] ? getProject(companyId, projectId) : null;
+  await client.query(
+    `
+    DELETE FROM bm_project_labor
+    WHERE project_id = $2 AND company_id = $1
+    `,
+    [companyId, projectId]
+  );
+
+  await client.query(
+    `
+    INSERT INTO bm_project_materials (
+      company_id,
+      project_id,
+      supplier_id,
+      material_id,
+      quantity,
+      unit_cost_override,
+      sell_cost_override,
+      notes
+    )
+    SELECT
+      $1,
+      $2,
+      supplier_id,
+      material_id,
+      quantity,
+      unit_cost_override,
+      sell_cost_override,
+      notes
+    FROM bm_project_types_materials
+    WHERE company_id = $1 AND project_type_id = $3
+    `,
+    [companyId, projectId, projectTypeId]
+  );
+
+  await client.query(
+    `
+    INSERT INTO bm_project_labor (
+      company_id,
+      project_id,
+      labor_id,
+      quantity,
+      unit_cost_override,
+      sell_cost_override,
+      notes
+    )
+    SELECT
+      $1,
+      $2,
+      labor_id,
+      quantity,
+      unit_cost_override,
+      sell_cost_override,
+      notes
+    FROM bm_project_types_labor
+    WHERE company_id = $1 AND project_type_id = $3
+    `,
+    [companyId, projectId, projectTypeId]
+  );
 }
 
 export async function archiveProject(companyId, projectId) {

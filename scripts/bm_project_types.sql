@@ -46,3 +46,13 @@ CREATE INDEX IF NOT EXISTS idx_project_types_materials_company
   ON bm_project_types_materials (company_id);
 CREATE INDEX IF NOT EXISTS idx_project_types_labor_company
   ON bm_project_types_labor (company_id);
+
+-- Projects -> optional project_type_id (for template loading)
+ALTER TABLE bm_projects
+  ADD COLUMN IF NOT EXISTS project_type_id uuid;
+
+ALTER TABLE bm_projects
+  ADD CONSTRAINT IF NOT EXISTS bm_projects_project_type_fkey
+  FOREIGN KEY (project_type_id)
+  REFERENCES bm_project_types(project_type_id)
+  ON DELETE SET NULL;
