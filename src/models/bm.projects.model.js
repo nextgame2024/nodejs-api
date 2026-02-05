@@ -10,9 +10,11 @@ const PROJECT_SELECT = `
   p.description,
   p.status,
   p.default_pricing AS "defaultPricing",
+  p.cost_in_quote AS "costInQuote",
   p.project_type_id AS "projectTypeId",
   pt.name AS "projectTypeName",
   p.pricing_profile_id AS "pricingProfileId",
+  pp.profile_name AS "pricingProfileName",
   p.createdat AS "createdAt",
   p.updatedat AS "updatedAt"
 `;
@@ -51,6 +53,9 @@ export async function listProjects(
     LEFT JOIN bm_project_types pt
       ON pt.project_type_id = p.project_type_id
      AND pt.company_id = p.company_id
+    LEFT JOIN bm_pricing_profiles pp
+      ON pp.pricing_profile_id = p.pricing_profile_id
+     AND pp.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     ORDER BY p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
@@ -90,6 +95,9 @@ export async function countProjects(companyId, { q, status, clientId }) {
     LEFT JOIN bm_project_types pt
       ON pt.project_type_id = p.project_type_id
      AND pt.company_id = p.company_id
+    LEFT JOIN bm_pricing_profiles pp
+      ON pp.pricing_profile_id = p.pricing_profile_id
+     AND pp.company_id = p.company_id
     WHERE ${where.join(" AND ")}
     `,
     params
@@ -109,6 +117,9 @@ export async function getProject(companyId, projectId) {
     LEFT JOIN bm_project_types pt
       ON pt.project_type_id = p.project_type_id
      AND pt.company_id = p.company_id
+    LEFT JOIN bm_pricing_profiles pp
+      ON pp.pricing_profile_id = p.pricing_profile_id
+     AND pp.company_id = p.company_id
     WHERE p.company_id = $1 AND p.project_id = $2
     LIMIT 1
     `,
@@ -132,28 +143,30 @@ export async function createProject(companyId, userId, payload) {
     const { rows } = await client.query(
       `
       INSERT INTO bm_projects (
-        project_id,
-        company_id,
-        user_id,
-        client_id,
-        project_name,
-        description,
-        status,
-        default_pricing,
-        project_type_id,
-        pricing_profile_id
-      )
-      SELECT
-        gen_random_uuid(),
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        COALESCE($6::bm_project_status, 'to_do'::bm_project_status),
-        COALESCE($7, true),
-        (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $8),
-        $9
+      project_id,
+      company_id,
+      user_id,
+      client_id,
+      project_name,
+      description,
+      status,
+      default_pricing,
+      cost_in_quote,
+      project_type_id,
+      pricing_profile_id
+    )
+    SELECT
+      gen_random_uuid(),
+      $1,
+      $2,
+      $3,
+      $4,
+      $5,
+      COALESCE($6::bm_project_status, 'to_do'::bm_project_status),
+      COALESCE($7, true),
+      COALESCE($8, false),
+      (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $9),
+      $10
       WHERE EXISTS (
         SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
       )
@@ -166,9 +179,10 @@ export async function createProject(companyId, userId, payload) {
         payload.project_name,
         payload.description ?? null,
         payload.status ?? null,
-        payload.default_pricing ?? true,
-        payload.project_type_id ?? null,
-        payload.pricing_profile_id ?? null,
+      payload.default_pricing ?? true,
+      payload.cost_in_quote ?? false,
+      payload.project_type_id ?? null,
+      payload.pricing_profile_id ?? null,
       ]
     );
 
@@ -207,6 +221,7 @@ export async function updateProject(companyId, projectId, payload) {
     description: "description",
     status: "status",
     default_pricing: "default_pricing",
+    cost_in_quote: "cost_in_quote",
     pricing_profile_id: "pricing_profile_id",
     client_id: "client_id",
     project_type_id: "project_type_id",
@@ -237,6 +252,11 @@ export async function updateProject(companyId, projectId, payload) {
       if (k === "status") {
         sets.push(`${col} = $${i++}::bm_project_status`);
         params.push(payload[k]);
+        continue;
+      }
+      if (k === "cost_in_quote") {
+        sets.push(`${col} = $${i++}`);
+        params.push(Boolean(payload[k]));
         continue;
       }
       sets.push(`${col} = $${i++}`);
