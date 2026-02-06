@@ -136,17 +136,15 @@ function drawTable(doc, title, columns, rows) {
 
   const rowHeight = 18;
   const headerY = doc.y;
+  const pad = 4;
 
-  doc
-    .fillColor(BRAND.white)
-    .rect(x, headerY, w, rowHeight)
-    .fill(BRAND.teal);
+  doc.fillColor(BRAND.white).rect(x, headerY, w, rowHeight).fill(BRAND.teal);
 
   let colX = x;
   doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(9);
   columns.forEach((col) => {
-    doc.text(col.label, colX + 4, headerY + 4, {
-      width: col.width,
+    doc.text(col.label, colX + pad, headerY + 4, {
+      width: col.width - pad * 2,
       align: col.align || "left",
     });
     colX += col.width;
@@ -160,8 +158,8 @@ function drawTable(doc, title, columns, rows) {
     const rowY = doc.y;
     colX = x;
     columns.forEach((col) => {
-      doc.text(row[col.key] ?? "", colX + 4, rowY + 4, {
-        width: col.width,
+      doc.text(row[col.key] ?? "", colX + pad, rowY + 4, {
+        width: col.width - pad * 2,
         align: col.align || "left",
       });
       colX += col.width;
@@ -268,12 +266,17 @@ export async function buildQuotePdf({
     doc.moveDown(2.2);
   }
 
+  const column1 = Math.floor(tableW * 0.42);
+  const column2 = Math.floor(tableW * 0.12);
+  const column3 = Math.floor(tableW * 0.18);
+  const column4 = tableW - (c1 + c2 + c3);
+
   const columns = costInQuote
     ? [
-        { key: "description", label: "Description", width: tableW * 0.42 },
-        { key: "quantity", label: "Qty", width: tableW * 0.12, align: "right" },
-        { key: "unitPrice", label: "Unit", width: tableW * 0.18, align: "right" },
-        { key: "lineTotal", label: "Total", width: tableW * 0.28, align: "right" },
+        { key: "description", label: "Description", width: column1 },
+        { key: "quantity", label: "Qty", width: column2, align: "right" },
+        { key: "unitPrice", label: "Unit", width: column3, align: "right" },
+        { key: "lineTotal", label: "Total", width: column4, align: "right" },
       ]
     : [
         { key: "description", label: "Description", width: tableW * 0.7 },
@@ -290,7 +293,7 @@ export async function buildQuotePdf({
         quantity: formatMoney(line.quantity ?? 0),
         unitPrice: formatMoney(line.unitPrice ?? 0),
         lineTotal: formatMoney(line.lineTotal ?? 0),
-      }))
+      })),
     );
 
     drawTable(
@@ -302,7 +305,7 @@ export async function buildQuotePdf({
         quantity: formatMoney(line.quantity ?? 0),
         unitPrice: formatMoney(line.unitPrice ?? 0),
         lineTotal: formatMoney(line.lineTotal ?? 0),
-      }))
+      })),
     );
   }
 
@@ -344,12 +347,10 @@ export async function buildQuotePdf({
       .font("Helvetica")
       .fontSize(9)
       .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
-    doc
-      .font("Helvetica-Bold")
-      .text(value, totalsX, doc.y - 12, {
-        width: totalsW,
-        align: "right",
-      });
+    doc.font("Helvetica-Bold").text(value, totalsX, doc.y - 12, {
+      width: totalsW,
+      align: "right",
+    });
     doc.moveDown(0.4);
   });
 
