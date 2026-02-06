@@ -270,10 +270,10 @@ export async function buildQuotePdf({
 
   const columns = costInQuote
     ? [
-        { key: "description", label: "Description", width: tableW * 0.46 },
+        { key: "description", label: "Description", width: tableW * 0.44 },
         { key: "quantity", label: "Qty", width: tableW * 0.12, align: "right" },
         { key: "unitPrice", label: "Unit", width: tableW * 0.18, align: "right" },
-        { key: "lineTotal", label: "Total", width: tableW * 0.24, align: "right" },
+        { key: "lineTotal", label: "Total", width: tableW * 0.26, align: "right" },
       ]
     : [
         { key: "description", label: "Description", width: tableW * 0.7 },
