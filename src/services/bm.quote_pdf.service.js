@@ -280,74 +280,72 @@ export async function buildQuotePdf({
         { key: "quantity", label: "Qty", width: tableW * 0.3, align: "right" },
       ];
 
-  drawTable(
-    doc,
-    "Materials",
-    columns,
-    (materialLines || []).map((line) => ({
-      description: line.materialName || line.description || "Material",
-      quantity: formatMoney(line.quantity ?? 0),
-      unitPrice: costInQuote ? formatMoney(line.unitPrice ?? 0) : "",
-      lineTotal: costInQuote ? formatMoney(line.lineTotal ?? 0) : "",
-    }))
-  );
+  if (costInQuote) {
+    drawTable(
+      doc,
+      "Materials",
+      columns,
+      (materialLines || []).map((line) => ({
+        description: line.materialName || line.description || "Material",
+        quantity: formatMoney(line.quantity ?? 0),
+        unitPrice: formatMoney(line.unitPrice ?? 0),
+        lineTotal: formatMoney(line.lineTotal ?? 0),
+      }))
+    );
 
-  drawTable(
-    doc,
-    "Labor",
-    columns,
-    (laborLines || []).map((line) => ({
-      description: line.laborName || line.description || "Labor",
-      quantity: formatMoney(line.quantity ?? 0),
-      unitPrice: costInQuote ? formatMoney(line.unitPrice ?? 0) : "",
-      lineTotal: costInQuote ? formatMoney(line.lineTotal ?? 0) : "",
-    }))
-  );
-
-  if (!costInQuote) {
-    ensureSpace(doc, 90);
-  } else {
-    ensureSpace(doc, 120);
-
-    const subtotal = Number(document.subtotal ?? 0);
-    const gst = Number(document.gst ?? 0);
-    const total = Number(document.totalAmount ?? subtotal + gst);
-    const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
-
-    const totalsX = X(doc) + contentW(doc) * 0.5;
-    const totalsW = contentW(doc) * 0.5;
-
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .text("Totals", totalsX, doc.y, { width: totalsW });
-
-    doc.moveDown(0.5);
-
-    const totals = [
-      ["Materials", formatMoney(document.materialTotal ?? 0)],
-      ["Labor", formatMoney(document.laborTotal ?? 0)],
-      ["Subtotal", formatMoney(subtotal)],
-      [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
-      ["Total", formatMoney(total)],
-    ];
-
-    totals.forEach(([label, value]) => {
-      doc
-        .fillColor(BRAND.text)
-        .font("Helvetica")
-        .fontSize(9)
-        .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
-      doc
-        .font("Helvetica-Bold")
-        .text(value, totalsX, doc.y - 12, {
-          width: totalsW,
-          align: "right",
-        });
-      doc.moveDown(0.4);
-    });
+    drawTable(
+      doc,
+      "Labor",
+      columns,
+      (laborLines || []).map((line) => ({
+        description: line.laborName || line.description || "Labor",
+        quantity: formatMoney(line.quantity ?? 0),
+        unitPrice: formatMoney(line.unitPrice ?? 0),
+        lineTotal: formatMoney(line.lineTotal ?? 0),
+      }))
+    );
   }
+
+  ensureSpace(doc, costInQuote ? 120 : 90);
+
+  const subtotal = Number(document.subtotal ?? 0);
+  const gst = Number(document.gst ?? 0);
+  const total = Number(document.totalAmount ?? subtotal + gst);
+  const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
+
+  const totalsX = X(doc) + contentW(doc) * 0.5;
+  const totalsW = contentW(doc) * 0.5;
+
+  doc
+    .fillColor(BRAND.teal2)
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("Totals", totalsX, doc.y, { width: totalsW });
+
+  doc.moveDown(0.5);
+
+  const totals = [
+    ["Materials", formatMoney(document.materialTotal ?? 0)],
+    ["Labor", formatMoney(document.laborTotal ?? 0)],
+    ["Subtotal", formatMoney(subtotal)],
+    [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
+    ["Total", formatMoney(total)],
+  ];
+
+  totals.forEach(([label, value]) => {
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica")
+      .fontSize(9)
+      .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
+    doc
+      .font("Helvetica-Bold")
+      .text(value, totalsX, doc.y - 12, {
+        width: totalsW,
+        align: "right",
+      });
+    doc.moveDown(0.4);
+  });
 
   ensureSpace(doc, 90);
 
