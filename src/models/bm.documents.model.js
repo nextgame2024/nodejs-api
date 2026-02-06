@@ -21,6 +21,7 @@ const DOC_SELECT = `
   d.total_amount AS "totalAmount",
   d.pdf_url AS "pdfUrl",
   d.pdf_key AS "pdfKey",
+  d.invoice_status AS "invoiceStatus",
   d.status,
   d.createdat AS "createdAt",
   d.updatedat AS "updatedAt"
@@ -233,6 +234,7 @@ export async function updateDocument(companyId, documentId, payload) {
     notes: "notes",
     pdf_url: "pdf_url",
     pdf_key: "pdf_key",
+    invoice_status: "invoice_status",
     status: "status",
   };
 
@@ -1030,6 +1032,7 @@ export async function createDocumentFromProject(
               due_date = COALESCE($4, due_date),
               notes = COALESCE($5, notes),
               status = COALESCE($6, status),
+              invoice_status = COALESCE($7, invoice_status),
               updatedat = NOW()
           WHERE company_id = $1 AND document_id = $2
           `,
@@ -1040,6 +1043,7 @@ export async function createDocumentFromProject(
             payload.due_date ?? null,
             payload.notes ?? null,
             payload.status ?? null,
+            payload.invoice_status ?? null,
           ]
         );
 
@@ -1064,11 +1068,15 @@ export async function createDocumentFromProject(
         `
           INSERT INTO bm_documents (
             document_id, company_id, user_id, client_id, project_id, type, doc_number,
-            issue_date, due_date, notes, status
+            issue_date, due_date, notes, status, invoice_status
           )
           VALUES (
             gen_random_uuid(), $1, $2, $3, $4, $5, $6,
-            COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status
+            COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status,
+            CASE
+              WHEN $5 = 'invoice' THEN COALESCE($11, 'invoice_created'::bm_invoice_status)
+              ELSE NULL
+            END
           )
           RETURNING document_id
         `,
@@ -1083,10 +1091,22 @@ export async function createDocumentFromProject(
           payload.due_date ?? null,
           payload.notes ?? null,
           payload.status ?? null,
+          payload.invoice_status ?? null,
         ]
       );
 
       documentId = docRows[0].document_id;
+    }
+
+    if (docType === "invoice") {
+      await client.query(
+        `
+        UPDATE bm_documents
+        SET invoice_status = COALESCE(invoice_status, 'invoice_created'::bm_invoice_status)
+        WHERE company_id = $1 AND document_id = $2
+        `,
+        [companyId, documentId]
+      );
     }
 
     const { materialMarkup, laborMarkup } = await resolvePricing(

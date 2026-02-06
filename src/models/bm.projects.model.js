@@ -15,6 +15,10 @@ const PROJECT_SELECT = `
   pt.name AS "projectTypeName",
   p.pricing_profile_id AS "pricingProfileId",
   pp.profile_name AS "pricingProfileName",
+  inv.document_id AS "invoiceDocumentId",
+  inv.doc_number AS "invoiceDocNumber",
+  inv.pdf_url AS "invoicePdfUrl",
+  inv.invoice_status AS "invoiceStatus",
   p.createdat AS "createdAt",
   p.updatedat AS "updatedAt"
 `;
@@ -56,6 +60,15 @@ export async function listProjects(
     LEFT JOIN bm_pricing_profiles pp
       ON pp.pricing_profile_id = p.pricing_profile_id
      AND pp.company_id = p.company_id
+    LEFT JOIN LATERAL (
+      SELECT document_id, doc_number, pdf_url, invoice_status
+      FROM bm_documents
+      WHERE company_id = p.company_id
+        AND project_id = p.project_id
+        AND type = 'invoice'
+      ORDER BY createdat ASC
+      LIMIT 1
+    ) inv ON true
     WHERE ${where.join(" AND ")}
     ORDER BY p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
@@ -120,6 +133,15 @@ export async function getProject(companyId, projectId) {
     LEFT JOIN bm_pricing_profiles pp
       ON pp.pricing_profile_id = p.pricing_profile_id
      AND pp.company_id = p.company_id
+    LEFT JOIN LATERAL (
+      SELECT document_id, doc_number, pdf_url, invoice_status
+      FROM bm_documents
+      WHERE company_id = p.company_id
+        AND project_id = p.project_id
+        AND type = 'invoice'
+      ORDER BY createdat ASC
+      LIMIT 1
+    ) inv ON true
     WHERE p.company_id = $1 AND p.project_id = $2
     LIMIT 1
     `,

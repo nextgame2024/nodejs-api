@@ -213,6 +213,7 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
       {
         pdf_url: pdfUrl,
         pdf_key: key,
+        invoice_status: "invoice_created",
       }
     );
     if (updated) result.document = updated;
