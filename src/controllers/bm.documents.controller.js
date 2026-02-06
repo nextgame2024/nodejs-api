@@ -3,6 +3,7 @@ import * as service from "../services/bm.documents.service.js";
 import * as model from "../models/bm.documents.model.js";
 import * as clientsModel from "../models/bm.clients.model.js";
 import { buildQuotePdf } from "../services/bm.quote_pdf.service.js";
+import * as projectsService from "../services/bm.projects.service.js";
 
 // Basic status transition guardrails
 const ALLOWED_TRANSITIONS = {
@@ -157,12 +158,15 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
 
   const refreshed = await service.recalcDocumentTotals(companyId, documentId);
   const document = refreshed || doc;
+  const project = doc.projectId
+    ? await projectsService.getProject(companyId, doc.projectId)
+    : null;
 
   const pdfBuffer = await buildQuotePdf({
     document,
     company: company || {},
     client: client || {},
-    project: doc.projectName ? { projectName: doc.projectName } : null,
+    project: project || (doc.projectName ? { projectName: doc.projectName } : null),
     materialLines,
     laborLines,
   });

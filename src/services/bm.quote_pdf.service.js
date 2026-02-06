@@ -214,10 +214,21 @@ export async function buildQuotePdf({
     client.phone,
   ];
 
-  drawInfoBlock(doc, "From", companyLines, leftX, doc.y, colW);
-  drawInfoBlock(doc, "To", clientLines, rightX, doc.y, colW);
+  const infoY = doc.y;
+  drawInfoBlock(doc, "From", companyLines, leftX, infoY, colW);
+  drawInfoBlock(doc, "To", clientLines, rightX, infoY, colW);
 
-  doc.moveDown(4);
+  const fromHeight =
+    14 +
+    doc.heightOfString(companyLines.filter(Boolean).join("\n"), {
+      width: colW,
+    });
+  const toHeight =
+    14 +
+    doc.heightOfString(clientLines.filter(Boolean).join("\n"), {
+      width: colW,
+    });
+  doc.y = infoY + Math.max(fromHeight, toHeight) + 18;
 
   const issueDate = document.issueDate || new Date();
   const validUntil = new Date(issueDate);
@@ -239,12 +250,35 @@ export async function buildQuotePdf({
   doc.moveDown(1.2);
 
   const tableW = contentW(doc);
-  const columns = [
-    { key: "description", label: "Description", width: tableW * 0.46 },
-    { key: "quantity", label: "Qty", width: tableW * 0.12, align: "right" },
-    { key: "unitPrice", label: "Unit", width: tableW * 0.18, align: "right" },
-    { key: "lineTotal", label: "Total", width: tableW * 0.24, align: "right" },
-  ];
+  const costInQuote = project?.costInQuote ?? true;
+  if (!costInQuote && project?.description) {
+    ensureSpace(doc, 36);
+    doc
+      .fillColor(BRAND.teal2)
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("Description", X(doc), doc.y);
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica")
+      .fontSize(9)
+      .text(project.description, X(doc), doc.y + 14, {
+        width: contentW(doc),
+      });
+    doc.moveDown(2.2);
+  }
+
+  const columns = costInQuote
+    ? [
+        { key: "description", label: "Description", width: tableW * 0.46 },
+        { key: "quantity", label: "Qty", width: tableW * 0.12, align: "right" },
+        { key: "unitPrice", label: "Unit", width: tableW * 0.18, align: "right" },
+        { key: "lineTotal", label: "Total", width: tableW * 0.24, align: "right" },
+      ]
+    : [
+        { key: "description", label: "Description", width: tableW * 0.7 },
+        { key: "quantity", label: "Qty", width: tableW * 0.3, align: "right" },
+      ];
 
   drawTable(
     doc,
@@ -253,8 +287,8 @@ export async function buildQuotePdf({
     (materialLines || []).map((line) => ({
       description: line.materialName || line.description || "Material",
       quantity: formatMoney(line.quantity ?? 0),
-      unitPrice: formatMoney(line.unitPrice ?? 0),
-      lineTotal: formatMoney(line.lineTotal ?? 0),
+      unitPrice: costInQuote ? formatMoney(line.unitPrice ?? 0) : "",
+      lineTotal: costInQuote ? formatMoney(line.lineTotal ?? 0) : "",
     }))
   );
 
@@ -265,51 +299,55 @@ export async function buildQuotePdf({
     (laborLines || []).map((line) => ({
       description: line.laborName || line.description || "Labor",
       quantity: formatMoney(line.quantity ?? 0),
-      unitPrice: formatMoney(line.unitPrice ?? 0),
-      lineTotal: formatMoney(line.lineTotal ?? 0),
+      unitPrice: costInQuote ? formatMoney(line.unitPrice ?? 0) : "",
+      lineTotal: costInQuote ? formatMoney(line.lineTotal ?? 0) : "",
     }))
   );
 
-  ensureSpace(doc, 120);
+  if (!costInQuote) {
+    ensureSpace(doc, 90);
+  } else {
+    ensureSpace(doc, 120);
 
-  const subtotal = Number(document.subtotal ?? 0);
-  const gst = Number(document.gst ?? 0);
-  const total = Number(document.totalAmount ?? subtotal + gst);
-  const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
+    const subtotal = Number(document.subtotal ?? 0);
+    const gst = Number(document.gst ?? 0);
+    const total = Number(document.totalAmount ?? subtotal + gst);
+    const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
 
-  const totalsX = X(doc) + contentW(doc) * 0.5;
-  const totalsW = contentW(doc) * 0.5;
+    const totalsX = X(doc) + contentW(doc) * 0.5;
+    const totalsW = contentW(doc) * 0.5;
 
-  doc
-    .fillColor(BRAND.teal2)
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .text("Totals", totalsX, doc.y, { width: totalsW });
-
-  doc.moveDown(0.5);
-
-  const totals = [
-    ["Materials", formatMoney(document.materialTotal ?? 0)],
-    ["Labor", formatMoney(document.laborTotal ?? 0)],
-    ["Subtotal", formatMoney(subtotal)],
-    [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
-    ["Total", formatMoney(total)],
-  ];
-
-  totals.forEach(([label, value]) => {
     doc
-      .fillColor(BRAND.text)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
-    doc
+      .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
-      .text(value, totalsX, doc.y - 12, {
-        width: totalsW,
-        align: "right",
-      });
-    doc.moveDown(0.4);
-  });
+      .fontSize(10)
+      .text("Totals", totalsX, doc.y, { width: totalsW });
+
+    doc.moveDown(0.5);
+
+    const totals = [
+      ["Materials", formatMoney(document.materialTotal ?? 0)],
+      ["Labor", formatMoney(document.laborTotal ?? 0)],
+      ["Subtotal", formatMoney(subtotal)],
+      [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
+      ["Total", formatMoney(total)],
+    ];
+
+    totals.forEach(([label, value]) => {
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica")
+        .fontSize(9)
+        .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
+      doc
+        .font("Helvetica-Bold")
+        .text(value, totalsX, doc.y - 12, {
+          width: totalsW,
+          align: "right",
+        });
+      doc.moveDown(0.4);
+    });
+  }
 
   ensureSpace(doc, 90);
 
