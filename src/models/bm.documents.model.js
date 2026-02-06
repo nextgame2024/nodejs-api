@@ -708,26 +708,120 @@ export async function recalcDocumentTotals(companyId, documentId) {
 
   const projectId = docRows[0].project_id;
 
-  const { rows: sumRows } = await pool.query(
-    `
-    WITH mat AS (
-      SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
-      FROM bm_document_material_lines
-      WHERE company_id = $1 AND document_id = $2
-    ),
-    lab AS (
-      SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS labor_total
-      FROM bm_document_labor_lines
-      WHERE company_id = $1 AND document_id = $2
-    )
-    SELECT mat.material_total, lab.labor_total
-    FROM mat, lab
-    `,
-    [companyId, documentId]
-  );
+  let materialTotal = 0;
+  let laborTotal = 0;
 
-  const materialTotal = sumRows[0].material_total;
-  const laborTotal = sumRows[0].labor_total;
+  if (projectId) {
+    const { rows: projRows } = await pool.query(
+      `
+      SELECT default_pricing, cost_in_quote
+      FROM bm_projects
+      WHERE company_id = $1 AND project_id = $2
+      LIMIT 1
+      `,
+      [companyId, projectId]
+    );
+
+    const project = projRows[0];
+
+    if (project && project.cost_in_quote === false) {
+      const { materialMarkup, laborMarkup } = await resolvePricing(
+        pool,
+        companyId,
+        projectId
+      );
+
+      const { rows: matRows } = await pool.query(
+        `
+        SELECT COALESCE(
+          SUM(
+            pm.quantity * CASE
+              WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
+              ELSE COALESCE(pm.unit_cost_override, 0) * (1::numeric + $3::numeric)
+            END
+          ), 0
+        )::numeric(12,2) AS material_total
+        FROM bm_project_materials pm
+        JOIN bm_projects p
+          ON p.project_id = pm.project_id
+         AND p.company_id = pm.company_id
+        WHERE p.company_id = $1
+          AND p.project_id = $2
+          AND pm.company_id = $1
+        `,
+        [companyId, projectId, materialMarkup]
+      );
+
+      const { rows: labRows } = await pool.query(
+        `
+        SELECT COALESCE(
+          SUM(
+            pl.quantity * CASE
+              WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
+              ELSE COALESCE(pl.unit_cost_override, l.unit_cost, 0) * (1::numeric + $3::numeric)
+            END
+          ), 0
+        )::numeric(12,2) AS labor_total
+        FROM bm_project_labor pl
+        JOIN bm_projects p
+          ON p.project_id = pl.project_id
+         AND p.company_id = pl.company_id
+        JOIN bm_labor l
+          ON l.labor_id = pl.labor_id
+         AND l.company_id = p.company_id
+        WHERE p.company_id = $1
+          AND p.project_id = $2
+          AND pl.company_id = $1
+        `,
+        [companyId, projectId, laborMarkup]
+      );
+
+      materialTotal = Number(matRows[0]?.material_total ?? 0);
+      laborTotal = Number(labRows[0]?.labor_total ?? 0);
+    } else {
+      const { rows: sumRows } = await pool.query(
+        `
+        WITH mat AS (
+          SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
+          FROM bm_document_material_lines
+          WHERE company_id = $1 AND document_id = $2
+        ),
+        lab AS (
+          SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS labor_total
+          FROM bm_document_labor_lines
+          WHERE company_id = $1 AND document_id = $2
+        )
+        SELECT mat.material_total, lab.labor_total
+        FROM mat, lab
+        `,
+        [companyId, documentId]
+      );
+
+      materialTotal = Number(sumRows[0]?.material_total ?? 0);
+      laborTotal = Number(sumRows[0]?.labor_total ?? 0);
+    }
+  } else {
+    const { rows: sumRows } = await pool.query(
+      `
+      WITH mat AS (
+        SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
+        FROM bm_document_material_lines
+        WHERE company_id = $1 AND document_id = $2
+      ),
+      lab AS (
+        SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS labor_total
+        FROM bm_document_labor_lines
+        WHERE company_id = $1 AND document_id = $2
+      )
+      SELECT mat.material_total, lab.labor_total
+      FROM mat, lab
+      `,
+      [companyId, documentId]
+    );
+
+    materialTotal = Number(sumRows[0]?.material_total ?? 0);
+    laborTotal = Number(sumRows[0]?.labor_total ?? 0);
+  }
   const subtotal = Number(materialTotal) + Number(laborTotal);
 
   const { rows: gstRows } = await pool.query(
