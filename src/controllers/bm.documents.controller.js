@@ -3,6 +3,7 @@ import * as service from "../services/bm.documents.service.js";
 import * as model from "../models/bm.documents.model.js";
 import * as clientsModel from "../models/bm.clients.model.js";
 import { buildQuotePdf } from "../services/bm.quote_pdf.service.js";
+import { buildInvoicePdf } from "../services/bm.invoice_pdf.service.js";
 import * as projectsService from "../services/bm.projects.service.js";
 
 // Basic status transition guardrails
@@ -174,6 +175,48 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
   const filename = `Quote-${doc.docNumber || doc.documentId}.pdf`;
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.send(pdfBuffer);
+});
+
+export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { documentId } = req.params;
+
+  const doc = await service.getDocument(companyId, documentId);
+  if (!doc) return res.status(404).json({ error: "Document not found" });
+  if (doc.type !== "invoice") {
+    return res.status(400).json({ error: "Document is not an invoice" });
+  }
+
+  if (doc.pdfUrl) {
+    return res.redirect(doc.pdfUrl);
+  }
+
+  const [materialLines, laborLines, company, client] = await Promise.all([
+    service.listDocumentMaterialLines(companyId, documentId),
+    service.listDocumentLaborLines(companyId, documentId),
+    service.getCompanyProfile(companyId),
+    clientsModel.getClient(companyId, doc.clientId),
+  ]);
+
+  const refreshed = await service.recalcDocumentTotals(companyId, documentId);
+  const document = refreshed || doc;
+  const project = doc.projectId
+    ? await projectsService.getProject(companyId, doc.projectId)
+    : null;
+
+  const pdfBuffer = await buildInvoicePdf({
+    document,
+    company: company || {},
+    client: client || {},
+    project: project || (doc.projectName ? { projectName: doc.projectName } : null),
+    materialLines,
+    laborLines,
+  });
+
+  const filename = `Invoice-${doc.docNumber || doc.documentId}.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename=\"${filename}\"`);
   res.send(pdfBuffer);
 });
 

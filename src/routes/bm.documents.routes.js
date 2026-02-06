@@ -8,6 +8,7 @@ import {
   archiveDocument,
   recalcDocumentTotals,
   getDocumentQuotePdf,
+  getDocumentInvoicePdf,
   listDocumentMaterialLines,
   createDocumentMaterialLine,
   updateDocumentMaterialLine,
@@ -38,6 +39,11 @@ router.get(
   "/bm/documents/:documentId/quote-pdf",
   authRequired,
   getDocumentQuotePdf
+);
+router.get(
+  "/bm/documents/:documentId/invoice-pdf",
+  authRequired,
+  getDocumentInvoicePdf
 );
 
 // Material lines

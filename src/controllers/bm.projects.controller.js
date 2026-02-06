@@ -1,6 +1,12 @@
 // src/controllers/bm.projects.controller.js
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.projects.service.js";
+import * as documentsService from "../services/bm.documents.service.js";
+import * as clientsModel from "../models/bm.clients.model.js";
+import { buildInvoicePdf } from "../services/bm.invoice_pdf.service.js";
+import { putToS3 } from "../services/s3.js";
+
+const S3_PUBLIC_PREFIX = process.env.S3_PUBLIC_PREFIX || "public/";
 
 export const listProjects = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
@@ -173,6 +179,43 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
 
   if (!result) {
     return res.status(404).json({ error: "Project not found" });
+  }
+
+  if (payload.type === "invoice" && result?.document?.documentId) {
+    const documentId = result.document.documentId;
+    const [company, client, project] = await Promise.all([
+      documentsService.getCompanyProfile(companyId),
+      clientsModel.getClient(companyId, result.document.clientId),
+      service.getProject(companyId, projectId),
+    ]);
+
+    const pdfBuffer = await buildInvoicePdf({
+      document: result.document,
+      company: company || {},
+      client: client || {},
+      project: project || null,
+      materialLines: result.materialLines || [],
+      laborLines: result.laborLines || [],
+    });
+
+    const key =
+      S3_PUBLIC_PREFIX +
+      `business-manager/invoices/${companyId}/${result.document.docNumber || documentId}.pdf`;
+    const pdfUrl = await putToS3({
+      key,
+      body: pdfBuffer,
+      contentType: "application/pdf",
+    });
+
+    const updated = await documentsService.updateDocument(
+      companyId,
+      documentId,
+      {
+        pdf_url: pdfUrl,
+        pdf_key: key,
+      }
+    );
+    if (updated) result.document = updated;
   }
 
   // result: { document, materialLines, laborLines }

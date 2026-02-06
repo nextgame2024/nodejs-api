@@ -19,6 +19,8 @@ const DOC_SELECT = `
   d.subtotal,
   d.gst,
   d.total_amount AS "totalAmount",
+  d.pdf_url AS "pdfUrl",
+  d.pdf_key AS "pdfKey",
   d.status,
   d.createdat AS "createdAt",
   d.updatedat AS "updatedAt"
@@ -229,6 +231,8 @@ export async function updateDocument(companyId, documentId, payload) {
     issue_date: "issue_date",
     due_date: "due_date",
     notes: "notes",
+    pdf_url: "pdf_url",
+    pdf_key: "pdf_key",
     status: "status",
   };
 
@@ -999,38 +1003,91 @@ export async function createDocumentFromProject(
 
     const clientId = projRows[0].client_id;
 
-    const docNumber =
-      payload.doc_number && String(payload.doc_number).trim()
-        ? String(payload.doc_number).trim()
-        : await allocateDocNumber(client, companyId, userId, docType);
+    let documentId = null;
+    let docNumber = null;
 
-    const { rows: docRows } = await client.query(
-      `
-        INSERT INTO bm_documents (
-          document_id, company_id, user_id, client_id, project_id, type, doc_number,
-          issue_date, due_date, notes, status
-        )
-        VALUES (
-          gen_random_uuid(), $1, $2, $3, $4, $5, $6,
-          COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status
-        )
-        RETURNING document_id
-      `,
-      [
-        companyId,
-        userId,
-        clientId,
-        projectId,
-        docType,
-        docNumber,
-        payload.issue_date ?? null,
-        payload.due_date ?? null,
-        payload.notes ?? null,
-        payload.status ?? null,
-      ]
-    );
+    if (docType === "invoice") {
+      const { rows: existingRows } = await client.query(
+        `
+          SELECT document_id, doc_number
+          FROM bm_documents
+          WHERE company_id = $1
+            AND project_id = $2
+            AND type = 'invoice'
+          ORDER BY createdat ASC
+          LIMIT 1
+        `,
+        [companyId, projectId]
+      );
+      if (existingRows[0]) {
+        documentId = existingRows[0].document_id;
+        docNumber = existingRows[0].doc_number;
 
-    const documentId = docRows[0].document_id;
+        await client.query(
+          `
+          UPDATE bm_documents
+          SET issue_date = COALESCE($3, issue_date),
+              due_date = COALESCE($4, due_date),
+              notes = COALESCE($5, notes),
+              status = COALESCE($6, status),
+              updatedat = NOW()
+          WHERE company_id = $1 AND document_id = $2
+          `,
+          [
+            companyId,
+            documentId,
+            payload.issue_date ?? null,
+            payload.due_date ?? null,
+            payload.notes ?? null,
+            payload.status ?? null,
+          ]
+        );
+
+        await client.query(
+          `DELETE FROM bm_document_material_lines WHERE company_id = $1 AND document_id = $2`,
+          [companyId, documentId]
+        );
+        await client.query(
+          `DELETE FROM bm_document_labor_lines WHERE company_id = $1 AND document_id = $2`,
+          [companyId, documentId]
+        );
+      }
+    }
+
+    if (!documentId) {
+      docNumber =
+        payload.doc_number && String(payload.doc_number).trim()
+          ? String(payload.doc_number).trim()
+          : await allocateDocNumber(client, companyId, userId, docType);
+
+      const { rows: docRows } = await client.query(
+        `
+          INSERT INTO bm_documents (
+            document_id, company_id, user_id, client_id, project_id, type, doc_number,
+            issue_date, due_date, notes, status
+          )
+          VALUES (
+            gen_random_uuid(), $1, $2, $3, $4, $5, $6,
+            COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status
+          )
+          RETURNING document_id
+        `,
+        [
+          companyId,
+          userId,
+          clientId,
+          projectId,
+          docType,
+          docNumber,
+          payload.issue_date ?? null,
+          payload.due_date ?? null,
+          payload.notes ?? null,
+          payload.status ?? null,
+        ]
+      );
+
+      documentId = docRows[0].document_id;
+    }
 
     const { materialMarkup, laborMarkup } = await resolvePricing(
       client,
