@@ -957,13 +957,13 @@ export async function createDocumentFromProject(
           m.material_name,
           pm.quantity,
           CASE
-            WHEN p.cost_in_quote = false THEN NULL
+            WHEN p.cost_in_quote = false THEN 0
             WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
             ELSE COALESCE(ROUND((pm.unit_cost_override * (1::numeric + $4::numeric))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
             (pm.quantity * CASE
-              WHEN p.cost_in_quote = false THEN NULL
+              WHEN p.cost_in_quote = false THEN 0
               WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
               ELSE COALESCE((pm.unit_cost_override * (1::numeric + $4::numeric)), 0)
             END)::numeric,
@@ -997,13 +997,13 @@ export async function createDocumentFromProject(
           pl.quantity,
           l.unit_type,
           CASE
-            WHEN p.cost_in_quote = false THEN NULL
+            WHEN p.cost_in_quote = false THEN 0
             WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
             ELSE COALESCE(ROUND((COALESCE(pl.unit_cost_override, l.unit_cost) * (1::numeric + $4::numeric))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
             (pl.quantity * CASE
-              WHEN p.cost_in_quote = false THEN NULL
+              WHEN p.cost_in_quote = false THEN 0
               WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
               ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1::numeric + $4::numeric)), 0)
             END)::numeric,
