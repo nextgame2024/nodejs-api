@@ -324,13 +324,19 @@ export async function buildQuotePdf({
 
   doc.moveDown(0.5);
 
-  const totals = [
-    ["Materials", formatMoney(document.materialTotal ?? 0)],
-    ["Labor", formatMoney(document.laborTotal ?? 0)],
-    ["Subtotal", formatMoney(subtotal)],
-    [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
-    ["Total", formatMoney(total)],
-  ];
+  const totals = costInQuote
+    ? [
+        ["Materials", formatMoney(document.materialTotal ?? 0)],
+        ["Labor", formatMoney(document.laborTotal ?? 0)],
+        ["Subtotal", formatMoney(subtotal)],
+        [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
+        ["Total", formatMoney(total)],
+      ]
+    : [
+        ["Subtotal", formatMoney(subtotal)],
+        [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
+        ["Total", formatMoney(total)],
+      ];
 
   totals.forEach(([label, value]) => {
     doc
