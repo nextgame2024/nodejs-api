@@ -269,7 +269,7 @@ export async function buildQuotePdf({
   const column1 = Math.floor(tableW * 0.42);
   const column2 = Math.floor(tableW * 0.12);
   const column3 = Math.floor(tableW * 0.18);
-  const column4 = tableW - (c1 + c2 + c3);
+  const column4 = tableW - (column1 + column2 + column3);
 
   const columns = costInQuote
     ? [
