@@ -1071,10 +1071,11 @@ export async function createDocumentFromProject(
             issue_date, due_date, notes, status, invoice_status
           )
           VALUES (
-            gen_random_uuid(), $1, $2, $3, $4, $5, $6,
+            gen_random_uuid(), $1, $2, $3, $4, $5::bm_doc_type, $6,
             COALESCE($7, CURRENT_DATE), $8, $9, COALESCE($10, 'draft')::bm_doc_status,
             CASE
-              WHEN $5 = 'invoice' THEN COALESCE($11, 'invoice_created'::bm_invoice_status)
+              WHEN $5::bm_doc_type = 'invoice'::bm_doc_type
+                THEN COALESCE($11, 'invoice_created'::bm_invoice_status)
               ELSE NULL
             END
           )
