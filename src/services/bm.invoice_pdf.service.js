@@ -190,7 +190,10 @@ export async function buildInvoicePdf({
   const chunks = [];
   doc.on("data", (d) => chunks.push(d));
 
-  const logoBuffer = await fetchBuffer(LOGO_URL);
+  const logoUrl = company?.logoUrl || LOGO_URL;
+  const logoBuffer =
+    (await fetchBuffer(logoUrl)) ||
+    (logoUrl !== LOGO_URL ? await fetchBuffer(LOGO_URL) : null);
   drawHeader(doc, { title: "Invoice", logoBuffer });
 
   const leftX = X(doc);

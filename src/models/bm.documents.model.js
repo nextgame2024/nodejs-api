@@ -34,7 +34,8 @@ const COMPANY_SELECT = `
   abn,
   address,
   email,
-  COALESCE(phone, tel, cel) AS "phone"
+  COALESCE(phone, tel, cel) AS "phone",
+  logo_url AS "logoUrl"
 `;
 
 export async function getCompanyProfile(companyId) {
