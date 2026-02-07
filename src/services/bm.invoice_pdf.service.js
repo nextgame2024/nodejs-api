@@ -72,7 +72,7 @@ function drawHeader(doc, { title, logoBuffer }) {
 
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, x + 14, y + 4, { height: 24 });
+      doc.image(logoBuffer, x + 14, y + 3, { height: 30 });
     } catch {
       doc
         .fillColor(BRAND.white)
