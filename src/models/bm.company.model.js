@@ -14,7 +14,8 @@ const COMPANY_SELECT = `
   email,
   phone,
   tel,
-  cel
+  cel,
+  logo_url AS "logoUrl"
 `;
 
 export async function listCompanies(companyId, { q, status, limit, offset }) {
@@ -110,7 +111,8 @@ export async function createCompany(companyId, userId, payload) {
         email,
         phone,
         tel,
-        cel
+        cel,
+        logo_url
      ) VALUES (
         COALESCE($1::uuid, gen_random_uuid()),
         $2,
@@ -123,7 +125,8 @@ export async function createCompany(companyId, userId, payload) {
         $9,
         $10,
         $11,
-        $12
+        $12,
+        $13
      )
      RETURNING ${COMPANY_SELECT}`,
     [
@@ -139,6 +142,7 @@ export async function createCompany(companyId, userId, payload) {
       payload.phone ?? null,
       payload.tel ?? null,
       payload.cel ?? null,
+      payload.logo_url ?? null,
     ],
   );
   return rows[0];
@@ -160,6 +164,7 @@ export async function updateCompany(companyId, targetCompanyId, payload) {
     phone: "phone",
     tel: "tel",
     cel: "cel",
+    logo_url: "logo_url",
   };
 
   for (const [k, col] of Object.entries(map)) {
