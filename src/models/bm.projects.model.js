@@ -9,6 +9,7 @@ const PROJECT_SELECT = `
   p.project_name AS "projectName",
   p.description,
   p.status,
+  p.status_before_hold AS "statusBeforeHold",
   p.default_pricing AS "defaultPricing",
   p.cost_in_quote AS "costInQuote",
   p.project_type_id AS "projectTypeId",
@@ -237,6 +238,84 @@ export async function updateProject(companyId, projectId, payload) {
   const sets = [];
   const params = [companyId, projectId];
   let i = 3;
+  let statusBeforeHoldUpdate = undefined;
+
+  if (payload.status !== undefined) {
+    const { rows: statusRows } = await pool.query(
+      `
+      SELECT status, status_before_hold
+      FROM bm_projects
+      WHERE company_id = $1 AND project_id = $2
+      LIMIT 1
+      `,
+      [companyId, projectId]
+    );
+    if (!statusRows[0]) return null;
+
+    const currentStatus = statusRows[0].status;
+    const statusBeforeHold = statusRows[0].status_before_hold;
+    const nextStatus = payload.status;
+
+    const lockedStatuses = new Set(["done", "cancelled"]);
+    if (lockedStatuses.has(currentStatus) && nextStatus !== currentStatus) {
+      const err = new Error(
+        "Status cannot be changed once it is Done or Cancelled."
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (currentStatus === "on_hold" && nextStatus !== "on_hold") {
+      if (nextStatus !== "cancelled" && statusBeforeHold && nextStatus !== statusBeforeHold) {
+        const err = new Error(
+          `Status can only return to ${statusBeforeHold} after On hold.`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      statusBeforeHoldUpdate = null;
+    }
+
+    if (nextStatus === "on_hold" && currentStatus !== "on_hold") {
+      statusBeforeHoldUpdate = currentStatus;
+    }
+
+    if (currentStatus !== "on_hold") {
+      const allowedMap = {
+        to_do: new Set(["to_do", "in_progress", "on_hold", "cancelled"]),
+        in_progress: new Set([
+          "in_progress",
+          "quote_approved",
+          "on_hold",
+          "cancelled",
+        ]),
+        quote_approved: new Set([
+          "quote_approved",
+          "invoice_process",
+          "on_hold",
+          "cancelled",
+        ]),
+        invoice_process: new Set([
+          "invoice_process",
+          "done",
+          "on_hold",
+          "cancelled",
+        ]),
+        on_hold: new Set(["on_hold"]),
+        done: new Set(["done"]),
+        cancelled: new Set(["cancelled"]),
+      };
+
+      const allowed = allowedMap[currentStatus] || new Set([currentStatus]);
+      if (!allowed.has(nextStatus)) {
+        const err = new Error(
+          `Invalid status transition: ${currentStatus} -> ${nextStatus}`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+  }
 
   const map = {
     project_name: "project_name",
@@ -287,6 +366,15 @@ export async function updateProject(companyId, projectId, payload) {
   }
 
   if (!sets.length) return getProject(companyId, projectId);
+
+  if (statusBeforeHoldUpdate !== undefined) {
+    if (statusBeforeHoldUpdate === null) {
+      sets.push(`status_before_hold = NULL`);
+    } else {
+      sets.push(`status_before_hold = $${i++}::bm_project_status`);
+      params.push(statusBeforeHoldUpdate);
+    }
+  }
 
   sets.push(`updatedat = NOW()`);
 

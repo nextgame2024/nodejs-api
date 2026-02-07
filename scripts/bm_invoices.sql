@@ -1,5 +1,10 @@
 -- Add new project status for invoice flow
 ALTER TYPE bm_project_status ADD VALUE IF NOT EXISTS 'quote_approved';
+ALTER TYPE bm_project_status ADD VALUE IF NOT EXISTS 'invoice_process';
+
+-- Track previous status when a project goes on hold
+ALTER TABLE bm_projects
+  ADD COLUMN IF NOT EXISTS status_before_hold bm_project_status;
 
 -- Invoice status enum
 DO $$

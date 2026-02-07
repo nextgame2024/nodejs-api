@@ -217,6 +217,12 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
       }
     );
     if (updated) result.document = updated;
+
+    if (project?.status === "quote_approved") {
+      await service.updateProject(companyId, projectId, {
+        status: "invoice_process",
+      });
+    }
   }
 
   // result: { document, materialLines, laborLines }
