@@ -8,6 +8,8 @@ const MATERIAL_SELECT = `
   material_name AS "materialName",
   code,
   category,
+  quantity,
+  unit,
   notes,
   status,
   createdat AS "createdAt",
@@ -85,9 +87,10 @@ export async function getMaterial(companyId, materialId) {
 export async function createMaterial(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_materials (
-        material_id, company_id, user_id, type, material_name, code, category, notes
+        material_id, company_id, user_id, type, material_name, code, category,
+        quantity, unit, notes
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9
      )
      RETURNING ${MATERIAL_SELECT}`,
     [
@@ -97,6 +100,8 @@ export async function createMaterial(companyId, userId, payload) {
       payload.material_name,
       payload.code ?? null,
       payload.category ?? null,
+      payload.quantity ?? 0,
+      payload.unit ?? null,
       payload.notes ?? null,
     ]
   );
@@ -113,6 +118,8 @@ export async function updateMaterial(companyId, materialId, payload) {
     material_name: "material_name",
     code: "code",
     category: "category",
+    quantity: "quantity",
+    unit: "unit",
     notes: "notes",
     status: "status",
   };
