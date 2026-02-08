@@ -7,6 +7,7 @@ const PROJECT_SELECT = `
   p.client_id AS "clientId",
   c.client_name AS "clientName",
   p.project_name AS "projectName",
+  p.meters_required AS "metersRequired",
   p.description,
   p.status,
   p.status_before_hold AS "statusBeforeHold",
@@ -171,6 +172,7 @@ export async function createProject(companyId, userId, payload) {
       user_id,
       client_id,
       project_name,
+      meters_required,
       description,
       status,
       default_pricing,
@@ -185,11 +187,12 @@ export async function createProject(companyId, userId, payload) {
       $3,
       $4,
       $5,
-      COALESCE($6::bm_project_status, 'to_do'::bm_project_status),
-      COALESCE($7, true),
-      COALESCE($8, false),
-      (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $9),
-      $10
+      $6,
+      COALESCE($7::bm_project_status, 'to_do'::bm_project_status),
+      COALESCE($8, true),
+      COALESCE($9, false),
+      (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $10),
+      $11
       WHERE EXISTS (
         SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
       )
@@ -200,12 +203,13 @@ export async function createProject(companyId, userId, payload) {
         userId,
         payload.client_id,
         payload.project_name,
+        payload.meters_required ?? null,
         payload.description ?? null,
         payload.status ?? null,
-      payload.default_pricing ?? true,
-      payload.cost_in_quote ?? false,
-      payload.project_type_id ?? null,
-      payload.pricing_profile_id ?? null,
+        payload.default_pricing ?? true,
+        payload.cost_in_quote ?? false,
+        payload.project_type_id ?? null,
+        payload.pricing_profile_id ?? null,
       ]
     );
 
@@ -319,6 +323,7 @@ export async function updateProject(companyId, projectId, payload) {
 
   const map = {
     project_name: "project_name",
+    meters_required: "meters_required",
     description: "description",
     status: "status",
     default_pricing: "default_pricing",
