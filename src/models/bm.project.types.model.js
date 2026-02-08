@@ -273,7 +273,7 @@ const PROJECT_TYPE_LABOR_SELECT = `
   ptl.project_type_id AS "projectTypeId",
   ptl.labor_id AS "laborId",
   l.labor_name AS "laborName",
-  COALESCE(ptl.unit_type, l.unit_type) AS "unitType",
+  COALESCE(ptl.unit_type, l.unit_type::text) AS "unitType",
   ptl.unit_cost_override AS "unitCostOverride",
   ptl.sell_cost_override AS "sellCostOverride",
   ptl.unit_productivity AS "unitProductivity",
