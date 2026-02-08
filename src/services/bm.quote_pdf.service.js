@@ -252,7 +252,7 @@ export async function buildQuotePdf({
 
   const tableW = contentW(doc);
   const costInQuote = project?.costInQuote ?? true;
-  if (!costInQuote && project?.description) {
+  if (project?.description) {
     ensureSpace(doc, 36);
     doc
       .fillColor(BRAND.teal2)
@@ -299,17 +299,19 @@ export async function buildQuotePdf({
       })),
     );
 
-    drawTable(
-      doc,
-      "Labor",
-      columns,
-      (laborLines || []).map((line) => ({
-        description: line.laborName || line.description || "Labor",
-        quantity: formatMoney(line.quantity ?? 0),
-        unitPrice: formatMoney(line.unitPrice ?? 0),
-        lineTotal: formatMoney(line.lineTotal ?? 0),
-      })),
-    );
+    if ((laborLines || []).length > 0) {
+      drawTable(
+        doc,
+        "Labor",
+        columns,
+        (laborLines || []).map((line) => ({
+          description: line.laborName || line.description || "Labor",
+          quantity: formatMoney(line.quantity ?? 0),
+          unitPrice: formatMoney(line.unitPrice ?? 0),
+          lineTotal: formatMoney(line.lineTotal ?? 0),
+        })),
+      );
+    }
   }
 
   ensureSpace(doc, costInQuote ? 120 : 90);

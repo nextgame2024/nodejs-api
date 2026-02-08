@@ -1059,6 +1059,54 @@ export async function createDocumentFromProject(
       }
     }
 
+    if (docType === "quote") {
+      const { rows: existingRows } = await client.query(
+        `
+          SELECT document_id, doc_number
+          FROM bm_documents
+          WHERE company_id = $1
+            AND project_id = $2
+            AND type = 'quote'
+          ORDER BY createdat ASC
+          LIMIT 1
+        `,
+        [companyId, projectId]
+      );
+      if (existingRows[0]) {
+        documentId = existingRows[0].document_id;
+        docNumber = existingRows[0].doc_number;
+
+        await client.query(
+          `
+          UPDATE bm_documents
+          SET issue_date = COALESCE($3, issue_date),
+              due_date = COALESCE($4, due_date),
+              notes = COALESCE($5, notes),
+              status = COALESCE($6, status),
+              updatedat = NOW()
+          WHERE company_id = $1 AND document_id = $2
+          `,
+          [
+            companyId,
+            documentId,
+            payload.issue_date ?? null,
+            payload.due_date ?? null,
+            payload.notes ?? null,
+            payload.status ?? null,
+          ]
+        );
+
+        await client.query(
+          `DELETE FROM bm_document_material_lines WHERE company_id = $1 AND document_id = $2`,
+          [companyId, documentId]
+        );
+        await client.query(
+          `DELETE FROM bm_document_labor_lines WHERE company_id = $1 AND document_id = $2`,
+          [companyId, documentId]
+        );
+      }
+    }
+
     if (!documentId) {
       docNumber =
         payload.doc_number && String(payload.doc_number).trim()
