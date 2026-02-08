@@ -252,22 +252,6 @@ export async function buildQuotePdf({
 
   const tableW = contentW(doc);
   const costInQuote = project?.costInQuote ?? true;
-  if (project?.description) {
-    ensureSpace(doc, 36);
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text("Description", X(doc), doc.y);
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(project.description, X(doc), doc.y + 14, {
-        width: contentW(doc),
-      });
-    doc.moveDown(2.2);
-  }
 
   const column1 = Math.floor(tableW * 0.42);
   const column2 = Math.floor(tableW * 0.12);
@@ -312,6 +296,23 @@ export async function buildQuotePdf({
         })),
       );
     }
+  }
+
+  if (project?.description) {
+    ensureSpace(doc, 36);
+    doc
+      .fillColor(BRAND.teal2)
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text("Description", X(doc), doc.y);
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica")
+      .fontSize(9)
+      .text(project.description, X(doc), doc.y + 14, {
+        width: contentW(doc),
+      });
+    doc.moveDown(2.2);
   }
 
   ensureSpace(doc, costInQuote ? 120 : 90);
