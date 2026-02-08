@@ -166,6 +166,7 @@ const PROJECT_TYPE_MATERIAL_SELECT = `
   ptm.supplier_id AS "supplierId",
   s.supplier_name AS "supplierName",
   m.material_name AS "materialName",
+  m.unit AS "unit",
   ptm.quantity,
   ptm.unit_cost_override AS "unitCostOverride",
   ptm.sell_cost_override AS "sellCostOverride",

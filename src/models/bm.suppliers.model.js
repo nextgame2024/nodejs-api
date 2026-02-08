@@ -315,6 +315,8 @@ const SUPPLIER_MATERIAL_SELECT = `
   sm.lead_time_days AS "leadTimeDays",
   sm.unit_cost_override AS "unitCost",
   sm.sell_cost AS "sellCost",
+  m.quantity AS "quantity",
+  m.unit AS "unit",
   sm.createdat AS "createdAt"
 `;
 
@@ -351,31 +353,32 @@ export async function countSupplierMaterials(companyId, supplierId) {
 export async function addSupplierMaterial(companyId, supplierId, payload) {
   const { rows } = await pool.query(
     `
-    INSERT INTO bm_supplier_materials (
-      company_id,
-      supplier_id,
-      material_id,
-      supplier_sku,
-      lead_time_days,
-      unit_cost_override,
-      sell_cost
+    WITH upsert AS (
+      INSERT INTO bm_supplier_materials (
+        company_id,
+        supplier_id,
+        material_id,
+        supplier_sku,
+        lead_time_days,
+        unit_cost_override,
+        sell_cost
+      )
+      SELECT $1, $2, $3, $4, $5, $6, $7
+      WHERE EXISTS (SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2)
+        AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
+      ON CONFLICT (supplier_id, material_id) DO UPDATE SET
+        supplier_sku = EXCLUDED.supplier_sku,
+        lead_time_days = EXCLUDED.lead_time_days,
+        unit_cost_override = EXCLUDED.unit_cost_override,
+        sell_cost = EXCLUDED.sell_cost
+      RETURNING supplier_id, material_id
     )
-    SELECT $1, $2, $3, $4, $5, $6, $7
-    WHERE EXISTS (SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2)
-      AND EXISTS (SELECT 1 FROM bm_materials WHERE company_id = $1 AND material_id = $3)
-    ON CONFLICT (supplier_id, material_id) DO UPDATE SET
-      supplier_sku = EXCLUDED.supplier_sku,
-      lead_time_days = EXCLUDED.lead_time_days,
-      unit_cost_override = EXCLUDED.unit_cost_override,
-      sell_cost = EXCLUDED.sell_cost
-    RETURNING
-      supplier_id AS "supplierId",
-      material_id AS "materialId",
-      supplier_sku AS "supplierSku",
-      lead_time_days AS "leadTimeDays",
-      unit_cost_override AS "unitCost",
-      sell_cost AS "sellCost",
-      createdat AS "createdAt"
+    SELECT ${SUPPLIER_MATERIAL_SELECT}
+    FROM bm_supplier_materials sm
+    JOIN bm_suppliers s ON s.supplier_id = sm.supplier_id
+    JOIN bm_materials m ON m.material_id = sm.material_id
+    JOIN upsert u ON u.supplier_id = sm.supplier_id AND u.material_id = sm.material_id
+    WHERE s.company_id = $1 AND m.company_id = $1
     `,
     [
       companyId,
@@ -449,10 +452,14 @@ export async function updateSupplierMaterial(
     RETURNING
       sm.supplier_id AS "supplierId",
       sm.material_id AS "materialId",
+      m.material_name AS "materialName",
+      m.code AS "materialCode",
       sm.supplier_sku AS "supplierSku",
       sm.lead_time_days AS "leadTimeDays",
       sm.unit_cost_override AS "unitCost",
       sm.sell_cost AS "sellCost",
+      m.quantity AS "quantity",
+      m.unit AS "unit",
       sm.createdat AS "createdAt"
     `,
     params
