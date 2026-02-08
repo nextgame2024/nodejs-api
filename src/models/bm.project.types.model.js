@@ -273,8 +273,7 @@ const PROJECT_TYPE_LABOR_SELECT = `
   ptl.project_type_id AS "projectTypeId",
   ptl.labor_id AS "laborId",
   l.labor_name AS "laborName",
-  l.unit_type AS "unitType",
-  ptl.quantity,
+  COALESCE(ptl.unit_type, l.unit_type) AS "unitType",
   ptl.unit_cost_override AS "unitCostOverride",
   ptl.sell_cost_override AS "sellCostOverride",
   ptl.unit_productivity AS "unitProductivity",
@@ -308,11 +307,11 @@ export async function upsertProjectTypeLabor(
   const { rows } = await pool.query(
     `
     INSERT INTO bm_project_types_labor (
-      company_id, project_type_id, labor_id, quantity,
+      company_id, project_type_id, labor_id, unit_type,
       unit_cost_override, sell_cost_override,
       unit_productivity, productivity_unit, notes
     )
-    SELECT $1, $2, $3::uuid, COALESCE($4, 1), $5, $6, $7, $8, $9
+    SELECT $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9
     WHERE EXISTS (
       SELECT 1 FROM bm_project_types WHERE company_id = $1 AND project_type_id = $2
     )
@@ -320,7 +319,7 @@ export async function upsertProjectTypeLabor(
         SELECT 1 FROM bm_labor WHERE company_id = $1 AND labor_id = $3::uuid
       )
     ON CONFLICT (project_type_id, labor_id) DO UPDATE SET
-      quantity = EXCLUDED.quantity,
+      unit_type = EXCLUDED.unit_type,
       unit_cost_override = EXCLUDED.unit_cost_override,
       sell_cost_override = EXCLUDED.sell_cost_override,
       unit_productivity = EXCLUDED.unit_productivity,
@@ -333,7 +332,7 @@ export async function upsertProjectTypeLabor(
       companyId,
       projectTypeId,
       laborId,
-      payload.quantity ?? 1,
+      payload.unit_type ?? null,
       payload.unit_cost_override ?? null,
       payload.sell_cost_override ?? null,
       payload.unit_productivity ?? null,

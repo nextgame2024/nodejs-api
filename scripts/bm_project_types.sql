@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS bm_project_types_labor (
   company_id uuid NOT NULL,
   project_type_id uuid NOT NULL,
   labor_id uuid NOT NULL,
-  quantity numeric NULL,
+  unit_type text NULL,
   unit_cost_override numeric NULL,
   sell_cost_override numeric NULL,
   unit_productivity numeric NULL,
