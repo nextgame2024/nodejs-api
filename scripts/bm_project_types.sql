@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS bm_project_types_materials (
   supplier_id uuid NULL,
   material_id uuid NOT NULL,
   unit text NULL,
+  coverage_ratio numeric NULL,
+  coverage_unit text NULL,
   quantity numeric NULL,
   unit_cost_override numeric NULL,
   sell_cost_override numeric NULL,

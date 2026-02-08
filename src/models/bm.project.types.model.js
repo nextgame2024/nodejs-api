@@ -167,6 +167,8 @@ const PROJECT_TYPE_MATERIAL_SELECT = `
   s.supplier_name AS "supplierName",
   m.material_name AS "materialName",
   COALESCE(ptm.unit, m.unit) AS "unit",
+  ptm.coverage_ratio AS "coverageRatio",
+  ptm.coverage_unit AS "coverageUnit",
   ptm.quantity,
   ptm.unit_cost_override AS "unitCostOverride",
   ptm.sell_cost_override AS "sellCostOverride",
@@ -203,10 +205,11 @@ export async function upsertProjectTypeMaterial(
   const { rows } = await pool.query(
     `
     INSERT INTO bm_project_types_materials (
-      company_id, project_type_id, supplier_id, material_id, unit, quantity,
+      company_id, project_type_id, supplier_id, material_id, unit,
+      coverage_ratio, coverage_unit, quantity,
       unit_cost_override, sell_cost_override, notes
     )
-    SELECT $1, $2, $3::uuid, $4::uuid, $5, COALESCE($6, 1), $7, $8, $9
+    SELECT $1, $2, $3::uuid, $4::uuid, $5, $6, $7, COALESCE($8, 1), $9, $10, $11
     WHERE EXISTS (
       SELECT 1 FROM bm_project_types WHERE company_id = $1 AND project_type_id = $2
     )
@@ -221,6 +224,8 @@ export async function upsertProjectTypeMaterial(
     ON CONFLICT (project_type_id, material_id) DO UPDATE SET
       supplier_id = EXCLUDED.supplier_id,
       unit = EXCLUDED.unit,
+      coverage_ratio = EXCLUDED.coverage_ratio,
+      coverage_unit = EXCLUDED.coverage_unit,
       quantity = EXCLUDED.quantity,
       unit_cost_override = EXCLUDED.unit_cost_override,
       sell_cost_override = EXCLUDED.sell_cost_override,
@@ -234,6 +239,8 @@ export async function upsertProjectTypeMaterial(
       supplierId,
       materialId,
       payload.unit ?? null,
+      payload.coverage_ratio ?? null,
+      payload.coverage_unit ?? null,
       payload.quantity ?? 1,
       payload.unit_cost_override ?? null,
       payload.sell_cost_override ?? null,
