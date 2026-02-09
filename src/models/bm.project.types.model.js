@@ -30,10 +30,17 @@ export async function listProjectTypes(companyId, { q, status, limit, offset }) 
 
   const { rows } = await pool.query(
     `
-    SELECT ${PROJECT_TYPE_SELECT}
+    SELECT
+      ${PROJECT_TYPE_SELECT},
+      EXISTS (
+        SELECT 1
+        FROM bm_projects p
+        WHERE p.company_id = pt.company_id
+          AND p.project_type_id = pt.project_type_id
+      ) AS "hasProjects"
     FROM bm_project_types pt
     WHERE ${where.join(" AND ")}
-    ORDER BY pt.createdat DESC
+    ORDER BY (pt.status = 'archived') ASC, pt.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params,
@@ -154,6 +161,29 @@ export async function archiveProjectType(companyId, projectTypeId) {
     SET status = 'archived', updatedat = NOW()
     WHERE company_id = $1 AND project_type_id = $2
     `,
+    [companyId, projectTypeId],
+  );
+  return res.rowCount > 0;
+}
+
+export async function projectTypeHasProjects(companyId, projectTypeId) {
+  const { rows } = await pool.query(
+    `
+    SELECT EXISTS (
+      SELECT 1
+      FROM bm_projects p
+      WHERE p.company_id = $1 AND p.project_type_id = $2
+    ) AS "hasProjects"
+    `,
+    [companyId, projectTypeId],
+  );
+
+  return rows[0]?.hasProjects ?? false;
+}
+
+export async function deleteProjectType(companyId, projectTypeId) {
+  const res = await pool.query(
+    `DELETE FROM bm_project_types WHERE company_id = $1 AND project_type_id = $2`,
     [companyId, projectTypeId],
   );
   return res.rowCount > 0;

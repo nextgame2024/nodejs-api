@@ -5,7 +5,7 @@ import {
   getProjectType,
   createProjectType,
   updateProjectType,
-  archiveProjectType,
+  removeProjectType,
   listProjectTypeMaterials,
   addProjectTypeMaterial,
   updateProjectTypeMaterial,
@@ -25,7 +25,7 @@ router.put("/bm/project-types/:projectTypeId", authRequired, updateProjectType);
 router.delete(
   "/bm/project-types/:projectTypeId",
   authRequired,
-  archiveProjectType,
+  removeProjectType,
 );
 
 router.get(

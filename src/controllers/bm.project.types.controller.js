@@ -59,15 +59,15 @@ export const updateProjectType = asyncHandler(async (req, res) => {
   res.json({ projectType });
 });
 
-export const archiveProjectType = asyncHandler(async (req, res) => {
+export const removeProjectType = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { projectTypeId } = req.params;
 
-  const ok = await service.archiveProjectType(companyId, projectTypeId);
-  if (!ok)
+  const result = await service.removeProjectType(companyId, projectTypeId);
+  if (!result?.ok)
     return res.status(404).json({ error: "Project type not found" });
 
-  res.status(204).send();
+  res.json({ projectTypeId, action: result.action });
 });
 
 export const listProjectTypeMaterials = asyncHandler(async (req, res) => {

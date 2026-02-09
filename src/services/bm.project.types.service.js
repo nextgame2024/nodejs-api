@@ -21,8 +21,19 @@ export const createProjectType = (companyId, userId, payload) =>
   model.createProjectType(companyId, userId, payload);
 export const updateProjectType = (companyId, projectTypeId, payload) =>
   model.updateProjectType(companyId, projectTypeId, payload);
-export const archiveProjectType = (companyId, projectTypeId) =>
-  model.archiveProjectType(companyId, projectTypeId);
+
+export const removeProjectType = async (companyId, projectTypeId) => {
+  const hasProjects = await model.projectTypeHasProjects(
+    companyId,
+    projectTypeId,
+  );
+  if (hasProjects) {
+    const ok = await model.archiveProjectType(companyId, projectTypeId);
+    return { ok, action: "archived" };
+  }
+  const ok = await model.deleteProjectType(companyId, projectTypeId);
+  return { ok, action: "deleted" };
+};
 
 export async function listProjectTypeMaterials(companyId, projectTypeId) {
   const exists = await model.projectTypeExists(companyId, projectTypeId);
