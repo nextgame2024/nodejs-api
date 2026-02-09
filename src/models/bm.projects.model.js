@@ -93,7 +93,7 @@ export async function listProjects(
       LIMIT 1
     ) inv ON true
     WHERE ${where.join(" AND ")}
-    ORDER BY (p.status = 'cancelled') ASC, p.createdat DESC
+    ORDER BY (p.status = 'archived') ASC, p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -281,7 +281,7 @@ export async function updateProject(companyId, projectId, payload) {
     const statusBeforeHold = statusRows[0].status_before_hold;
     const nextStatus = payload.status;
 
-    const lockedStatuses = new Set(["done", "cancelled"]);
+    const lockedStatuses = new Set(["done", "cancelled", "archived"]);
     if (lockedStatuses.has(currentStatus) && nextStatus !== currentStatus) {
       const err = new Error(
         "Status cannot be changed once it is Done or Cancelled."
@@ -335,6 +335,7 @@ export async function updateProject(companyId, projectId, payload) {
         on_hold: new Set(["on_hold"]),
         done: new Set(["done"]),
         cancelled: new Set(["cancelled"]),
+        archived: new Set(["archived"]),
       };
 
       const allowed = allowedMap[currentStatus] || new Set([currentStatus]);
@@ -553,7 +554,7 @@ export async function archiveProject(companyId, projectId) {
   const res = await pool.query(
     `
     UPDATE bm_projects
-    SET status = 'cancelled', updatedat = NOW()
+    SET status = 'archived', updatedat = NOW()
     WHERE company_id = $1 AND project_id = $2
     `,
     [companyId, projectId]
