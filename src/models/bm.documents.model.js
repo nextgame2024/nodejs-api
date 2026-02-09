@@ -742,7 +742,19 @@ export async function recalcDocumentTotals(companyId, documentId) {
         `
         SELECT COALESCE(
           SUM(
-            pm.quantity * CASE
+            (CASE
+              WHEN p.project_type_id IS NULL THEN pm.quantity
+              ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pm.coverage_ratio, 0), 0)
+            END)
+            *
+            CASE
+              WHEN p.project_type_id IS NOT NULL THEN
+                CASE
+                  WHEN p.default_pricing = true THEN
+                    COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0)
+                  ELSE
+                    COALESCE(pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0) * (1::numeric + $3::numeric)
+                END
               WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
               ELSE COALESCE(pm.unit_cost_override, 0) * (1::numeric + $3::numeric)
             END
@@ -763,7 +775,12 @@ export async function recalcDocumentTotals(companyId, documentId) {
         `
         SELECT COALESCE(
           SUM(
-            pl.quantity * CASE
+            (CASE
+              WHEN p.project_type_id IS NULL THEN pl.quantity
+              ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pl.unit_productivity, l.unit_productivity, 0), 0)
+            END)
+            *
+            CASE
               WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
               ELSE COALESCE(pl.unit_cost_override, l.unit_cost, 0) * (1::numeric + $3::numeric)
             END
@@ -1176,18 +1193,42 @@ export async function createDocumentFromProject(
           $3,
           pm.material_id,
           m.material_name,
-          pm.quantity,
+          CASE
+            WHEN p.project_type_id IS NULL THEN pm.quantity
+            ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pm.coverage_ratio, 0), 0)
+          END AS quantity,
           CASE
             WHEN p.cost_in_quote = false THEN 0
+            WHEN p.project_type_id IS NOT NULL THEN
+              CASE
+                WHEN p.default_pricing = true THEN
+                  COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0)
+                ELSE
+                  COALESCE(pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0) * (1::numeric + $4::numeric)
+              END
             WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
             ELSE COALESCE(ROUND((pm.unit_cost_override * (1::numeric + $4::numeric))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
-            (pm.quantity * CASE
-              WHEN p.cost_in_quote = false THEN 0
-              WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
-              ELSE COALESCE((pm.unit_cost_override * (1::numeric + $4::numeric)), 0)
-            END)::numeric,
+            (
+              (CASE
+                WHEN p.project_type_id IS NULL THEN pm.quantity
+                ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pm.coverage_ratio, 0), 0)
+              END)
+              *
+              CASE
+                WHEN p.cost_in_quote = false THEN 0
+                WHEN p.project_type_id IS NOT NULL THEN
+                  CASE
+                    WHEN p.default_pricing = true THEN
+                      COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0)
+                    ELSE
+                      COALESCE(pm.unit_cost_override, 0) / NULLIF(COALESCE(pm.quantity, 0), 0) * (1::numeric + $4::numeric)
+                  END
+                WHEN p.default_pricing = true THEN COALESCE(pm.sell_cost_override, pm.unit_cost_override, 0)
+                ELSE COALESCE((pm.unit_cost_override * (1::numeric + $4::numeric)), 0)
+              END
+            )::numeric,
             2
           ) AS line_total
         FROM bm_project_materials pm
@@ -1215,19 +1256,29 @@ export async function createDocumentFromProject(
           $3,
           pl.labor_id,
           l.labor_name,
-          pl.quantity,
-          l.unit_type,
+          CASE
+            WHEN p.project_type_id IS NULL THEN pl.quantity
+            ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pl.unit_productivity, l.unit_productivity, 0), 0)
+          END AS quantity,
+          COALESCE(pl.unit_type, l.unit_type),
           CASE
             WHEN p.cost_in_quote = false THEN 0
             WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
             ELSE COALESCE(ROUND((COALESCE(pl.unit_cost_override, l.unit_cost) * (1::numeric + $4::numeric))::numeric, 2), 0)
           END AS unit_price,
           ROUND(
-            (pl.quantity * CASE
-              WHEN p.cost_in_quote = false THEN 0
-              WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
-              ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1::numeric + $4::numeric)), 0)
-            END)::numeric,
+            (
+              (CASE
+                WHEN p.project_type_id IS NULL THEN pl.quantity
+                ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pl.unit_productivity, l.unit_productivity, 0), 0)
+              END)
+              *
+              CASE
+                WHEN p.cost_in_quote = false THEN 0
+                WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
+                ELSE COALESCE((COALESCE(pl.unit_cost_override, l.unit_cost) * (1::numeric + $4::numeric)), 0)
+              END
+            )::numeric,
             2
           ) AS line_total
         FROM bm_project_labor pl
