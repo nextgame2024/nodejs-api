@@ -21,8 +21,16 @@ export const createSupplier = (companyId, userId, payload) =>
   model.createSupplier(companyId, userId, payload);
 export const updateSupplier = (companyId, supplierId, payload) =>
   model.updateSupplier(companyId, supplierId, payload);
-export const archiveSupplier = (companyId, supplierId) =>
-  model.archiveSupplier(companyId, supplierId);
+
+export const removeSupplier = async (companyId, supplierId) => {
+  const hasRelations = await model.supplierHasRelations(companyId, supplierId);
+  if (hasRelations) {
+    const ok = await model.archiveSupplier(companyId, supplierId);
+    return { ok, action: "archived" };
+  }
+  const ok = await model.deleteSupplier(companyId, supplierId);
+  return { ok, action: "deleted" };
+};
 
 // Contacts
 export async function listSupplierContacts(companyId, supplierId, { page, limit }) {

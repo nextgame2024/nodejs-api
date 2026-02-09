@@ -34,10 +34,37 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
 
   const { rows } = await pool.query(
     `
-    SELECT ${SUPPLIER_SELECT}
+    SELECT
+      ${SUPPLIER_SELECT},
+      (
+        EXISTS (
+          SELECT 1
+          FROM bm_supplier_contacts sc
+          WHERE sc.company_id = bm_suppliers.company_id
+            AND sc.supplier_id = bm_suppliers.supplier_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_supplier_materials sm
+          WHERE sm.company_id = bm_suppliers.company_id
+            AND sm.supplier_id = bm_suppliers.supplier_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_types_materials ptm
+          WHERE ptm.company_id = bm_suppliers.company_id
+            AND ptm.supplier_id = bm_suppliers.supplier_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_materials pm
+          WHERE pm.company_id = bm_suppliers.company_id
+            AND pm.supplier_id = bm_suppliers.supplier_id
+        )
+      ) AS "hasProjects"
     FROM bm_suppliers
     WHERE ${where.join(" AND ")}
-    ORDER BY supplier_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, supplier_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -153,6 +180,46 @@ export async function archiveSupplier(companyId, supplierId) {
     `UPDATE bm_suppliers
      SET status = 'archived', updatedat = NOW()
      WHERE company_id = $1 AND supplier_id = $2`,
+    [companyId, supplierId]
+  );
+  return res.rowCount > 0;
+}
+
+export async function supplierHasRelations(companyId, supplierId) {
+  const { rows } = await pool.query(
+    `
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM bm_supplier_contacts sc
+        WHERE sc.company_id = $1 AND sc.supplier_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_supplier_materials sm
+        WHERE sm.company_id = $1 AND sm.supplier_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_types_materials ptm
+        WHERE ptm.company_id = $1 AND ptm.supplier_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_materials pm
+        WHERE pm.company_id = $1 AND pm.supplier_id = $2
+      )
+    ) AS "hasRelations"
+    `,
+    [companyId, supplierId]
+  );
+
+  return rows[0]?.hasRelations ?? false;
+}
+
+export async function deleteSupplier(companyId, supplierId) {
+  const res = await pool.query(
+    `DELETE FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2`,
     [companyId, supplierId]
   );
   return res.rowCount > 0;

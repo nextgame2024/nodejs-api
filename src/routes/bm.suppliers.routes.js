@@ -5,7 +5,7 @@ import {
   getSupplier,
   createSupplier,
   updateSupplier,
-  archiveSupplier,
+  removeSupplier,
   listSupplierContacts,
   createSupplierContact,
   updateSupplierContact,
@@ -23,7 +23,7 @@ router.get("/bm/suppliers", authRequired, listSuppliers);
 router.post("/bm/suppliers", authRequired, createSupplier);
 router.get("/bm/suppliers/:supplierId", authRequired, getSupplier);
 router.put("/bm/suppliers/:supplierId", authRequired, updateSupplier);
-router.delete("/bm/suppliers/:supplierId", authRequired, archiveSupplier);
+router.delete("/bm/suppliers/:supplierId", authRequired, removeSupplier);
 
 // Contacts
 router.get(

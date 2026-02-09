@@ -48,14 +48,14 @@ export const updateSupplier = asyncHandler(async (req, res) => {
   res.json({ supplier });
 });
 
-export const archiveSupplier = asyncHandler(async (req, res) => {
+export const removeSupplier = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { supplierId } = req.params;
 
-  const ok = await service.archiveSupplier(companyId, supplierId);
-  if (!ok) return res.status(404).json({ error: "Supplier not found" });
+  const result = await service.removeSupplier(companyId, supplierId);
+  if (!result?.ok) return res.status(404).json({ error: "Supplier not found" });
 
-  res.status(204).send();
+  res.json({ supplierId, action: result.action });
 });
 
 // Contacts
