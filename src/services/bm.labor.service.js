@@ -21,5 +21,13 @@ export const createLabor = (companyId, userId, payload) =>
   model.createLabor(companyId, userId, payload);
 export const updateLabor = (companyId, laborId, payload) =>
   model.updateLabor(companyId, laborId, payload);
-export const archiveLabor = (companyId, laborId) =>
-  model.archiveLabor(companyId, laborId);
+
+export const removeLabor = async (companyId, laborId) => {
+  const hasRelations = await model.laborHasRelations(companyId, laborId);
+  if (hasRelations) {
+    const ok = await model.archiveLabor(companyId, laborId);
+    return { ok, action: "archived" };
+  }
+  const ok = await model.deleteLabor(companyId, laborId);
+  return { ok, action: "deleted" };
+};

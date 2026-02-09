@@ -50,12 +50,12 @@ export const updateLabor = asyncHandler(async (req, res) => {
   res.json({ labor });
 });
 
-export const archiveLabor = asyncHandler(async (req, res) => {
+export const removeLabor = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { laborId } = req.params;
 
-  const ok = await service.archiveLabor(companyId, laborId);
-  if (!ok) return res.status(404).json({ error: "Labor not found" });
+  const result = await service.removeLabor(companyId, laborId);
+  if (!result?.ok) return res.status(404).json({ error: "Labor not found" });
 
-  res.status(204).send();
+  res.json({ laborId, action: result.action });
 });

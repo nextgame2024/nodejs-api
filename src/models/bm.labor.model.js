@@ -34,10 +34,31 @@ export async function listLabor(companyId, { q, status, limit, offset }) {
 
   const { rows } = await pool.query(
     `
-    SELECT ${LABOR_SELECT}
+    SELECT
+      ${LABOR_SELECT},
+      (
+        EXISTS (
+          SELECT 1
+          FROM bm_project_labor pl
+          WHERE pl.company_id = bm_labor.company_id
+            AND pl.labor_id = bm_labor.labor_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_types_labor ptl
+          WHERE ptl.company_id = bm_labor.company_id
+            AND ptl.labor_id = bm_labor.labor_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_document_labor_lines dll
+          WHERE dll.company_id = bm_labor.company_id
+            AND dll.labor_id = bm_labor.labor_id
+        )
+      ) AS "hasProjects"
     FROM bm_labor
     WHERE ${where.join(" AND ")}
-    ORDER BY labor_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, labor_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -146,6 +167,41 @@ export async function archiveLabor(companyId, laborId) {
     `UPDATE bm_labor
      SET status = 'archived', updatedat = NOW()
      WHERE company_id = $1 AND labor_id = $2`,
+    [companyId, laborId]
+  );
+  return res.rowCount > 0;
+}
+
+export async function laborHasRelations(companyId, laborId) {
+  const { rows } = await pool.query(
+    `
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM bm_project_labor pl
+        WHERE pl.company_id = $1 AND pl.labor_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_types_labor ptl
+        WHERE ptl.company_id = $1 AND ptl.labor_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_document_labor_lines dll
+        WHERE dll.company_id = $1 AND dll.labor_id = $2
+      )
+    ) AS "hasRelations"
+    `,
+    [companyId, laborId]
+  );
+
+  return rows[0]?.hasRelations ?? false;
+}
+
+export async function deleteLabor(companyId, laborId) {
+  const res = await pool.query(
+    `DELETE FROM bm_labor WHERE company_id = $1 AND labor_id = $2`,
     [companyId, laborId]
   );
   return res.rowCount > 0;

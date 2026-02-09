@@ -5,7 +5,7 @@ import {
   getLabor,
   createLabor,
   updateLabor,
-  archiveLabor,
+  removeLabor,
 } from "../controllers/bm.labor.controller.js";
 
 const router = Router();
@@ -14,6 +14,6 @@ router.get("/bm/labor", authRequired, listLabor);
 router.post("/bm/labor", authRequired, createLabor);
 router.get("/bm/labor/:laborId", authRequired, getLabor);
 router.put("/bm/labor/:laborId", authRequired, updateLabor);
-router.delete("/bm/labor/:laborId", authRequired, archiveLabor);
+router.delete("/bm/labor/:laborId", authRequired, removeLabor);
 
 export default router;
