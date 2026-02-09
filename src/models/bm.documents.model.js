@@ -1260,7 +1260,7 @@ export async function createDocumentFromProject(
             WHEN p.project_type_id IS NULL THEN pl.quantity
             ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pl.unit_productivity, l.unit_productivity, 0), 0)
           END AS quantity,
-          COALESCE(pl.unit_type, l.unit_type::text),
+          COALESCE(pl.unit_type, l.unit_type::text)::bm_unit_type,
           CASE
             WHEN p.cost_in_quote = false THEN 0
             WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
