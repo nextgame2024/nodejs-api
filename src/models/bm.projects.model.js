@@ -286,7 +286,13 @@ export async function updateProject(companyId, projectId, payload) {
 
     if (currentStatus !== "on_hold") {
       const allowedMap = {
-        to_do: new Set(["to_do", "in_progress", "on_hold", "cancelled"]),
+        to_do: new Set([
+          "to_do",
+          "in_progress",
+          "quote_approved",
+          "on_hold",
+          "cancelled",
+        ]),
         in_progress: new Set([
           "in_progress",
           "quote_approved",
