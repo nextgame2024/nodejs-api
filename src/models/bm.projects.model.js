@@ -93,7 +93,7 @@ export async function listProjects(
       LIMIT 1
     ) inv ON true
     WHERE ${where.join(" AND ")}
-    ORDER BY (p.status = 'archived') ASC, p.createdat DESC
+    ORDER BY (p.status = 'cancelled') ASC, p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -553,7 +553,7 @@ export async function archiveProject(companyId, projectId) {
   const res = await pool.query(
     `
     UPDATE bm_projects
-    SET status = 'archived', updatedat = NOW()
+    SET status = 'cancelled', updatedat = NOW()
     WHERE company_id = $1 AND project_id = $2
     `,
     [companyId, projectId]
