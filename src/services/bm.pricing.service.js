@@ -32,5 +32,15 @@ export const createPricingProfile = (companyId, userId, payload) =>
 export const updatePricingProfile = (companyId, pricingProfileId, payload) =>
   model.updatePricingProfile(companyId, pricingProfileId, payload);
 
-export const archivePricingProfile = (companyId, pricingProfileId) =>
-  model.archivePricingProfile(companyId, pricingProfileId);
+export async function removePricingProfile(companyId, pricingProfileId) {
+  const hasProjects = await model.pricingProfileHasProjects(
+    companyId,
+    pricingProfileId
+  );
+  if (hasProjects) {
+    const ok = await model.archivePricingProfile(companyId, pricingProfileId);
+    return ok ? { action: "archived" } : null;
+  }
+  const ok = await model.deletePricingProfile(companyId, pricingProfileId);
+  return ok ? { action: "deleted" } : null;
+}

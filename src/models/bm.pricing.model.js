@@ -35,10 +35,17 @@ export async function listPricingProfiles(
 
   const { rows } = await pool.query(
     `
-    SELECT ${PRICING_SELECT}
+    SELECT
+      ${PRICING_SELECT},
+      EXISTS (
+        SELECT 1
+        FROM bm_projects p
+        WHERE p.company_id = bm_pricing_profiles.company_id
+          AND p.pricing_profile_id = bm_pricing_profiles.pricing_profile_id
+      ) AS "hasProjects"
     FROM bm_pricing_profiles
     WHERE ${where.join(" AND ")}
-    ORDER BY profile_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, profile_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -145,6 +152,29 @@ export async function archivePricingProfile(companyId, pricingProfileId) {
   const res = await pool.query(
     `UPDATE bm_pricing_profiles
      SET status = 'archived', updatedat = NOW()
+     WHERE company_id = $1 AND pricing_profile_id = $2`,
+    [companyId, pricingProfileId]
+  );
+  return res.rowCount > 0;
+}
+
+export async function pricingProfileHasProjects(
+  companyId,
+  pricingProfileId
+) {
+  const { rowCount } = await pool.query(
+    `SELECT 1
+     FROM bm_projects
+     WHERE company_id = $1 AND pricing_profile_id = $2
+     LIMIT 1`,
+    [companyId, pricingProfileId]
+  );
+  return rowCount > 0;
+}
+
+export async function deletePricingProfile(companyId, pricingProfileId) {
+  const res = await pool.query(
+    `DELETE FROM bm_pricing_profiles
      WHERE company_id = $1 AND pricing_profile_id = $2`,
     [companyId, pricingProfileId]
   );

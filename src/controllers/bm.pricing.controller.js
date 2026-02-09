@@ -66,8 +66,8 @@ export const archivePricingProfile = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { pricingProfileId } = req.params;
 
-  const ok = await service.archivePricingProfile(companyId, pricingProfileId);
-  if (!ok) return res.status(404).json({ error: "Pricing profile not found" });
+  const result = await service.removePricingProfile(companyId, pricingProfileId);
+  if (!result) return res.status(404).json({ error: "Pricing profile not found" });
 
-  res.status(204).send();
+  res.json({ pricingProfileId, action: result.action });
 });
