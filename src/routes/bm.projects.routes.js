@@ -5,7 +5,7 @@ import {
   getProject,
   createProject,
   updateProject,
-  archiveProject,
+  removeProject,
   listProjectMaterials,
   upsertProjectMaterial,
   removeProjectMaterial,
@@ -22,7 +22,7 @@ router.get("/bm/projects", authRequired, listProjects);
 router.post("/bm/projects", authRequired, createProject);
 router.get("/bm/projects/:projectId", authRequired, getProject);
 router.put("/bm/projects/:projectId", authRequired, updateProject);
-router.delete("/bm/projects/:projectId", authRequired, archiveProject);
+router.delete("/bm/projects/:projectId", authRequired, removeProject);
 router.post(
   "/bm/projects/:projectId/create-document",
   authRequired,

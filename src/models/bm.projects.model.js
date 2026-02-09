@@ -51,7 +51,28 @@ export async function listProjects(
 
   const { rows } = await pool.query(
     `
-    SELECT ${PROJECT_SELECT}
+    SELECT
+      ${PROJECT_SELECT},
+      (
+        EXISTS (
+          SELECT 1
+          FROM bm_documents d
+          WHERE d.company_id = p.company_id
+            AND d.project_id = p.project_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_materials pm
+          WHERE pm.company_id = p.company_id
+            AND pm.project_id = p.project_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_labor pl
+          WHERE pl.company_id = p.company_id
+            AND pl.project_id = p.project_id
+        )
+      ) AS "hasProjects"
     FROM bm_projects p
     JOIN bm_clients c
       ON c.client_id = p.client_id
@@ -72,7 +93,7 @@ export async function listProjects(
       LIMIT 1
     ) inv ON true
     WHERE ${where.join(" AND ")}
-    ORDER BY p.createdat DESC
+    ORDER BY (p.status = 'archived') ASC, p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -532,9 +553,44 @@ export async function archiveProject(companyId, projectId) {
   const res = await pool.query(
     `
     UPDATE bm_projects
-    SET status = 'cancelled', updatedat = NOW()
+    SET status = 'archived', updatedat = NOW()
     WHERE company_id = $1 AND project_id = $2
     `,
+    [companyId, projectId]
+  );
+  return res.rowCount > 0;
+}
+
+export async function projectHasRelations(companyId, projectId) {
+  const { rows } = await pool.query(
+    `
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM bm_documents d
+        WHERE d.company_id = $1 AND d.project_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_materials pm
+        WHERE pm.company_id = $1 AND pm.project_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_labor pl
+        WHERE pl.company_id = $1 AND pl.project_id = $2
+      )
+    ) AS "hasRelations"
+    `,
+    [companyId, projectId]
+  );
+
+  return rows[0]?.hasRelations ?? false;
+}
+
+export async function deleteProject(companyId, projectId) {
+  const res = await pool.query(
+    `DELETE FROM bm_projects WHERE company_id = $1 AND project_id = $2`,
     [companyId, projectId]
   );
   return res.rowCount > 0;

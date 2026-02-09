@@ -60,14 +60,14 @@ export const updateProject = asyncHandler(async (req, res) => {
   res.json({ project });
 });
 
-export const archiveProject = asyncHandler(async (req, res) => {
+export const removeProject = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { projectId } = req.params;
 
-  const ok = await service.archiveProject(companyId, projectId);
-  if (!ok) return res.status(404).json({ error: "Project not found" });
+  const result = await service.removeProject(companyId, projectId);
+  if (!result?.ok) return res.status(404).json({ error: "Project not found" });
 
-  res.status(204).send();
+  res.json({ projectId, action: result.action });
 });
 
 // Materials
