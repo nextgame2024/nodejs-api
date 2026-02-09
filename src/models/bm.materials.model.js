@@ -37,10 +37,37 @@ export async function listMaterials(companyId, { q, status, limit, offset }) {
 
   const { rows } = await pool.query(
     `
-    SELECT ${MATERIAL_SELECT}
+    SELECT
+      ${MATERIAL_SELECT},
+      (
+        EXISTS (
+          SELECT 1
+          FROM bm_project_materials pm
+          WHERE pm.company_id = bm_materials.company_id
+            AND pm.material_id = bm_materials.material_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_types_materials ptm
+          WHERE ptm.company_id = bm_materials.company_id
+            AND ptm.material_id = bm_materials.material_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_document_material_lines dml
+          WHERE dml.company_id = bm_materials.company_id
+            AND dml.material_id = bm_materials.material_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_supplier_materials sm
+          WHERE sm.company_id = bm_materials.company_id
+            AND sm.material_id = bm_materials.material_id
+        )
+      ) AS "hasProjects"
     FROM bm_materials
     WHERE ${where.join(" AND ")}
-    ORDER BY material_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, material_name ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -149,6 +176,46 @@ export async function archiveMaterial(companyId, materialId) {
     `UPDATE bm_materials
      SET status = 'archived', updatedat = NOW()
      WHERE company_id = $1 AND material_id = $2`,
+    [companyId, materialId]
+  );
+  return res.rowCount > 0;
+}
+
+export async function materialHasRelations(companyId, materialId) {
+  const { rows } = await pool.query(
+    `
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM bm_project_materials pm
+        WHERE pm.company_id = $1 AND pm.material_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_types_materials ptm
+        WHERE ptm.company_id = $1 AND ptm.material_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_document_material_lines dml
+        WHERE dml.company_id = $1 AND dml.material_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_supplier_materials sm
+        WHERE sm.company_id = $1 AND sm.material_id = $2
+      )
+    ) AS "hasRelations"
+    `,
+    [companyId, materialId]
+  );
+
+  return rows[0]?.hasRelations ?? false;
+}
+
+export async function deleteMaterial(companyId, materialId) {
+  const res = await pool.query(
+    `DELETE FROM bm_materials WHERE company_id = $1 AND material_id = $2`,
     [companyId, materialId]
   );
   return res.rowCount > 0;

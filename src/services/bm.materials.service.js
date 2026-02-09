@@ -21,5 +21,13 @@ export const createMaterial = (companyId, userId, payload) =>
   model.createMaterial(companyId, userId, payload);
 export const updateMaterial = (companyId, materialId, payload) =>
   model.updateMaterial(companyId, materialId, payload);
-export const archiveMaterial = (companyId, materialId) =>
-  model.archiveMaterial(companyId, materialId);
+
+export const removeMaterial = async (companyId, materialId) => {
+  const hasRelations = await model.materialHasRelations(companyId, materialId);
+  if (hasRelations) {
+    const ok = await model.archiveMaterial(companyId, materialId);
+    return { ok, action: "archived" };
+  }
+  const ok = await model.deleteMaterial(companyId, materialId);
+  return { ok, action: "deleted" };
+};

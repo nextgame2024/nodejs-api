@@ -48,12 +48,12 @@ export const updateMaterial = asyncHandler(async (req, res) => {
   res.json({ material });
 });
 
-export const archiveMaterial = asyncHandler(async (req, res) => {
+export const removeMaterial = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { materialId } = req.params;
 
-  const ok = await service.archiveMaterial(companyId, materialId);
-  if (!ok) return res.status(404).json({ error: "Material not found" });
+  const result = await service.removeMaterial(companyId, materialId);
+  if (!result?.ok) return res.status(404).json({ error: "Material not found" });
 
-  res.status(204).send();
+  res.json({ materialId, action: result.action });
 });
