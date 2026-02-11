@@ -6,6 +6,7 @@ const PROJECT_SELECT = `
   p.user_id AS "userId",
   p.client_id AS "clientId",
   c.client_name AS "clientName",
+  c.address AS "clientAddress",
   p.project_name AS "projectName",
   p.meters_required AS "metersRequired",
   p.description,
@@ -45,7 +46,9 @@ export async function listProjects(
     params.push(clientId);
   }
   if (q) {
-    where.push(`(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i})`);
+    where.push(
+      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
@@ -128,7 +131,9 @@ export async function countProjects(companyId, { q, status, clientId }) {
     params.push(clientId);
   }
   if (q) {
-    where.push(`(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i})`);
+    where.push(
+      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
