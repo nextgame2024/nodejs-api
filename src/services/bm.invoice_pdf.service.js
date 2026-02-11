@@ -20,7 +20,7 @@ const LOGO_URL =
 
 const TERMS = {
   paymentTerms:
-    "Payment due within 7 days of invoice date after acceptance of this quote.",
+    "Payment due within 7 days of invoice date after acceptance of this invoice.",
 };
 
 function formatDateAU(value) {

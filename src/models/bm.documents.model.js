@@ -1051,6 +1051,8 @@ export async function createDocumentFromProject(
               notes = COALESCE($5, notes),
               status = COALESCE($6, status),
               invoice_status = COALESCE($7, invoice_status),
+              pdf_url = NULL,
+              pdf_key = NULL,
               updatedat = NOW()
           WHERE company_id = $1 AND document_id = $2
           `,

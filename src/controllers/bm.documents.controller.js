@@ -181,6 +181,7 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
 export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { documentId } = req.params;
+  const { refresh = "false" } = req.query;
 
   const doc = await service.getDocument(companyId, documentId);
   if (!doc) return res.status(404).json({ error: "Document not found" });
@@ -188,7 +189,7 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Document is not an invoice" });
   }
 
-  if (doc.pdfUrl) {
+  if (doc.pdfUrl && refresh !== "1" && refresh !== "true") {
     return res.redirect(doc.pdfUrl);
   }
 
