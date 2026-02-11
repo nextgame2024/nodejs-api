@@ -218,7 +218,10 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
     );
     if (updated) result.document = updated;
 
-    if (project?.status === "quote_approved") {
+    if (
+      project &&
+      ["quote_approved", "quote_created"].includes(project.status)
+    ) {
       await service.updateProject(companyId, projectId, {
         status: "invoice_process",
       });

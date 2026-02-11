@@ -351,6 +351,7 @@ export async function updateProject(companyId, projectId, payload) {
         quote_created: new Set([
           "quote_created",
           "quote_approved",
+          "invoice_process",
           "on_hold",
           "cancelled",
         ]),
