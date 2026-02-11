@@ -336,12 +336,20 @@ export async function updateProject(companyId, projectId, payload) {
         to_do: new Set([
           "to_do",
           "in_progress",
+          "quote_created",
           "quote_approved",
           "on_hold",
           "cancelled",
         ]),
         in_progress: new Set([
           "in_progress",
+          "quote_created",
+          "quote_approved",
+          "on_hold",
+          "cancelled",
+        ]),
+        quote_created: new Set([
+          "quote_created",
           "quote_approved",
           "on_hold",
           "cancelled",
