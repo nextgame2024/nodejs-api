@@ -174,6 +174,15 @@ export async function getProject(companyId, projectId) {
       ON pp.pricing_profile_id = p.pricing_profile_id
      AND pp.company_id = p.company_id
     LEFT JOIN LATERAL (
+      SELECT document_id, doc_number, pdf_url
+      FROM bm_documents
+      WHERE company_id = p.company_id
+        AND project_id = p.project_id
+        AND type = 'quote'
+      ORDER BY createdat ASC
+      LIMIT 1
+    ) q ON true
+    LEFT JOIN LATERAL (
       SELECT document_id, doc_number, pdf_url, invoice_status
       FROM bm_documents
       WHERE company_id = p.company_id
