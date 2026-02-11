@@ -190,7 +190,18 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
   }
 
   if (doc.pdfUrl && refresh !== "1" && refresh !== "true") {
-    return res.redirect(doc.pdfUrl);
+    try {
+      const pdfRes = await fetch(doc.pdfUrl);
+      if (pdfRes.ok) {
+        const buf = Buffer.from(await pdfRes.arrayBuffer());
+        const filename = `Invoice-${doc.docNumber || doc.documentId}.pdf`;
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+        return res.send(buf);
+      }
+    } catch (_) {
+      // Fall through to regenerate PDF if fetch fails.
+    }
   }
 
   const [materialLines, laborLines, company, client] = await Promise.all([
