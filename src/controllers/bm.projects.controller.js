@@ -225,6 +225,20 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
     }
   }
 
+  if (payload.type === "quote") {
+    const project = await service.getProject(companyId, projectId);
+    if (
+      project &&
+      !["quote_approved", "invoice_process", "done", "cancelled", "archived"].includes(
+        project.status
+      )
+    ) {
+      await service.updateProject(companyId, projectId, {
+        status: "quote_created",
+      });
+    }
+  }
+
   // result: { document, materialLines, laborLines }
   res.status(201).json(result);
 });

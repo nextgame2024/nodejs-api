@@ -1,4 +1,5 @@
 -- Add new project status for invoice flow
+ALTER TYPE bm_project_status ADD VALUE IF NOT EXISTS 'quote_created';
 ALTER TYPE bm_project_status ADD VALUE IF NOT EXISTS 'quote_approved';
 ALTER TYPE bm_project_status ADD VALUE IF NOT EXISTS 'invoice_process';
 
