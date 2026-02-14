@@ -46,6 +46,28 @@ function formatCoords(lat, lng) {
   return `${a.toFixed(6)}, ${b.toFixed(6)}`;
 }
 
+function formatLotPlanLine(lotPlanRaw, lotNumber, planNumber) {
+  const raw = String(lotPlanRaw || "").trim();
+  const lot = String(lotNumber || "").trim();
+  const plan = String(planNumber || "").trim();
+
+  if (raw) {
+    if (/^lot\s+/i.test(raw)) return raw;
+    if (/^plan\s+/i.test(raw)) return raw;
+    if (/\bon\b/i.test(raw) && !/^lot\b/i.test(raw)) return `Lot ${raw}`;
+
+    const m = raw.match(/^([A-Za-z0-9]+)\s*[/\s]\s*([A-Za-z0-9]+)$/);
+    if (m) return `Lot ${m[1]} on ${m[2]}`;
+
+    return `Lot ${raw}`;
+  }
+
+  if (lot && plan) return `Lot ${lot} on ${plan}`;
+  if (lot) return `Lot ${lot}`;
+  if (plan) return `Plan ${plan}`;
+  return "";
+}
+
 const BRAND = {
   teal: "#0F2B2B",
   teal2: "#143838",
@@ -243,26 +265,16 @@ function footerAllPages(doc, schemeVersion) {
     // boundary prevents PDFKit from creating trailing blank pages.
     const y = doc.page.height - doc.page.margins.bottom - 18;
 
-    doc
-      .font("Helvetica")
-      .fontSize(8)
-      .fillColor(BRAND.muted)
-      .text(`Brisbane Town Planner • sophiaAi • ${PDF_ENGINE_VERSION}`, x, y, {
-        width: w,
-        align: "left",
-      });
+    const scheme = schemeVersion ? ` • ${schemeVersion}` : "";
+    const footerText = `Brisbane Town Planner • sophiaAi${scheme} Page ${
+      i + 1
+    } of ${total}`;
 
     doc
       .font("Helvetica")
       .fontSize(8)
       .fillColor(BRAND.muted)
-      .text(schemeVersion || "", x, y, { width: w, align: "center" });
-
-    doc
-      .font("Helvetica")
-      .fontSize(8)
-      .fillColor(BRAND.muted)
-      .text(`Page ${i + 1} of ${total}`, x, y, { width: w, align: "right" });
+      .text(footerText, x, y, { width: w, align: "left" });
   }
 }
 
@@ -326,12 +338,41 @@ export async function buildTownPlannerReportPdfV2(
       reportPayload?.inputs?.address_label
     ) || "Address not provided";
 
-  const placeId =
-    pickFirst(reportPayload.placeId, reportPayload?.inputs?.placeId) || "";
   const lat =
     pickFirst(reportPayload.lat, reportPayload?.inputs?.lat, opts.lat) ?? null;
   const lng =
     pickFirst(reportPayload.lng, reportPayload?.inputs?.lng, opts.lng) ?? null;
+
+  const lotPlanRaw = pickFirst(
+    reportPayload.lotPlan,
+    reportPayload.lot_plan,
+    reportPayload?.inputs?.lotPlan,
+    reportPayload?.inputs?.lot_plan,
+    reportPayload?.planningSnapshot?.lotPlan,
+    reportPayload?.planningSnapshot?.lot_plan,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_plan,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotplan,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_plan_desc,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotplan_desc
+  );
+
+  const lotNumber = pickFirst(
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_number,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_no,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotnum,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotno
+  );
+
+  const planNumber = pickFirst(
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_number,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_no,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.planno,
+    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_id
+  );
+
+  const lotPlanLine = formatLotPlanLine(lotPlanRaw, lotNumber, planNumber);
 
   const generatedAt =
     pickFirst(
@@ -553,11 +594,21 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(24)
       .text("Property Planning Report", x + 18, y + 70, { width: w - 36 });
 
-    doc
-      .fillColor(BRAND.white)
-      .font("Helvetica")
-      .fontSize(11)
-      .text(addressLabel, x + 18, y + 104, { width: w - 36 });
+    boundedText(doc, addressLabel, x + 18, y + 104, w - 36, 14, {
+      font: "Helvetica",
+      fontSize: 11,
+      color: BRAND.white,
+      ellipsis: true,
+    });
+
+    if (lotPlanLine) {
+      boundedText(doc, lotPlanLine, x + 18, y + 122, w - 36, 14, {
+        font: "Helvetica",
+        fontSize: 11,
+        color: BRAND.white,
+        ellipsis: true,
+      });
+    }
 
     doc
       .fillColor(BRAND.white)
@@ -566,20 +617,11 @@ export async function buildTownPlannerReportPdfV2(
       .text(
         `Generated ${formatDateAU(generatedAt)} • ${schemeVersion}`,
         x + 18,
-        y + 126,
+        lotPlanLine ? y + 140 : y + 122,
         {
           width: w - 36,
         }
       );
-
-    doc
-      .fillColor(BRAND.white)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(PDF_ENGINE_VERSION, x + 18, y + 146, {
-        width: w - 36,
-        opacity: 0.9,
-      });
 
     // Hero map (cover fill)
     const mapY = y + 190;
@@ -608,25 +650,6 @@ export async function buildTownPlannerReportPdfV2(
         });
     }
 
-    // Inputs block
-    const bY = mapY + mapH + 18;
-    box(doc, x, bY, w, 90);
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .text("Report inputs", x + 16, bY + 12);
-
-    // Bounded placeId prevents auto-page creation
-    boundedText(
-      doc,
-      `Place ID: ${placeId || "N/A"}\nCoordinates: ${formatCoords(lat, lng)}`,
-      x + 16,
-      bY + 32,
-      w - 32,
-      48,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
-    );
   }
 
   // ========== PAGE 2: CONTENTS ==========
