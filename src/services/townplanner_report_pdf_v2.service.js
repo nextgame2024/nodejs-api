@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.1";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.2";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -392,16 +392,35 @@ export async function buildTownPlannerReportPdfV2(
   const lng =
     pickFirst(reportPayload.lng, reportPayload?.inputs?.lng, opts.lng) ?? null;
 
+  const generatedAt =
+    pickFirst(
+      reportPayload.generatedAt,
+      reportPayload?.reportJson?.generatedAt
+    ) || new Date().toISOString();
+
+  const logoBuffer = reportPayload.logoBuffer || null;
+
+  const planningSnapshot =
+    safeJsonParse(
+      pickFirst(
+        reportPayload.planningSnapshot,
+        reportPayload.planning_snapshot,
+        reportPayload.planning,
+        reportPayload?.inputs?.planningSnapshot,
+        reportPayload?.inputs?.planning_snapshot
+      )
+    ) || {};
+
   const parcelProps =
-    reportPayload?.planningSnapshot?.propertyParcel?.properties || null;
+    planningSnapshot?.propertyParcel?.properties || null;
 
   const lotPlanRaw = pickFirst(
     reportPayload.lotPlan,
     reportPayload.lot_plan,
     reportPayload?.inputs?.lotPlan,
     reportPayload?.inputs?.lot_plan,
-    reportPayload?.planningSnapshot?.lotPlan,
-    reportPayload?.planningSnapshot?.lot_plan,
+    planningSnapshot?.lotPlan,
+    planningSnapshot?.lot_plan,
     pickProp(parcelProps, [
       "lot_plan",
       "lotplan",
@@ -434,25 +453,6 @@ export async function buildTownPlannerReportPdfV2(
   ]);
 
   const lotPlanLine = formatLotPlanLine(lotPlanRaw, lotNumber, planNumber);
-
-  const generatedAt =
-    pickFirst(
-      reportPayload.generatedAt,
-      reportPayload?.reportJson?.generatedAt
-    ) || new Date().toISOString();
-
-  const logoBuffer = reportPayload.logoBuffer || null;
-
-  const planningSnapshot =
-    safeJsonParse(
-      pickFirst(
-        reportPayload.planningSnapshot,
-        reportPayload.planning_snapshot,
-        reportPayload.planning,
-        reportPayload?.inputs?.planningSnapshot,
-        reportPayload?.inputs?.planning_snapshot
-      )
-    ) || {};
 
   const controls =
     safeJsonParse(
