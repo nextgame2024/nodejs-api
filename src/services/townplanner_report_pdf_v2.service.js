@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.3";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.4";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -236,6 +236,37 @@ function boundedText(
 
   const out = (best || full.slice(0, 1)) + suffix;
   doc.text(out, x, y, measureOpts);
+}
+
+function splitOverlayName(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return { base: "", detail: "" };
+  if (raw.includes(" – ")) {
+    const [base, ...rest] = raw.split(" – ");
+    return { base: base.trim(), detail: rest.join(" – ").trim() };
+  }
+  if (raw.includes(" - ")) {
+    const [base, ...rest] = raw.split(" - ");
+    return { base: base.trim(), detail: rest.join(" - ").trim() };
+  }
+  return { base: raw, detail: "" };
+}
+
+function buildOverlayLines(items, limit = 14) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return ["• No overlays returned for this site."];
+  }
+
+  const lines = [];
+  for (const item of items) {
+    const { base, detail } = splitOverlayName(item?.name);
+    if (!base) continue;
+    lines.push(`• ${base}`);
+    if (detail) lines.push(`  - ${detail}`);
+    if (lines.length >= limit) break;
+  }
+
+  return lines.length ? lines : ["• No overlays returned for this site."];
 }
 
 function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
@@ -832,15 +863,22 @@ export async function buildTownPlannerReportPdfV2(
 
     const tilesY = mapY + mapH + 16;
     const gap = 12;
-    const tileW = (w - gap) / 2;
-    const tileH = 160;
+    const colW = (w - gap) / 2;
+    const colH = 280;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
-    const zoneDisplay =
-      zoningCode && zoningText
-        ? `${zoningCode} – ${zoningText}`
-        : zoningText || zoningCode || "Not mapped";
+    const zoneDisplay = (() => {
+      const code = String(zoningCode || "").trim();
+      const text = String(zoningText || "").trim();
+      if (!code && !text) return "Not mapped";
+      if (code && text) {
+        const lc = code.toLowerCase();
+        if (text.toLowerCase().startsWith(lc)) return text;
+        return `${code} - ${text.replace(/^[–-]\s*/, "")}`;
+      }
+      return text || code;
+    })();
 
     const np = planningSnapshot?.neighbourhoodPlan || "Not mapped";
     const precinct = planningSnapshot?.neighbourhoodPlanPrecinct || "N/A";
@@ -861,37 +899,52 @@ export async function buildTownPlannerReportPdfV2(
         ? `${npTableLabel} (${npTableUrl})`
         : npTableLabel || "Not mapped";
 
-    box(doc, x, tilesY, tileW, tileH);
+    const leftX = x;
+    const rightX = x + colW + gap;
+
+    const leftTopH = 120;
+    const leftBottomH = colH - leftTopH - gap;
+
+    box(doc, leftX, tilesY, colW, leftTopH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Zoning", x + 14, tilesY + 12);
-    boundedText(doc, "Zone", x + 14, tilesY + 34, tileW - 28, 14, {
+      .text("Zoning", leftX + 14, tilesY + 12);
+    boundedText(doc, "Zone", leftX + 14, tilesY + 34, colW - 28, 14, {
       font: "Helvetica",
       fontSize: 9,
       color: BRAND.muted,
       ellipsis: false,
     });
-    boundedText(doc, String(zoneDisplay), x + 14, tilesY + 48, tileW - 28, 60, {
-      font: "Helvetica-Bold",
-      fontSize: 11,
-      color: BRAND.text,
-      ellipsis: true,
-    });
+    boundedText(
+      doc,
+      String(zoneDisplay),
+      leftX + 14,
+      tilesY + 48,
+      colW - 28,
+      60,
+      {
+        font: "Helvetica-Bold",
+        fontSize: 11,
+        color: BRAND.text,
+        ellipsis: true,
+      }
+    );
 
-    box(doc, x + tileW + gap, tilesY, tileW, tileH);
+    const npY = tilesY + leftTopH + gap;
+    box(doc, leftX, npY, colW, leftBottomH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Neighbourhood plan", x + tileW + gap + 14, tilesY + 12);
+      .text("Neighbourhood plan", leftX + 14, npY + 12);
     boundedText(
       doc,
       "Neighbourhood plan",
-      x + tileW + gap + 14,
-      tilesY + 34,
-      tileW - 28,
+      leftX + 14,
+      npY + 34,
+      colW - 28,
       14,
       {
         font: "Helvetica",
@@ -903,9 +956,9 @@ export async function buildTownPlannerReportPdfV2(
     boundedText(
       doc,
       String(np),
-      x + tileW + gap + 14,
-      tilesY + 48,
-      tileW - 28,
+      leftX + 14,
+      npY + 48,
+      colW - 28,
       22,
       {
         font: "Helvetica-Bold",
@@ -917,9 +970,9 @@ export async function buildTownPlannerReportPdfV2(
     boundedText(
       doc,
       "Table of assessment",
-      x + tileW + gap + 14,
-      tilesY + 76,
-      tileW - 28,
+      leftX + 14,
+      npY + 76,
+      colW - 28,
       14,
       {
         font: "Helvetica",
@@ -931,9 +984,9 @@ export async function buildTownPlannerReportPdfV2(
     boundedText(
       doc,
       String(npTableText),
-      x + tileW + gap + 14,
-      tilesY + 90,
-      tileW - 28,
+      leftX + 14,
+      npY + 90,
+      colW - 28,
       32,
       {
         font: "Helvetica-Bold",
@@ -945,9 +998,9 @@ export async function buildTownPlannerReportPdfV2(
     boundedText(
       doc,
       "Precinct",
-      x + tileW + gap + 14,
-      tilesY + 124,
-      tileW - 28,
+      leftX + 14,
+      npY + 124,
+      colW - 28,
       14,
       {
         font: "Helvetica",
@@ -959,9 +1012,9 @@ export async function buildTownPlannerReportPdfV2(
     boundedText(
       doc,
       String(precinct),
-      x + tileW + gap + 14,
-      tilesY + 138,
-      tileW - 28,
+      leftX + 14,
+      npY + 138,
+      colW - 28,
       20,
       {
         font: "Helvetica-Bold",
@@ -971,13 +1024,12 @@ export async function buildTownPlannerReportPdfV2(
       }
     );
 
-    const cY = tilesY + tileH + 16;
-    box(doc, x, cY, w, 130);
+    box(doc, rightX, tilesY, colW, colH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Overlays", x + 14, cY + 12);
+      .text("Overlays", rightX + 14, tilesY + 12);
 
     const overlayPriority = [
       "overlay_airport_pans",
@@ -995,11 +1047,12 @@ export async function buildTownPlannerReportPdfV2(
       (o) => !overlayPrioritySet.has(o.code)
     );
 
-    const list = overlayItems.length
-      ? prioritized.concat(fallback).slice(0, 6).map((o) => `• ${o.name}`)
-      : ["• No overlays returned for this site."];
+    const orderedOverlays = overlayItems.length
+      ? prioritized.concat(fallback)
+      : [];
+    const listLines = buildOverlayLines(orderedOverlays, 18);
 
-    boundedText(doc, list.join("\n"), x + 14, cY + 34, w - 28, 86, {
+    boundedText(doc, listLines.join("\n"), rightX + 14, tilesY + 34, colW - 28, colH - 48, {
       font: "Helvetica",
       fontSize: 9,
       color: BRAND.muted,
