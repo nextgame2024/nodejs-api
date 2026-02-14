@@ -110,8 +110,9 @@ export async function generateTownPlannerReportV2({
   placeId = null,
   lat,
   lng,
+  lotPlan = null,
 }) {
-  const planning = await fetchPlanningDataV2({ lat, lng });
+  const planning = await fetchPlanningDataV2({ lat, lng, lotPlan });
 
   // Keep your existing “must have parcel boundary” guard
   if (!planning || !planning.siteParcelPolygon) {
@@ -167,6 +168,7 @@ export async function generateTownPlannerReportV2({
     placeId,
     lat,
     lng,
+    lotPlan,
     planning,
     controls,
     narrative,
@@ -199,6 +201,7 @@ export async function generateTownPlannerReportV2({
       placeId,
       lat,
       lng,
+      lotPlan,
       planning,
       controls,
       narrative,

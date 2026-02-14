@@ -44,6 +44,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     placeId = null,
     lat,
     lng,
+    lotPlan = null,
     force = false,
     email = "unknown@local",
   } = req.body || {};
@@ -66,6 +67,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     placeId: placeId || null,
     lat,
     lng,
+    lotPlan: lotPlan || null,
     schemeVersion,
     templateVersion: REPORT_TEMPLATE_VERSION,
   });
@@ -130,6 +132,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
           placeId,
           lat,
           lng,
+          lotPlan: lotPlan || null,
         });
 
         await markReportReadyV2({

@@ -21,6 +21,23 @@ function pickFirst(...vals) {
   for (const v of vals) if (v !== undefined && v !== null && v !== "") return v;
   return null;
 }
+function pickProp(props, keys = []) {
+  if (!props || typeof props !== "object") return null;
+  for (const key of keys) {
+    if (props[key] !== undefined && props[key] !== null && props[key] !== "") {
+      return props[key];
+    }
+    const target = String(key || "").toLowerCase();
+    if (!target) continue;
+    const hit = Object.keys(props).find(
+      (k) => String(k || "").toLowerCase() === target
+    );
+    if (hit && props[hit] !== undefined && props[hit] !== null && props[hit] !== "") {
+      return props[hit];
+    }
+  }
+  return null;
+}
 function featureFromGeometry(geometry, props = {}) {
   if (!geometry) return null;
   return { type: "Feature", properties: props, geometry };
@@ -48,17 +65,39 @@ function formatCoords(lat, lng) {
 
 function formatLotPlanLine(lotPlanRaw, lotNumber, planNumber) {
   const raw = String(lotPlanRaw || "").trim();
-  const lot = String(lotNumber || "").trim();
-  const plan = String(planNumber || "").trim();
+  let lot = String(lotNumber || "").trim();
+  let plan = String(planNumber || "").trim();
+
+  const parseConcat = (v) => {
+    const m = String(v || "")
+      .trim()
+      .match(
+        /^([A-Za-z0-9]+?)(RP|SP|BUP|PS|L|CP|OP|DP)(\d+)$/i
+      );
+    if (!m) return null;
+    return { lot: m[1], plan: `${m[2]}${m[3]}` };
+  };
 
   if (raw) {
     if (/^lot\s+/i.test(raw)) return raw;
     if (/^plan\s+/i.test(raw)) return raw;
+
+    const concat = parseConcat(raw);
+    if (concat) {
+      if (!lot) lot = concat.lot;
+      if (!plan) plan = concat.plan;
+      return lot ? `Lot ${lot} on ${plan}` : `Plan ${plan}`;
+    }
+
+    if (/^(rp|sp|bup|ps|l|cp|op|dp)\d+/i.test(raw)) {
+      return lot ? `Lot ${lot} on ${raw}` : `Plan ${raw}`;
+    }
     if (/\bon\b/i.test(raw) && !/^lot\b/i.test(raw)) return `Lot ${raw}`;
 
     const m = raw.match(/^([A-Za-z0-9]+)\s*[/\s]\s*([A-Za-z0-9]+)$/);
     if (m) return `Lot ${m[1]} on ${m[2]}`;
 
+    if (lot && plan) return `Lot ${lot} on ${plan}`;
     return `Lot ${raw}`;
   }
 
@@ -265,16 +304,26 @@ function footerAllPages(doc, schemeVersion) {
     // boundary prevents PDFKit from creating trailing blank pages.
     const y = doc.page.height - doc.page.margins.bottom - 18;
 
-    const scheme = schemeVersion ? ` • ${schemeVersion}` : "";
-    const footerText = `Brisbane Town Planner • sophiaAi${scheme} Page ${
-      i + 1
-    } of ${total}`;
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor(BRAND.muted)
+      .text("Brisbane Town Planner • sophiaAi", x, y, {
+        width: w,
+        align: "left",
+      });
 
     doc
       .font("Helvetica")
       .fontSize(8)
       .fillColor(BRAND.muted)
-      .text(footerText, x, y, { width: w, align: "left" });
+      .text(schemeVersion || "", x, y, { width: w, align: "center" });
+
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor(BRAND.muted)
+      .text(`Page ${i + 1} of ${total}`, x, y, { width: w, align: "right" });
   }
 }
 
@@ -343,6 +392,9 @@ export async function buildTownPlannerReportPdfV2(
   const lng =
     pickFirst(reportPayload.lng, reportPayload?.inputs?.lng, opts.lng) ?? null;
 
+  const parcelProps =
+    reportPayload?.planningSnapshot?.propertyParcel?.properties || null;
+
   const lotPlanRaw = pickFirst(
     reportPayload.lotPlan,
     reportPayload.lot_plan,
@@ -350,27 +402,36 @@ export async function buildTownPlannerReportPdfV2(
     reportPayload?.inputs?.lot_plan,
     reportPayload?.planningSnapshot?.lotPlan,
     reportPayload?.planningSnapshot?.lot_plan,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_plan,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotplan,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_plan_desc,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotplan_desc
+    pickProp(parcelProps, [
+      "lot_plan",
+      "lotplan",
+      "lot_plan_desc",
+      "lotplan_desc",
+      "lot_plan_number",
+      "lotplan_number",
+      "lot_plan_no",
+      "lotplan_no",
+      "lotplanid",
+      "lot_plan_id",
+    ])
   );
 
-  const lotNumber = pickFirst(
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_number,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lot_no,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotnum,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.lotno
-  );
+  const lotNumber = pickProp(parcelProps, [
+    "lot",
+    "lot_number",
+    "lot_no",
+    "lotnum",
+    "lotno",
+    "lot_id",
+  ]);
 
-  const planNumber = pickFirst(
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_number,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_no,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.planno,
-    reportPayload?.planningSnapshot?.propertyParcel?.properties?.plan_id
-  );
+  const planNumber = pickProp(parcelProps, [
+    "plan",
+    "plan_number",
+    "plan_no",
+    "planno",
+    "plan_id",
+  ]);
 
   const lotPlanLine = formatLotPlanLine(lotPlanRaw, lotNumber, planNumber);
 
@@ -594,18 +655,20 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(24)
       .text("Property Planning Report", x + 18, y + 70, { width: w - 36 });
 
-    boundedText(doc, addressLabel, x + 18, y + 104, w - 36, 14, {
+    boundedText(doc, addressLabel, x + 18, y + 104, w - 36, 28, {
       font: "Helvetica",
       fontSize: 11,
       color: BRAND.white,
+      lineGap: 0,
       ellipsis: true,
     });
 
     if (lotPlanLine) {
-      boundedText(doc, lotPlanLine, x + 18, y + 122, w - 36, 14, {
+      boundedText(doc, lotPlanLine, x + 18, y + 122, w - 36, 28, {
         font: "Helvetica",
         fontSize: 11,
         color: BRAND.white,
+        lineGap: 0,
         ellipsis: true,
       });
     }
