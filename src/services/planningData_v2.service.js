@@ -54,6 +54,44 @@ function readProp(obj, keys) {
   return null;
 }
 
+function readPropCI(obj, keys) {
+  if (!obj) return null;
+  const keyMap = new Map();
+  for (const k of Object.keys(obj)) keyMap.set(String(k).toLowerCase(), k);
+
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
+      const v = obj[k];
+      if (String(v).trim() !== "") return v;
+    }
+
+    const hit = keyMap.get(String(k).toLowerCase());
+    if (hit && obj[hit] != null && String(obj[hit]).trim() !== "") return obj[hit];
+  }
+
+  return null;
+}
+
+function normalizeOverlayDetail(value) {
+  if (value == null) return null;
+  let s = String(value).trim();
+  if (!s) return null;
+  s = s.replace(/\s*sub-?category$/i, "");
+  s = s.replace(/\s*sub-?categories$/i, "");
+  return s.trim() || null;
+}
+
+function overlayDetail(props, keys, fallback = null) {
+  const raw = readPropCI(props, keys);
+  const normalized = normalizeOverlayDetail(raw);
+  if (normalized) return normalized;
+  return fallback || null;
+}
+
+function overlayName(base, detail) {
+  return detail ? `${base} – ${detail}` : base;
+}
+
 /**
  * Convert table geom to EPSG:4326 defensively.
  * - If SRID is 4326: keep
@@ -301,6 +339,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const parcel = await queryPropertyParcel(safeLng, safeLat, lotPlan);
   const focusLat = parcel?.point?.coordinates?.[1] ?? safeLat;
   const focusLng = parcel?.point?.coordinates?.[0] ?? safeLng;
+  const LINE_OVERLAY_DISTANCE_M = 40;
 
   // 2) Spatial lookups
   const floodPromises = parcel?.geometry
@@ -332,7 +371,12 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     heritageStateArea,
     airportHeight,
     airportOls,
+    airportPansOps,
     lgipNetworkKey,
+    bicycleNetwork,
+    criticalInfrastructureMovementAssets,
+    roadHierarchy,
+    streetscapeHierarchy,
   ] = await Promise.all([
     queryOne("bcc_zoning", focusLng, focusLat),
     queryOne("bcc_np_boundaries", focusLng, focusLat),
@@ -350,9 +394,30 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     // Airport environs overlays
     queryOne("bcc_airport_height_restriction", focusLng, focusLat),
     queryOne("bcc_airport_ols_boundary", focusLng, focusLat),
+    queryOne("bcc_airport_pans_ops", focusLng, focusLat),
 
     // Services / infrastructure indicator (LGIP network key)
     queryOne("bcc_lgip_network_key", focusLng, focusLat),
+
+    // Networks / hierarchy overlays (often line-based)
+    queryOne(
+      "bcc_bicycle_network_overlay",
+      focusLng,
+      focusLat,
+      LINE_OVERLAY_DISTANCE_M
+    ),
+    queryOne(
+      "bcc_critical_infrastructure_movement_assets",
+      focusLng,
+      focusLat
+    ),
+    queryOne("bcc_road_hierarchy", focusLng, focusLat, LINE_OVERLAY_DISTANCE_M),
+    queryOne(
+      "bcc_streetscape_hierarchy",
+      focusLng,
+      focusLat,
+      LINE_OVERLAY_DISTANCE_M
+    ),
   ]);
 
   const zoningProps = zoning?.properties || null;
@@ -410,6 +475,63 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     overlays.push(def);
     if (geom) overlayPolygons.push({ code: def.code, geometry: geom });
   };
+
+  const overlayDetailKeys = [
+    "OVL2_DESC",
+    "ovl2_desc",
+    "OVL_DESC",
+    "ovl_desc",
+    "SUBCATEGORY",
+    "sub_category",
+    "SUB_CAT",
+    "sub_cat",
+    "CATEGORY",
+    "category",
+    "TYPE",
+    "type",
+    "CLASS",
+    "class",
+    "DESCRIPTION",
+    "description",
+    "DESC",
+    "desc",
+  ];
+  const bicycleKeys = overlayDetailKeys.concat([
+    "ROUTE",
+    "route",
+    "ROUTE_TYPE",
+    "route_type",
+    "NETWORK",
+    "network",
+  ]);
+  const criticalKeys = overlayDetailKeys.concat([
+    "PLANNING_AREA",
+    "planning_area",
+    "AREA",
+    "area",
+    "ASSET",
+    "asset",
+    "INFRASTRUCTURE",
+    "infrastructure",
+    "MOVEMENT",
+    "movement",
+  ]);
+  const roadHierarchyKeys = overlayDetailKeys.concat([
+    "ROAD_HIERARCHY",
+    "road_hierarchy",
+    "ROAD_TYPE",
+    "road_type",
+    "ROAD_CLASS",
+    "road_class",
+    "HIERARCHY",
+    "hierarchy",
+  ]);
+  const streetscapeKeys = overlayDetailKeys.concat([
+    "STREETSCAPE",
+    "streetscape",
+    "HIERARCHY",
+    "hierarchy",
+  ]);
 
   pushOverlay(fOverland?.properties, fOverland?.geometry, {
     name: "Flood overlay – overland flow",
@@ -516,6 +638,58 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     severity: "mapped overlay",
   });
 
+  const pansDetail = overlayDetail(
+    airportPansOps?.properties,
+    overlayDetailKeys,
+    "Procedures for air navigation surfaces (PANS)"
+  );
+  pushOverlay(airportPansOps?.properties, airportPansOps?.geometry, {
+    name: overlayName("Airport environs overlay", pansDetail),
+    code: "overlay_airport_pans",
+    severity: pansDetail || "mapped overlay",
+  });
+
+  const bicycleDetail = overlayDetail(bicycleNetwork?.properties, bicycleKeys);
+  pushOverlay(bicycleNetwork?.properties, bicycleNetwork?.geometry, {
+    name: overlayName("Bicycle network overlay", bicycleDetail),
+    code: "overlay_bicycle_network",
+    severity: bicycleDetail || "mapped overlay",
+  });
+
+  const criticalDetail = overlayDetail(
+    criticalInfrastructureMovementAssets?.properties,
+    criticalKeys
+  );
+  pushOverlay(
+    criticalInfrastructureMovementAssets?.properties,
+    criticalInfrastructureMovementAssets?.geometry,
+    {
+      name: overlayName(
+        "Critical infrastructure and movement areas overlay",
+        criticalDetail
+      ),
+      code: "overlay_critical_infrastructure_movement",
+      severity: criticalDetail || "mapped overlay",
+    }
+  );
+
+  const roadDetail = overlayDetail(roadHierarchy?.properties, roadHierarchyKeys);
+  pushOverlay(roadHierarchy?.properties, roadHierarchy?.geometry, {
+    name: overlayName("Road hierarchy overlay", roadDetail),
+    code: "overlay_road_hierarchy",
+    severity: roadDetail || "mapped overlay",
+  });
+
+  const streetscapeDetail = overlayDetail(
+    streetscapeHierarchy?.properties,
+    streetscapeKeys
+  );
+  pushOverlay(streetscapeHierarchy?.properties, streetscapeHierarchy?.geometry, {
+    name: overlayName("Streetscape hierarchy overlay", streetscapeDetail),
+    code: "overlay_streetscape_hierarchy",
+    severity: streetscapeDetail || "mapped overlay",
+  });
+
   // Services meta for reporting (not necessarily a map overlay page)
   const rawLgipNetworkKey = lgipNetworkKey?.properties || null;
 
@@ -562,6 +736,12 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     rawHeritageStateArea: heritageStateArea?.properties || null,
     rawAirportHeight: airportHeight?.properties || null,
     rawAirportOls: airportOls?.properties || null,
+    rawAirportPansOps: airportPansOps?.properties || null,
     rawLgipNetworkKey,
+    rawBicycleNetwork: bicycleNetwork?.properties || null,
+    rawCriticalInfrastructureMovementAssets:
+      criticalInfrastructureMovementAssets?.properties || null,
+    rawRoadHierarchy: roadHierarchy?.properties || null,
+    rawStreetscapeHierarchy: streetscapeHierarchy?.properties || null,
   };
 }

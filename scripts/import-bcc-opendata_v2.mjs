@@ -88,6 +88,27 @@ const DATASETS = {
     odsId: "cp14-lgip-network-key",
     table: "bcc_lgip_network_key",
   },
+  bicycle_network_overlay: {
+    odsId: "cp14-bicycle-network-overlay",
+    table: "bcc_bicycle_network_overlay",
+  },
+  critical_infrastructure_movement_assets: {
+    odsId: "cp14-critical-infrastructure-movement-network-overlay-assets-infrastructure-move",
+    table: "bcc_critical_infrastructure_movement_assets",
+  },
+  road_hierarchy_overlay: {
+    odsId: "cp14-road-hierarchy-overlay-road-hierarchy",
+    table: "bcc_road_hierarchy",
+  },
+  streetscape_hierarchy_overlay: {
+    odsId: "cp14-streetscape-hierarchy-overlay-streetscape-hierarchy",
+    table: "bcc_streetscape_hierarchy",
+  },
+  airport_pans_ops: {
+    odsId:
+      "cp14-airport-environs-overlay-procedures-for-air-nav-services-aircraft-operation",
+    table: "bcc_airport_pans_ops",
+  },
 };
 
 function odsGeoJsonExportUrl(odsId) {

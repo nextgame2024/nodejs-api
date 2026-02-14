@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.2";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.3";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -121,6 +121,13 @@ const BRAND = {
 const PAGE = {
   size: "A4",
   margin: 56,
+};
+
+const NEIGHBOURHOOD_PLAN_TABLES = {
+  "aspley district neighbourhood plan": {
+    label: "Aspley district neighbourhood plan Table 5.9.5",
+    url: "https://cityplan.brisbane.qld.gov.au/eplan/rules/0/324/0/18498/0/264",
+  },
 };
 
 function contentW(doc) {
@@ -604,7 +611,7 @@ export async function buildTownPlannerReportPdfV2(
   const toc = [
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
-    { label: "Executive summary", page: 3 },
+    { label: "Site overview", page: 3 },
     { label: "Zoning", page: 4 },
     { label: "Development controls", page: 5 },
     { label: "Potential cautions", page: 6 },
@@ -798,11 +805,11 @@ export async function buildTownPlannerReportPdfV2(
     );
   }
 
-  // ========== PAGE 3: EXECUTIVE SUMMARY ==========
+  // ========== PAGE 3: SITE OVERVIEW ==========
   doc.addPage();
   {
     header(doc, {
-      title: "Executive summary",
+      title: "Site overview",
       addressLabel,
       schemeVersion,
       logoBuffer,
@@ -816,7 +823,7 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Planning summary", x, top);
+      .text("Site overview", x, top);
 
     // Map should fill container (cover) to remove right whitespace
     const mapY = top + 50;
@@ -826,13 +833,33 @@ export async function buildTownPlannerReportPdfV2(
     const tilesY = mapY + mapH + 16;
     const gap = 12;
     const tileW = (w - gap) / 2;
-    const tileH = 140;
+    const tileH = 160;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
+    const zoneDisplay =
+      zoningCode && zoningText
+        ? `${zoningCode} – ${zoningText}`
+        : zoningText || zoningCode || "Not mapped";
+
     const np = planningSnapshot?.neighbourhoodPlan || "Not mapped";
-    const precinct =
-      planningSnapshot?.neighbourhoodPlanPrecinct || "Not mapped";
+    const precinct = planningSnapshot?.neighbourhoodPlanPrecinct || "N/A";
+
+    const npKey = String(np || "").trim().toLowerCase();
+    const npFallback = npKey ? NEIGHBOURHOOD_PLAN_TABLES[npKey] : null;
+    const npSource = sources.find(
+      (s) =>
+        s?.neighbourhoodPlan &&
+        npKey &&
+        String(s.neighbourhoodPlan).toLowerCase() === npKey
+    );
+    const npTableLabel =
+      npSource?.sourceCitation || npSource?.label || npFallback?.label || null;
+    const npTableUrl = npSource?.sourceUrl || npFallback?.url || null;
+    const npTableText =
+      npTableLabel && npTableUrl
+        ? `${npTableLabel} (${npTableUrl})`
+        : npTableLabel || "Not mapped";
 
     box(doc, x, tilesY, tileW, tileH);
     doc
@@ -840,25 +867,13 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Zoning", x + 14, tilesY + 12);
-    boundedText(doc, "Zone code", x + 14, tilesY + 34, tileW - 28, 14, {
+    boundedText(doc, "Zone", x + 14, tilesY + 34, tileW - 28, 14, {
       font: "Helvetica",
       fontSize: 9,
       color: BRAND.muted,
       ellipsis: false,
     });
-    boundedText(doc, String(zoningCode), x + 14, tilesY + 48, tileW - 28, 20, {
-      font: "Helvetica-Bold",
-      fontSize: 13,
-      color: BRAND.text,
-      ellipsis: true,
-    });
-    boundedText(doc, "Zone name", x + 14, tilesY + 74, tileW - 28, 14, {
-      font: "Helvetica",
-      fontSize: 9,
-      color: BRAND.muted,
-      ellipsis: false,
-    });
-    boundedText(doc, String(zoningText), x + 14, tilesY + 88, tileW - 28, 44, {
+    boundedText(doc, String(zoneDisplay), x + 14, tilesY + 48, tileW - 28, 60, {
       font: "Helvetica-Bold",
       fontSize: 11,
       color: BRAND.text,
@@ -873,7 +888,7 @@ export async function buildTownPlannerReportPdfV2(
       .text("Neighbourhood plan", x + tileW + gap + 14, tilesY + 12);
     boundedText(
       doc,
-      "Plan",
+      "Neighbourhood plan",
       x + tileW + gap + 14,
       tilesY + 34,
       tileW - 28,
@@ -891,7 +906,7 @@ export async function buildTownPlannerReportPdfV2(
       x + tileW + gap + 14,
       tilesY + 48,
       tileW - 28,
-      34,
+      22,
       {
         font: "Helvetica-Bold",
         fontSize: 11,
@@ -901,9 +916,37 @@ export async function buildTownPlannerReportPdfV2(
     );
     boundedText(
       doc,
+      "Table of assessment",
+      x + tileW + gap + 14,
+      tilesY + 76,
+      tileW - 28,
+      14,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: false,
+      }
+    );
+    boundedText(
+      doc,
+      String(npTableText),
+      x + tileW + gap + 14,
+      tilesY + 90,
+      tileW - 28,
+      32,
+      {
+        font: "Helvetica-Bold",
+        fontSize: 9,
+        color: BRAND.text,
+        ellipsis: true,
+      }
+    );
+    boundedText(
+      doc,
       "Precinct",
       x + tileW + gap + 14,
-      tilesY + 84,
+      tilesY + 124,
       tileW - 28,
       14,
       {
@@ -917,12 +960,12 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       String(precinct),
       x + tileW + gap + 14,
-      tilesY + 98,
+      tilesY + 138,
       tileW - 28,
-      34,
+      20,
       {
         font: "Helvetica-Bold",
-        fontSize: 11,
+        fontSize: 10,
         color: BRAND.text,
         ellipsis: true,
       }
@@ -934,10 +977,26 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Potential cautions (overlays)", x + 14, cY + 12);
+      .text("Overlays", x + 14, cY + 12);
+
+    const overlayPriority = [
+      "overlay_airport_pans",
+      "overlay_bicycle_network",
+      "overlay_critical_infrastructure_movement",
+      "character_dwelling_house",
+      "overlay_road_hierarchy",
+      "overlay_streetscape_hierarchy",
+    ];
+    const overlayPrioritySet = new Set(overlayPriority);
+    const prioritized = overlayPriority
+      .map((code) => overlayItems.find((o) => o.code === code))
+      .filter(Boolean);
+    const fallback = overlayItems.filter(
+      (o) => !overlayPrioritySet.has(o.code)
+    );
 
     const list = overlayItems.length
-      ? overlayItems.slice(0, 6).map((o) => `• ${o.name}`)
+      ? prioritized.concat(fallback).slice(0, 6).map((o) => `• ${o.name}`)
       : ["• No overlays returned for this site."];
 
     boundedText(doc, list.join("\n"), x + 14, cY + 34, w - 28, 86, {
