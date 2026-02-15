@@ -224,6 +224,67 @@ async function queryIntersects(table, parcelGeomGeoJSON) {
 }
 
 /**
+ * For line/network layers: prefer parcel proximity if parcel geom exists,
+ * otherwise fallback to point-based queryOne.
+ */
+async function queryNearParcel(
+  table,
+  lng,
+  lat,
+  parcelGeomGeoJSON,
+  withinDistanceMeters
+) {
+  if (!pool) return null;
+
+  // Skip missing tables cleanly
+  if (!(await tableExists(table))) return null;
+
+  if (!parcelGeomGeoJSON || typeof withinDistanceMeters !== "number") {
+    return queryOne(table, lng, lat, withinDistanceMeters);
+  }
+
+  const geom4326 = geomTo4326Sql("geom");
+  const parcelExpr = "ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)";
+
+  const sql = `
+    WITH parcel AS (
+      SELECT ${parcelExpr} AS g
+    )
+    SELECT
+      properties,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(${geom4326}),
+          0.00001
+        )
+      ) AS geom_geojson
+    FROM ${table}, parcel
+    WHERE ST_DWithin((${geom4326})::geography, parcel.g::geography, $2)
+    ORDER BY ST_Distance((${geom4326})::geography, parcel.g::geography)
+    LIMIT 1;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [
+      JSON.stringify(parcelGeomGeoJSON),
+      withinDistanceMeters,
+    ]);
+    if (!rows?.length) return null;
+    const row = rows[0];
+    return {
+      properties: row.properties || {},
+      geometry: safeJsonParse(row.geom_geojson),
+    };
+  } catch (err) {
+    console.error(
+      `[townplanner_v2] queryNearParcel failed for ${table}:`,
+      err?.message || err
+    );
+    return null;
+  }
+}
+
+/**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
  * Returns:
@@ -339,6 +400,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const focusLat = parcel?.point?.coordinates?.[1] ?? safeLat;
   const focusLng = parcel?.point?.coordinates?.[0] ?? safeLng;
   const LINE_OVERLAY_DISTANCE_M = 40;
+  const parcelGeom = parcel?.geometry || null;
 
   // 2) Spatial lookups
   const floodPromises = parcel?.geometry
@@ -399,10 +461,11 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     queryOne("bcc_lgip_network_key", focusLng, focusLat),
 
     // Networks / hierarchy overlays (often line-based)
-    queryOne(
+    queryNearParcel(
       "bcc_bicycle_network_overlay",
       focusLng,
       focusLat,
+      parcelGeom,
       LINE_OVERLAY_DISTANCE_M
     ),
     queryOne(
@@ -410,11 +473,18 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       focusLng,
       focusLat
     ),
-    queryOne("bcc_road_hierarchy", focusLng, focusLat, LINE_OVERLAY_DISTANCE_M),
-    queryOne(
+    queryNearParcel(
+      "bcc_road_hierarchy",
+      focusLng,
+      focusLat,
+      parcelGeom,
+      LINE_OVERLAY_DISTANCE_M
+    ),
+    queryNearParcel(
       "bcc_streetscape_hierarchy",
       focusLng,
       focusLat,
+      parcelGeom,
       LINE_OVERLAY_DISTANCE_M
     ),
   ]);
@@ -424,6 +494,9 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     console.info("[townplanner_v2] bicycle overlay hit", {
       lat: safeLat,
       lng: safeLng,
+      focusLat,
+      focusLng,
+      usedParcel: !!parcelGeom,
       ovl2_desc: bp.ovl2_desc || bp.OVL2_DESC || null,
       description: bp.description || bp.DESCRIPTION || null,
       route: bp.route || bp.ROUTE || null,
@@ -434,6 +507,9 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     console.info("[townplanner_v2] bicycle overlay not found", {
       lat: safeLat,
       lng: safeLng,
+      focusLat,
+      focusLng,
+      usedParcel: !!parcelGeom,
     });
   }
 
