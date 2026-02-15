@@ -444,13 +444,27 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const npPrecinctProps = npP?.properties || null;
 
   const neighbourhoodPlan =
-    readProp(npPrecinctProps, ["NP_NAME", "np_name", "NAME", "name"]) ||
-    readProp(npBoundaryProps, ["NP_NAME", "np_name", "NAME", "name"]) ||
+    readProp(npPrecinctProps, [
+      "NP_NAME",
+      "np_name",
+      "NAME",
+      "name",
+      "LP",
+      "lp",
+    ]) ||
+    readProp(npBoundaryProps, [
+      "NP_NAME",
+      "np_name",
+      "NAME",
+      "name",
+      "LP",
+      "lp",
+    ]) ||
     null;
 
   const neighbourhoodPlanCode =
-    readProp(npPrecinctProps, ["NP_CODE", "np_code"]) ||
-    readProp(npBoundaryProps, ["NP_CODE", "np_code"]) ||
+    readProp(npPrecinctProps, ["NP_CODE", "np_code", "LP_CODE", "lp_code"]) ||
+    readProp(npBoundaryProps, ["NP_CODE", "np_code", "LP_CODE", "lp_code"]) ||
     null;
 
   const npPrecinctName =
@@ -461,10 +475,17 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       "npp_name",
       "NPP_DESC",
       "npp_desc",
+      "LP_PREC",
+      "lp_prec",
     ]) || null;
 
   const npPrecinctCode =
-    readProp(npPrecinctProps, ["NPP_CODE", "npp_code"]) || null;
+    readProp(npPrecinctProps, [
+      "NPP_CODE",
+      "npp_code",
+      "LP_PREC_CODE",
+      "lp_prec_code",
+    ]) || null;
 
   // 3) Overlays
   const overlays = [];

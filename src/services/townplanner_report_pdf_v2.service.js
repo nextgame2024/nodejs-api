@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.4";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.5";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -864,7 +864,7 @@ export async function buildTownPlannerReportPdfV2(
     const tilesY = mapY + mapH + 16;
     const gap = 12;
     const colW = (w - gap) / 2;
-    const colH = 280;
+    const colH = 300;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
@@ -902,7 +902,7 @@ export async function buildTownPlannerReportPdfV2(
     const leftX = x;
     const rightX = x + colW + gap;
 
-    const leftTopH = 120;
+    const leftTopH = 100;
     const leftBottomH = colH - leftTopH - gap;
 
     box(doc, leftX, tilesY, colW, leftTopH);
