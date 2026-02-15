@@ -420,6 +420,24 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     ),
   ]);
 
+  if (bicycleNetwork?.properties) {
+    const bp = bicycleNetwork.properties || {};
+    console.info("[townplanner_v2] bicycle overlay hit", {
+      lat: safeLat,
+      lng: safeLng,
+      ovl2_desc: bp.ovl2_desc || bp.OVL2_DESC || null,
+      description: bp.description || bp.DESCRIPTION || null,
+      route: bp.route || bp.ROUTE || null,
+      route_type: bp.route_type || bp.ROUTE_TYPE || null,
+      network: bp.network || bp.NETWORK || null,
+    });
+  } else {
+    console.info("[townplanner_v2] bicycle overlay not found", {
+      lat: safeLat,
+      lng: safeLng,
+    });
+  }
+
   const zoningProps = zoning?.properties || null;
   const zoningPolygon = zoning?.geometry || null;
 
