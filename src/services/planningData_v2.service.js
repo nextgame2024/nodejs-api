@@ -14,17 +14,16 @@ const _tableExistsCache = new Map();
 
 async function tableExists(tableName) {
   if (!tableName) return false;
-  if (_tableExistsCache.has(tableName)) return _tableExistsCache.get(tableName);
+  if (_tableExistsCache.has(tableName)) return true;
 
   try {
     const { rows } = await pool.query(`SELECT to_regclass($1) AS regclass`, [
       tableName,
     ]);
     const ok = !!rows?.[0]?.regclass;
-    _tableExistsCache.set(tableName, ok);
+    if (ok) _tableExistsCache.set(tableName, true);
     return ok;
   } catch {
-    _tableExistsCache.set(tableName, false);
     return false;
   }
 }
