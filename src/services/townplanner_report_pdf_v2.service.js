@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.5";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.6";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -123,12 +123,6 @@ const PAGE = {
   margin: 56,
 };
 
-const NEIGHBOURHOOD_PLAN_TABLES = {
-  "aspley district neighbourhood plan": {
-    label: "Aspley district neighbourhood plan Table 5.9.5",
-    url: "https://cityplan.brisbane.qld.gov.au/eplan/rules/0/324/0/18498/0/264",
-  },
-};
 
 function contentW(doc) {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -864,7 +858,7 @@ export async function buildTownPlannerReportPdfV2(
     const tilesY = mapY + mapH + 16;
     const gap = 12;
     const colW = (w - gap) / 2;
-    const colH = 300;
+    const colH = 260;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
@@ -884,16 +878,14 @@ export async function buildTownPlannerReportPdfV2(
     const precinct = planningSnapshot?.neighbourhoodPlanPrecinct || "N/A";
 
     const npKey = String(np || "").trim().toLowerCase();
-    const npFallback = npKey ? NEIGHBOURHOOD_PLAN_TABLES[npKey] : null;
     const npSource = sources.find(
       (s) =>
         s?.neighbourhoodPlan &&
         npKey &&
         String(s.neighbourhoodPlan).toLowerCase() === npKey
     );
-    const npTableLabel =
-      npSource?.sourceCitation || npSource?.label || npFallback?.label || null;
-    const npTableUrl = npSource?.sourceUrl || npFallback?.url || null;
+    const npTableLabel = npSource?.sourceCitation || npSource?.label || null;
+    const npTableUrl = npSource?.sourceUrl || null;
     const npTableText =
       npTableLabel && npTableUrl
         ? `${npTableLabel} (${npTableUrl})`
@@ -902,7 +894,7 @@ export async function buildTownPlannerReportPdfV2(
     const leftX = x;
     const rightX = x + colW + gap;
 
-    const leftTopH = 100;
+    const leftTopH = 90;
     const leftBottomH = colH - leftTopH - gap;
 
     box(doc, leftX, tilesY, colW, leftTopH);
@@ -991,10 +983,14 @@ export async function buildTownPlannerReportPdfV2(
       {
         font: "Helvetica-Bold",
         fontSize: 9,
-        color: BRAND.text,
+        color: npTableUrl ? BRAND.teal2 : BRAND.text,
         ellipsis: true,
       }
     );
+    if (npTableUrl) {
+      // Make table text clickable
+      doc.link(leftX + 14, npY + 90, colW - 28, 32, npTableUrl);
+    }
     boundedText(
       doc,
       "Precinct",
