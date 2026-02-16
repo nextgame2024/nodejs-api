@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-14.9";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-16.1";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -123,6 +123,13 @@ const PAGE = {
   margin: 56,
 };
 
+const TABLE = {
+  headerFill: "#F1F3F5",
+  sectionFill: "#F7F9FA",
+  border: "#D8DDE1",
+  text: "#111111",
+  pad: 6,
+};
 
 function contentW(doc) {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -155,6 +162,94 @@ function box(
   rr(doc, x, y, w, h, r);
   doc.strokeColor(stroke).lineWidth(1).stroke();
   doc.restore();
+}
+
+function tableRowHeight(doc, cells, widths, font, fontSize, pad) {
+  let max = 0;
+  doc.font(font).fontSize(fontSize);
+  for (let i = 0; i < widths.length; i += 1) {
+    const text = String(cells[i] || "");
+    const h = doc.heightOfString(text, {
+      width: Math.max(10, widths[i] - pad * 2),
+      align: "left",
+    });
+    if (h > max) max = h;
+  }
+  return Math.max(18, max + pad * 2);
+}
+
+function drawTableRow(doc, x, y, widths, cells, opts = {}) {
+  const {
+    fill = null,
+    stroke = TABLE.border,
+    font = "Helvetica",
+    fontSize = 9,
+    color = TABLE.text,
+    pad = TABLE.pad,
+  } = opts;
+
+  const h = tableRowHeight(doc, cells, widths, font, fontSize, pad);
+  const totalW = widths.reduce((sum, v) => sum + v, 0);
+
+  if (fill) {
+    doc.save();
+    doc.rect(x, y, totalW, h).fill(fill);
+    doc.restore();
+  }
+
+  let cx = x;
+  for (let i = 0; i < widths.length; i += 1) {
+    doc.save();
+    doc.rect(cx, y, widths[i], h).strokeColor(stroke).lineWidth(1).stroke();
+    doc.restore();
+
+    doc
+      .fillColor(color)
+      .font(font)
+      .fontSize(fontSize)
+      .text(String(cells[i] || ""), cx + pad, y + pad, {
+        width: Math.max(10, widths[i] - pad * 2),
+        align: "left",
+      });
+    cx += widths[i];
+  }
+
+  return h;
+}
+
+function drawSectionRow(doc, x, y, w, title, opts = {}) {
+  const {
+    fill = TABLE.sectionFill,
+    stroke = TABLE.border,
+    font = "Helvetica-Bold",
+    fontSize = 9,
+    color = TABLE.text,
+    pad = TABLE.pad,
+  } = opts;
+  const h =
+    doc
+      .font(font)
+      .fontSize(fontSize)
+      .heightOfString(String(title || ""), {
+        width: Math.max(10, w - pad * 2),
+        align: "left",
+      }) +
+    pad * 2;
+  doc.save();
+  doc.rect(x, y, w, h).fill(fill);
+  doc.restore();
+  doc.save();
+  doc.rect(x, y, w, h).strokeColor(stroke).lineWidth(1).stroke();
+  doc.restore();
+  doc
+    .fillColor(color)
+    .font(font)
+    .fontSize(fontSize)
+    .text(String(title || ""), x + pad, y + pad, {
+      width: Math.max(10, w - pad * 2),
+      align: "left",
+    });
+  return h;
 }
 
 /**
@@ -498,6 +593,20 @@ export async function buildTownPlannerReportPdfV2(
 
   const mergedControls = controls?.mergedControls || {};
   const sources = Array.isArray(controls?.sources) ? controls.sources : [];
+  const controlsTables = Array.isArray(controls?.tables) ? controls.tables : [];
+  const planningNpName = planningSnapshot?.neighbourhoodPlan || "";
+  const planningNpKey = String(planningNpName || "").trim().toLowerCase();
+  const filteredTables = controlsTables.filter((t) => {
+    const plan = t?.plan || t?.neighbourhood_plan || "";
+    if (!plan) return false;
+    return String(plan).trim().toLowerCase() === planningNpKey;
+  });
+  const tableControls = (filteredTables.length ? filteredTables : controlsTables).slice();
+  tableControls.sort((a, b) => {
+    const aId = String(a?.table_id || "");
+    const bId = String(b?.table_id || "");
+    return aId.localeCompare(bId, "en", { numeric: true });
+  });
 
   const parcelGeom =
     pickFirst(
@@ -637,10 +746,11 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
     { label: "Site overview", page: 3 },
-    { label: "Zoning", page: 4 },
-    { label: "Development controls", page: 5 },
-    { label: "Potential cautions", page: 6 },
-    { label: "References & disclaimer", page: 6 + overlayPages },
+    { label: "Table of assessment", page: 4 },
+    { label: "Zoning", page: 5 },
+    { label: "Development controls", page: 6 },
+    { label: "Potential cautions", page: 7 },
+    { label: "References & disclaimer", page: 7 + overlayPages },
   ];
 
   const doc = new PDFDocument({
@@ -979,17 +1089,17 @@ export async function buildTownPlannerReportPdfV2(
       leftX + 14,
       npY + 90,
       colW - 28,
-      32,
+      40,
       {
         font: "Helvetica-Bold",
         fontSize: 9,
         color: npTableUrl ? BRAND.teal2 : BRAND.text,
-        ellipsis: true,
+        ellipsis: false,
       }
     );
     if (npTableUrl) {
       // Make table text clickable
-      doc.link(leftX + 14, npY + 90, colW - 28, 32, npTableUrl);
+      doc.link(leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
     }
     boundedText(
       doc,
@@ -1056,7 +1166,145 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
-  // ========== PAGE 4: ZONING ==========
+  // ========== PAGE 4: TABLE OF ASSESSMENT ==========
+  doc.addPage();
+  {
+    header(doc, {
+      title: "Table of assessment",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const top = Y(doc) + 84;
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("Table of assessment", x, top);
+
+    let y = top + 30;
+
+    if (!tableControls.length) {
+      boundedText(
+        doc,
+        "No table of assessment data found in controls. Populate bcc_planning_controls_v2.controls.tables to render this page.",
+        x,
+        y,
+        w,
+        60,
+        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+      );
+    } else {
+      const colWidths = [w * 0.28, w * 0.38, w * 0.34];
+
+      const renderTableHeader = (headers) => {
+        const headerH = drawTableRow(
+          doc,
+          x,
+          y,
+          colWidths,
+          headers || [
+            "Use",
+            "Categories of development and assessment",
+            "Assessment benchmarks",
+          ],
+          {
+            fill: TABLE.headerFill,
+            font: "Helvetica-Bold",
+            fontSize: 9,
+          }
+        );
+        y += headerH;
+      };
+
+      for (const table of tableControls) {
+        const titleText =
+          table.table_title || `${table.table_id || ""} ${table.type || ""}`.trim();
+
+        if (y + 40 > pageBottom) {
+          doc.addPage();
+          header(doc, {
+            title: "Table of assessment",
+            addressLabel,
+            schemeVersion,
+            logoBuffer,
+          });
+          y = Y(doc) + 84;
+        }
+
+        doc
+          .fillColor(BRAND.text)
+          .font("Helvetica-Bold")
+          .fontSize(12)
+          .text(titleText, x, y, { width: w });
+        y += 18;
+
+        renderTableHeader(table.headers);
+
+        const sections = Array.isArray(table.sections) ? table.sections : [];
+        for (const section of sections) {
+          if (section?.title) {
+            const secH = drawSectionRow(doc, x, y, w, section.title, {});
+            y += secH;
+          }
+
+          const rows = Array.isArray(section?.rows) ? section.rows : [];
+          for (const row of rows) {
+            const cells = Array.isArray(row?.cells)
+              ? row.cells
+              : [String(row || "")];
+            const padded =
+              cells.length >= 3 ? cells.slice(0, 3) : [...cells, "", ""].slice(0, 3);
+
+            const rowH = tableRowHeight(
+              doc,
+              padded,
+              colWidths,
+              "Helvetica",
+              9,
+              TABLE.pad
+            );
+
+            if (y + rowH > pageBottom) {
+              doc.addPage();
+              header(doc, {
+                title: "Table of assessment",
+                addressLabel,
+                schemeVersion,
+                logoBuffer,
+              });
+              y = Y(doc) + 84;
+              doc
+                .fillColor(BRAND.text)
+                .font("Helvetica-Bold")
+                .fontSize(12)
+                .text(titleText, x, y, { width: w });
+              y += 18;
+              renderTableHeader(table.headers);
+            }
+
+            const h = drawTableRow(doc, x, y, colWidths, padded, {
+              font: "Helvetica",
+              fontSize: 9,
+              color: BRAND.text,
+            });
+            y += h;
+          }
+
+          y += 10;
+        }
+
+        y += 12;
+      }
+    }
+  }
+
+  // ========== PAGE 5: ZONING ==========
   doc.addPage();
   {
     header(doc, { title: "Zoning", addressLabel, schemeVersion, logoBuffer });
@@ -1094,7 +1342,7 @@ export async function buildTownPlannerReportPdfV2(
     );
   }
 
-  // ========== PAGE 5: DEVELOPMENT CONTROLS ==========
+  // ========== PAGE 6: DEVELOPMENT CONTROLS ==========
   doc.addPage();
   {
     header(doc, {
@@ -1219,7 +1467,7 @@ export async function buildTownPlannerReportPdfV2(
     }
   }
 
-  // ========== PAGES 6..: POTENTIAL CAUTIONS (2 per page) ==========
+  // ========== PAGES 7..: POTENTIAL CAUTIONS (2 per page) ==========
   for (let p = 0; p < overlayPages; p += 1) {
     doc.addPage();
     header(doc, {

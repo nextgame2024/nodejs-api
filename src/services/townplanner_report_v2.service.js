@@ -87,7 +87,20 @@ async function getControlsV2({
   const { rows } = await pool.query(sql, params);
 
   const merged = {};
+  const tables = [];
   for (const r of rows) Object.assign(merged, r.controls || {});
+  for (const r of rows) {
+    if (Array.isArray(r?.controls?.tables)) {
+      tables.push(
+        ...r.controls.tables.map((t) => ({
+          ...t,
+          _sourceLabel: r.label || null,
+          _sourceUrl: r.source_url || null,
+          _sourceCitation: r.source_citation || null,
+        }))
+      );
+    }
+  }
 
   return {
     schemeVersion: scheme,
@@ -101,6 +114,7 @@ async function getControlsV2({
       sourceUrl: r.source_url,
       sourceCitation: r.source_citation,
     })),
+    tables,
   };
 }
 
