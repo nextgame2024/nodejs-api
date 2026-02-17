@@ -63,6 +63,7 @@ async function getControlsV2({
   overlayCodes,
 }) {
   const scheme = SCHEME_VERSION;
+  const zoningAssessmentTableNumbers = ["5.5.1", "5.6.1", "5.7.1", "5.8.1"];
 
   const sql = `
     SELECT label, controls, zone_code, neighbourhood_plan, precinct_code, overlay_code, source_url, source_citation
@@ -84,11 +85,42 @@ async function getControlsV2({
     Array.isArray(overlayCodes) ? overlayCodes : [],
   ];
 
-  const { rows } = await pool.query(sql, params);
+  const { rows: contextRows } = await pool.query(sql, params);
+
+  const tableSql = `
+    SELECT label, controls, zone_code, neighbourhood_plan, precinct_code, overlay_code, source_url, source_citation
+    FROM bcc_planning_controls_v2
+    WHERE scheme_version = $1
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(COALESCE(controls->'tables', '[]'::jsonb)) t
+        WHERE regexp_replace(
+          lower(COALESCE(t->>'table_id', '')),
+          '[^0-9.]',
+          '',
+          'g'
+        ) = ANY($2)
+      )
+  `;
+
+  let tableRows = [];
+  try {
+    const res = await pool.query(tableSql, [scheme, zoningAssessmentTableNumbers]);
+    tableRows = res.rows || [];
+  } catch (err) {
+    console.warn("[townplanner_v2] failed to load zoning assessment tables", err?.message);
+  }
+
+  const dedupe = new Map();
+  for (const r of [...contextRows, ...tableRows]) {
+    const key = `${r.label || ""}|${r.source_url || ""}|${r.source_citation || ""}`;
+    if (!dedupe.has(key)) dedupe.set(key, r);
+  }
+  const rows = Array.from(dedupe.values());
 
   const merged = {};
   const tables = [];
-  for (const r of rows) Object.assign(merged, r.controls || {});
+  for (const r of contextRows) Object.assign(merged, r.controls || {});
   for (const r of rows) {
     if (Array.isArray(r?.controls?.tables)) {
       tables.push(
@@ -105,7 +137,7 @@ async function getControlsV2({
   return {
     schemeVersion: scheme,
     mergedControls: merged,
-    sources: rows.map((r) => ({
+    sources: contextRows.map((r) => ({
       label: r.label,
       zoneCode: r.zone_code,
       neighbourhoodPlan: r.neighbourhood_plan,

@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-17.1";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-17.3";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -792,36 +792,6 @@ export async function buildTownPlannerReportPdfV2(
       ref: resolveAssessmentTableRef("5.8.1"),
     },
   ];
-
-  const fallbackTablesByType = {
-    material: tableControls.find((t) =>
-      /material change of use/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
-    ),
-    reconfiguring: tableControls.find((t) =>
-      /reconfiguring a lot/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
-    ),
-    building: tableControls.find((t) =>
-      /building work/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
-    ),
-    operational: tableControls.find((t) =>
-      /operational work/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
-    ),
-  };
-
-  if (!zoningAssessmentConsiderations[0].ref.table) {
-    zoningAssessmentConsiderations[0].ref.table = fallbackTablesByType.material || null;
-  }
-  if (!zoningAssessmentConsiderations[1].ref.table) {
-    zoningAssessmentConsiderations[1].ref.table =
-      fallbackTablesByType.reconfiguring || null;
-  }
-  if (!zoningAssessmentConsiderations[2].ref.table) {
-    zoningAssessmentConsiderations[2].ref.table = fallbackTablesByType.building || null;
-  }
-  if (!zoningAssessmentConsiderations[3].ref.table) {
-    zoningAssessmentConsiderations[3].ref.table =
-      fallbackTablesByType.operational || null;
-  }
 
   // Pagination plan
   const overlayPages = Math.max(1, Math.ceil(overlayItems.length / 2));

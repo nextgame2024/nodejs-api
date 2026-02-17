@@ -136,7 +136,7 @@ function extractPolygonRings(geojson) {
       ? geojson.geometry
       : geojson?.geometry || geojson;
 
-  if (!geom) return null;
+  if (!geom) return [];
 
   if (geom.type === "Polygon") {
     const ring = geom.coordinates?.[0];
@@ -367,6 +367,35 @@ function selectBestOverlayRing(overlayRings, parcelRing) {
   return best;
 }
 
+function orderOverlayRingsByParcel(overlayRings, parcelRing) {
+  if (!Array.isArray(overlayRings) || !overlayRings.length) return [];
+  if (!parcelRing || !parcelRing.length) return overlayRings.slice();
+
+  const parcelCenter = centroidFromRing(parcelRing);
+  if (!parcelCenter) return overlayRings.slice();
+
+  return overlayRings
+    .map((ring) => {
+      const c = centroidFromRing(ring);
+      let dist2 = Number.POSITIVE_INFINITY;
+      if (c) {
+        const dLng = c.lng - parcelCenter.lng;
+        const dLat = c.lat - parcelCenter.lat;
+        dist2 = dLng * dLng + dLat * dLat;
+      }
+      return {
+        ring,
+        contains: pointInRing(parcelCenter.lng, parcelCenter.lat, ring),
+        dist2,
+      };
+    })
+    .sort((a, b) => {
+      if (a.contains !== b.contains) return a.contains ? -1 : 1;
+      return a.dist2 - b.dist2;
+    })
+    .map((x) => x.ring);
+}
+
 function isImage(resp) {
   const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
   return typeof ct === "string" && ct.toLowerCase().startsWith("image/");
@@ -544,10 +573,16 @@ export async function getParcelOverlayMapImageBufferV2({
 
   const parcelRingRaw = extractPolygonRing(parcelGeoJson);
   const overlayRingsRaw = extractPolygonRings(overlayGeoJson);
-  const overlayRingRaw = selectBestOverlayRing(overlayRingsRaw, parcelRingRaw);
-  if (!parcelRingRaw || !overlayRingRaw) return null;
+  if (!parcelRingRaw || !overlayRingsRaw.length) return null;
+  const orderedOverlayRings = orderOverlayRingsByParcel(
+    overlayRingsRaw,
+    parcelRingRaw
+  );
+  const selectedOverlayRings = orderedOverlayRings.slice(0, 4);
+  const fallbackOverlayRing =
+    selectBestOverlayRing(overlayRingsRaw, parcelRingRaw) || null;
 
-  const bounds = boundsFromRings([parcelRingRaw, overlayRingRaw]);
+  const bounds = boundsFromRings([parcelRingRaw, ...selectedOverlayRings]);
 
   const autoCenter =
     centerFromBounds(bounds) ||
@@ -572,11 +607,17 @@ export async function getParcelOverlayMapImageBufferV2({
 
   for (const eps of epsList) {
     const parcelRing = simplifyRing(parcelRingRaw, eps, 220);
-    const overlayRing = simplifyRing(overlayRingRaw, eps, 220);
-    if (!parcelRing || !overlayRing) continue;
+    if (!parcelRing) continue;
+
+    const overlayPaths = [];
+    for (const rawRing of selectedOverlayRings) {
+      const overlayRing = simplifyRing(rawRing, eps, 220);
+      if (!overlayRing) continue;
+      overlayPaths.push(`${overlayPrefix}${ringToEncodedPath(overlayRing)}`);
+    }
+    if (!overlayPaths.length) continue;
 
     const parcelPath = `${parcelPrefix}${ringToEncodedPath(parcelRing)}`;
-    const overlayPath = `${overlayPrefix}${ringToEncodedPath(overlayRing)}`;
 
     const url = buildStaticMapUrl({
       apiKey,
@@ -586,7 +627,7 @@ export async function getParcelOverlayMapImageBufferV2({
       scale,
       maptype,
       styles,
-      paths: [parcelPath, overlayPath],
+      paths: [parcelPath, ...overlayPaths],
     });
 
     if (url.length > MAX_URL_LEN) continue;
@@ -596,7 +637,9 @@ export async function getParcelOverlayMapImageBufferV2({
   }
 
   const parcelRing = simplifyRing(parcelRingRaw, 0.0004, 120);
-  const overlayRing = simplifyRing(overlayRingRaw, 0.0004, 120);
+  const overlayRing = fallbackOverlayRing
+    ? simplifyRing(fallbackOverlayRing, 0.0004, 120)
+    : null;
   if (!parcelRing || !overlayRing) return null;
 
   const url = buildStaticMapUrl({
