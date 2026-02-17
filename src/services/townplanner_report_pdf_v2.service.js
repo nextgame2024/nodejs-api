@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-16.1";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-17.1";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -608,6 +608,23 @@ export async function buildTownPlannerReportPdfV2(
     return aId.localeCompare(bId, "en", { numeric: true });
   });
 
+  const resolveAssessmentTableRef = (defaultNumber) => {
+    const needle = String(defaultNumber || "").toLowerCase();
+    const hit = controlsTables.find((t) => {
+      const id = String(t?.table_id || "").toLowerCase();
+      const title = String(t?.table_title || "").toLowerCase();
+      return id.includes(needle) || title.includes(`table ${needle}`);
+    });
+
+    const rawId = String(hit?.table_id || "").trim();
+    const fromId = rawId.match(/([0-9]+(?:\.[0-9]+)+[A-Za-z]?)/);
+    const number = fromId?.[1] || defaultNumber;
+    return {
+      label: `Table of assessment ${number}`,
+      url: hit?._sourceUrl || hit?.source_url || null,
+    };
+  };
+
   const parcelGeom =
     pickFirst(
       planningSnapshot.siteParcelPolygon,
@@ -675,11 +692,13 @@ export async function buildTownPlannerReportPdfV2(
           center,
           parcelGeoJson: parcelFeature,
           overlayGeoJson: zoningFeature,
-          overlayColor: "0x00a3ffff",
-          overlayFill: "0x00a3ff2e",
+          parcelColor: "0xffeb3bff",
+          parcelFill: "0xffeb3b22",
+          overlayColor: "0xff6b6bff",
+          overlayFill: "0xff8a8a2f",
           zoom: 17,
-          maptype: "roadmap",
-          size: "640x420",
+          maptype: "hybrid",
+          size: "640x380",
           scale: 2,
         }).catch(() => null)
       : null;
@@ -1201,18 +1220,23 @@ export async function buildTownPlannerReportPdfV2(
       );
     } else {
       const colWidths = [w * 0.28, w * 0.38, w * 0.34];
+      const defaultTableHeaders = [
+        "Use",
+        "Categories of development and assessment",
+        "Assessment benchmarks",
+      ];
 
       const renderTableHeader = (headers) => {
+        const resolvedHeaders =
+          Array.isArray(headers) && headers.length === 3
+            ? headers
+            : defaultTableHeaders;
         const headerH = drawTableRow(
           doc,
           x,
           y,
           colWidths,
-          headers || [
-            "Use",
-            "Categories of development and assessment",
-            "Assessment benchmarks",
-          ],
+          resolvedHeaders,
           {
             fill: TABLE.headerFill,
             font: "Helvetica-Bold",
@@ -1317,14 +1341,15 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Zoning map", x, top);
+      .text("Zone and categories of assessment", x, top);
 
-    const mapY = top + 46;
-    const mapH = 420;
+    const mapY = top + 42;
+    const mapH = Math.round((w * 380) / 640);
     drawCoverImageInRoundedBox(doc, zoningMap, x, mapY, w, mapH, 14);
 
-    const noteY = mapY + mapH + 14;
-    box(doc, x, noteY, w, 120);
+    const noteY = mapY + mapH + 12;
+    const noteH = 74;
+    box(doc, x, noteY, w, noteH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
@@ -1337,8 +1362,90 @@ export async function buildTownPlannerReportPdfV2(
       x + 14,
       noteY + 34,
       w - 28,
-      80,
+      noteH - 34,
       { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+    );
+
+    const drawAssessmentReferenceLine = (label, url, yPos) => {
+      const prefix = "Refer ";
+      const suffix = " within Brisbane City Plan";
+
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica")
+        .fontSize(10)
+        .text(prefix, x, yPos, { lineBreak: false });
+
+      const prefixW = doc.widthOfString(prefix);
+      doc
+        .fillColor(url ? BRAND.teal2 : BRAND.text)
+        .font("Helvetica")
+        .fontSize(10)
+        .text(label, x + prefixW, yPos, {
+          lineBreak: false,
+          underline: !!url,
+        });
+
+      const labelW = doc.widthOfString(label);
+      if (url) {
+        doc.link(x + prefixW, yPos, labelW, 12, url);
+      }
+
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica")
+        .fontSize(10)
+        .text(suffix, x + prefixW + labelW, yPos, {
+          width: Math.max(20, w - prefixW - labelW),
+        });
+    };
+
+    const assessmentConsiderations = [
+      {
+        heading: "Material change of use considerations",
+        ref: resolveAssessmentTableRef("5.5.1"),
+      },
+      {
+        heading: "Reconfiguring a lot considerations",
+        ref: resolveAssessmentTableRef("5.6.1"),
+      },
+      {
+        heading: "Building work considerations",
+        ref: resolveAssessmentTableRef("5.7.1"),
+      },
+      {
+        heading: "Operational work considerations",
+        ref: resolveAssessmentTableRef("5.8.1"),
+      },
+    ];
+
+    let sectionY = noteY + noteH + 14;
+    for (const item of assessmentConsiderations) {
+      doc.font("Helvetica-Bold").fontSize(12);
+      const headingH = doc.heightOfString(item.heading, { width: w });
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica-Bold")
+        .fontSize(12)
+        .text(item.heading, x, sectionY, { width: w });
+      sectionY += headingH + 2;
+      drawAssessmentReferenceLine(item.ref.label, item.ref.url, sectionY);
+      sectionY += 21;
+    }
+
+    boundedText(
+      doc,
+      "Note: the overall category of assessment for a development may change as a result of the Neighbourhood plan or overlays applicable to the site.",
+      x,
+      sectionY + 2,
+      w,
+      34,
+      {
+        font: "Helvetica-Oblique",
+        fontSize: 9,
+        color: BRAND.text,
+        ellipsis: true,
+      }
     );
   }
 

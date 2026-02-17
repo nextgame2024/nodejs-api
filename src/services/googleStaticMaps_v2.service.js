@@ -472,8 +472,12 @@ export async function getParcelOverlayMapImageBufferV2({
   maptype = "hybrid",
   parcelGeoJson,
   overlayGeoJson,
+  parcelColor = "0x2ecc71ff",
+  parcelFill = "0x2ecc7133",
+  parcelWeight = 4,
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
+  overlayWeight = 4,
   paddingPx = 110,
   styles = null,
 }) {
@@ -504,8 +508,8 @@ export async function getParcelOverlayMapImageBufferV2({
     maxZoom: zoom,
   });
 
-  const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
-  const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:4|`;
+  const parcelPrefix = `fillcolor:${parcelFill}|color:${parcelColor}|weight:${parcelWeight}|`;
+  const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:${overlayWeight}|`;
 
   const epsList = [0.000005, 0.000015, 0.00004, 0.00008, 0.00016, 0.0003];
 
