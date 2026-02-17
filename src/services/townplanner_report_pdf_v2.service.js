@@ -608,20 +608,35 @@ export async function buildTownPlannerReportPdfV2(
     return aId.localeCompare(bId, "en", { numeric: true });
   });
 
+  const parseTableNumber = (value) => {
+    const m = String(value || "").match(/([0-9]+(?:\.[0-9]+)+[A-Za-z]?)/);
+    return m?.[1] || "";
+  };
+
   const resolveAssessmentTableRef = (defaultNumber) => {
     const needle = String(defaultNumber || "").toLowerCase();
-    const hit = controlsTables.find((t) => {
-      const id = String(t?.table_id || "").toLowerCase();
-      const title = String(t?.table_title || "").toLowerCase();
-      return id.includes(needle) || title.includes(`table ${needle}`);
-    });
+    const prefix = needle.includes(".") ? needle.replace(/\.[^.]+$/, "") : needle;
+
+    const hit =
+      controlsTables.find((t) => {
+        const id = String(t?.table_id || "").toLowerCase();
+        const title = String(t?.table_title || "").toLowerCase();
+        const num = parseTableNumber(t?.table_id || t?.table_title).toLowerCase();
+        return id.includes(needle) || title.includes(`table ${needle}`) || num === needle;
+      }) ||
+      controlsTables.find((t) => {
+        const num = parseTableNumber(t?.table_id || t?.table_title).toLowerCase();
+        return prefix && num.startsWith(`${prefix}.`);
+      }) ||
+      null;
 
     const rawId = String(hit?.table_id || "").trim();
-    const fromId = rawId.match(/([0-9]+(?:\.[0-9]+)+[A-Za-z]?)/);
-    const number = fromId?.[1] || defaultNumber;
+    const fromId = parseTableNumber(rawId || hit?.table_title);
+    const number = fromId || defaultNumber;
     return {
       label: `Table of assessment ${number}`,
       url: hit?._sourceUrl || hit?.source_url || null,
+      table: hit || null,
     };
   };
 
@@ -689,7 +704,7 @@ export async function buildTownPlannerReportPdfV2(
     parcelFeature && zoningFeature
       ? await getParcelOverlayMapImageBufferV2({
           apiKey,
-          center,
+          center: null,
           parcelGeoJson: parcelFeature,
           overlayGeoJson: zoningFeature,
           parcelColor: "0xffeb3bff",
@@ -757,6 +772,55 @@ export async function buildTownPlannerReportPdfV2(
       mapBuffer,
       narrativeSummary,
     });
+  }
+
+  const zoningAssessmentConsiderations = [
+    {
+      heading: "Material change of use considerations",
+      ref: resolveAssessmentTableRef("5.5.1"),
+    },
+    {
+      heading: "Reconfiguring a lot considerations",
+      ref: resolveAssessmentTableRef("5.6.1"),
+    },
+    {
+      heading: "Building work considerations",
+      ref: resolveAssessmentTableRef("5.7.1"),
+    },
+    {
+      heading: "Operational work considerations",
+      ref: resolveAssessmentTableRef("5.8.1"),
+    },
+  ];
+
+  const fallbackTablesByType = {
+    material: tableControls.find((t) =>
+      /material change of use/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
+    ),
+    reconfiguring: tableControls.find((t) =>
+      /reconfiguring a lot/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
+    ),
+    building: tableControls.find((t) =>
+      /building work/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
+    ),
+    operational: tableControls.find((t) =>
+      /operational work/i.test(`${t?.type || ""} ${t?.table_title || ""}`)
+    ),
+  };
+
+  if (!zoningAssessmentConsiderations[0].ref.table) {
+    zoningAssessmentConsiderations[0].ref.table = fallbackTablesByType.material || null;
+  }
+  if (!zoningAssessmentConsiderations[1].ref.table) {
+    zoningAssessmentConsiderations[1].ref.table =
+      fallbackTablesByType.reconfiguring || null;
+  }
+  if (!zoningAssessmentConsiderations[2].ref.table) {
+    zoningAssessmentConsiderations[2].ref.table = fallbackTablesByType.building || null;
+  }
+  if (!zoningAssessmentConsiderations[3].ref.table) {
+    zoningAssessmentConsiderations[3].ref.table =
+      fallbackTablesByType.operational || null;
   }
 
   // Pagination plan
@@ -1400,27 +1464,8 @@ export async function buildTownPlannerReportPdfV2(
         });
     };
 
-    const assessmentConsiderations = [
-      {
-        heading: "Material change of use considerations",
-        ref: resolveAssessmentTableRef("5.5.1"),
-      },
-      {
-        heading: "Reconfiguring a lot considerations",
-        ref: resolveAssessmentTableRef("5.6.1"),
-      },
-      {
-        heading: "Building work considerations",
-        ref: resolveAssessmentTableRef("5.7.1"),
-      },
-      {
-        heading: "Operational work considerations",
-        ref: resolveAssessmentTableRef("5.8.1"),
-      },
-    ];
-
     let sectionY = noteY + noteH + 14;
-    for (const item of assessmentConsiderations) {
+    for (const item of zoningAssessmentConsiderations) {
       doc.font("Helvetica-Bold").fontSize(12);
       const headingH = doc.heightOfString(item.heading, { width: w });
       doc
@@ -1447,6 +1492,143 @@ export async function buildTownPlannerReportPdfV2(
         ellipsis: true,
       }
     );
+  }
+
+  // ========== PAGE 6+: ZONE CATEGORY TABLES ==========
+  const detailedAssessmentTables = zoningAssessmentConsiderations.filter(
+    (item) => item?.ref?.table
+  );
+  if (detailedAssessmentTables.length) {
+    doc.addPage();
+    header(doc, {
+      title: "Zone and categories of assessment",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const pageBottom = doc.page.height - doc.page.margins.bottom;
+    const colWidths = [w * 0.28, w * 0.38, w * 0.34];
+    const defaultHeaders = [
+      "Development",
+      "Categories of development and assessment",
+      "Assessment benchmarks",
+    ];
+    let y = Y(doc) + 84;
+
+    const renderTableHeader = (headers) => {
+      const resolvedHeaders =
+        Array.isArray(headers) && headers.length === 3 ? headers : defaultHeaders;
+      const headerH = drawTableRow(doc, x, y, colWidths, resolvedHeaders, {
+        fill: TABLE.headerFill,
+        font: "Helvetica-Bold",
+        fontSize: 9,
+      });
+      y += headerH;
+    };
+
+    const startNewPage = () => {
+      doc.addPage();
+      header(doc, {
+        title: "Zone and categories of assessment",
+        addressLabel,
+        schemeVersion,
+        logoBuffer,
+      });
+      y = Y(doc) + 84;
+    };
+
+    for (const item of detailedAssessmentTables) {
+      const table = item.ref.table;
+      const tableTitle =
+        table.table_title || `${table.table_id || ""} ${table.type || ""}`.trim();
+
+      if (y + 46 > pageBottom) startNewPage();
+
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica-Bold")
+        .fontSize(13)
+        .text(item.heading, x, y, { width: w });
+      y += 18;
+
+      if (y + 28 > pageBottom) startNewPage();
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica-Bold")
+        .fontSize(12)
+        .text(tableTitle, x, y, { width: w });
+      y += 18;
+
+      if (y + 24 > pageBottom) startNewPage();
+      renderTableHeader(table.headers);
+
+      const sections = Array.isArray(table.sections) ? table.sections : [];
+      if (!sections.length) {
+        const h = drawTableRow(doc, x, y, colWidths, ["No rows", "", ""], {
+          font: "Helvetica",
+          fontSize: 9,
+          color: BRAND.text,
+        });
+        y += h + 12;
+        continue;
+      }
+
+      for (const section of sections) {
+        if (section?.title) {
+          if (y + 22 > pageBottom) {
+            startNewPage();
+            doc
+              .fillColor(BRAND.text)
+              .font("Helvetica-Bold")
+              .fontSize(12)
+              .text(tableTitle, x, y, { width: w });
+            y += 18;
+            renderTableHeader(table.headers);
+          }
+          const secH = drawSectionRow(doc, x, y, w, section.title, {});
+          y += secH;
+        }
+
+        const rows = Array.isArray(section?.rows) ? section.rows : [];
+        for (const row of rows) {
+          const cells = Array.isArray(row?.cells) ? row.cells : [String(row || "")];
+          const padded =
+            cells.length >= 3 ? cells.slice(0, 3) : [...cells, "", ""].slice(0, 3);
+
+          const rowH = tableRowHeight(
+            doc,
+            padded,
+            colWidths,
+            "Helvetica",
+            9,
+            TABLE.pad
+          );
+
+          if (y + rowH > pageBottom) {
+            startNewPage();
+            doc
+              .fillColor(BRAND.text)
+              .font("Helvetica-Bold")
+              .fontSize(12)
+              .text(tableTitle, x, y, { width: w });
+            y += 18;
+            renderTableHeader(table.headers);
+          }
+
+          const h = drawTableRow(doc, x, y, colWidths, padded, {
+            font: "Helvetica",
+            fontSize: 9,
+            color: BRAND.text,
+          });
+          y += h;
+        }
+      }
+
+      y += 14;
+    }
   }
 
   // ========== PAGE 6: DEVELOPMENT CONTROLS ==========

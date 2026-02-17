@@ -110,7 +110,26 @@ function fitZoomForBounds({
  * Supports Polygon and MultiPolygon (chooses the largest outer ring).
  */
 function extractPolygonRing(geojson) {
-  if (!geojson) return null;
+  const rings = extractPolygonRings(geojson);
+  if (!rings.length) return null;
+  let best = rings[0];
+  let bestLen = Array.isArray(best) ? best.length : 0;
+  for (const ring of rings) {
+    const len = Array.isArray(ring) ? ring.length : 0;
+    if (len > bestLen) {
+      best = ring;
+      bestLen = len;
+    }
+  }
+  return best;
+}
+
+/**
+ * Extract outer rings (array of [lng,lat] arrays) from GeoJSON Feature/Geometry.
+ * Supports Polygon and MultiPolygon.
+ */
+function extractPolygonRings(geojson) {
+  if (!geojson) return [];
 
   const geom =
     geojson?.type === "Feature"
@@ -121,27 +140,18 @@ function extractPolygonRing(geojson) {
 
   if (geom.type === "Polygon") {
     const ring = geom.coordinates?.[0];
-    return Array.isArray(ring) && ring.length ? ring : null;
+    return Array.isArray(ring) && ring.length ? [ring] : [];
   }
 
   if (geom.type === "MultiPolygon") {
     const polys = geom.coordinates || [];
-    if (!polys.length) return null;
-
-    let best = null;
-    let bestLen = 0;
-    for (const poly of polys) {
-      const ring = poly?.[0];
-      const len = Array.isArray(ring) ? ring.length : 0;
-      if (len > bestLen) {
-        bestLen = len;
-        best = ring;
-      }
-    }
-    return bestLen ? best : null;
+    if (!polys.length) return [];
+    return polys
+      .map((poly) => poly?.[0])
+      .filter((ring) => Array.isArray(ring) && ring.length);
   }
 
-  return null;
+  return [];
 }
 
 function round6(n) {
@@ -309,6 +319,52 @@ function centroidFromRing(ringLngLat) {
   }
   if (!n) return null;
   return { lng: sumLng / n, lat: sumLat / n };
+}
+
+function pointInRing(lng, lat, ringLngLat) {
+  if (!Array.isArray(ringLngLat) || ringLngLat.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ringLngLat.length - 1; i < ringLngLat.length; j = i++) {
+    const xi = ringLngLat[i][0];
+    const yi = ringLngLat[i][1];
+    const xj = ringLngLat[j][0];
+    const yj = ringLngLat[j][1];
+
+    const intersects =
+      yi > lat !== yj > lat &&
+      lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi;
+
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function selectBestOverlayRing(overlayRings, parcelRing) {
+  if (!Array.isArray(overlayRings) || !overlayRings.length) return null;
+  if (!parcelRing || !parcelRing.length) return overlayRings[0];
+
+  const parcelCenter = centroidFromRing(parcelRing);
+  if (!parcelCenter) return overlayRings[0];
+
+  const containsHit = overlayRings.find((ring) =>
+    pointInRing(parcelCenter.lng, parcelCenter.lat, ring)
+  );
+  if (containsHit) return containsHit;
+
+  let best = overlayRings[0];
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const ring of overlayRings) {
+    const c = centroidFromRing(ring);
+    if (!c) continue;
+    const dLng = c.lng - parcelCenter.lng;
+    const dLat = c.lat - parcelCenter.lat;
+    const d2 = dLng * dLng + dLat * dLat;
+    if (d2 < bestDist) {
+      bestDist = d2;
+      best = ring;
+    }
+  }
+  return best;
 }
 
 function isImage(resp) {
@@ -487,7 +543,8 @@ export async function getParcelOverlayMapImageBufferV2({
   }
 
   const parcelRingRaw = extractPolygonRing(parcelGeoJson);
-  const overlayRingRaw = extractPolygonRing(overlayGeoJson);
+  const overlayRingsRaw = extractPolygonRings(overlayGeoJson);
+  const overlayRingRaw = selectBestOverlayRing(overlayRingsRaw, parcelRingRaw);
   if (!parcelRingRaw || !overlayRingRaw) return null;
 
   const bounds = boundsFromRings([parcelRingRaw, overlayRingRaw]);
