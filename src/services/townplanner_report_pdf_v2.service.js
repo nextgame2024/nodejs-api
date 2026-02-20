@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.3";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.4";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -374,6 +374,12 @@ function buildOverlayLines(items, limit = 14) {
   return lines.length ? lines : ["• No overlays returned for this site."];
 }
 
+function addExternalLink(doc, x, y, w, h, url) {
+  if (!url) return;
+  // Hint PDF viewers to open external links in a new window/tab.
+  doc.link(x, y, w, h, url, { newWindow: true });
+}
+
 function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
   const x = X(doc);
   const y = Y(doc);
@@ -732,7 +738,7 @@ export async function buildTownPlannerReportPdfV2(
     const areaIntersectM2 = computeIntersectionAreaM2(parcelGeom, geom);
     const palette = overlayColorPalette[i % overlayColorPalette.length];
 
-    const mapBuffer =
+    let mapBuffer =
       parcelFeature && overlayFeature
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
@@ -741,12 +747,27 @@ export async function buildTownPlannerReportPdfV2(
             overlayGeoJson: overlayFeature,
             overlayColor: palette.outline,
             overlayFill: palette.fill,
-            zoom: 17,
-            maptype: "roadmap",
+            zoom: 19,
+            fitToParcel: true,
+            maptype: "hybrid",
             size: "640x360",
             scale: 2,
           }).catch(() => null)
         : null;
+
+    // Some overlays can be non-polygon or too large to render reliably as
+    // parcel+overlay; ensure we still show the parcel map instead of blank.
+    if (!mapBuffer && parcelFeature) {
+      mapBuffer = await getParcelMapImageBufferV2({
+        apiKey,
+        center,
+        parcelGeoJson: parcelFeature,
+        zoom: 19,
+        maptype: "hybrid",
+        size: "640x360",
+        scale: 2,
+      }).catch(() => null);
+    }
 
     let narrativeSummary = "";
     const cautions = narrative?.sections?.find((s) => s?.id === "cautions");
@@ -817,6 +838,17 @@ export async function buildTownPlannerReportPdfV2(
       })
     : [];
 
+  // Keep one card per base overlay type (e.g. keep a single Airport environs overlay
+  // card even if multiple airport subcategories are present in inputs).
+  const seenOverlayBases = new Set();
+  const displayOverlayItems = [];
+  for (const item of orderedOverlayItems) {
+    const baseKey = normalizeOverlayKey(splitOverlayName(item?.name).base);
+    if (baseKey && seenOverlayBases.has(baseKey)) continue;
+    if (baseKey) seenOverlayBases.add(baseKey);
+    displayOverlayItems.push(item);
+  }
+
   const zoningAssessmentConsiderations = [
     {
       heading: "Material change of use considerations",
@@ -837,7 +869,7 @@ export async function buildTownPlannerReportPdfV2(
   ];
 
   // Pagination plan
-  const overlayPages = Math.max(1, Math.ceil(orderedOverlayItems.length / 2));
+  const overlayPages = Math.max(1, displayOverlayItems.length);
   const toc = [
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
@@ -1197,7 +1229,7 @@ export async function buildTownPlannerReportPdfV2(
     }
     if (npTableUrl) {
       // Make table text clickable
-      doc.link(leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
+      addExternalLink(doc, leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
     }
     boundedText(
       doc,
@@ -1235,7 +1267,7 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(10)
       .text("Overlays", rightX + 14, tilesY + 12);
 
-    const listLines = buildOverlayLines(orderedOverlayItems, 18);
+    const listLines = buildOverlayLines(displayOverlayItems, 18);
 
     boundedText(doc, listLines.join("\n"), rightX + 14, tilesY + 34, colW - 28, colH - 48, {
       font: "Helvetica",
@@ -1315,7 +1347,7 @@ export async function buildTownPlannerReportPdfV2(
           .lineTo(x + prefixW + labelW, underlineY)
           .stroke()
           .restore();
-        doc.link(x + prefixW, safeY, labelW, 12, url);
+        addExternalLink(doc, x + prefixW, safeY, labelW, 12, url);
       }
 
       doc
@@ -1421,7 +1453,7 @@ export async function buildTownPlannerReportPdfV2(
         .lineTo(xPos + prefixW + labelW, underlineY)
         .stroke()
         .restore();
-      doc.link(xPos + prefixW, safeY, labelW, 12, url);
+      addExternalLink(doc, xPos + prefixW, safeY, labelW, 12, url);
     }
 
     doc
@@ -1433,7 +1465,7 @@ export async function buildTownPlannerReportPdfV2(
       });
   };
 
-  // ========== PAGES 5..: OVERLAY CONSTRAINS (2 per page) ==========
+  // ========== PAGES 5..: OVERLAY CONSTRAINS (1 per page) ==========
   for (let p = 0; p < overlayPages; p += 1) {
     doc.addPage();
     header(doc, {
@@ -1463,8 +1495,7 @@ export async function buildTownPlannerReportPdfV2(
     );
 
     const blockTopY = top + 52;
-    const blockH = 274;
-    const gapY = 12;
+    const blockH = 540;
 
     const drawOverlayBlock = (item, y) => {
       box(doc, x, y, w, blockH);
@@ -1495,8 +1526,8 @@ export async function buildTownPlannerReportPdfV2(
         .fontSize(13)
         .text(overlayTitle, x + 14, y + 12, { width: w - 28 });
 
-      const mapY = y + 36;
-      const mapH = 132;
+      const mapY = y + 44;
+      const mapH = 304;
       drawCoverImageInRoundedBox(
         doc,
         item.mapBuffer,
@@ -1511,7 +1542,7 @@ export async function buildTownPlannerReportPdfV2(
         doc,
         "Subcategory",
         x + 14,
-        mapY + mapH + 10,
+        mapY + mapH + 14,
         w - 28,
         16,
         {
@@ -1526,9 +1557,9 @@ export async function buildTownPlannerReportPdfV2(
         doc,
         subcategory,
         x + 14,
-        mapY + mapH + 28,
+        mapY + mapH + 34,
         w - 28,
-        24,
+        36,
         {
           font: "Helvetica",
           fontSize: 10,
@@ -1541,7 +1572,7 @@ export async function buildTownPlannerReportPdfV2(
         doc,
         "Category of assessment",
         x + 14,
-        mapY + mapH + 54,
+        mapY + mapH + 78,
         w - 28,
         16,
         {
@@ -1552,14 +1583,11 @@ export async function buildTownPlannerReportPdfV2(
         }
       );
 
-      drawReferLine(ref.label, ref.url, x + 14, mapY + mapH + 72, w - 28);
+      drawReferLine(ref.label, ref.url, x + 14, mapY + mapH + 98, w - 28);
     };
 
-    const i1 = orderedOverlayItems[p * 2] || null;
-    const i2 = orderedOverlayItems[p * 2 + 1] || null;
-
-    drawOverlayBlock(i1, blockTopY);
-    drawOverlayBlock(i2, blockTopY + blockH + gapY);
+    const item = displayOverlayItems[p] || null;
+    drawOverlayBlock(item, blockTopY);
   }
 
   const renderDevelopmentControlsPage = () => {

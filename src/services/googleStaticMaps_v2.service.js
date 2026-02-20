@@ -552,6 +552,7 @@ export async function getParcelOverlayMapImageBufferV2({
   apiKey,
   center,
   zoom = 17, // treated as MAX zoom now
+  fitToParcel = false,
   size = "640x360",
   scale = 2,
   maptype = "hybrid",
@@ -582,12 +583,16 @@ export async function getParcelOverlayMapImageBufferV2({
   const fallbackOverlayRing =
     selectBestOverlayRing(overlayRingsRaw, parcelRingRaw) || null;
 
-  const bounds = boundsFromRings([parcelRingRaw, ...selectedOverlayRings]);
+  const parcelBounds = boundsFromRings([parcelRingRaw]);
+  const combinedBounds = boundsFromRings([parcelRingRaw, ...selectedOverlayRings]);
+  const bounds = fitToParcel
+    ? parcelBounds || combinedBounds
+    : combinedBounds || parcelBounds;
 
   const autoCenter =
     centerFromBounds(bounds) ||
     centroidFromRing(parcelRingRaw) ||
-    centroidFromRing(overlayRingRaw);
+    centroidFromRing(fallbackOverlayRing);
 
   const c = center || autoCenter;
   if (!c) return null;
