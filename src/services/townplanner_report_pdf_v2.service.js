@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.4";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.5";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -376,8 +376,18 @@ function buildOverlayLines(items, limit = 14) {
 
 function addExternalLink(doc, x, y, w, h, url) {
   if (!url) return;
-  // Hint PDF viewers to open external links in a new window/tab.
-  doc.link(x, y, w, h, url, { newWindow: true });
+  // Build annotation manually so NewWindow is attached to the URI action.
+  const action = doc.ref({
+    S: "URI",
+    URI: new String(url),
+    NewWindow: true,
+  });
+  action.end();
+  doc.annotate(x, y, w, h, {
+    Subtype: "Link",
+    A: action,
+    F: 1 << 2,
+  });
 }
 
 function header(doc, { title, addressLabel, schemeVersion, logoBuffer }) {
@@ -733,10 +743,35 @@ export async function buildTownPlannerReportPdfV2(
     const code = ov?.code || "";
     const name = ov?.name || code || "Overlay";
     const geom = findOverlayGeometry(code);
-    const overlayFeature = featureFromGeometry(geom);
+    const { base } = splitOverlayName(name);
+    const baseKey = normalizeOverlayKey(base);
+
+    const sameBaseGeometries =
+      baseKey === normalizeOverlayKey("Airport environs overlay")
+        ? overlays
+            .filter(
+              (x) =>
+                normalizeOverlayKey(splitOverlayName(x?.name || "").base) ===
+                baseKey
+            )
+            .map((x) => findOverlayGeometry(x?.code || ""))
+            .filter(Boolean)
+        : [];
+
+    const geomForMap =
+      sameBaseGeometries.length > 1
+        ? { type: "GeometryCollection", geometries: sameBaseGeometries }
+        : geom;
+    const overlayFeature = featureFromGeometry(geomForMap);
 
     const areaIntersectM2 = computeIntersectionAreaM2(parcelGeom, geom);
     const palette = overlayColorPalette[i % overlayColorPalette.length];
+    const overlayColor =
+      baseKey === normalizeOverlayKey("Airport environs overlay")
+        ? "0x2962ffff"
+        : baseKey === normalizeOverlayKey("Bicycle network overlay")
+          ? "0xffc107ff"
+          : palette.outline;
 
     let mapBuffer =
       parcelFeature && overlayFeature
@@ -745,8 +780,12 @@ export async function buildTownPlannerReportPdfV2(
             center,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
-            overlayColor: palette.outline,
-            overlayFill: palette.fill,
+            parcelColor: "0xffeb3bff",
+            parcelFill: "0x00000000",
+            parcelWeight: 4,
+            overlayColor,
+            overlayFill: "0x00000000",
+            overlayWeight: 3,
             zoom: 19,
             fitToParcel: true,
             maptype: "hybrid",
@@ -762,6 +801,9 @@ export async function buildTownPlannerReportPdfV2(
         apiKey,
         center,
         parcelGeoJson: parcelFeature,
+        parcelColor: "0xffeb3bff",
+        parcelFill: "0x00000000",
+        parcelWeight: 4,
         zoom: 19,
         maptype: "hybrid",
         size: "640x360",

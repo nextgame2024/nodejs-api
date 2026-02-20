@@ -151,6 +151,12 @@ function extractPolygonRings(geojson) {
       .filter((ring) => Array.isArray(ring) && ring.length);
   }
 
+  if (geom.type === "GeometryCollection") {
+    const out = [];
+    for (const g of geom.geometries || []) out.push(...extractPolygonRings(g));
+    return out;
+  }
+
   return [];
 }
 
@@ -187,6 +193,29 @@ function normalizeRing(ringLngLat) {
     cleaned.push([first[0], first[1]]);
 
   return cleaned.length >= 4 ? cleaned : null;
+}
+
+/** Remove consecutive duplicates/invalid points from a line. */
+function normalizeLine(lineLngLat) {
+  if (!Array.isArray(lineLngLat) || lineLngLat.length < 2) return null;
+
+  const cleaned = [];
+  let prev = null;
+
+  for (const p of lineLngLat) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const lng = round6(p[0]);
+    const lat = round6(p[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+
+    const cur = [lng, lat];
+    if (!prev || prev[0] !== cur[0] || prev[1] !== cur[1]) {
+      cleaned.push(cur);
+      prev = cur;
+    }
+  }
+
+  return cleaned.length >= 2 ? cleaned : null;
 }
 
 /**
@@ -265,6 +294,24 @@ function simplifyRing(ringLngLat, epsilonDeg, maxPoints) {
   return simplified.length >= 4 ? simplified : null;
 }
 
+function simplifyLine(lineLngLat, epsilonDeg, maxPoints) {
+  const line = normalizeLine(lineLngLat);
+  if (!line) return null;
+
+  let simplified = rdp(line, epsilonDeg);
+  if (!Array.isArray(simplified) || simplified.length < 2) {
+    simplified = line;
+  }
+
+  if (simplified.length > maxPoints) {
+    const step = Math.ceil(simplified.length / maxPoints);
+    simplified = simplified.filter((_, i) => i % step === 0);
+    if (simplified.length < 2) simplified = line.slice(0, maxPoints);
+  }
+
+  return simplified.length >= 2 ? simplified : null;
+}
+
 /**
  * Polyline encoding helpers (Google Encoded Polyline Algorithm).
  * Google expects encoding in lat,lng order.
@@ -307,7 +354,13 @@ function ringToEncodedPath(ringLngLat) {
   return `enc:${encodePolyline(ptsLatLng)}`;
 }
 
+function lineToEncodedPath(lineLngLat) {
+  const ptsLatLng = lineLngLat.map(([lng, lat]) => [lat, lng]);
+  return `enc:${encodePolyline(ptsLatLng)}`;
+}
+
 function centroidFromRing(ringLngLat) {
+  if (!Array.isArray(ringLngLat) || !ringLngLat.length) return null;
   let sumLng = 0;
   let sumLat = 0;
   let n = 0;
@@ -319,6 +372,35 @@ function centroidFromRing(ringLngLat) {
   }
   if (!n) return null;
   return { lng: sumLng / n, lat: sumLat / n };
+}
+
+function extractLinePaths(geojson) {
+  if (!geojson) return [];
+  const geom =
+    geojson?.type === "Feature"
+      ? geojson.geometry
+      : geojson?.geometry || geojson;
+  if (!geom) return [];
+
+  if (geom.type === "LineString") {
+    return Array.isArray(geom.coordinates) && geom.coordinates.length
+      ? [geom.coordinates]
+      : [];
+  }
+
+  if (geom.type === "MultiLineString") {
+    return (geom.coordinates || []).filter(
+      (line) => Array.isArray(line) && line.length
+    );
+  }
+
+  if (geom.type === "GeometryCollection") {
+    const out = [];
+    for (const g of geom.geometries || []) out.push(...extractLinePaths(g));
+    return out;
+  }
+
+  return [];
 }
 
 function pointInRing(lng, lat, ringLngLat) {
@@ -394,6 +476,28 @@ function orderOverlayRingsByParcel(overlayRings, parcelRing) {
       return a.dist2 - b.dist2;
     })
     .map((x) => x.ring);
+}
+
+function orderOverlayLinesByParcel(overlayLines, parcelRing) {
+  if (!Array.isArray(overlayLines) || !overlayLines.length) return [];
+  if (!parcelRing || !parcelRing.length) return overlayLines.slice();
+
+  const parcelCenter = centroidFromRing(parcelRing);
+  if (!parcelCenter) return overlayLines.slice();
+
+  return overlayLines
+    .map((line) => {
+      const c = centroidFromRing(line);
+      let dist2 = Number.POSITIVE_INFINITY;
+      if (c) {
+        const dLng = c.lng - parcelCenter.lng;
+        const dLat = c.lat - parcelCenter.lat;
+        dist2 = dLng * dLng + dLat * dLat;
+      }
+      return { line, dist2 };
+    })
+    .sort((a, b) => a.dist2 - b.dist2)
+    .map((x) => x.line);
 }
 
 function isImage(resp) {
@@ -477,6 +581,9 @@ export async function getParcelMapImageBufferV2({
   scale = 2,
   maptype = "hybrid",
   parcelGeoJson,
+  parcelColor = "0x2ecc71ff",
+  parcelFill = "0x2ecc7133",
+  parcelWeight = 4,
   paddingPx = 90,
   styles = null,
 }) {
@@ -501,7 +608,7 @@ export async function getParcelMapImageBufferV2({
     maxZoom: zoom,
   });
 
-  const parcelPrefix = `fillcolor:0x2ecc7133|color:0x2ecc71ff|weight:4|`;
+  const parcelPrefix = `fillcolor:${parcelFill}|color:${parcelColor}|weight:${parcelWeight}|`;
   const epsList = [0.000003, 0.000008, 0.00002, 0.00005, 0.0001];
 
   for (const eps of epsList) {
@@ -574,17 +681,31 @@ export async function getParcelOverlayMapImageBufferV2({
 
   const parcelRingRaw = extractPolygonRing(parcelGeoJson);
   const overlayRingsRaw = extractPolygonRings(overlayGeoJson);
-  if (!parcelRingRaw || !overlayRingsRaw.length) return null;
+  const overlayLinesRaw = extractLinePaths(overlayGeoJson);
+  if (!parcelRingRaw || (!overlayRingsRaw.length && !overlayLinesRaw.length))
+    return null;
+
   const orderedOverlayRings = orderOverlayRingsByParcel(
     overlayRingsRaw,
     parcelRingRaw
   );
   const selectedOverlayRings = orderedOverlayRings.slice(0, 4);
+  const orderedOverlayLines = orderOverlayLinesByParcel(
+    overlayLinesRaw,
+    parcelRingRaw
+  );
+  const selectedOverlayLines = orderedOverlayLines.slice(0, 6);
+
   const fallbackOverlayRing =
     selectBestOverlayRing(overlayRingsRaw, parcelRingRaw) || null;
+  const fallbackOverlayLine = selectedOverlayLines[0] || null;
 
   const parcelBounds = boundsFromRings([parcelRingRaw]);
-  const combinedBounds = boundsFromRings([parcelRingRaw, ...selectedOverlayRings]);
+  const combinedBounds = boundsFromRings([
+    parcelRingRaw,
+    ...selectedOverlayRings,
+    ...selectedOverlayLines,
+  ]);
   const bounds = fitToParcel
     ? parcelBounds || combinedBounds
     : combinedBounds || parcelBounds;
@@ -592,7 +713,8 @@ export async function getParcelOverlayMapImageBufferV2({
   const autoCenter =
     centerFromBounds(bounds) ||
     centroidFromRing(parcelRingRaw) ||
-    centroidFromRing(fallbackOverlayRing);
+    centroidFromRing(fallbackOverlayRing) ||
+    centroidFromRing(fallbackOverlayLine);
 
   const c = center || autoCenter;
   if (!c) return null;
@@ -607,6 +729,7 @@ export async function getParcelOverlayMapImageBufferV2({
 
   const parcelPrefix = `fillcolor:${parcelFill}|color:${parcelColor}|weight:${parcelWeight}|`;
   const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:${overlayWeight}|`;
+  const overlayLinePrefix = `color:${overlayColor}|weight:${overlayWeight}|`;
 
   const epsList = [0.000005, 0.000015, 0.00004, 0.00008, 0.00016, 0.0003];
 
@@ -619,6 +742,11 @@ export async function getParcelOverlayMapImageBufferV2({
       const overlayRing = simplifyRing(rawRing, eps, 220);
       if (!overlayRing) continue;
       overlayPaths.push(`${overlayPrefix}${ringToEncodedPath(overlayRing)}`);
+    }
+    for (const rawLine of selectedOverlayLines) {
+      const overlayLine = simplifyLine(rawLine, eps, 260);
+      if (!overlayLine) continue;
+      overlayPaths.push(`${overlayLinePrefix}${lineToEncodedPath(overlayLine)}`);
     }
     if (!overlayPaths.length) continue;
 
@@ -645,7 +773,10 @@ export async function getParcelOverlayMapImageBufferV2({
   const overlayRing = fallbackOverlayRing
     ? simplifyRing(fallbackOverlayRing, 0.0004, 120)
     : null;
-  if (!parcelRing || !overlayRing) return null;
+  const overlayLine = fallbackOverlayLine
+    ? simplifyLine(fallbackOverlayLine, 0.0004, 180)
+    : null;
+  if (!parcelRing || (!overlayRing && !overlayLine)) return null;
 
   const url = buildStaticMapUrl({
     apiKey,
@@ -657,7 +788,10 @@ export async function getParcelOverlayMapImageBufferV2({
     styles,
     paths: [
       `${parcelPrefix}${ringToEncodedPath(parcelRing)}`,
-      `${overlayPrefix}${ringToEncodedPath(overlayRing)}`,
+      ...(overlayRing ? [`${overlayPrefix}${ringToEncodedPath(overlayRing)}`] : []),
+      ...(overlayLine
+        ? [`${overlayLinePrefix}${lineToEncodedPath(overlayLine)}`]
+        : []),
     ],
   });
 
