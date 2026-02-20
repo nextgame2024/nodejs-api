@@ -47,6 +47,47 @@ function versionSlug(v) {
     .slice(0, 80);
 }
 
+function normalizeDashes(v) {
+  return String(v || "")
+    .replace(/[–—]/g, "-")
+    .trim();
+}
+
+function normalizeLookupKey(v) {
+  return normalizeDashes(v).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseTableNumber(v) {
+  const m = String(v || "").match(
+    /([0-9]+(?:\.[0-9]+)+(?:\.[A-Za-z]|[A-Za-z])?)/
+  );
+  return m?.[1] ? m[1].toUpperCase() : "";
+}
+
+function canonicalCitation(v, fallbackNumber = "") {
+  const n = parseTableNumber(v) || String(fallbackNumber || "").trim().toUpperCase();
+  if (n) return `Table ${n}`;
+  const raw = String(v || "").trim();
+  return raw || null;
+}
+
+function normalizeZoneLookup(zoningName, zoningCode) {
+  const rawName = normalizeDashes(zoningName);
+  const withoutCodePrefix = rawName.replace(/^[A-Za-z0-9]+\s*-\s*/, "").trim();
+  const candidate = withoutCodePrefix || rawName || normalizeDashes(zoningCode);
+  return normalizeLookupKey(candidate);
+}
+
+function toAssessmentRef(row, fallbackNumber = "") {
+  return {
+    sourceCitation: canonicalCitation(
+      row?.source_citation || row?.label,
+      fallbackNumber
+    ),
+    sourceUrl: row?.source_url || null,
+  };
+}
+
 async function loadLogoBuffer() {
   try {
     const resp = await axios.get(PDF_LOGO_URL, { responseType: "arraybuffer" });
@@ -58,6 +99,7 @@ async function loadLogoBuffer() {
 
 async function getControlsV2({
   zoningCode,
+  zoningName,
   neighbourhoodPlan,
   precinctCode,
   overlayCodes,
@@ -134,6 +176,109 @@ async function getControlsV2({
     }
   }
 
+  const zoneLookupKey = normalizeZoneLookup(zoningName, zoningCode);
+  const npLookupKey = normalizeLookupKey(neighbourhoodPlan);
+
+  let materialRow = null;
+  let reconfigRow = null;
+  let buildingRow = null;
+  let operationalRow = null;
+  let npRow = null;
+
+  try {
+    const materialPromise = zoneLookupKey
+      ? pool.query(
+          `
+          SELECT label, source_url, source_citation, zone_code, neighbourhood_plan
+          FROM bcc_planning_controls_v2
+          WHERE scheme_version = $1
+            AND (
+              source_citation ILIKE 'Table 5.5.%'
+              OR label ILIKE 'Table 5.5.%'
+            )
+            AND (
+              lower(replace(replace(COALESCE(neighbourhood_plan, ''), '—', '-'), '–', '-')) = $2
+              OR lower(replace(replace(COALESCE(zone_code, ''), '—', '-'), '–', '-')) = $2
+              OR lower(replace(replace(COALESCE(label, ''), '—', '-'), '–', '-')) LIKE '%' || $2 || '%'
+            )
+          ORDER BY
+            CASE
+              WHEN lower(replace(replace(COALESCE(neighbourhood_plan, ''), '—', '-'), '–', '-')) = $2 THEN 0
+              WHEN lower(replace(replace(COALESCE(zone_code, ''), '—', '-'), '–', '-')) = $2 THEN 1
+              ELSE 2
+            END,
+            extracted_at DESC NULLS LAST
+          LIMIT 1
+          `,
+          [scheme, zoneLookupKey]
+        )
+      : Promise.resolve({ rows: [] });
+
+    const generalPromise = pool.query(
+      `
+      SELECT label, source_url, source_citation, zone_code, neighbourhood_plan
+      FROM bcc_planning_controls_v2
+      WHERE scheme_version = $1
+        AND lower(replace(replace(COALESCE(zone_code, ''), '—', '-'), '–', '-')) = 'general'
+        AND (
+          source_citation ILIKE '%5.6.1%'
+          OR source_citation ILIKE '%5.7.1%'
+          OR source_citation ILIKE '%5.8.1%'
+          OR label ILIKE '%5.6.1%'
+          OR label ILIKE '%5.7.1%'
+          OR label ILIKE '%5.8.1%'
+        )
+      `,
+      [scheme]
+    );
+
+    const npPromise = npLookupKey
+      ? pool.query(
+          `
+          SELECT label, source_url, source_citation, zone_code, neighbourhood_plan
+          FROM bcc_planning_controls_v2
+          WHERE scheme_version = $1
+            AND lower(replace(replace(COALESCE(neighbourhood_plan, ''), '—', '-'), '–', '-')) = $2
+            AND (
+              source_citation ILIKE 'Table 5.9.%'
+              OR label ILIKE 'Table 5.9.%'
+            )
+          ORDER BY extracted_at DESC NULLS LAST
+          LIMIT 1
+          `,
+          [scheme, npLookupKey]
+        )
+      : Promise.resolve({ rows: [] });
+
+    const [materialRes, generalRes, npRes] = await Promise.all([
+      materialPromise,
+      generalPromise,
+      npPromise,
+    ]);
+
+    materialRow = materialRes.rows?.[0] || null;
+    npRow = npRes.rows?.[0] || null;
+
+    const generalRows = generalRes.rows || [];
+    reconfigRow =
+      generalRows.find(
+        (r) => parseTableNumber(r?.source_citation || r?.label) === "5.6.1"
+      ) || null;
+    buildingRow =
+      generalRows.find(
+        (r) => parseTableNumber(r?.source_citation || r?.label) === "5.7.1"
+      ) || null;
+    operationalRow =
+      generalRows.find(
+        (r) => parseTableNumber(r?.source_citation || r?.label) === "5.8.1"
+      ) || null;
+  } catch (err) {
+    console.warn(
+      "[townplanner_v2] failed to load assessment reference rows",
+      err?.message
+    );
+  }
+
   return {
     schemeVersion: scheme,
     mergedControls: merged,
@@ -146,6 +291,13 @@ async function getControlsV2({
       sourceUrl: r.source_url,
       sourceCitation: r.source_citation,
     })),
+    assessmentRefs: {
+      neighbourhoodPlan: toAssessmentRef(npRow),
+      material: toAssessmentRef(materialRow, "5.5.1"),
+      reconfiguring: toAssessmentRef(reconfigRow, "5.6.1"),
+      building: toAssessmentRef(buildingRow, "5.7.1"),
+      operational: toAssessmentRef(operationalRow, "5.8.1"),
+    },
     tables,
   };
 }
@@ -185,6 +337,7 @@ export async function generateTownPlannerReportV2({
   const overlayCodes = (planning?.overlays || []).map((o) => o.code);
   const controls = await getControlsV2({
     zoningCode: planning?.zoningCode,
+    zoningName: planning?.zoning,
     neighbourhoodPlan: planning?.neighbourhoodPlan,
     precinctCode: planning?.neighbourhoodPlanPrecinctCode,
     overlayCodes,

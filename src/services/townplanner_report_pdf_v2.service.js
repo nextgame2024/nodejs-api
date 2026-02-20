@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.1";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.2";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -593,50 +593,29 @@ export async function buildTownPlannerReportPdfV2(
 
   const mergedControls = controls?.mergedControls || {};
   const sources = Array.isArray(controls?.sources) ? controls.sources : [];
-  const controlsTables = Array.isArray(controls?.tables) ? controls.tables : [];
-  const planningNpName = planningSnapshot?.neighbourhoodPlan || "";
-  const planningNpKey = String(planningNpName || "").trim().toLowerCase();
-  const filteredTables = controlsTables.filter((t) => {
-    const plan = t?.plan || t?.neighbourhood_plan || "";
-    if (!plan) return false;
-    return String(plan).trim().toLowerCase() === planningNpKey;
-  });
-  const tableControls = (filteredTables.length ? filteredTables : controlsTables).slice();
-  tableControls.sort((a, b) => {
-    const aId = String(a?.table_id || "");
-    const bId = String(b?.table_id || "");
-    return aId.localeCompare(bId, "en", { numeric: true });
-  });
+  const assessmentRefs = controls?.assessmentRefs || {};
 
   const parseTableNumber = (value) => {
-    const m = String(value || "").match(/([0-9]+(?:\.[0-9]+)+[A-Za-z]?)/);
-    return m?.[1] || "";
+    const m = String(value || "").match(
+      /([0-9]+(?:\.[0-9]+)+(?:\.[A-Za-z]|[A-Za-z])?)/
+    );
+    return m?.[1] ? m[1].toUpperCase() : "";
   };
 
-  const resolveAssessmentTableRef = (defaultNumber) => {
-    const needle = String(defaultNumber || "").toLowerCase();
-    const prefix = needle.includes(".") ? needle.replace(/\.[^.]+$/, "") : needle;
+  const canonicalCitation = (value, fallbackNumber = "") => {
+    const number =
+      parseTableNumber(value) || String(fallbackNumber || "").trim().toUpperCase();
+    if (number) return `Table ${number}`;
+    const raw = String(value || "").trim();
+    return raw || null;
+  };
 
-    const hit =
-      controlsTables.find((t) => {
-        const id = String(t?.table_id || "").toLowerCase();
-        const title = String(t?.table_title || "").toLowerCase();
-        const num = parseTableNumber(t?.table_id || t?.table_title).toLowerCase();
-        return id.includes(needle) || title.includes(`table ${needle}`) || num === needle;
-      }) ||
-      controlsTables.find((t) => {
-        const num = parseTableNumber(t?.table_id || t?.table_title).toLowerCase();
-        return prefix && num.startsWith(`${prefix}.`);
-      }) ||
-      null;
-
-    const rawId = String(hit?.table_id || "").trim();
-    const fromId = parseTableNumber(rawId || hit?.table_title);
-    const number = fromId || defaultNumber;
+  const buildAssessmentRef = (rawRef, fallbackNumber) => {
+    const citation = canonicalCitation(rawRef?.sourceCitation, fallbackNumber);
+    const number = parseTableNumber(citation) || fallbackNumber;
     return {
       label: `Table of assessment ${number}`,
-      url: hit?._sourceUrl || hit?.source_url || null,
-      table: hit || null,
+      url: rawRef?.sourceUrl || null,
     };
   };
 
@@ -777,19 +756,19 @@ export async function buildTownPlannerReportPdfV2(
   const zoningAssessmentConsiderations = [
     {
       heading: "Material change of use considerations",
-      ref: resolveAssessmentTableRef("5.5.1"),
+      ref: buildAssessmentRef(assessmentRefs?.material, "5.5.1"),
     },
     {
       heading: "Reconfiguring a lot considerations",
-      ref: resolveAssessmentTableRef("5.6.1"),
+      ref: buildAssessmentRef(assessmentRefs?.reconfiguring, "5.6.1"),
     },
     {
       heading: "Building work considerations",
-      ref: resolveAssessmentTableRef("5.7.1"),
+      ref: buildAssessmentRef(assessmentRefs?.building, "5.7.1"),
     },
     {
       heading: "Operational work considerations",
-      ref: resolveAssessmentTableRef("5.8.1"),
+      ref: buildAssessmentRef(assessmentRefs?.operational, "5.8.1"),
     },
   ];
 
@@ -799,11 +778,10 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
     { label: "Site overview", page: 3 },
-    { label: "Table of assessment", page: 4 },
-    { label: "Zoning", page: 5 },
-    { label: "Development controls", page: 6 },
-    { label: "Potential cautions", page: 7 },
-    { label: "References & disclaimer", page: 7 + overlayPages },
+    { label: "Zoning", page: 4 },
+    { label: "Development controls", page: 5 },
+    { label: "Potential cautions", page: 6 },
+    { label: "References & disclaimer", page: 6 + overlayPages },
   ];
 
   const doc = new PDFDocument({
@@ -1047,12 +1025,12 @@ export async function buildTownPlannerReportPdfV2(
         npKey &&
         String(s.neighbourhoodPlan).toLowerCase() === npKey
     );
-    const npTableLabel = npSource?.sourceCitation || npSource?.label || null;
-    const npTableUrl = npSource?.sourceUrl || null;
+    const npRef = assessmentRefs?.neighbourhoodPlan || null;
     const npTableText =
-      npTableLabel && npTableUrl
-        ? `${npTableLabel} (${npTableUrl})`
-        : npTableLabel || "Not mapped";
+      canonicalCitation(npRef?.sourceCitation) ||
+      canonicalCitation(npSource?.sourceCitation || npSource?.label) ||
+      "Not mapped";
+    const npTableUrl = npRef?.sourceUrl || npSource?.sourceUrl || null;
 
     const leftX = x;
     const rightX = x + colW + gap;
@@ -1136,20 +1114,23 @@ export async function buildTownPlannerReportPdfV2(
         ellipsis: false,
       }
     );
-    boundedText(
-      doc,
-      String(npTableText),
-      leftX + 14,
-      npY + 90,
-      colW - 28,
-      40,
-      {
+    if (npTableUrl) {
+      doc
+        .fillColor(BRAND.teal2)
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text(String(npTableText), leftX + 14, npY + 90, {
+          width: colW - 28,
+          underline: true,
+        });
+    } else {
+      boundedText(doc, String(npTableText), leftX + 14, npY + 90, colW - 28, 40, {
         font: "Helvetica-Bold",
         fontSize: 9,
-        color: npTableUrl ? BRAND.teal2 : BRAND.text,
+        color: BRAND.text,
         ellipsis: false,
-      }
-    );
+      });
+    }
     if (npTableUrl) {
       // Make table text clickable
       doc.link(leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
@@ -1219,150 +1200,7 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
-  // ========== PAGE 4: TABLE OF ASSESSMENT ==========
-  doc.addPage();
-  {
-    header(doc, {
-      title: "Table of assessment",
-      addressLabel,
-      schemeVersion,
-      logoBuffer,
-    });
-
-    const x = X(doc);
-    const w = contentW(doc);
-    const top = Y(doc) + 84;
-    const pageBottom = doc.page.height - doc.page.margins.bottom;
-
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(20)
-      .text("Table of assessment", x, top);
-
-    let y = top + 30;
-
-    if (!tableControls.length) {
-      boundedText(
-        doc,
-        "No table of assessment data found in controls. Populate bcc_planning_controls_v2.controls.tables to render this page.",
-        x,
-        y,
-        w,
-        60,
-        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
-      );
-    } else {
-      const colWidths = [w * 0.28, w * 0.38, w * 0.34];
-      const defaultTableHeaders = [
-        "Use",
-        "Categories of development and assessment",
-        "Assessment benchmarks",
-      ];
-
-      const renderTableHeader = (headers) => {
-        const resolvedHeaders =
-          Array.isArray(headers) && headers.length === 3
-            ? headers
-            : defaultTableHeaders;
-        const headerH = drawTableRow(
-          doc,
-          x,
-          y,
-          colWidths,
-          resolvedHeaders,
-          {
-            fill: TABLE.headerFill,
-            font: "Helvetica-Bold",
-            fontSize: 9,
-          }
-        );
-        y += headerH;
-      };
-
-      for (const table of tableControls) {
-        const titleText =
-          table.table_title || `${table.table_id || ""} ${table.type || ""}`.trim();
-
-        if (y + 40 > pageBottom) {
-          doc.addPage();
-          header(doc, {
-            title: "Table of assessment",
-            addressLabel,
-            schemeVersion,
-            logoBuffer,
-          });
-          y = Y(doc) + 84;
-        }
-
-        doc
-          .fillColor(BRAND.text)
-          .font("Helvetica-Bold")
-          .fontSize(12)
-          .text(titleText, x, y, { width: w });
-        y += 18;
-
-        renderTableHeader(table.headers);
-
-        const sections = Array.isArray(table.sections) ? table.sections : [];
-        for (const section of sections) {
-          if (section?.title) {
-            const secH = drawSectionRow(doc, x, y, w, section.title, {});
-            y += secH;
-          }
-
-          const rows = Array.isArray(section?.rows) ? section.rows : [];
-          for (const row of rows) {
-            const cells = Array.isArray(row?.cells)
-              ? row.cells
-              : [String(row || "")];
-            const padded =
-              cells.length >= 3 ? cells.slice(0, 3) : [...cells, "", ""].slice(0, 3);
-
-            const rowH = tableRowHeight(
-              doc,
-              padded,
-              colWidths,
-              "Helvetica",
-              9,
-              TABLE.pad
-            );
-
-            if (y + rowH > pageBottom) {
-              doc.addPage();
-              header(doc, {
-                title: "Table of assessment",
-                addressLabel,
-                schemeVersion,
-                logoBuffer,
-              });
-              y = Y(doc) + 84;
-              doc
-                .fillColor(BRAND.text)
-                .font("Helvetica-Bold")
-                .fontSize(12)
-                .text(titleText, x, y, { width: w });
-              y += 18;
-              renderTableHeader(table.headers);
-            }
-
-            const h = drawTableRow(doc, x, y, colWidths, padded, {
-              font: "Helvetica",
-              fontSize: 9,
-              color: BRAND.text,
-            });
-            y += h;
-          }
-
-          y += 10;
-        }
-
-        y += 12;
-      }
-    }
-  }
-
-  // ========== PAGE 5: ZONING ==========
+  // ========== PAGE 4: ZONING ==========
   doc.addPage();
   {
     header(doc, { title: "Zoning", addressLabel, schemeVersion, logoBuffer });
@@ -1401,35 +1239,45 @@ export async function buildTownPlannerReportPdfV2(
     );
 
     const drawAssessmentReferenceLine = (label, url, yPos) => {
+      const safeLabel = String(label || "Table of assessment");
       const prefix = "Refer ";
       const suffix = " within Brisbane City Plan";
+      const safeY = Number.isFinite(yPos) ? yPos : 0;
 
       doc
         .fillColor(BRAND.text)
         .font("Helvetica")
         .fontSize(10)
-        .text(prefix, x, yPos, { lineBreak: false });
+        .text(prefix, x, safeY, { lineBreak: false });
 
-      const prefixW = doc.widthOfString(prefix);
+      const prefixW = Number(doc.widthOfString(prefix)) || 0;
       doc
         .fillColor(url ? BRAND.teal2 : BRAND.text)
         .font("Helvetica")
         .fontSize(10)
-        .text(label, x + prefixW, yPos, {
+        .text(safeLabel, x + prefixW, safeY, {
           lineBreak: false,
-          underline: !!url,
         });
 
-      const labelW = doc.widthOfString(label);
-      if (url) {
-        doc.link(x + prefixW, yPos, labelW, 12, url);
+      const labelW = Number(doc.widthOfString(safeLabel)) || 0;
+      if (url && labelW > 0) {
+        const underlineY = safeY + 11;
+        doc
+          .save()
+          .strokeColor(BRAND.teal2)
+          .lineWidth(0.8)
+          .moveTo(x + prefixW, underlineY)
+          .lineTo(x + prefixW + labelW, underlineY)
+          .stroke()
+          .restore();
+        doc.link(x + prefixW, safeY, labelW, 12, url);
       }
 
       doc
         .fillColor(BRAND.text)
         .font("Helvetica")
         .fontSize(10)
-        .text(suffix, x + prefixW + labelW, yPos, {
+        .text(suffix, x + prefixW + labelW, safeY, {
           width: Math.max(20, w - prefixW - labelW),
         });
     };
@@ -1464,7 +1312,7 @@ export async function buildTownPlannerReportPdfV2(
     );
   }
 
-  // ========== PAGE 6: DEVELOPMENT CONTROLS ==========
+  // ========== PAGE 5: DEVELOPMENT CONTROLS ==========
   doc.addPage();
   {
     header(doc, {
@@ -1589,7 +1437,7 @@ export async function buildTownPlannerReportPdfV2(
     }
   }
 
-  // ========== PAGES 7..: POTENTIAL CAUTIONS (2 per page) ==========
+  // ========== PAGES 6..: POTENTIAL CAUTIONS (2 per page) ==========
   for (let p = 0; p < overlayPages; p += 1) {
     doc.addPage();
     header(doc, {
