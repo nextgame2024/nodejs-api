@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.5";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.7";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -746,32 +746,22 @@ export async function buildTownPlannerReportPdfV2(
     const { base } = splitOverlayName(name);
     const baseKey = normalizeOverlayKey(base);
 
-    const sameBaseGeometries =
-      baseKey === normalizeOverlayKey("Airport environs overlay")
-        ? overlays
-            .filter(
-              (x) =>
-                normalizeOverlayKey(splitOverlayName(x?.name || "").base) ===
-                baseKey
-            )
-            .map((x) => findOverlayGeometry(x?.code || ""))
-            .filter(Boolean)
-        : [];
-
-    const geomForMap =
-      sameBaseGeometries.length > 1
-        ? { type: "GeometryCollection", geometries: sameBaseGeometries }
-        : geom;
-    const overlayFeature = featureFromGeometry(geomForMap);
+    const overlayFeature = featureFromGeometry(geom);
 
     const areaIntersectM2 = computeIntersectionAreaM2(parcelGeom, geom);
     const palette = overlayColorPalette[i % overlayColorPalette.length];
-    const overlayColor =
-      baseKey === normalizeOverlayKey("Airport environs overlay")
-        ? "0x2962ffff"
-        : baseKey === normalizeOverlayKey("Bicycle network overlay")
-          ? "0xffc107ff"
-          : palette.outline;
+    const isAirportOverlay =
+      baseKey === normalizeOverlayKey("Airport environs overlay");
+    const isBicycleOverlay =
+      baseKey === normalizeOverlayKey("Bicycle network overlay");
+
+    const overlayColor = isAirportOverlay
+      ? "0x2962ffff"
+      : isBicycleOverlay
+        ? "0xffc107ff"
+        : palette.outline;
+    const overlayZoom = isAirportOverlay ? 14 : 19;
+    const overlayPaddingPx = isAirportOverlay ? 90 : 110;
 
     let mapBuffer =
       parcelFeature && overlayFeature
@@ -785,9 +775,10 @@ export async function buildTownPlannerReportPdfV2(
             parcelWeight: 4,
             overlayColor,
             overlayFill: "0x00000000",
-            overlayWeight: 3,
-            zoom: 19,
+            overlayWeight: isAirportOverlay ? 2 : 3,
+            zoom: overlayZoom,
             fitToParcel: true,
+            paddingPx: overlayPaddingPx,
             maptype: "hybrid",
             size: "640x360",
             scale: 2,
@@ -804,7 +795,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelColor: "0xffeb3bff",
         parcelFill: "0x00000000",
         parcelWeight: 4,
-        zoom: 19,
+        zoom: isAirportOverlay ? overlayZoom : 19,
         maptype: "hybrid",
         size: "640x360",
         scale: 2,
