@@ -57,6 +57,29 @@ function normalizeLookupKey(v) {
   return normalizeDashes(v).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function extractOverlayBaseName(v) {
+  const raw = normalizeDashes(v);
+  if (!raw) return "";
+  if (raw.includes(" - ")) {
+    return raw.split(" - ")[0].trim();
+  }
+  return raw;
+}
+
+function overlayLookupKeysForName(v) {
+  const keys = new Set();
+  const raw = normalizeDashes(v);
+  if (!raw) return [];
+
+  const fullKey = normalizeLookupKey(raw);
+  if (fullKey) keys.add(fullKey);
+
+  const baseKey = normalizeLookupKey(extractOverlayBaseName(raw));
+  if (baseKey) keys.add(baseKey);
+
+  return Array.from(keys);
+}
+
 function parseTableNumber(v) {
   const m = String(v || "").match(
     /([0-9]+(?:\.[0-9]+)+(?:\.[A-Za-z]|[A-Za-z])?)/
@@ -103,6 +126,7 @@ async function getControlsV2({
   neighbourhoodPlan,
   precinctCode,
   overlayCodes,
+  overlayNames,
 }) {
   const scheme = SCHEME_VERSION;
   const zoningAssessmentTableNumbers = ["5.5.1", "5.6.1", "5.7.1", "5.8.1"];
@@ -184,6 +208,7 @@ async function getControlsV2({
   let buildingRow = null;
   let operationalRow = null;
   let npRow = null;
+  let overlayRows = [];
 
   try {
     const materialPromise = zoneLookupKey
@@ -250,10 +275,33 @@ async function getControlsV2({
         )
       : Promise.resolve({ rows: [] });
 
-    const [materialRes, generalRes, npRes] = await Promise.all([
+    const overlayLookupKeys = Array.from(
+      new Set(
+        (Array.isArray(overlayNames) ? overlayNames : [])
+          .flatMap((n) => overlayLookupKeysForName(n))
+          .filter(Boolean)
+      )
+    );
+
+    const overlayPromise = overlayLookupKeys.length
+      ? pool.query(
+          `
+          SELECT label, source_url, source_citation, zone_code, neighbourhood_plan, extracted_at
+          FROM bcc_planning_controls_v2
+          WHERE scheme_version = $1
+            AND lower(replace(replace(COALESCE(zone_code, ''), '—', '-'), '–', '-')) = 'overlay'
+            AND lower(replace(replace(COALESCE(neighbourhood_plan, ''), '—', '-'), '–', '-')) = ANY($2)
+          ORDER BY extracted_at DESC NULLS LAST
+          `,
+          [scheme, overlayLookupKeys]
+        )
+      : Promise.resolve({ rows: [] });
+
+    const [materialRes, generalRes, npRes, overlayRes] = await Promise.all([
       materialPromise,
       generalPromise,
       npPromise,
+      overlayPromise,
     ]);
 
     materialRow = materialRes.rows?.[0] || null;
@@ -272,11 +320,19 @@ async function getControlsV2({
       generalRows.find(
         (r) => parseTableNumber(r?.source_citation || r?.label) === "5.8.1"
       ) || null;
+    overlayRows = overlayRes.rows || [];
   } catch (err) {
     console.warn(
       "[townplanner_v2] failed to load assessment reference rows",
       err?.message
     );
+  }
+
+  const overlayAssessmentRefs = {};
+  for (const r of overlayRows) {
+    const k = normalizeLookupKey(r?.neighbourhood_plan);
+    if (!k || overlayAssessmentRefs[k]) continue;
+    overlayAssessmentRefs[k] = toAssessmentRef(r);
   }
 
   return {
@@ -297,6 +353,7 @@ async function getControlsV2({
       reconfiguring: toAssessmentRef(reconfigRow, "5.6.1"),
       building: toAssessmentRef(buildingRow, "5.7.1"),
       operational: toAssessmentRef(operationalRow, "5.8.1"),
+      overlays: overlayAssessmentRefs,
     },
     tables,
   };
@@ -335,12 +392,14 @@ export async function generateTownPlannerReportV2({
   }
 
   const overlayCodes = (planning?.overlays || []).map((o) => o.code);
+  const overlayNames = (planning?.overlays || []).map((o) => o.name);
   const controls = await getControlsV2({
     zoningCode: planning?.zoningCode,
     zoningName: planning?.zoning,
     neighbourhoodPlan: planning?.neighbourhoodPlan,
     precinctCode: planning?.neighbourhoodPlanPrecinctCode,
     overlayCodes,
+    overlayNames,
   });
 
   const narrative = await genTownPlannerReportNarrativeV2({

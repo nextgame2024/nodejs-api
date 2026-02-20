@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.2";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.3";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -110,6 +110,7 @@ function formatLotPlanLine(lotPlanRaw, lotNumber, planNumber) {
 const BRAND = {
   teal: "#0F2B2B",
   teal2: "#143838",
+  link: "#1E63C6",
   green: "#2ecc71",
   text: "#111111",
   muted: "#5A5F66",
@@ -339,6 +340,21 @@ function splitOverlayName(name) {
     return { base: base.trim(), detail: rest.join(" - ").trim() };
   }
   return { base: raw, detail: "" };
+}
+
+function normalizeOverlayKey(v) {
+  return String(v || "")
+    .replace(/[–—]/g, "-")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeOverlaySubcategory(v) {
+  return String(v || "")
+    .replace(/security\s*label\s*:?.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildOverlayLines(items, limit = 14) {
@@ -753,6 +769,54 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
+  const overlayNamePriority = [
+    "Airport environs overlay",
+    "Bicycle network overlay",
+    "Critical infrastructure and movement areas overlay",
+    "Streetscape hierarchy overlay",
+    "Dwelling house character overlay",
+    "Road hierarchy overlay",
+  ].map((v) => normalizeOverlayKey(v));
+  const overlayCodePriority = [
+    "overlay_airport_pans",
+    "overlay_bicycle_network",
+    "overlay_critical_infrastructure_movement",
+    "overlay_streetscape_hierarchy",
+    "character_dwelling_house",
+    "overlay_road_hierarchy",
+  ];
+  const overlayRank = (item) => {
+    const baseKey = normalizeOverlayKey(splitOverlayName(item?.name).base);
+    const nameIdx = overlayNamePriority.indexOf(baseKey);
+    if (nameIdx >= 0) return nameIdx;
+    const codeIdx = overlayCodePriority.indexOf(String(item?.code || ""));
+    if (codeIdx >= 0) return overlayNamePriority.length + codeIdx;
+    return Number.MAX_SAFE_INTEGER;
+  };
+  const orderedOverlayItems = overlayItems.length
+    ? [...overlayItems].sort((a, b) => {
+        const rankDiff = overlayRank(a) - overlayRank(b);
+        if (rankDiff !== 0) return rankDiff;
+        const aSplit = splitOverlayName(a?.name);
+        const bSplit = splitOverlayName(b?.name);
+        const aBase = normalizeOverlayKey(aSplit.base);
+        const bBase = normalizeOverlayKey(bSplit.base);
+        if (aBase && aBase === bBase) {
+          const detailRank = (detail) => {
+            const d = normalizeOverlayKey(detail);
+            if (/procedures for air navigation surfaces/.test(d)) return 0;
+            if (/local cycle route/.test(d)) return 1;
+            if (/ols boundary/.test(d)) return 2;
+            return 3;
+          };
+          const detailDiff =
+            detailRank(aSplit.detail) - detailRank(bSplit.detail);
+          if (detailDiff !== 0) return detailDiff;
+        }
+        return String(a?.name || "").localeCompare(String(b?.name || ""));
+      })
+    : [];
+
   const zoningAssessmentConsiderations = [
     {
       heading: "Material change of use considerations",
@@ -773,14 +837,14 @@ export async function buildTownPlannerReportPdfV2(
   ];
 
   // Pagination plan
-  const overlayPages = Math.max(1, Math.ceil(overlayItems.length / 2));
+  const overlayPages = Math.max(1, Math.ceil(orderedOverlayItems.length / 2));
   const toc = [
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
     { label: "Site overview", page: 3 },
     { label: "Zoning", page: 4 },
-    { label: "Development controls", page: 5 },
-    { label: "Potential cautions", page: 6 },
+    { label: "Overlay constrains", page: 5 },
+    { label: "Development controls", page: 5 + overlayPages },
     { label: "References & disclaimer", page: 6 + overlayPages },
   ];
 
@@ -1116,7 +1180,7 @@ export async function buildTownPlannerReportPdfV2(
     );
     if (npTableUrl) {
       doc
-        .fillColor(BRAND.teal2)
+        .fillColor(BRAND.link)
         .font("Helvetica-Bold")
         .fontSize(9)
         .text(String(npTableText), leftX + 14, npY + 90, {
@@ -1171,26 +1235,7 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(10)
       .text("Overlays", rightX + 14, tilesY + 12);
 
-    const overlayPriority = [
-      "overlay_airport_pans",
-      "overlay_bicycle_network",
-      "overlay_critical_infrastructure_movement",
-      "character_dwelling_house",
-      "overlay_road_hierarchy",
-      "overlay_streetscape_hierarchy",
-    ];
-    const overlayPrioritySet = new Set(overlayPriority);
-    const prioritized = overlayPriority
-      .map((code) => overlayItems.find((o) => o.code === code))
-      .filter(Boolean);
-    const fallback = overlayItems.filter(
-      (o) => !overlayPrioritySet.has(o.code)
-    );
-
-    const orderedOverlays = overlayItems.length
-      ? prioritized.concat(fallback)
-      : [];
-    const listLines = buildOverlayLines(orderedOverlays, 18);
+    const listLines = buildOverlayLines(orderedOverlayItems, 18);
 
     boundedText(doc, listLines.join("\n"), rightX + 14, tilesY + 34, colW - 28, colH - 48, {
       font: "Helvetica",
@@ -1252,7 +1297,7 @@ export async function buildTownPlannerReportPdfV2(
 
       const prefixW = Number(doc.widthOfString(prefix)) || 0;
       doc
-        .fillColor(url ? BRAND.teal2 : BRAND.text)
+        .fillColor(url ? BRAND.link : BRAND.text)
         .font("Helvetica")
         .fontSize(10)
         .text(safeLabel, x + prefixW, safeY, {
@@ -1264,7 +1309,7 @@ export async function buildTownPlannerReportPdfV2(
         const underlineY = safeY + 11;
         doc
           .save()
-          .strokeColor(BRAND.teal2)
+          .strokeColor(BRAND.link)
           .lineWidth(0.8)
           .moveTo(x + prefixW, underlineY)
           .lineTo(x + prefixW + labelW, underlineY)
@@ -1312,136 +1357,87 @@ export async function buildTownPlannerReportPdfV2(
     );
   }
 
-  // ========== PAGE 5: DEVELOPMENT CONTROLS ==========
-  doc.addPage();
-  {
-    header(doc, {
-      title: "Development controls",
-      addressLabel,
-      schemeVersion,
-      logoBuffer,
+  const overlayAssessmentRefsRaw =
+    assessmentRefs && typeof assessmentRefs.overlays === "object"
+      ? assessmentRefs.overlays
+      : {};
+  const overlayAssessmentRefs = {};
+  for (const [k, v] of Object.entries(overlayAssessmentRefsRaw)) {
+    overlayAssessmentRefs[normalizeOverlayKey(k)] = v;
+  }
+
+  const resolveOverlayAssessmentRef = (overlayBaseName) => {
+    const key = normalizeOverlayKey(overlayBaseName);
+    const mapped = overlayAssessmentRefs[key] || null;
+    if (mapped) {
+      const number = parseTableNumber(mapped?.sourceCitation);
+      return {
+        label: number ? `Table of assessment ${number}` : "Table of assessment",
+        url: mapped?.sourceUrl || null,
+      };
+    }
+
+    const src = sources.find((s) => {
+      const np = normalizeOverlayKey(s?.neighbourhoodPlan);
+      if (!np || np !== key) return false;
+      const citation = String(s?.sourceCitation || s?.label || "");
+      return /5\.10\./.test(citation);
     });
 
-    const x = X(doc);
-    const w = contentW(doc);
-    const top = Y(doc) + 84;
+    const number = parseTableNumber(src?.sourceCitation || src?.label);
+    return {
+      label: number ? `Table of assessment ${number}` : "Table of assessment",
+      url: src?.sourceUrl || null,
+    };
+  };
+
+  const drawReferLine = (label, url, xPos, yPos, maxWidth) => {
+    const safeLabel = String(label || "Table of assessment");
+    const safeY = Number.isFinite(yPos) ? yPos : 0;
+    const prefix = "Refer ";
+    const suffix = " within Brisbane City Plan.";
 
     doc
       .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(20)
-      .text("Key development controls", x, top);
-    boundedText(
-      doc,
-      "Populated from bcc_planning_controls_v2 where available.",
-      x,
-      top + 26,
-      w,
-      18,
-      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
-    );
-
-    const cardY = top + 60;
-    const gap = 12;
-    const cardW = (w - gap) / 2;
-    const cardH = 240;
-
-    const get = (k, fallback = "Not available from provided controls") => {
-      const v = mergedControls?.[k];
-      return v != null && String(v).trim() !== "" ? String(v) : fallback;
-    };
-
-    box(doc, x, cardY, cardW, cardH);
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
+      .font("Helvetica")
       .fontSize(10)
-      .text("Lot & built form", x + 14, cardY + 12);
-    boundedText(
-      doc,
-      [
-        `Maximum building height: ${get("maximumHeight")}`,
-        `Maximum site coverage: ${get("maximumSiteCoverage")}`,
-        `Plot ratio / GFA: ${get("plotRatio")}`,
-        `Density (if applicable): ${get("density")}`,
-      ].join("\n"),
-      x + 14,
-      cardY + 36,
-      cardW - 28,
-      cardH - 54,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
-    );
+      .text(prefix, xPos, safeY, { lineBreak: false });
 
-    box(doc, x + cardW + gap, cardY, cardW, cardH);
+    const prefixW = Number(doc.widthOfString(prefix)) || 0;
     doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
+      .fillColor(url ? BRAND.link : BRAND.text)
+      .font("Helvetica")
       .fontSize(10)
-      .text("Subdivision & dimensions", x + cardW + gap + 14, cardY + 12);
-    boundedText(
-      doc,
-      [
-        `Minimum lot size: ${get("minimumLotSize")}`,
-        `Minimum frontage: ${get("minimumFrontage")}`,
-        `Site area (approx.): ${formatAreaM2(areaM2)}`,
-        `Coordinates: ${formatCoords(lat, lng)}`,
-      ].join("\n"),
-      x + cardW + gap + 14,
-      cardY + 36,
-      cardW - 28,
-      cardH - 54,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
-    );
+      .text(safeLabel, xPos + prefixW, safeY, { lineBreak: false });
 
-    const srcY = cardY + cardH + 14;
-    box(doc, x, srcY, w, 280);
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .text("Controls sources", x + 14, srcY + 12);
-
-    const srcLines = sources.length
-      ? sources
-          .slice(0, 8)
-          .map(
-            (s) =>
-              `• ${s.label || "Source"}${s.sourceCitation ? ` — ${s.sourceCitation}` : ""}`
-          )
-      : [
-          "• No matching control records were returned for this site. Populate bcc_planning_controls_v2 to enrich this section.",
-        ];
-
-    boundedText(doc, srcLines.join("\n"), x + 14, srcY + 34, w - 28, 180, {
-      font: "Helvetica",
-      fontSize: 9,
-      color: BRAND.muted,
-      ellipsis: true,
-    });
-
-    const devBullets =
-      narrative?.sections?.find((s) => s?.id === "development")?.bullets || [];
-    const note = devBullets.length
-      ? devBullets
-          .slice(0, 4)
-          .map((b) => `• ${b}`)
-          .join("\n")
-      : "";
-    if (note) {
-      boundedText(doc, note, x + 14, srcY + 220, w - 28, 50, {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: true,
-      });
+    const labelW = Number(doc.widthOfString(safeLabel)) || 0;
+    if (url && labelW > 0) {
+      const underlineY = safeY + 11;
+      doc
+        .save()
+        .strokeColor(BRAND.link)
+        .lineWidth(0.8)
+        .moveTo(xPos + prefixW, underlineY)
+        .lineTo(xPos + prefixW + labelW, underlineY)
+        .stroke()
+        .restore();
+      doc.link(xPos + prefixW, safeY, labelW, 12, url);
     }
-  }
 
-  // ========== PAGES 6..: POTENTIAL CAUTIONS (2 per page) ==========
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica")
+      .fontSize(10)
+      .text(suffix, xPos + prefixW + labelW, safeY, {
+        width: Math.max(20, maxWidth - prefixW - labelW),
+      });
+  };
+
+  // ========== PAGES 5..: OVERLAY CONSTRAINS (2 per page) ==========
   for (let p = 0; p < overlayPages; p += 1) {
     doc.addPage();
     header(doc, {
-      title: "Potential cautions",
+      title: "Overlay constrains",
       addressLabel,
       schemeVersion,
       logoBuffer,
@@ -1455,10 +1451,10 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Potential cautions", x, top);
+      .text("Overlay constrains", x, top);
     boundedText(
       doc,
-      "Overlays returned by current spatial inputs. Verify against authoritative mapping.",
+      "Overlay constraints returned by current spatial inputs.",
       x,
       top + 26,
       w,
@@ -1466,9 +1462,9 @@ export async function buildTownPlannerReportPdfV2(
       { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
     );
 
-    const blockTopY = top + 60;
-    const blockH = 300;
-    const gapY = 18;
+    const blockTopY = top + 52;
+    const blockH = 274;
+    const gapY = 12;
 
     const drawOverlayBlock = (item, y) => {
       box(doc, x, y, w, blockH);
@@ -1478,105 +1474,222 @@ export async function buildTownPlannerReportPdfV2(
           .fillColor(BRAND.muted)
           .font("Helvetica")
           .fontSize(10)
-          .text("No overlays.", x, y + blockH / 2 - 6, {
+          .text("No overlays identified for this site.", x, y + blockH / 2 - 6, {
             width: w,
             align: "center",
           });
         return;
       }
 
-      // Title + meta
+      const { base, detail } = splitOverlayName(item.name);
+      const overlayTitle = String(base || item.name || "Overlay constraint").trim();
+      const subRaw = sanitizeOverlaySubcategory(detail || item.severity || "");
+      const subcategory = /procedures for air navigation surfaces/i.test(subRaw)
+        ? `${subRaw} subcategory.`
+        : subRaw || "Not mapped";
+      const ref = resolveOverlayAssessmentRef(overlayTitle);
+
       doc
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
-        .fontSize(12)
-        .text(item.name, x + 14, y + 12, { width: w - 28 });
+        .fontSize(13)
+        .text(overlayTitle, x + 14, y + 12, { width: w - 28 });
 
-      const areaText =
-        item.areaIntersectM2 == null
-          ? "N/A"
-          : `${Math.round(item.areaIntersectM2).toLocaleString("en-AU")} m²`;
-
-      boundedText(
-        doc,
-        `Overlay code: ${item.code || "N/A"}   •   Intersect area: ${areaText}`,
-        x + 14,
-        y + 32,
-        w - 28,
-        16,
-        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
-      );
-
-      // Two-column layout: map left, text right
-      const innerY = y + 54;
-      const innerH = 228;
-      const innerX = x + 14;
-      const innerW = w - 28;
-      const colGap = 12;
-      const mapW = Math.floor(innerW * 0.62);
-      const textW = innerW - mapW - colGap;
-
-      // Map (cover-fill to remove right whitespace)
+      const mapY = y + 36;
+      const mapH = 132;
       drawCoverImageInRoundedBox(
         doc,
         item.mapBuffer,
-        innerX,
-        innerY,
-        mapW,
-        innerH,
-        12
+        x + 14,
+        mapY,
+        w - 28,
+        mapH,
+        10
       );
-
-      // Text panel
-      box(doc, innerX + mapW + colGap, innerY, textW, innerH, {
-        fill: BRAND.white,
-        stroke: BRAND.border,
-        r: 12,
-      });
-
-      const summary =
-        item.narrativeSummary ||
-        (item.severity
-          ? `Mapped overlay. Notes: ${item.severity}.`
-          : "Mapped overlay. Review relevant City Plan codes and mapping legend.");
 
       boundedText(
         doc,
-        "Summary",
-        innerX + mapW + colGap + 12,
-        innerY + 12,
-        textW - 24,
+        "Subcategory",
+        x + 14,
+        mapY + mapH + 10,
+        w - 28,
         16,
         {
           font: "Helvetica-Bold",
-          fontSize: 10,
-          color: BRAND.teal2,
+          fontSize: 11,
+          color: BRAND.text,
           ellipsis: false,
         }
       );
 
       boundedText(
         doc,
-        summary,
-        innerX + mapW + colGap + 12,
-        innerY + 32,
-        textW - 24,
-        innerH - 44,
+        subcategory,
+        x + 14,
+        mapY + mapH + 28,
+        w - 28,
+        24,
         {
           font: "Helvetica",
-          fontSize: 9,
-          color: BRAND.muted,
+          fontSize: 10,
+          color: BRAND.text,
           ellipsis: true,
         }
       );
+
+      boundedText(
+        doc,
+        "Category of assessment",
+        x + 14,
+        mapY + mapH + 54,
+        w - 28,
+        16,
+        {
+          font: "Helvetica-Bold",
+          fontSize: 11,
+          color: BRAND.text,
+          ellipsis: false,
+        }
+      );
+
+      drawReferLine(ref.label, ref.url, x + 14, mapY + mapH + 72, w - 28);
     };
 
-    const i1 = overlayItems[p * 2] || null;
-    const i2 = overlayItems[p * 2 + 1] || null;
+    const i1 = orderedOverlayItems[p * 2] || null;
+    const i2 = orderedOverlayItems[p * 2 + 1] || null;
 
     drawOverlayBlock(i1, blockTopY);
     drawOverlayBlock(i2, blockTopY + blockH + gapY);
   }
+
+  const renderDevelopmentControlsPage = () => {
+    doc.addPage();
+    {
+      header(doc, {
+        title: "Development controls",
+        addressLabel,
+        schemeVersion,
+        logoBuffer,
+      });
+
+      const x = X(doc);
+      const w = contentW(doc);
+      const top = Y(doc) + 84;
+
+      doc
+        .fillColor(BRAND.text)
+        .font("Helvetica-Bold")
+        .fontSize(20)
+        .text("Key development controls", x, top);
+      boundedText(
+        doc,
+        "Populated from bcc_planning_controls_v2 where available.",
+        x,
+        top + 26,
+        w,
+        18,
+        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+      );
+
+      const cardY = top + 60;
+      const gap = 12;
+      const cardW = (w - gap) / 2;
+      const cardH = 240;
+
+      const get = (k, fallback = "Not available from provided controls") => {
+        const v = mergedControls?.[k];
+        return v != null && String(v).trim() !== "" ? String(v) : fallback;
+      };
+
+      box(doc, x, cardY, cardW, cardH);
+      doc
+        .fillColor(BRAND.teal2)
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text("Lot & built form", x + 14, cardY + 12);
+      boundedText(
+        doc,
+        [
+          `Maximum building height: ${get("maximumHeight")}`,
+          `Maximum site coverage: ${get("maximumSiteCoverage")}`,
+          `Plot ratio / GFA: ${get("plotRatio")}`,
+          `Density (if applicable): ${get("density")}`,
+        ].join("\n"),
+        x + 14,
+        cardY + 36,
+        cardW - 28,
+        cardH - 54,
+        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      );
+
+      box(doc, x + cardW + gap, cardY, cardW, cardH);
+      doc
+        .fillColor(BRAND.teal2)
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text("Subdivision & dimensions", x + cardW + gap + 14, cardY + 12);
+      boundedText(
+        doc,
+        [
+          `Minimum lot size: ${get("minimumLotSize")}`,
+          `Minimum frontage: ${get("minimumFrontage")}`,
+          `Site area (approx.): ${formatAreaM2(areaM2)}`,
+          `Coordinates: ${formatCoords(lat, lng)}`,
+        ].join("\n"),
+        x + cardW + gap + 14,
+        cardY + 36,
+        cardW - 28,
+        cardH - 54,
+        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      );
+
+      const srcY = cardY + cardH + 14;
+      box(doc, x, srcY, w, 280);
+      doc
+        .fillColor(BRAND.teal2)
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text("Controls sources", x + 14, srcY + 12);
+
+      const srcLines = sources.length
+        ? sources
+            .slice(0, 8)
+            .map(
+              (s) =>
+                `• ${s.label || "Source"}${s.sourceCitation ? ` — ${s.sourceCitation}` : ""}`
+            )
+        : [
+            "• No matching control records were returned for this site. Populate bcc_planning_controls_v2 to enrich this section.",
+          ];
+
+      boundedText(doc, srcLines.join("\n"), x + 14, srcY + 34, w - 28, 180, {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: true,
+      });
+
+      const devBullets =
+        narrative?.sections?.find((s) => s?.id === "development")?.bullets || [];
+      const note = devBullets.length
+        ? devBullets
+            .slice(0, 4)
+            .map((b) => `• ${b}`)
+            .join("\n")
+        : "";
+      if (note) {
+        boundedText(doc, note, x + 14, srcY + 220, w - 28, 50, {
+          font: "Helvetica",
+          fontSize: 9,
+          color: BRAND.muted,
+          ellipsis: true,
+        });
+      }
+    }
+  };
+
+  // ========== PAGE 5 + overlay pages: DEVELOPMENT CONTROLS ==========
+  renderDevelopmentControlsPage();
 
   // ========== LAST PAGE: REFERENCES & DISCLAIMER ==========
   doc.addPage();
