@@ -873,15 +873,22 @@ export async function getParcelOverlayMapImageBufferV2({
       paths: [...selectedOverlayPaths, parcelPath],
     });
 
-    // If URL is too long, keep key overlay paths and progressively thin the rest.
+    // If URL is too long, progressively thin overlay paths while keeping broad coverage.
     if (url.length > MAX_URL_LEN) {
-      const fixedCount = Math.min(4, selectedOverlayPaths.length);
-      const fixedPaths = selectedOverlayPaths.slice(0, fixedCount);
-      let variablePaths = selectedOverlayPaths.slice(fixedCount);
+      const minOverlayPaths = Math.min(
+        debugLabel === "critical-overlay" ? 24 : 4,
+        selectedOverlayPaths.length
+      );
+      let workingPaths = selectedOverlayPaths.slice();
 
-      while (url.length > MAX_URL_LEN && variablePaths.length > 0) {
-        variablePaths = variablePaths.filter((_, idx) => idx % 2 === 0);
-        selectedOverlayPaths = fixedPaths.concat(variablePaths);
+      while (url.length > MAX_URL_LEN && workingPaths.length > minOverlayPaths) {
+        const nextCount = Math.max(
+          minOverlayPaths,
+          Math.floor(workingPaths.length * 0.7)
+        );
+        if (nextCount >= workingPaths.length) break;
+        workingPaths = pickEvenly(workingPaths, nextCount);
+        selectedOverlayPaths = workingPaths;
         url = buildStaticMapUrl({
           apiKey,
           center: { lat: c.lat, lng: c.lng },
@@ -901,6 +908,7 @@ export async function getParcelOverlayMapImageBufferV2({
             debugLabel,
             originalCount: overlayPaths.length,
             trimmedCount: selectedOverlayPaths.length,
+            minOverlayPaths,
             urlLength: url.length,
           },
         );

@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.23";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.24";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -408,8 +408,8 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
       const width = Math.max(0.0001, maxLng - minLng);
       const height = Math.max(0.0001, maxLat - minLat);
       // Localized hatch window around the site parcel.
-      const padLng = Math.max(width * 8, 0.0075);
-      const padLat = Math.max(height * 8, 0.0055);
+      const padLng = Math.max(width * 4, 0.0032);
+      const padLat = Math.max(height * 4, 0.0024);
       minLng -= padLng;
       maxLng += padLng;
       minLat -= padLat;
@@ -426,10 +426,10 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
     const lat = Number(centerPoint?.lat);
     const lng = Number(centerPoint?.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    minLng = lng - 0.012;
-    maxLng = lng + 0.012;
-    minLat = lat - 0.0085;
-    maxLat = lat + 0.0085;
+    minLng = lng - 0.0055;
+    maxLng = lng + 0.0055;
+    minLat = lat - 0.0042;
+    maxLat = lat + 0.0042;
   }
 
   const width = maxLng - minLng;
