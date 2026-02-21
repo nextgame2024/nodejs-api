@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.8";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.9";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -355,6 +355,40 @@ function sanitizeOverlaySubcategory(v) {
     .replace(/security\s*label\s*:?.*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function deriveAirportMapCenter(baseCenter, airportOverlayLayers = []) {
+  if (!baseCenter) return null;
+  const lat = Number(baseCenter.lat);
+  const lng = Number(baseCenter.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const features = airportOverlayLayers
+    .map((layer) => layer?.geoJson)
+    .filter(Boolean);
+  if (!features.length) return { lat, lng: lng + 0.0016 };
+
+  try {
+    const fc = turf.featureCollection(features);
+    const [minLng, minLat, maxLng, maxLat] = turf.bbox(fc);
+    if (
+      ![minLng, minLat, maxLng, maxLat].every((v) => Number.isFinite(v))
+    ) {
+      return { lat, lng: lng + 0.0016 };
+    }
+
+    const overlayCenterLng = (minLng + maxLng) / 2;
+    const overlayCenterLat = (minLat + maxLat) / 2;
+    const spanLng = Math.max(0, maxLng - minLng);
+    const eastNudge = Math.min(Math.max(spanLng * 0.07, 0.0009), 0.0028);
+
+    return {
+      lat: lat * 0.92 + overlayCenterLat * 0.08,
+      lng: lng * 0.72 + overlayCenterLng * 0.28 + eastNudge,
+    };
+  } catch {
+    return { lat, lng: lng + 0.0016 };
+  }
 }
 
 function buildOverlayLines(items, limit = 14) {
@@ -782,12 +816,15 @@ export async function buildTownPlannerReportPdfV2(
 
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
+    const mapCenter = isAirportOverlay
+      ? deriveAirportMapCenter(center, airportOverlayLayers)
+      : center;
 
     let mapBuffer =
       parcelFeature && (overlayFeature || hasAirportOverlayLayers)
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
-            center,
+            center: mapCenter,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
             overlayLayers: airportOverlayLayers,
@@ -811,7 +848,7 @@ export async function buildTownPlannerReportPdfV2(
     if (!mapBuffer && parcelFeature) {
       mapBuffer = await getParcelMapImageBufferV2({
         apiKey,
-        center,
+        center: mapCenter,
         parcelGeoJson: parcelFeature,
         parcelColor: "0xffeb3bff",
         parcelFill: "0x00000000",
