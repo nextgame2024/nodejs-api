@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.36";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.37";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1276,16 +1276,16 @@ export async function buildTownPlannerReportPdfV2(
     "Bicycle network overlay",
     "Critical infrastructure and movement areas overlay",
     "Dwelling house character overlay",
-    "Streetscape hierarchy overlay",
     "Road hierarchy overlay",
+    "Streetscape hierarchy overlay",
   ].map((v) => normalizeOverlayKey(v));
   const overlayCodePriority = [
     "overlay_airport_pans",
     "overlay_bicycle_network",
     "overlay_critical_infrastructure_movement",
     "character_dwelling_house",
-    "overlay_streetscape_hierarchy",
     "overlay_road_hierarchy",
+    "overlay_streetscape_hierarchy",
   ];
   const overlayRank = (item) => {
     const baseKey = normalizeOverlayKey(splitOverlayName(item?.name).base);
