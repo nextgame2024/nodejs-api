@@ -672,6 +672,7 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
   overlayLayers = null, // [{ geoJson, color, fill, weight }]
+  debugLabel = null,
   paddingPx = 110,
   styles = null,
 }) {
@@ -699,6 +700,7 @@ export async function getParcelOverlayMapImageBufferV2({
   const maxLinesPerLayer = rawLayers.length > 1 ? 3 : 6;
 
   const preparedLayers = [];
+  const preparedLayerDebug = [];
   for (const layer of rawLayers) {
     const ringsRaw = extractPolygonRings(layer?.geoJson);
     const linesRaw = extractLinePaths(layer?.geoJson);
@@ -716,9 +718,27 @@ export async function getParcelOverlayMapImageBufferV2({
       fallbackRing: selectBestOverlayRing(ringsRaw, parcelRingRaw) || null,
       fallbackLine: orderedLines[0] || null,
     });
+
+    preparedLayerDebug.push({
+      color: layer?.color || overlayColor,
+      fill: layer?.fill || overlayFill,
+      weight: Number(layer?.weight) || overlayWeight,
+      rawRingCount: ringsRaw.length,
+      rawLineCount: linesRaw.length,
+      selectedRingCount: Math.min(orderedRings.length, maxRingsPerLayer),
+      selectedLineCount: Math.min(orderedLines.length, maxLinesPerLayer),
+    });
   }
 
-  if (!preparedLayers.length) return null;
+  if (!preparedLayers.length) {
+    if (debugLabel) {
+      console.warn("[static-maps][overlay-debug] no prepared layers", {
+        debugLabel,
+        rawLayerCount: rawLayers.length,
+      });
+    }
+    return null;
+  }
 
   const parcelBounds = boundsFromRings([parcelRingRaw]);
   const allOverlayParts = [];
@@ -753,6 +773,22 @@ export async function getParcelOverlayMapImageBufferV2({
     paddingPx,
     maxZoom: zoom,
   });
+
+  if (debugLabel) {
+    console.info("[static-maps][overlay-debug] prepared", {
+      debugLabel,
+      fitZoom,
+      requestedMaxZoom: zoom,
+      fitToParcel,
+      centerProvided: center || null,
+      centerUsed: c,
+      size,
+      scale,
+      paddingPx,
+      layerCount: preparedLayers.length,
+      layers: preparedLayerDebug,
+    });
+  }
 
   const parcelPrefix = `fillcolor:${parcelFill}|color:${parcelColor}|weight:${parcelWeight}|`;
 
@@ -796,7 +832,18 @@ export async function getParcelOverlayMapImageBufferV2({
     if (url.length > MAX_URL_LEN) continue;
 
     const buf = await fetchStaticMapImageBuffer(url);
-    if (buf) return buf;
+    if (buf) {
+      if (debugLabel) {
+        console.info("[static-maps][overlay-debug] primary render success", {
+          debugLabel,
+          eps,
+          fitZoom,
+          overlayPathCount: overlayPaths.length,
+          urlLength: url.length,
+        });
+      }
+      return buf;
+    }
   }
 
   const parcelRing = simplifyRing(parcelRingRaw, 0.0004, 120);
@@ -815,7 +862,14 @@ export async function getParcelOverlayMapImageBufferV2({
     if (ring) fallbackPaths.push(`${layerPrefix}${ringToEncodedPath(ring)}`);
     if (line) fallbackPaths.push(`${layerLinePrefix}${lineToEncodedPath(line)}`);
   }
-  if (!fallbackPaths.length) return null;
+  if (!fallbackPaths.length) {
+    if (debugLabel) {
+      console.warn("[static-maps][overlay-debug] no fallback paths", {
+        debugLabel,
+      });
+    }
+    return null;
+  }
 
   const url = buildStaticMapUrl({
     apiKey,
@@ -831,8 +885,26 @@ export async function getParcelOverlayMapImageBufferV2({
     ],
   });
 
-  if (url.length > MAX_URL_LEN) return null;
-  return fetchStaticMapImageBuffer(url);
+  if (url.length > MAX_URL_LEN) {
+    if (debugLabel) {
+      console.warn("[static-maps][overlay-debug] fallback url too long", {
+        debugLabel,
+        urlLength: url.length,
+      });
+    }
+    return null;
+  }
+  const fallbackBuf = await fetchStaticMapImageBuffer(url);
+  if (debugLabel) {
+    console.info("[static-maps][overlay-debug] fallback render result", {
+      debugLabel,
+      fitZoom,
+      fallbackPathCount: fallbackPaths.length,
+      urlLength: url.length,
+      success: !!fallbackBuf,
+    });
+  }
+  return fallbackBuf;
 }
 
 // Backwards-compatible aliases

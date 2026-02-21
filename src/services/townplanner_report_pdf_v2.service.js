@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.13";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.14";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -360,18 +360,6 @@ function sanitizeOverlaySubcategory(v) {
     .trim();
 }
 
-function nudgeCenterLng(baseCenter, lngOffsetDeg = 0) {
-  if (!baseCenter) return null;
-  const lat = Number(baseCenter.lat);
-  const lng = Number(baseCenter.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  const offset = Number(lngOffsetDeg);
-  return {
-    lat,
-    lng: lng + (Number.isFinite(offset) ? offset : 0),
-  };
-}
-
 function lineCandidatesFromGeometry(geometry) {
   if (!geometry) return [];
   const type = String(geometry?.type || "");
@@ -468,6 +456,42 @@ function deriveAirportMapCenter(baseCenter, pansGeometry, blueGeometry) {
 
   const deltaLng = Math.max(-0.008, Math.min(0.008, targetLng - lng));
   return { lat, lng: lng + deltaLng };
+}
+
+function geometryDebugStats(geometry) {
+  if (!geometry) return { present: false };
+
+  const stats = {
+    present: true,
+    type: String(geometry?.type || "Unknown"),
+    polygonCount: 0,
+    lineCount: 0,
+    pointCount: 0,
+  };
+
+  const walk = (g) => {
+    if (!g) return;
+    const t = String(g?.type || "");
+    if (t === "Polygon" || t === "MultiPolygon") stats.polygonCount += 1;
+    else if (t === "LineString" || t === "MultiLineString") stats.lineCount += 1;
+    else if (t === "Point" || t === "MultiPoint") stats.pointCount += 1;
+    else if (t === "GeometryCollection") {
+      for (const child of g?.geometries || []) walk(child);
+    }
+  };
+  walk(geometry);
+
+  try {
+    const feature = featureFromGeometry(geometry);
+    if (feature) {
+      const bbox = turf.bbox(feature);
+      if (Array.isArray(bbox) && bbox.length === 4) {
+        stats.bbox = bbox.map((v) => Number(Number(v).toFixed(6)));
+      }
+    }
+  } catch {}
+
+  return stats;
 }
 
 function buildOverlayLines(items, limit = 14) {
@@ -901,10 +925,50 @@ export async function buildTownPlannerReportPdfV2(
 
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
+    const pansNearDebug = isAirportOverlay
+      ? nearestOverlayBoundaryPoint(center, airportPansGeom)
+      : null;
+    const blueNearDebug = isAirportOverlay
+      ? nearestOverlayBoundaryPoint(center, airportBlueGeom)
+      : null;
     const mapCenter = isAirportOverlay
       ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
       : center;
 
+    if (isAirportOverlay) {
+      const airportCodesInSnapshot = overlayPolygons
+        .filter((x) => String(x?.code || "").startsWith("overlay_airport_"))
+        .map((x) => x?.code);
+      console.info("[townplanner_v2][airport_overlay_debug] inputs", {
+        overlayName: name,
+        overlayCode: code,
+        center,
+        mapCenter,
+        overlayZoom,
+        overlayPaddingPx,
+        airportCodesInSnapshot,
+        hasAirportOverlayLayers,
+        airportOverlayLayerCount: airportOverlayLayers?.length || 0,
+        pansGeom: geometryDebugStats(airportPansGeom),
+        blueGeom: geometryDebugStats(airportBlueGeom),
+        pansNear: pansNearDebug
+          ? {
+              lat: Number(pansNearDebug.lat?.toFixed(6)),
+              lng: Number(pansNearDebug.lng?.toFixed(6)),
+              distKm: Number(pansNearDebug.distKm?.toFixed(6)),
+            }
+          : null,
+        blueNear: blueNearDebug
+          ? {
+              lat: Number(blueNearDebug.lat?.toFixed(6)),
+              lng: Number(blueNearDebug.lng?.toFixed(6)),
+              distKm: Number(blueNearDebug.distKm?.toFixed(6)),
+            }
+          : null,
+      });
+    }
+
+    let usedParcelFallback = false;
     let mapBuffer =
       parcelFeature && (overlayFeature || hasAirportOverlayLayers)
         ? await getParcelOverlayMapImageBufferV2({
@@ -913,6 +977,7 @@ export async function buildTownPlannerReportPdfV2(
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
             overlayLayers: airportOverlayLayers,
+            debugLabel: isAirportOverlay ? "airport-overlay" : null,
             parcelColor: "0xffeb3bff",
             parcelFill: "0x00000000",
             parcelWeight: 4,
@@ -931,6 +996,14 @@ export async function buildTownPlannerReportPdfV2(
     // Some overlays can be non-polygon or too large to render reliably as
     // parcel+overlay; ensure we still show the parcel map instead of blank.
     if (!mapBuffer && parcelFeature) {
+      usedParcelFallback = true;
+      if (isAirportOverlay) {
+        console.warn("[townplanner_v2][airport_overlay_debug] overlay map render returned null; using parcel-only fallback", {
+          center,
+          mapCenter,
+          overlayCode: code,
+        });
+      }
       mapBuffer = await getParcelMapImageBufferV2({
         apiKey,
         center: mapCenter,
@@ -943,6 +1016,15 @@ export async function buildTownPlannerReportPdfV2(
         size: "640x360",
         scale: 2,
       }).catch(() => null);
+    }
+
+    if (isAirportOverlay) {
+      console.info("[townplanner_v2][airport_overlay_debug] map result", {
+        overlayCode: code,
+        usedFallbackParcelMap: usedParcelFallback,
+        hasBuffer: !!mapBuffer,
+        mapBufferBytes: mapBuffer?.length || 0,
+      });
     }
 
     let narrativeSummary = "";
