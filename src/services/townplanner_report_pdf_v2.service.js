@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.34";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.35";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1192,7 +1192,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
-            zoomNudge: isDwellingOverlay ? 1 : 0,
+            zoomNudge: isDwellingOverlay ? 2 : 0,
             fitToParcel: !isDwellingOverlay,
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
