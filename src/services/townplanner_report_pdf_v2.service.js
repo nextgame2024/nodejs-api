@@ -438,7 +438,7 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
 
   const span = width + height;
   // Very dense hatch pattern to match City Plan visual style.
-  const step = Math.max(Math.min(span / 180, 0.00016), 0.00006);
+  const step = Math.max(Math.min(span / 220, 0.00016), 0.00006);
   const start = minLng - height;
   const end = maxLng + height;
 
