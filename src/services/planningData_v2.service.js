@@ -237,6 +237,121 @@ async function queryIntersects(table, parcelGeomGeoJSON) {
 }
 
 /**
+ * Build a broader zoning geometry context around the site by merging nearby
+ * polygons with the same zone key. This avoids rendering only a tiny zoning
+ * fragment when the zone is split by road/reserve boundaries.
+ */
+async function queryZoningContextGeometry({
+  table = "bcc_zoning",
+  lng,
+  lat,
+  zoneCode = null,
+  zoneName = null,
+  withinDistanceMeters = 320,
+}) {
+  if (!pool) return null;
+  if (!(await tableExists(table))) return null;
+
+  const codeNorm = String(zoneCode || "")
+    .trim()
+    .toLowerCase();
+  const nameNorm = String(zoneName || "")
+    .trim()
+    .toLowerCase();
+  const nameCoreNorm = nameNorm.replace(/^[a-z0-9]+\s*-\s*/, "").trim();
+  if (!codeNorm && !nameNorm) return null;
+
+  const geom4326 = geomTo4326Sql("geom");
+  const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
+
+  const codeExpr = `
+    lower(
+      coalesce(
+        nullif(properties->>'zone_code',''),
+        nullif(properties->>'ZONE_CODE',''),
+        nullif(properties->>'zone',''),
+        nullif(properties->>'ZONE','')
+      )
+    )
+  `;
+  const nameExpr = `
+    lower(
+      coalesce(
+        nullif(properties->>'zone_prec_desc',''),
+        nullif(properties->>'ZONE_PREC_DESC',''),
+        nullif(properties->>'zone_desc',''),
+        nullif(properties->>'ZONE_DESC',''),
+        nullif(properties->>'zone_name',''),
+        nullif(properties->>'ZONE_NAME',''),
+        nullif(properties->>'lvl2_zone',''),
+        nullif(properties->>'LVL2_ZONE',''),
+        nullif(properties->>'lvl1_zone',''),
+        nullif(properties->>'LVL1_ZONE','')
+      )
+    )
+  `;
+
+  const params = [lng, lat];
+  const predicates = [];
+  if (codeNorm) {
+    params.push(codeNorm);
+    predicates.push(`${codeExpr} = $${params.length}`);
+  }
+  if (nameNorm) {
+    params.push(`%${nameNorm}%`);
+    predicates.push(`${nameExpr} LIKE $${params.length}`);
+  }
+  if (nameCoreNorm && nameCoreNorm !== nameNorm) {
+    params.push(`%${nameCoreNorm}%`);
+    predicates.push(`${nameExpr} LIKE $${params.length}`);
+  }
+
+  if (!predicates.length) return null;
+
+  params.push(withinDistanceMeters);
+  const distIdx = params.length;
+
+  const sql = `
+    WITH src AS (
+      SELECT ST_MakeValid(${geom4326}) AS g
+      FROM ${table}
+      WHERE (${predicates.join(" OR ")})
+        AND ST_DWithin((${geom4326})::geography, (${pointExpr})::geography, $${distIdx})
+    ),
+    merged AS (
+      SELECT
+        COUNT(*)::int AS feature_count,
+        ST_UnaryUnion(ST_Collect(g)) AS g
+      FROM src
+    )
+    SELECT
+      feature_count,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(g),
+          0.00001
+        )
+      ) AS geom_geojson
+    FROM merged;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    const row = rows?.[0];
+    const geometry = safeJsonParse(row?.geom_geojson);
+    const featureCount = Number(row?.feature_count || 0);
+    if (!geometry || featureCount < 1) return null;
+    return { geometry, featureCount };
+  } catch (err) {
+    console.error(
+      `[townplanner_v2] queryZoningContextGeometry failed for ${table}:`,
+      err?.message || err
+    );
+    return null;
+  }
+}
+
+/**
  * For line/network layers: prefer parcel proximity if parcel geom exists,
  * otherwise fallback to point-based queryOne.
  */
@@ -529,7 +644,6 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   }
 
   const zoningProps = zoning?.properties || null;
-  const zoningPolygon = zoning?.geometry || null;
 
   const zoningName =
     readProp(zoningProps, [
@@ -547,6 +661,27 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
 
   const zoningCode =
     readProp(zoningProps, ["zone_code", "ZONE_CODE", "ZONE", "zone"]) || null;
+
+  const zoningContext = await queryZoningContextGeometry({
+    table: "bcc_zoning",
+    lng: focusLng,
+    lat: focusLat,
+    zoneCode: zoningCode,
+    zoneName: zoningName,
+    withinDistanceMeters: 320,
+  });
+  const zoningPolygon = zoningContext?.geometry || zoning?.geometry || null;
+  console.info("[townplanner_v2] zoning context geometry", {
+    lat: safeLat,
+    lng: safeLng,
+    focusLat,
+    focusLng,
+    zoningCode,
+    zoningName,
+    baseType: zoning?.geometry?.type || null,
+    contextType: zoningContext?.geometry?.type || null,
+    contextFeatureCount: zoningContext?.featureCount || 0,
+  });
 
   const npBoundaryProps = npB?.properties || null;
   const npPrecinctProps = npP?.properties || null;

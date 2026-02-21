@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.26";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.27";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -968,15 +968,26 @@ export async function buildTownPlannerReportPdfV2(
   if (parcelFeature && zoningFeature) {
     zoningMap = await getParcelOverlayMapImageBufferV2({
       apiKey,
-      center: null,
+      center,
       parcelGeoJson: parcelFeature,
       overlayGeoJson: zoningFeature,
+      overlayLayers: [
+        {
+          geoJson: zoningFeature,
+          color: "0x00000000",
+          fill: "0xff8a8a2f",
+          weight: 1,
+          includeHoles: false,
+          maxRings: 24,
+        },
+      ],
       debugLabel: "zoning-map",
       parcelColor: "0xffeb3bff",
       parcelFill: "0xffeb3b22",
-      overlayColor: "0xff6b6bff",
+      overlayColor: "0x00000000",
       overlayFill: "0xff8a8a2f",
-      zoom: 17,
+      overlayWeight: 1,
+      zoom: 18,
       maptype: "hybrid",
       size: "640x380",
       scale: 2,
