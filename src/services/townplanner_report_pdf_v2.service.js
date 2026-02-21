@@ -804,7 +804,7 @@ export async function buildTownPlannerReportPdfV2(
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
     const mapCenter = isAirportOverlay
-      ? nudgeCenterLng(center, 0.0046)
+      ? nudgeCenterLng(center, 0.0066)
       : center;
 
     let mapBuffer =
