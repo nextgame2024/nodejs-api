@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.33";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.34";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1055,7 +1055,7 @@ export async function buildTownPlannerReportPdfV2(
         : isCriticalOverlay
           ? "0xff3b3bff"
           : palette.outline;
-    const overlayFillColor = isDwellingOverlay ? "0xffef9a4d" : "0x00000000";
+    const overlayFillColor = isDwellingOverlay ? "0xe46e6e66" : "0x00000000";
     const overlayZoom = isAirportOverlay ? 14 : isDwellingOverlay ? 18 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : isDwellingOverlay ? 98 : 110;
 
@@ -1104,7 +1104,7 @@ export async function buildTownPlannerReportPdfV2(
           {
             geoJson: overlayFeature,
             color: "0x00000000",
-            fill: "0xffef9a4d",
+            fill: "0xe46e6e66",
             weight: 1,
             includeHoles: false,
             maxRings: 24,
@@ -1182,13 +1182,17 @@ export async function buildTownPlannerReportPdfV2(
                 : isDwellingOverlay
                   ? "dwelling-overlay"
                 : null,
-            parcelColor: isDwellingOverlay ? "0xfffff176ff" : "0xffeb3bff",
-            parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
+            parcelColor: "0xffeb3bff",
+            parcelFill:
+              isCriticalOverlay || isDwellingOverlay
+                ? "0xffeb3b4d"
+                : "0x00000000",
             parcelWeight: 4,
             overlayColor,
             overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
+            zoomNudge: isDwellingOverlay ? 1 : 0,
             fitToParcel: !isDwellingOverlay,
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
@@ -1215,8 +1219,11 @@ export async function buildTownPlannerReportPdfV2(
         apiKey,
         center: mapCenter,
         parcelGeoJson: parcelFeature,
-        parcelColor: isDwellingOverlay ? "0xfffff176ff" : "0xffeb3bff",
-        parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
+        parcelColor: "0xffeb3bff",
+        parcelFill:
+          isCriticalOverlay || isDwellingOverlay
+            ? "0xffeb3b4d"
+            : "0x00000000",
         parcelWeight: 4,
         zoom: isAirportOverlay || isDwellingOverlay ? overlayZoom : 19,
         maptype: "hybrid",
@@ -1983,9 +1990,12 @@ export async function buildTownPlannerReportPdfV2(
         base || item.name || "Overlay constraint",
       ).trim();
       const subRaw = sanitizeOverlaySubcategory(detail || item.severity || "");
-      const subcategory = /procedures for air navigation surfaces/i.test(subRaw)
-        ? `${subRaw} subcategory.`
-        : subRaw || "Not mapped";
+      const subBase = /^(mapped overlay|not mapped)$/i.test(subRaw || "")
+        ? "N/A"
+        : subRaw || "N/A";
+      const subcategory = /procedures for air navigation surfaces/i.test(subBase)
+        ? `${subBase} subcategory.`
+        : subBase;
       const ref = resolveOverlayAssessmentRef(overlayTitle);
 
       doc
