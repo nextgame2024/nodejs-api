@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.19";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.20";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -437,8 +437,8 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
   if (!(width > 0 && height > 0)) return null;
 
   const span = width + height;
-  // Very dense hatch pattern to match City Plan visual style.
-  const step = Math.max(Math.min(span / 220, 0.00016), 0.00006);
+  // Extra-dense hatch pattern to match City Plan visual style.
+  const step = Math.max(Math.min(span / 420, 0.00008), 0.00003);
   const start = minLng - height;
   const end = maxLng + height;
 
@@ -448,7 +448,7 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
       [x, minLat],
       [x + width + height, maxLat],
     ]);
-    if (lines.length >= 420) break;
+    if (lines.length >= 900) break;
   }
 
   return featureFromGeometry({
@@ -514,7 +514,9 @@ function nearestOverlayBoundaryPoint(baseCenter, geometry) {
   let best = null;
   for (const line of lines) {
     try {
-      const near = turf.nearestPointOnLine(line, origin, { units: "kilometers" });
+      const near = turf.nearestPointOnLine(line, origin, {
+        units: "kilometers",
+      });
       const coords = near?.geometry?.coordinates;
       if (!Array.isArray(coords) || coords.length < 2) continue;
       const rawDist = Number(near?.properties?.dist);
@@ -574,7 +576,8 @@ function geometryDebugStats(geometry) {
     if (!g) return;
     const t = String(g?.type || "");
     if (t === "Polygon" || t === "MultiPolygon") stats.polygonCount += 1;
-    else if (t === "LineString" || t === "MultiLineString") stats.lineCount += 1;
+    else if (t === "LineString" || t === "MultiLineString")
+      stats.lineCount += 1;
     else if (t === "Point" || t === "MultiPoint") stats.pointCount += 1;
     else if (t === "GeometryCollection") {
       for (const child of g?.geometries || []) walk(child);
@@ -997,10 +1000,14 @@ export async function buildTownPlannerReportPdfV2(
       baseKey === normalizeOverlayKey("Bicycle network overlay");
     const isCriticalOverlay =
       overlayLookupKeys.includes(
-        normalizeOverlayKey("Critical infrastructure and movement areas overlay"),
+        normalizeOverlayKey(
+          "Critical infrastructure and movement areas overlay",
+        ),
       ) ||
       overlayLookupKeys.includes(
-        normalizeOverlayKey("Critical infrastructure and movement network overlay"),
+        normalizeOverlayKey(
+          "Critical infrastructure and movement network overlay",
+        ),
       );
 
     const overlayColor = isAirportOverlay
@@ -1009,7 +1016,7 @@ export async function buildTownPlannerReportPdfV2(
         ? "0xffc107ff"
         : isCriticalOverlay
           ? "0xff3b3bff"
-        : palette.outline;
+          : palette.outline;
     const overlayZoom = isAirportOverlay ? 14 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : 110;
 
@@ -1051,7 +1058,7 @@ export async function buildTownPlannerReportPdfV2(
             color: "0xff3b3bcc",
             fill: "0x00000000",
             weight: 1,
-            maxLines: 96,
+            maxLines: 110,
           },
         ].filter((x) => x.geoJson)
       : null;
@@ -1140,11 +1147,14 @@ export async function buildTownPlannerReportPdfV2(
     if (!mapBuffer && parcelFeature) {
       usedParcelFallback = true;
       if (isAirportOverlay) {
-        console.warn("[townplanner_v2][airport_overlay_debug] overlay map render returned null; using parcel-only fallback", {
-          center,
-          mapCenter,
-          overlayCode: code,
-        });
+        console.warn(
+          "[townplanner_v2][airport_overlay_debug] overlay map render returned null; using parcel-only fallback",
+          {
+            center,
+            mapCenter,
+            overlayCode: code,
+          },
+        );
       }
       mapBuffer = await getParcelMapImageBufferV2({
         apiKey,
