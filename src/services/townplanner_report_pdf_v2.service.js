@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.11";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.12";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -780,20 +780,20 @@ export async function buildTownPlannerReportPdfV2(
     const overlayZoom = isAirportOverlay ? 15 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : 110;
 
+    const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
+    const airportBlueGeom =
+      findOverlayGeometry("overlay_airport_ols") ||
+      findOverlayGeometry("overlay_airport_height");
     const airportOverlayLayers = isAirportOverlay
       ? [
           {
-            geoJson: featureFromGeometry(
-              findOverlayGeometry("overlay_airport_pans"),
-            ),
+            geoJson: featureFromGeometry(airportPansGeom),
             color: "0xffeb3bff",
             fill: "0x00000000",
             weight: 3,
           },
           {
-            geoJson: featureFromGeometry(
-              findOverlayGeometry("overlay_airport_ols"),
-            ),
+            geoJson: featureFromGeometry(airportBlueGeom),
             color: "0x2962ffff",
             fill: "0x00000000",
             weight: 3,
