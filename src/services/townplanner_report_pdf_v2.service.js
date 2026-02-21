@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.9";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.10";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -357,38 +357,16 @@ function sanitizeOverlaySubcategory(v) {
     .trim();
 }
 
-function deriveAirportMapCenter(baseCenter, airportOverlayLayers = []) {
+function nudgeCenterLng(baseCenter, lngOffsetDeg = 0) {
   if (!baseCenter) return null;
   const lat = Number(baseCenter.lat);
   const lng = Number(baseCenter.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-
-  const features = airportOverlayLayers
-    .map((layer) => layer?.geoJson)
-    .filter(Boolean);
-  if (!features.length) return { lat, lng: lng + 0.0016 };
-
-  try {
-    const fc = turf.featureCollection(features);
-    const [minLng, minLat, maxLng, maxLat] = turf.bbox(fc);
-    if (
-      ![minLng, minLat, maxLng, maxLat].every((v) => Number.isFinite(v))
-    ) {
-      return { lat, lng: lng + 0.0016 };
-    }
-
-    const overlayCenterLng = (minLng + maxLng) / 2;
-    const overlayCenterLat = (minLat + maxLat) / 2;
-    const spanLng = Math.max(0, maxLng - minLng);
-    const eastNudge = Math.min(Math.max(spanLng * 0.07, 0.0009), 0.0028);
-
-    return {
-      lat: lat * 0.92 + overlayCenterLat * 0.08,
-      lng: lng * 0.72 + overlayCenterLng * 0.28 + eastNudge,
-    };
-  } catch {
-    return { lat, lng: lng + 0.0016 };
-  }
+  const offset = Number(lngOffsetDeg);
+  return {
+    lat,
+    lng: lng + (Number.isFinite(offset) ? offset : 0),
+  };
 }
 
 function buildOverlayLines(items, limit = 14) {
@@ -816,9 +794,7 @@ export async function buildTownPlannerReportPdfV2(
 
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
-    const mapCenter = isAirportOverlay
-      ? deriveAirportMapCenter(center, airportOverlayLayers)
-      : center;
+    const mapCenter = isAirportOverlay ? nudgeCenterLng(center, 0.0012) : center;
 
     let mapBuffer =
       parcelFeature && (overlayFeature || hasAirportOverlayLayers)
