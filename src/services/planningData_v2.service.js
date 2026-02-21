@@ -352,6 +352,62 @@ async function queryZoningContextGeometry({
 }
 
 /**
+ * Merge nearby geometries from a table into a single context geometry.
+ * Useful for overlays that are split into adjacent polygons by roads.
+ */
+async function queryGeometryContextByDistance({
+  table,
+  lng,
+  lat,
+  withinDistanceMeters = 260,
+}) {
+  if (!pool) return null;
+  if (!table) return null;
+  if (!(await tableExists(table))) return null;
+
+  const geom4326 = geomTo4326Sql("geom");
+  const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
+
+  const sql = `
+    WITH src AS (
+      SELECT ST_MakeValid(${geom4326}) AS g
+      FROM ${table}
+      WHERE ST_DWithin((${geom4326})::geography, (${pointExpr})::geography, $3)
+    ),
+    merged AS (
+      SELECT
+        COUNT(*)::int AS feature_count,
+        ST_UnaryUnion(ST_Collect(g)) AS g
+      FROM src
+    )
+    SELECT
+      feature_count,
+      ST_AsGeoJSON(
+        ST_SimplifyPreserveTopology(
+          ST_MakeValid(g),
+          0.00001
+        )
+      ) AS geom_geojson
+    FROM merged;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [lng, lat, withinDistanceMeters]);
+    const row = rows?.[0];
+    const featureCount = Number(row?.feature_count || 0);
+    const geometry = safeJsonParse(row?.geom_geojson);
+    if (!geometry || featureCount < 1) return null;
+    return { geometry, featureCount };
+  } catch (err) {
+    console.error(
+      `[townplanner_v2] queryGeometryContextByDistance failed for ${table}:`,
+      err?.message || err
+    );
+    return null;
+  }
+}
+
+/**
  * For line/network layers: prefer parcel proximity if parcel geom exists,
  * otherwise fallback to point-based queryOne.
  */
@@ -643,6 +699,26 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     });
   }
 
+  const dwellingContext = dwellingCharacter?.geometry
+    ? await queryGeometryContextByDistance({
+        table: "bcc_dwelling_house_character",
+        lng: focusLng,
+        lat: focusLat,
+        withinDistanceMeters: 260,
+      })
+    : null;
+  const dwellingCharacterGeom =
+    dwellingContext?.geometry || dwellingCharacter?.geometry || null;
+  console.info("[townplanner_v2] dwelling overlay context", {
+    lat: safeLat,
+    lng: safeLng,
+    focusLat,
+    focusLng,
+    baseType: dwellingCharacter?.geometry?.type || null,
+    contextType: dwellingContext?.geometry?.type || null,
+    contextFeatureCount: dwellingContext?.featureCount || 0,
+  });
+
   const zoningProps = zoning?.properties || null;
 
   const zoningName =
@@ -856,7 +932,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   }
 
   // NEW: push character / heritage / airport overlays
-  pushOverlay(dwellingCharacter?.properties, dwellingCharacter?.geometry, {
+  pushOverlay(dwellingCharacter?.properties, dwellingCharacterGeom, {
     name: "Dwelling house character overlay",
     code: "character_dwelling_house",
     severity: "mapped overlay",

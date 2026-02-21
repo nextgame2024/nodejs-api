@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.32";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.33";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1032,6 +1032,8 @@ export async function buildTownPlannerReportPdfV2(
       baseKey === normalizeOverlayKey("Airport environs overlay");
     const isBicycleOverlay =
       baseKey === normalizeOverlayKey("Bicycle network overlay");
+    const isDwellingOverlay =
+      baseKey === normalizeOverlayKey("Dwelling house character overlay");
     const isCriticalOverlay =
       overlayLookupKeys.includes(
         normalizeOverlayKey(
@@ -1048,11 +1050,14 @@ export async function buildTownPlannerReportPdfV2(
       ? "0x2962ffff"
       : isBicycleOverlay
         ? "0xffc107ff"
+        : isDwellingOverlay
+          ? "0x00000000"
         : isCriticalOverlay
           ? "0xff3b3bff"
           : palette.outline;
-    const overlayZoom = isAirportOverlay ? 14 : 19;
-    const overlayPaddingPx = isAirportOverlay ? 84 : 110;
+    const overlayFillColor = isDwellingOverlay ? "0xffef9a4d" : "0x00000000";
+    const overlayZoom = isAirportOverlay ? 14 : isDwellingOverlay ? 18 : 19;
+    const overlayPaddingPx = isAirportOverlay ? 84 : isDwellingOverlay ? 98 : 110;
 
     const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
     const airportBlueGeom =
@@ -1094,10 +1099,25 @@ export async function buildTownPlannerReportPdfV2(
         ].filter((x) => x.geoJson)
       : null;
 
+    const dwellingOverlayLayers = isDwellingOverlay
+      ? [
+          {
+            geoJson: overlayFeature,
+            color: "0x00000000",
+            fill: "0xffef9a4d",
+            weight: 1,
+            includeHoles: false,
+            maxRings: 24,
+          },
+        ].filter((x) => x.geoJson)
+      : null;
+
     const customOverlayLayers = isAirportOverlay
       ? airportOverlayLayers
       : isCriticalOverlay
         ? criticalOverlayLayers
+        : isDwellingOverlay
+          ? dwellingOverlayLayers
         : null;
     const hasCustomOverlayLayers =
       Array.isArray(customOverlayLayers) && customOverlayLayers.length > 0;
@@ -1109,6 +1129,8 @@ export async function buildTownPlannerReportPdfV2(
       : null;
     const mapCenter = isAirportOverlay
       ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
+      : isDwellingOverlay
+        ? null
       : center;
 
     if (isAirportOverlay) {
@@ -1157,15 +1179,17 @@ export async function buildTownPlannerReportPdfV2(
               ? "airport-overlay"
               : isCriticalOverlay
                 ? "critical-overlay"
+                : isDwellingOverlay
+                  ? "dwelling-overlay"
                 : null,
-            parcelColor: "0xffeb3bff",
+            parcelColor: isDwellingOverlay ? "0xfffff176ff" : "0xffeb3bff",
             parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
             parcelWeight: 4,
             overlayColor,
-            overlayFill: "0x00000000",
+            overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
-            fitToParcel: true,
+            fitToParcel: !isDwellingOverlay,
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
             size: "640x360",
@@ -1191,10 +1215,10 @@ export async function buildTownPlannerReportPdfV2(
         apiKey,
         center: mapCenter,
         parcelGeoJson: parcelFeature,
-        parcelColor: "0xffeb3bff",
+        parcelColor: isDwellingOverlay ? "0xfffff176ff" : "0xffeb3bff",
         parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
         parcelWeight: 4,
-        zoom: isAirportOverlay ? overlayZoom : 19,
+        zoom: isAirportOverlay || isDwellingOverlay ? overlayZoom : 19,
         maptype: "hybrid",
         size: "640x360",
         scale: 2,
@@ -1235,16 +1259,16 @@ export async function buildTownPlannerReportPdfV2(
     "Airport environs overlay",
     "Bicycle network overlay",
     "Critical infrastructure and movement areas overlay",
-    "Streetscape hierarchy overlay",
     "Dwelling house character overlay",
+    "Streetscape hierarchy overlay",
     "Road hierarchy overlay",
   ].map((v) => normalizeOverlayKey(v));
   const overlayCodePriority = [
     "overlay_airport_pans",
     "overlay_bicycle_network",
     "overlay_critical_infrastructure_movement",
-    "overlay_streetscape_hierarchy",
     "character_dwelling_house",
+    "overlay_streetscape_hierarchy",
     "overlay_road_hierarchy",
   ];
   const overlayRank = (item) => {
