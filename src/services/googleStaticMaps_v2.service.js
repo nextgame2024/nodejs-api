@@ -836,8 +836,8 @@ export async function getParcelOverlayMapImageBufferV2({
     if (!overlayPaths.length) continue;
 
     const parcelPath = `${parcelPrefix}${ringToEncodedPath(parcelRing)}`;
-
-    const url = buildStaticMapUrl({
+    let selectedOverlayPaths = overlayPaths.slice();
+    let url = buildStaticMapUrl({
       apiKey,
       center: { lat: c.lat, lng: c.lng },
       zoom: fitZoom,
@@ -846,8 +846,39 @@ export async function getParcelOverlayMapImageBufferV2({
       maptype,
       styles,
       // Draw overlays first, parcel boundary last so lot outline remains visible.
-      paths: [...overlayPaths, parcelPath],
+      paths: [...selectedOverlayPaths, parcelPath],
     });
+
+    // If URL is too long, keep key overlay paths and progressively thin the rest.
+    if (url.length > MAX_URL_LEN) {
+      const fixedCount = Math.min(4, selectedOverlayPaths.length);
+      const fixedPaths = selectedOverlayPaths.slice(0, fixedCount);
+      let variablePaths = selectedOverlayPaths.slice(fixedCount);
+
+      while (url.length > MAX_URL_LEN && variablePaths.length > 0) {
+        variablePaths = variablePaths.filter((_, idx) => idx % 2 === 0);
+        selectedOverlayPaths = fixedPaths.concat(variablePaths);
+        url = buildStaticMapUrl({
+          apiKey,
+          center: { lat: c.lat, lng: c.lng },
+          zoom: fitZoom,
+          size,
+          scale,
+          maptype,
+          styles,
+          paths: [...selectedOverlayPaths, parcelPath],
+        });
+      }
+
+      if (debugLabel && selectedOverlayPaths.length < overlayPaths.length) {
+        console.info("[static-maps][overlay-debug] trimmed overlay paths for URL budget", {
+          debugLabel,
+          originalCount: overlayPaths.length,
+          trimmedCount: selectedOverlayPaths.length,
+          urlLength: url.length,
+        });
+      }
+    }
 
     if (url.length > MAX_URL_LEN) continue;
 
@@ -858,7 +889,7 @@ export async function getParcelOverlayMapImageBufferV2({
           debugLabel,
           eps,
           fitZoom,
-          overlayPathCount: overlayPaths.length,
+          overlayPathCount: selectedOverlayPaths.length,
           urlLength: url.length,
         });
       }
