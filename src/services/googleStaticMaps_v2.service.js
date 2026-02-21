@@ -19,7 +19,7 @@ function parseSize(sizeStr) {
 
 /**
  * Convert lat/lng to "world coordinates" in Web Mercator at zoom 0.
- * x,y in [0..1] range.
+ * x,y in [0..1] range
  */
 function latLngToWorld(lat, lng) {
   const clampedLat = clampLat(lat);
