@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.10";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.11";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -777,7 +777,7 @@ export async function buildTownPlannerReportPdfV2(
       : isBicycleOverlay
         ? "0xffc107ff"
         : palette.outline;
-    const overlayZoom = isAirportOverlay ? 16 : 19;
+    const overlayZoom = isAirportOverlay ? 15 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : 110;
 
     const airportOverlayLayers = isAirportOverlay
