@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.18";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.19";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -437,8 +437,8 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
   if (!(width > 0 && height > 0)) return null;
 
   const span = width + height;
-  // Dense hatch pattern to match City Plan visual style.
-  const step = Math.max(Math.min(span / 96, 0.00028), 0.00012);
+  // Very dense hatch pattern to match City Plan visual style.
+  const step = Math.max(Math.min(span / 180, 0.00016), 0.00006);
   const start = minLng - height;
   const end = maxLng + height;
 
@@ -448,7 +448,7 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
       [x, minLat],
       [x + width + height, maxLat],
     ]);
-    if (lines.length >= 220) break;
+    if (lines.length >= 420) break;
   }
 
   return featureFromGeometry({
@@ -1051,7 +1051,7 @@ export async function buildTownPlannerReportPdfV2(
             color: "0xff3b3bcc",
             fill: "0x00000000",
             weight: 1,
-            maxLines: 56,
+            maxLines: 96,
           },
         ].filter((x) => x.geoJson)
       : null;
