@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.12";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.13";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -370,6 +370,104 @@ function nudgeCenterLng(baseCenter, lngOffsetDeg = 0) {
     lat,
     lng: lng + (Number.isFinite(offset) ? offset : 0),
   };
+}
+
+function lineCandidatesFromGeometry(geometry) {
+  if (!geometry) return [];
+  const type = String(geometry?.type || "");
+
+  if (type === "LineString" || type === "MultiLineString") {
+    const f = featureFromGeometry(geometry);
+    return f ? [f] : [];
+  }
+
+  if (type === "Polygon" || type === "MultiPolygon") {
+    try {
+      const polyFeature = featureFromGeometry(geometry);
+      if (!polyFeature) return [];
+      const line = turf.polygonToLine(polyFeature);
+      if (!line) return [];
+      if (line.type === "FeatureCollection") {
+        return (line.features || []).filter(
+          (f) =>
+            f?.geometry?.type === "LineString" ||
+            f?.geometry?.type === "MultiLineString",
+        );
+      }
+      if (
+        line.type === "Feature" &&
+        (line?.geometry?.type === "LineString" ||
+          line?.geometry?.type === "MultiLineString")
+      ) {
+        return [line];
+      }
+    } catch {}
+    return [];
+  }
+
+  if (type === "GeometryCollection") {
+    const out = [];
+    for (const g of geometry?.geometries || []) {
+      out.push(...lineCandidatesFromGeometry(g));
+    }
+    return out;
+  }
+
+  return [];
+}
+
+function nearestOverlayBoundaryPoint(baseCenter, geometry) {
+  if (!baseCenter || !geometry) return null;
+  const lat = Number(baseCenter.lat);
+  const lng = Number(baseCenter.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const origin = turf.point([lng, lat]);
+  const lines = lineCandidatesFromGeometry(geometry);
+  if (!lines.length) return null;
+
+  let best = null;
+  for (const line of lines) {
+    try {
+      const near = turf.nearestPointOnLine(line, origin, { units: "kilometers" });
+      const coords = near?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+      const rawDist = Number(near?.properties?.dist);
+      const distKm = Number.isFinite(rawDist)
+        ? rawDist
+        : turf.distance(origin, near, { units: "kilometers" });
+      if (!best || distKm < best.distKm) {
+        best = { lng: Number(coords[0]), lat: Number(coords[1]), distKm };
+      }
+    } catch {}
+  }
+
+  return best;
+}
+
+function deriveAirportMapCenter(baseCenter, pansGeometry, blueGeometry) {
+  if (!baseCenter) return null;
+  const lat = Number(baseCenter.lat);
+  const lng = Number(baseCenter.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const pansNear = nearestOverlayBoundaryPoint(baseCenter, pansGeometry);
+  const blueNear = nearestOverlayBoundaryPoint(baseCenter, blueGeometry);
+
+  let targetLng = lng;
+  if (pansNear && blueNear) {
+    const betweenLng = (pansNear.lng + blueNear.lng) / 2;
+    targetLng = lng * 0.35 + betweenLng * 0.65;
+  } else if (blueNear) {
+    targetLng = lng * 0.6 + blueNear.lng * 0.4;
+  } else if (pansNear) {
+    targetLng = lng * 0.75 + pansNear.lng * 0.25;
+  } else {
+    targetLng = lng + 0.0066;
+  }
+
+  const deltaLng = Math.max(-0.008, Math.min(0.008, targetLng - lng));
+  return { lat, lng: lng + deltaLng };
 }
 
 function buildOverlayLines(items, limit = 14) {
@@ -803,7 +901,9 @@ export async function buildTownPlannerReportPdfV2(
 
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
-    const mapCenter = isAirportOverlay ? nudgeCenterLng(center, 0.01) : center;
+    const mapCenter = isAirportOverlay
+      ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
+      : center;
 
     let mapBuffer =
       parcelFeature && (overlayFeature || hasAirportOverlayLayers)
