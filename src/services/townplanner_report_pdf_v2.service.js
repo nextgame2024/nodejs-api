@@ -1002,7 +1002,7 @@ export async function buildTownPlannerReportPdfV2(
       overlayColor: "0x00000000",
       overlayFill: "0xff8a8a4d",
       overlayWeight: 1,
-      zoom: 22,
+      zoom: 21,
       zoomNudge: 2,
       paddingPx: 96,
       maptype: "hybrid",
