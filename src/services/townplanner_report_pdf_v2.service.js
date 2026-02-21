@@ -903,7 +903,7 @@ export async function buildTownPlannerReportPdfV2(
       : isBicycleOverlay
         ? "0xffc107ff"
         : palette.outline;
-    const overlayZoom = isAirportOverlay ? 15 : 19;
+    const overlayZoom = isAirportOverlay ? 14 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : 110;
 
     const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
