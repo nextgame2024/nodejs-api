@@ -688,6 +688,7 @@ export async function getParcelOverlayMapImageBufferV2({
   apiKey,
   center,
   zoom = 17, // treated as MAX zoom now
+  zoomNudge = 0, // additional zoom levels applied after fit (for controlled zoom-in)
   fitToParcel = false,
   size = "640x360",
   scale = 2,
@@ -817,12 +818,21 @@ export async function getParcelOverlayMapImageBufferV2({
     paddingPx,
     maxZoom: zoom,
   });
+  const zoomNudgeInt = Number.isFinite(Number(zoomNudge))
+    ? Math.max(0, Math.floor(Number(zoomNudge)))
+    : 0;
+  const effectiveZoom = Math.max(
+    3,
+    Math.min(21, Number(zoom) || 21, fitZoom + zoomNudgeInt),
+  );
 
   if (debugLabel) {
     console.info("[static-maps][overlay-debug] prepared", {
       debugLabel,
       fitZoom,
+      effectiveZoom,
       requestedMaxZoom: zoom,
+      zoomNudge: zoomNudgeInt,
       fitToParcel,
       centerProvided: center || null,
       centerUsed: c,
@@ -866,7 +876,7 @@ export async function getParcelOverlayMapImageBufferV2({
     let url = buildStaticMapUrl({
       apiKey,
       center: { lat: c.lat, lng: c.lng },
-      zoom: fitZoom,
+      zoom: effectiveZoom,
       size,
       scale,
       maptype,
@@ -894,7 +904,7 @@ export async function getParcelOverlayMapImageBufferV2({
         url = buildStaticMapUrl({
           apiKey,
           center: { lat: c.lat, lng: c.lng },
-          zoom: fitZoom,
+          zoom: effectiveZoom,
           size,
           scale,
           maptype,
@@ -926,6 +936,7 @@ export async function getParcelOverlayMapImageBufferV2({
           debugLabel,
           eps,
           fitZoom,
+          effectiveZoom,
           overlayPathCount: selectedOverlayPaths.length,
           urlLength: url.length,
         });
@@ -963,7 +974,7 @@ export async function getParcelOverlayMapImageBufferV2({
   const url = buildStaticMapUrl({
     apiKey,
     center: { lat: c.lat, lng: c.lng },
-    zoom: fitZoom,
+    zoom: effectiveZoom,
     size,
     scale,
     maptype,
@@ -988,6 +999,7 @@ export async function getParcelOverlayMapImageBufferV2({
     console.info("[static-maps][overlay-debug] fallback render result", {
       debugLabel,
       fitZoom,
+      effectiveZoom,
       fallbackPathCount: fallbackPaths.length,
       urlLength: url.length,
       success: !!fallbackBuf,
