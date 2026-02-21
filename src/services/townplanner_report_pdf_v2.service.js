@@ -567,7 +567,7 @@ function deriveDwellingMapCenter(baseCenter) {
   const lng = Number(baseCenter.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   // Nudge east slightly so the parcel appears a bit more centered (left in frame).
-  return { lat, lng: lng + 0.00055 };
+  return { lat, lng: lng + 0.00035 };
 }
 
 function geometryDebugStats(geometry) {
