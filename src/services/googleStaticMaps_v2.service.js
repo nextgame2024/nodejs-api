@@ -671,6 +671,7 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
+  overlayLayers = null, // [{ geoJson, color, fill, weight }]
   paddingPx = 110,
   styles = null,
 }) {
@@ -680,41 +681,67 @@ export async function getParcelOverlayMapImageBufferV2({
   }
 
   const parcelRingRaw = extractPolygonRing(parcelGeoJson);
-  const overlayRingsRaw = extractPolygonRings(overlayGeoJson);
-  const overlayLinesRaw = extractLinePaths(overlayGeoJson);
-  if (!parcelRingRaw || (!overlayRingsRaw.length && !overlayLinesRaw.length))
-    return null;
+  if (!parcelRingRaw) return null;
 
-  const orderedOverlayRings = orderOverlayRingsByParcel(
-    overlayRingsRaw,
-    parcelRingRaw
-  );
-  const selectedOverlayRings = orderedOverlayRings.slice(0, 4);
-  const orderedOverlayLines = orderOverlayLinesByParcel(
-    overlayLinesRaw,
-    parcelRingRaw
-  );
-  const selectedOverlayLines = orderedOverlayLines.slice(0, 6);
+  const rawLayers =
+    Array.isArray(overlayLayers) && overlayLayers.length
+      ? overlayLayers
+      : [
+          {
+            geoJson: overlayGeoJson,
+            color: overlayColor,
+            fill: overlayFill,
+            weight: overlayWeight,
+          },
+        ];
 
-  const fallbackOverlayRing =
-    selectBestOverlayRing(overlayRingsRaw, parcelRingRaw) || null;
-  const fallbackOverlayLine = selectedOverlayLines[0] || null;
+  const maxRingsPerLayer = rawLayers.length > 1 ? 2 : 4;
+  const maxLinesPerLayer = rawLayers.length > 1 ? 3 : 6;
+
+  const preparedLayers = [];
+  for (const layer of rawLayers) {
+    const ringsRaw = extractPolygonRings(layer?.geoJson);
+    const linesRaw = extractLinePaths(layer?.geoJson);
+    if (!ringsRaw.length && !linesRaw.length) continue;
+
+    const orderedRings = orderOverlayRingsByParcel(ringsRaw, parcelRingRaw);
+    const orderedLines = orderOverlayLinesByParcel(linesRaw, parcelRingRaw);
+
+    preparedLayers.push({
+      color: layer?.color || overlayColor,
+      fill: layer?.fill || overlayFill,
+      weight: Number(layer?.weight) || overlayWeight,
+      selectedRings: orderedRings.slice(0, maxRingsPerLayer),
+      selectedLines: orderedLines.slice(0, maxLinesPerLayer),
+      fallbackRing: selectBestOverlayRing(ringsRaw, parcelRingRaw) || null,
+      fallbackLine: orderedLines[0] || null,
+    });
+  }
+
+  if (!preparedLayers.length) return null;
 
   const parcelBounds = boundsFromRings([parcelRingRaw]);
+  const allOverlayParts = [];
+  for (const layer of preparedLayers) {
+    allOverlayParts.push(...layer.selectedRings, ...layer.selectedLines);
+  }
   const combinedBounds = boundsFromRings([
     parcelRingRaw,
-    ...selectedOverlayRings,
-    ...selectedOverlayLines,
+    ...allOverlayParts,
   ]);
   const bounds = fitToParcel
     ? parcelBounds || combinedBounds
     : combinedBounds || parcelBounds;
 
+  const fallbackCentroidSource =
+    preparedLayers.find((x) => x.fallbackRing)?.fallbackRing ||
+    preparedLayers.find((x) => x.fallbackLine)?.fallbackLine ||
+    null;
+
   const autoCenter =
     centerFromBounds(bounds) ||
     centroidFromRing(parcelRingRaw) ||
-    centroidFromRing(fallbackOverlayRing) ||
-    centroidFromRing(fallbackOverlayLine);
+    centroidFromRing(fallbackCentroidSource);
 
   const c = center || autoCenter;
   if (!c) return null;
@@ -728,8 +755,6 @@ export async function getParcelOverlayMapImageBufferV2({
   });
 
   const parcelPrefix = `fillcolor:${parcelFill}|color:${parcelColor}|weight:${parcelWeight}|`;
-  const overlayPrefix = `fillcolor:${overlayFill}|color:${overlayColor}|weight:${overlayWeight}|`;
-  const overlayLinePrefix = `color:${overlayColor}|weight:${overlayWeight}|`;
 
   const epsList = [0.000005, 0.000015, 0.00004, 0.00008, 0.00016, 0.0003];
 
@@ -738,15 +763,19 @@ export async function getParcelOverlayMapImageBufferV2({
     if (!parcelRing) continue;
 
     const overlayPaths = [];
-    for (const rawRing of selectedOverlayRings) {
-      const overlayRing = simplifyRing(rawRing, eps, 220);
-      if (!overlayRing) continue;
-      overlayPaths.push(`${overlayPrefix}${ringToEncodedPath(overlayRing)}`);
-    }
-    for (const rawLine of selectedOverlayLines) {
-      const overlayLine = simplifyLine(rawLine, eps, 260);
-      if (!overlayLine) continue;
-      overlayPaths.push(`${overlayLinePrefix}${lineToEncodedPath(overlayLine)}`);
+    for (const layer of preparedLayers) {
+      const layerPrefix = `fillcolor:${layer.fill}|color:${layer.color}|weight:${layer.weight}|`;
+      const layerLinePrefix = `color:${layer.color}|weight:${layer.weight}|`;
+      for (const rawRing of layer.selectedRings) {
+        const overlayRing = simplifyRing(rawRing, eps, 220);
+        if (!overlayRing) continue;
+        overlayPaths.push(`${layerPrefix}${ringToEncodedPath(overlayRing)}`);
+      }
+      for (const rawLine of layer.selectedLines) {
+        const overlayLine = simplifyLine(rawLine, eps, 260);
+        if (!overlayLine) continue;
+        overlayPaths.push(`${layerLinePrefix}${lineToEncodedPath(overlayLine)}`);
+      }
     }
     if (!overlayPaths.length) continue;
 
@@ -760,7 +789,8 @@ export async function getParcelOverlayMapImageBufferV2({
       scale,
       maptype,
       styles,
-      paths: [parcelPath, ...overlayPaths],
+      // Draw overlays first, parcel boundary last so lot outline remains visible.
+      paths: [...overlayPaths, parcelPath],
     });
 
     if (url.length > MAX_URL_LEN) continue;
@@ -770,13 +800,22 @@ export async function getParcelOverlayMapImageBufferV2({
   }
 
   const parcelRing = simplifyRing(parcelRingRaw, 0.0004, 120);
-  const overlayRing = fallbackOverlayRing
-    ? simplifyRing(fallbackOverlayRing, 0.0004, 120)
-    : null;
-  const overlayLine = fallbackOverlayLine
-    ? simplifyLine(fallbackOverlayLine, 0.0004, 180)
-    : null;
-  if (!parcelRing || (!overlayRing && !overlayLine)) return null;
+  if (!parcelRing) return null;
+
+  const fallbackPaths = [];
+  for (const layer of preparedLayers) {
+    const layerPrefix = `fillcolor:${layer.fill}|color:${layer.color}|weight:${layer.weight}|`;
+    const layerLinePrefix = `color:${layer.color}|weight:${layer.weight}|`;
+    const ring = layer.fallbackRing
+      ? simplifyRing(layer.fallbackRing, 0.0004, 120)
+      : null;
+    const line = layer.fallbackLine
+      ? simplifyLine(layer.fallbackLine, 0.0004, 180)
+      : null;
+    if (ring) fallbackPaths.push(`${layerPrefix}${ringToEncodedPath(ring)}`);
+    if (line) fallbackPaths.push(`${layerLinePrefix}${lineToEncodedPath(line)}`);
+  }
+  if (!fallbackPaths.length) return null;
 
   const url = buildStaticMapUrl({
     apiKey,
@@ -787,11 +826,8 @@ export async function getParcelOverlayMapImageBufferV2({
     maptype,
     styles,
     paths: [
+      ...fallbackPaths,
       `${parcelPrefix}${ringToEncodedPath(parcelRing)}`,
-      ...(overlayRing ? [`${overlayPrefix}${ringToEncodedPath(overlayRing)}`] : []),
-      ...(overlayLine
-        ? [`${overlayLinePrefix}${lineToEncodedPath(overlayLine)}`]
-        : []),
     ],
   });
 

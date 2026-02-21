@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.7";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.8";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -760,16 +760,37 @@ export async function buildTownPlannerReportPdfV2(
       : isBicycleOverlay
         ? "0xffc107ff"
         : palette.outline;
-    const overlayZoom = isAirportOverlay ? 14 : 19;
-    const overlayPaddingPx = isAirportOverlay ? 90 : 110;
+    const overlayZoom = isAirportOverlay ? 16 : 19;
+    const overlayPaddingPx = isAirportOverlay ? 84 : 110;
+
+    const airportOverlayLayers = isAirportOverlay
+      ? [
+          {
+            geoJson: featureFromGeometry(findOverlayGeometry("overlay_airport_pans")),
+            color: "0xffeb3bff",
+            fill: "0x00000000",
+            weight: 3,
+          },
+          {
+            geoJson: featureFromGeometry(findOverlayGeometry("overlay_airport_ols")),
+            color: "0x2962ffff",
+            fill: "0x00000000",
+            weight: 3,
+          },
+        ].filter((x) => x.geoJson)
+      : null;
+
+    const hasAirportOverlayLayers =
+      Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
 
     let mapBuffer =
-      parcelFeature && overlayFeature
+      parcelFeature && (overlayFeature || hasAirportOverlayLayers)
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
             center,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
+            overlayLayers: airportOverlayLayers,
             parcelColor: "0xffeb3bff",
             parcelFill: "0x00000000",
             parcelWeight: 4,
