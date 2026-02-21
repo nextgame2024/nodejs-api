@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.15";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.16";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -444,8 +444,12 @@ function deriveAirportMapCenter(baseCenter, pansGeometry, blueGeometry) {
 
   let targetLng = lng;
   if (pansNear && blueNear) {
-    const betweenLng = (pansNear.lng + blueNear.lng) / 2;
-    targetLng = lng * 0.35 + betweenLng * 0.65;
+    const lowLng = Math.min(pansNear.lng, blueNear.lng);
+    const highLng = Math.max(pansNear.lng, blueNear.lng);
+    const gapLng = Math.max(0, highLng - lowLng);
+    const midpointLng = (lowLng + highLng) / 2;
+    // Keep both boundaries inside frame, with a slight west bias so parcel stays visible.
+    targetLng = midpointLng - gapLng * 0.1;
   } else if (blueNear) {
     targetLng = lng * 0.6 + blueNear.lng * 0.4;
   } else if (pansNear) {
@@ -454,7 +458,7 @@ function deriveAirportMapCenter(baseCenter, pansGeometry, blueGeometry) {
     targetLng = lng + 0.0066;
   }
 
-  const deltaLng = Math.max(-0.008, Math.min(0.008, targetLng - lng));
+  const deltaLng = Math.max(-0.012, Math.min(0.012, targetLng - lng));
   return { lat, lng: lng + deltaLng };
 }
 
