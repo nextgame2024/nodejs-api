@@ -30,9 +30,14 @@ function pickProp(props, keys = []) {
     const target = String(key || "").toLowerCase();
     if (!target) continue;
     const hit = Object.keys(props).find(
-      (k) => String(k || "").toLowerCase() === target
+      (k) => String(k || "").toLowerCase() === target,
     );
-    if (hit && props[hit] !== undefined && props[hit] !== null && props[hit] !== "") {
+    if (
+      hit &&
+      props[hit] !== undefined &&
+      props[hit] !== null &&
+      props[hit] !== ""
+    ) {
       return props[hit];
     }
   }
@@ -71,9 +76,7 @@ function formatLotPlanLine(lotPlanRaw, lotNumber, planNumber) {
   const parseConcat = (v) => {
     const m = String(v || "")
       .trim()
-      .match(
-        /^([A-Za-z0-9]+?)(RP|SP|BUP|PS|L|CP|OP|DP)(\d+)$/i
-      );
+      .match(/^([A-Za-z0-9]+?)(RP|SP|BUP|PS|L|CP|OP|DP)(\d+)$/i);
     if (!m) return null;
     return { lot: m[1], plan: `${m[2]}${m[3]}` };
   };
@@ -152,7 +155,7 @@ function box(
   y,
   w,
   h,
-  { fill = BRAND.light, stroke = BRAND.border, r = 14 } = {}
+  { fill = BRAND.light, stroke = BRAND.border, r = 14 } = {},
 ) {
   doc.save();
   rr(doc, x, y, w, h, r);
@@ -271,7 +274,7 @@ function boundedText(
     lineGap = 2,
     ellipsis = true,
     align = "left",
-  } = {}
+  } = {},
 ) {
   const full = String(text ?? "");
 
@@ -535,7 +538,7 @@ function drawCoverImageInRoundedBox(doc, img, x, y, w, h, r = 14) {
 
 export async function buildTownPlannerReportPdfV2(
   reportPayload = {},
-  opts = {}
+  opts = {},
 ) {
   const apiKey =
     process.env.GOOGLE_MAPS_API_KEY ||
@@ -545,7 +548,7 @@ export async function buildTownPlannerReportPdfV2(
   const schemeVersion =
     pickFirst(
       reportPayload.schemeVersion,
-      reportPayload?.controls?.schemeVersion
+      reportPayload?.controls?.schemeVersion,
     ) ||
     process.env.CITY_PLAN_SCHEME_VERSION ||
     "City Plan 2014";
@@ -555,7 +558,7 @@ export async function buildTownPlannerReportPdfV2(
       reportPayload.addressLabel,
       reportPayload.address_label,
       reportPayload?.inputs?.addressLabel,
-      reportPayload?.inputs?.address_label
+      reportPayload?.inputs?.address_label,
     ) || "Address not provided";
 
   const lat =
@@ -566,7 +569,7 @@ export async function buildTownPlannerReportPdfV2(
   const generatedAt =
     pickFirst(
       reportPayload.generatedAt,
-      reportPayload?.reportJson?.generatedAt
+      reportPayload?.reportJson?.generatedAt,
     ) || new Date().toISOString();
 
   const logoBuffer = reportPayload.logoBuffer || null;
@@ -578,12 +581,11 @@ export async function buildTownPlannerReportPdfV2(
         reportPayload.planning_snapshot,
         reportPayload.planning,
         reportPayload?.inputs?.planningSnapshot,
-        reportPayload?.inputs?.planning_snapshot
-      )
+        reportPayload?.inputs?.planning_snapshot,
+      ),
     ) || {};
 
-  const parcelProps =
-    planningSnapshot?.propertyParcel?.properties || null;
+  const parcelProps = planningSnapshot?.propertyParcel?.properties || null;
 
   const lotPlanRaw = pickFirst(
     reportPayload.lotPlan,
@@ -603,7 +605,7 @@ export async function buildTownPlannerReportPdfV2(
       "lotplan_no",
       "lotplanid",
       "lot_plan_id",
-    ])
+    ]),
   );
 
   const lotNumber = pickProp(parcelProps, [
@@ -627,12 +629,12 @@ export async function buildTownPlannerReportPdfV2(
 
   const controls =
     safeJsonParse(
-      pickFirst(reportPayload.controls, reportPayload?.inputs?.controls)
+      pickFirst(reportPayload.controls, reportPayload?.inputs?.controls),
     ) || {};
 
   const narrative =
     safeJsonParse(
-      pickFirst(reportPayload.narrative, reportPayload?.inputs?.narrative)
+      pickFirst(reportPayload.narrative, reportPayload?.inputs?.narrative),
     ) || null;
 
   const mergedControls = controls?.mergedControls || {};
@@ -641,14 +643,17 @@ export async function buildTownPlannerReportPdfV2(
 
   const parseTableNumber = (value) => {
     const m = String(value || "").match(
-      /([0-9]+(?:\.[0-9]+)+(?:\.[A-Za-z]|[A-Za-z])?)/
+      /([0-9]+(?:\.[0-9]+)+(?:\.[A-Za-z]|[A-Za-z])?)/,
     );
     return m?.[1] ? m[1].toUpperCase() : "";
   };
 
   const canonicalCitation = (value, fallbackNumber = "") => {
     const number =
-      parseTableNumber(value) || String(fallbackNumber || "").trim().toUpperCase();
+      parseTableNumber(value) ||
+      String(fallbackNumber || "")
+        .trim()
+        .toUpperCase();
     if (number) return `Table ${number}`;
     const raw = String(value || "").trim();
     return raw || null;
@@ -666,13 +671,13 @@ export async function buildTownPlannerReportPdfV2(
   const parcelGeom =
     pickFirst(
       planningSnapshot.siteParcelPolygon,
-      planningSnapshot?.propertyParcel?.geometry
+      planningSnapshot?.propertyParcel?.geometry,
     ) || null;
 
   const zoningGeom =
     pickFirst(
       planningSnapshot.zoningPolygon,
-      planningSnapshot?.zoning?.geometry
+      planningSnapshot?.zoning?.geometry,
     ) || null;
 
   const parcelFeature = featureFromGeometry(parcelGeom);
@@ -778,13 +783,17 @@ export async function buildTownPlannerReportPdfV2(
     const airportOverlayLayers = isAirportOverlay
       ? [
           {
-            geoJson: featureFromGeometry(findOverlayGeometry("overlay_airport_pans")),
+            geoJson: featureFromGeometry(
+              findOverlayGeometry("overlay_airport_pans"),
+            ),
             color: "0xffeb3bff",
             fill: "0x00000000",
             weight: 3,
           },
           {
-            geoJson: featureFromGeometry(findOverlayGeometry("overlay_airport_ols")),
+            geoJson: featureFromGeometry(
+              findOverlayGeometry("overlay_airport_ols"),
+            ),
             color: "0x2962ffff",
             fill: "0x00000000",
             weight: 3,
@@ -794,7 +803,9 @@ export async function buildTownPlannerReportPdfV2(
 
     const hasAirportOverlayLayers =
       Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
-    const mapCenter = isAirportOverlay ? nudgeCenterLng(center, 0.0012) : center;
+    const mapCenter = isAirportOverlay
+      ? nudgeCenterLng(center, 0.0016)
+      : center;
 
     let mapBuffer =
       parcelFeature && (overlayFeature || hasAirportOverlayLayers)
@@ -842,7 +853,7 @@ export async function buildTownPlannerReportPdfV2(
       const hit = cautions.items.find((it) =>
         String(it?.title || "")
           .toLowerCase()
-          .includes(String(name).toLowerCase())
+          .includes(String(name).toLowerCase()),
       );
       narrativeSummary = hit?.summary || "";
     }
@@ -1019,7 +1030,7 @@ export async function buildTownPlannerReportPdfV2(
         lotPlanLine ? y + 140 : y + 122,
         {
           width: w - 36,
-        }
+        },
       );
 
     // Hero map (cover fill)
@@ -1048,7 +1059,6 @@ export async function buildTownPlannerReportPdfV2(
           align: "center",
         });
     }
-
   }
 
   // ========== PAGE 2: CONTENTS ==========
@@ -1130,7 +1140,7 @@ export async function buildTownPlannerReportPdfV2(
         color: BRAND.muted,
         align: "center",
         ellipsis: true,
-      }
+      },
     );
   }
 
@@ -1181,12 +1191,14 @@ export async function buildTownPlannerReportPdfV2(
     const np = planningSnapshot?.neighbourhoodPlan || "Not mapped";
     const precinct = planningSnapshot?.neighbourhoodPlanPrecinct || "N/A";
 
-    const npKey = String(np || "").trim().toLowerCase();
+    const npKey = String(np || "")
+      .trim()
+      .toLowerCase();
     const npSource = sources.find(
       (s) =>
         s?.neighbourhoodPlan &&
         npKey &&
-        String(s.neighbourhoodPlan).toLowerCase() === npKey
+        String(s.neighbourhoodPlan).toLowerCase() === npKey,
     );
     const npRef = assessmentRefs?.neighbourhoodPlan || null;
     const npTableText =
@@ -1225,7 +1237,7 @@ export async function buildTownPlannerReportPdfV2(
         fontSize: 11,
         color: BRAND.text,
         ellipsis: true,
-      }
+      },
     );
 
     const npY = tilesY + leftTopH + gap;
@@ -1247,22 +1259,14 @@ export async function buildTownPlannerReportPdfV2(
         fontSize: 9,
         color: BRAND.muted,
         ellipsis: false,
-      }
+      },
     );
-    boundedText(
-      doc,
-      String(np),
-      leftX + 14,
-      npY + 48,
-      colW - 28,
-      22,
-      {
-        font: "Helvetica-Bold",
-        fontSize: 11,
-        color: BRAND.text,
-        ellipsis: true,
-      }
-    );
+    boundedText(doc, String(np), leftX + 14, npY + 48, colW - 28, 22, {
+      font: "Helvetica-Bold",
+      fontSize: 11,
+      color: BRAND.text,
+      ellipsis: true,
+    });
     boundedText(
       doc,
       "Table of assessment",
@@ -1275,7 +1279,7 @@ export async function buildTownPlannerReportPdfV2(
         fontSize: 9,
         color: BRAND.muted,
         ellipsis: false,
-      }
+      },
     );
     if (npTableUrl) {
       doc
@@ -1287,45 +1291,37 @@ export async function buildTownPlannerReportPdfV2(
           underline: true,
         });
     } else {
-      boundedText(doc, String(npTableText), leftX + 14, npY + 90, colW - 28, 40, {
-        font: "Helvetica-Bold",
-        fontSize: 9,
-        color: BRAND.text,
-        ellipsis: false,
-      });
+      boundedText(
+        doc,
+        String(npTableText),
+        leftX + 14,
+        npY + 90,
+        colW - 28,
+        40,
+        {
+          font: "Helvetica-Bold",
+          fontSize: 9,
+          color: BRAND.text,
+          ellipsis: false,
+        },
+      );
     }
     if (npTableUrl) {
       // Make table text clickable
       addExternalLink(doc, leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
     }
-    boundedText(
-      doc,
-      "Precinct",
-      leftX + 14,
-      npY + 124,
-      colW - 28,
-      14,
-      {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: false,
-      }
-    );
-    boundedText(
-      doc,
-      String(precinct),
-      leftX + 14,
-      npY + 138,
-      colW - 28,
-      20,
-      {
-        font: "Helvetica-Bold",
-        fontSize: 10,
-        color: BRAND.text,
-        ellipsis: true,
-      }
-    );
+    boundedText(doc, "Precinct", leftX + 14, npY + 124, colW - 28, 14, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: false,
+    });
+    boundedText(doc, String(precinct), leftX + 14, npY + 138, colW - 28, 20, {
+      font: "Helvetica-Bold",
+      fontSize: 10,
+      color: BRAND.text,
+      ellipsis: true,
+    });
 
     box(doc, rightX, tilesY, colW, colH);
     doc
@@ -1336,12 +1332,20 @@ export async function buildTownPlannerReportPdfV2(
 
     const listLines = buildOverlayLines(displayOverlayItems, 18);
 
-    boundedText(doc, listLines.join("\n"), rightX + 14, tilesY + 34, colW - 28, colH - 48, {
-      font: "Helvetica",
-      fontSize: 9,
-      color: BRAND.muted,
-      ellipsis: true,
-    });
+    boundedText(
+      doc,
+      listLines.join("\n"),
+      rightX + 14,
+      tilesY + 34,
+      colW - 28,
+      colH - 48,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: true,
+      },
+    );
   }
 
   // ========== PAGE 4: ZONING ==========
@@ -1379,7 +1383,7 @@ export async function buildTownPlannerReportPdfV2(
       noteY + 34,
       w - 28,
       noteH - 34,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
     );
 
     const drawAssessmentReferenceLine = (label, url, yPos) => {
@@ -1452,7 +1456,7 @@ export async function buildTownPlannerReportPdfV2(
         fontSize: 9,
         color: BRAND.text,
         ellipsis: true,
-      }
+      },
     );
   }
 
@@ -1558,7 +1562,7 @@ export async function buildTownPlannerReportPdfV2(
       top + 26,
       w,
       18,
-      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
     );
 
     const blockTopY = top + 52;
@@ -1572,15 +1576,22 @@ export async function buildTownPlannerReportPdfV2(
           .fillColor(BRAND.muted)
           .font("Helvetica")
           .fontSize(10)
-          .text("No overlays identified for this site.", x, y + blockH / 2 - 6, {
-            width: w,
-            align: "center",
-          });
+          .text(
+            "No overlays identified for this site.",
+            x,
+            y + blockH / 2 - 6,
+            {
+              width: w,
+              align: "center",
+            },
+          );
         return;
       }
 
       const { base, detail } = splitOverlayName(item.name);
-      const overlayTitle = String(base || item.name || "Overlay constraint").trim();
+      const overlayTitle = String(
+        base || item.name || "Overlay constraint",
+      ).trim();
       const subRaw = sanitizeOverlaySubcategory(detail || item.severity || "");
       const subcategory = /procedures for air navigation surfaces/i.test(subRaw)
         ? `${subRaw} subcategory.`
@@ -1602,38 +1613,22 @@ export async function buildTownPlannerReportPdfV2(
         mapY,
         w - 28,
         mapH,
-        10
+        10,
       );
 
-      boundedText(
-        doc,
-        "Subcategory",
-        x + 14,
-        mapY + mapH + 14,
-        w - 28,
-        16,
-        {
-          font: "Helvetica-Bold",
-          fontSize: 11,
-          color: BRAND.text,
-          ellipsis: false,
-        }
-      );
+      boundedText(doc, "Subcategory", x + 14, mapY + mapH + 14, w - 28, 16, {
+        font: "Helvetica-Bold",
+        fontSize: 11,
+        color: BRAND.text,
+        ellipsis: false,
+      });
 
-      boundedText(
-        doc,
-        subcategory,
-        x + 14,
-        mapY + mapH + 34,
-        w - 28,
-        36,
-        {
-          font: "Helvetica",
-          fontSize: 10,
-          color: BRAND.text,
-          ellipsis: true,
-        }
-      );
+      boundedText(doc, subcategory, x + 14, mapY + mapH + 34, w - 28, 36, {
+        font: "Helvetica",
+        fontSize: 10,
+        color: BRAND.text,
+        ellipsis: true,
+      });
 
       boundedText(
         doc,
@@ -1647,7 +1642,7 @@ export async function buildTownPlannerReportPdfV2(
           fontSize: 11,
           color: BRAND.text,
           ellipsis: false,
-        }
+        },
       );
 
       drawReferLine(ref.label, ref.url, x + 14, mapY + mapH + 98, w - 28);
@@ -1683,7 +1678,7 @@ export async function buildTownPlannerReportPdfV2(
         top + 26,
         w,
         18,
-        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true }
+        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
       );
 
       const cardY = top + 60;
@@ -1714,7 +1709,7 @@ export async function buildTownPlannerReportPdfV2(
         cardY + 36,
         cardW - 28,
         cardH - 54,
-        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
       );
 
       box(doc, x + cardW + gap, cardY, cardW, cardH);
@@ -1735,7 +1730,7 @@ export async function buildTownPlannerReportPdfV2(
         cardY + 36,
         cardW - 28,
         cardH - 54,
-        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
       );
 
       const srcY = cardY + cardH + 14;
@@ -1751,7 +1746,7 @@ export async function buildTownPlannerReportPdfV2(
             .slice(0, 8)
             .map(
               (s) =>
-                `• ${s.label || "Source"}${s.sourceCitation ? ` — ${s.sourceCitation}` : ""}`
+                `• ${s.label || "Source"}${s.sourceCitation ? ` — ${s.sourceCitation}` : ""}`,
             )
         : [
             "• No matching control records were returned for this site. Populate bcc_planning_controls_v2 to enrich this section.",
@@ -1765,7 +1760,8 @@ export async function buildTownPlannerReportPdfV2(
       });
 
       const devBullets =
-        narrative?.sections?.find((s) => s?.id === "development")?.bullets || [];
+        narrative?.sections?.find((s) => s?.id === "development")?.bullets ||
+        [];
       const note = devBullets.length
         ? devBullets
             .slice(0, 4)
@@ -1833,7 +1829,7 @@ export async function buildTownPlannerReportPdfV2(
       bY + 34,
       w - 28,
       210,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
     );
 
     const dY = bY + 276;
@@ -1862,7 +1858,7 @@ export async function buildTownPlannerReportPdfV2(
       dY + 202,
       w - 28,
       40,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true }
+      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
     );
   }
 
