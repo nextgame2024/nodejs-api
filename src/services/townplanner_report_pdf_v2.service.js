@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.22";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.23";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1047,18 +1047,11 @@ export async function buildTownPlannerReportPdfV2(
     const criticalOverlayLayers = isCriticalOverlay
       ? [
           {
-            geoJson: overlayFeature,
-            color: "0xff3b3bff",
-            fill: "0x00000000",
-            weight: 2,
-            maxRings: 3,
-          },
-          {
             geoJson: criticalHatchGeoJson,
             color: "0xff3b3bcc",
             fill: "0x00000000",
             weight: 1,
-            maxLines: 120,
+            maxLines: 140,
             preserveLineOrder: true,
             spreadLines: true,
           },
