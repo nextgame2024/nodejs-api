@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.27";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.28";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -617,16 +617,31 @@ function buildOverlayLines(items, limit = 14) {
 
 function addExternalLink(doc, x, y, w, h, url) {
   if (!url) return;
-  // Build annotation manually so NewWindow is attached to the URI action.
-  const action = doc.ref({
+  // Ask viewers to open externally in a new window/tab; keep URI fallback.
+  const safeUrl = String(url).trim();
+  if (!safeUrl) return;
+  const escapedForJs = safeUrl
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'");
+
+  const uriAction = doc.ref({
     S: "URI",
-    URI: new String(url),
+    URI: new String(safeUrl),
     NewWindow: true,
   });
-  action.end();
+  uriAction.end();
+
+  const jsAction = doc.ref({
+    S: "JavaScript",
+    JS: new String(`app.launchURL('${escapedForJs}', true);`),
+    Next: uriAction,
+  });
+  jsAction.end();
+
   doc.annotate(x, y, w, h, {
     Subtype: "Link",
-    A: action,
+    A: jsAction,
+    Border: [0, 0, 0],
     F: 1 << 2,
   });
 }
@@ -975,7 +990,7 @@ export async function buildTownPlannerReportPdfV2(
         {
           geoJson: zoningFeature,
           color: "0x00000000",
-          fill: "0xff8a8a2f",
+          fill: "0xff8a8a4d",
           weight: 1,
           includeHoles: false,
           maxRings: 24,
@@ -985,9 +1000,10 @@ export async function buildTownPlannerReportPdfV2(
       parcelColor: "0xffeb3bff",
       parcelFill: "0xffeb3b22",
       overlayColor: "0x00000000",
-      overlayFill: "0xff8a8a2f",
+      overlayFill: "0xff8a8a4d",
       overlayWeight: 1,
-      zoom: 18,
+      zoom: 19,
+      paddingPx: 96,
       maptype: "hybrid",
       size: "640x380",
       scale: 2,
