@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.31";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.32";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -617,12 +617,9 @@ function buildOverlayLines(items, limit = 14) {
 
 function addExternalLink(doc, x, y, w, h, url) {
   if (!url) return;
-  // Ask viewers to open externally in a new window/tab; keep URI fallback.
+  // Use standards-based URI annotation for maximum PDF viewer compatibility.
   const safeUrl = String(url).trim();
   if (!safeUrl) return;
-  const escapedForJs = safeUrl
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'");
 
   const uriAction = doc.ref({
     S: "URI",
@@ -631,16 +628,9 @@ function addExternalLink(doc, x, y, w, h, url) {
   });
   uriAction.end();
 
-  const jsAction = doc.ref({
-    S: "JavaScript",
-    JS: new String(`app.launchURL('${escapedForJs}', true);`),
-    Next: uriAction,
-  });
-  jsAction.end();
-
   doc.annotate(x, y, w, h, {
     Subtype: "Link",
-    A: jsAction,
+    A: uriAction,
     Border: [0, 0, 0],
     F: 1 << 2,
   });
