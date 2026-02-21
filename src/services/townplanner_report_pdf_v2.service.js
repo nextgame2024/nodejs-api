@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.16";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.17";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -358,6 +358,102 @@ function sanitizeOverlaySubcategory(v) {
     .replace(/security\s*label\s*:?.*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function overlayLookupKeysForName(name) {
+  const keys = new Set();
+  const raw = String(name || "")
+    .replace(/[–—]/g, "-")
+    .trim();
+
+  const pushWithAliases = (candidate) => {
+    const k = normalizeOverlayKey(candidate);
+    if (!k) return;
+    keys.add(k);
+    if (k.includes("critical infrastructure and movement areas overlay")) {
+      keys.add(
+        k.replace(
+          "critical infrastructure and movement areas overlay",
+          "critical infrastructure and movement network overlay",
+        ),
+      );
+    }
+    if (k.includes("critical infrastructure and movement network overlay")) {
+      keys.add(
+        k.replace(
+          "critical infrastructure and movement network overlay",
+          "critical infrastructure and movement areas overlay",
+        ),
+      );
+    }
+  };
+
+  if (raw) pushWithAliases(raw);
+  const { base } = splitOverlayName(raw);
+  if (base && base !== raw) pushWithAliases(base);
+  return Array.from(keys);
+}
+
+function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
+  let minLng = null;
+  let minLat = null;
+  let maxLng = null;
+  let maxLat = null;
+
+  try {
+    const parcelFeature = featureFromGeometry(parcelGeometry);
+    const b = parcelFeature ? turf.bbox(parcelFeature) : null;
+    if (Array.isArray(b) && b.length === 4) {
+      [minLng, minLat, maxLng, maxLat] = b;
+      const width = Math.max(0.0001, maxLng - minLng);
+      const height = Math.max(0.0001, maxLat - minLat);
+      // Localized hatch window around the site parcel.
+      const padLng = Math.max(width * 8, 0.0075);
+      const padLat = Math.max(height * 8, 0.0055);
+      minLng -= padLng;
+      maxLng += padLng;
+      minLat -= padLat;
+      maxLat += padLat;
+    }
+  } catch {}
+
+  if (
+    !Number.isFinite(minLng) ||
+    !Number.isFinite(minLat) ||
+    !Number.isFinite(maxLng) ||
+    !Number.isFinite(maxLat)
+  ) {
+    const lat = Number(centerPoint?.lat);
+    const lng = Number(centerPoint?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    minLng = lng - 0.012;
+    maxLng = lng + 0.012;
+    minLat = lat - 0.0085;
+    maxLat = lat + 0.0085;
+  }
+
+  const width = maxLng - minLng;
+  const height = maxLat - minLat;
+  if (!(width > 0 && height > 0)) return null;
+
+  const span = width + height;
+  const step = Math.max(Math.min(span / 26, 0.0012), 0.00045);
+  const start = minLng - height;
+  const end = maxLng + height;
+
+  const lines = [];
+  for (let x = start; x <= end; x += step) {
+    lines.push([
+      [x, minLat],
+      [x + width + height, maxLat],
+    ]);
+    if (lines.length >= 64) break;
+  }
+
+  return featureFromGeometry({
+    type: "MultiLineString",
+    coordinates: lines,
+  });
 }
 
 function lineCandidatesFromGeometry(geometry) {
@@ -893,15 +989,25 @@ export async function buildTownPlannerReportPdfV2(
 
     const areaIntersectM2 = computeIntersectionAreaM2(parcelGeom, geom);
     const palette = overlayColorPalette[i % overlayColorPalette.length];
+    const overlayLookupKeys = overlayLookupKeysForName(base);
     const isAirportOverlay =
       baseKey === normalizeOverlayKey("Airport environs overlay");
     const isBicycleOverlay =
       baseKey === normalizeOverlayKey("Bicycle network overlay");
+    const isCriticalOverlay =
+      overlayLookupKeys.includes(
+        normalizeOverlayKey("Critical infrastructure and movement areas overlay"),
+      ) ||
+      overlayLookupKeys.includes(
+        normalizeOverlayKey("Critical infrastructure and movement network overlay"),
+      );
 
     const overlayColor = isAirportOverlay
       ? "0x2962ffff"
       : isBicycleOverlay
         ? "0xffc107ff"
+        : isCriticalOverlay
+          ? "0xff3b3bff"
         : palette.outline;
     const overlayZoom = isAirportOverlay ? 14 : 19;
     const overlayPaddingPx = isAirportOverlay ? 84 : 110;
@@ -927,8 +1033,35 @@ export async function buildTownPlannerReportPdfV2(
         ].filter((x) => x.geoJson)
       : null;
 
-    const hasAirportOverlayLayers =
-      Array.isArray(airportOverlayLayers) && airportOverlayLayers.length > 0;
+    const criticalHatchGeoJson = isCriticalOverlay
+      ? buildCriticalOverlayHatchGeoJson(parcelGeom, center)
+      : null;
+    const criticalOverlayLayers = isCriticalOverlay
+      ? [
+          {
+            geoJson: overlayFeature,
+            color: "0xff3b3bff",
+            fill: "0x00000000",
+            weight: 2,
+            maxRings: 3,
+          },
+          {
+            geoJson: criticalHatchGeoJson,
+            color: "0xff3b3bcc",
+            fill: "0x00000000",
+            weight: 2,
+            maxLines: 18,
+          },
+        ].filter((x) => x.geoJson)
+      : null;
+
+    const customOverlayLayers = isAirportOverlay
+      ? airportOverlayLayers
+      : isCriticalOverlay
+        ? criticalOverlayLayers
+        : null;
+    const hasCustomOverlayLayers =
+      Array.isArray(customOverlayLayers) && customOverlayLayers.length > 0;
     const pansNearDebug = isAirportOverlay
       ? nearestOverlayBoundaryPoint(center, airportPansGeom)
       : null;
@@ -951,7 +1084,7 @@ export async function buildTownPlannerReportPdfV2(
         overlayZoom,
         overlayPaddingPx,
         airportCodesInSnapshot,
-        hasAirportOverlayLayers,
+        hasAirportOverlayLayers: hasCustomOverlayLayers,
         airportOverlayLayerCount: airportOverlayLayers?.length || 0,
         pansGeom: geometryDebugStats(airportPansGeom),
         blueGeom: geometryDebugStats(airportBlueGeom),
@@ -974,16 +1107,20 @@ export async function buildTownPlannerReportPdfV2(
 
     let usedParcelFallback = false;
     let mapBuffer =
-      parcelFeature && (overlayFeature || hasAirportOverlayLayers)
+      parcelFeature && (overlayFeature || hasCustomOverlayLayers)
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
             center: mapCenter,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
-            overlayLayers: airportOverlayLayers,
-            debugLabel: isAirportOverlay ? "airport-overlay" : null,
+            overlayLayers: customOverlayLayers,
+            debugLabel: isAirportOverlay
+              ? "airport-overlay"
+              : isCriticalOverlay
+                ? "critical-overlay"
+                : null,
             parcelColor: "0xffeb3bff",
-            parcelFill: "0x00000000",
+            parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
             parcelWeight: 4,
             overlayColor,
             overlayFill: "0x00000000",
@@ -1013,7 +1150,7 @@ export async function buildTownPlannerReportPdfV2(
         center: mapCenter,
         parcelGeoJson: parcelFeature,
         parcelColor: "0xffeb3bff",
-        parcelFill: "0x00000000",
+        parcelFill: isCriticalOverlay ? "0xffeb3b4d" : "0x00000000",
         parcelWeight: 4,
         zoom: isAirportOverlay ? overlayZoom : 19,
         maptype: "hybrid",
@@ -1650,13 +1787,16 @@ export async function buildTownPlannerReportPdfV2(
       : {};
   const overlayAssessmentRefs = {};
   for (const [k, v] of Object.entries(overlayAssessmentRefsRaw)) {
-    overlayAssessmentRefs[normalizeOverlayKey(k)] = v;
+    for (const key of overlayLookupKeysForName(k)) {
+      if (!overlayAssessmentRefs[key]) overlayAssessmentRefs[key] = v;
+    }
   }
 
   const resolveOverlayAssessmentRef = (overlayBaseName) => {
-    const key = normalizeOverlayKey(overlayBaseName);
-    const mapped = overlayAssessmentRefs[key] || null;
-    if (mapped) {
+    const lookupKeys = overlayLookupKeysForName(overlayBaseName);
+    for (const key of lookupKeys) {
+      const mapped = overlayAssessmentRefs[key] || null;
+      if (!mapped) continue;
       const number = parseTableNumber(mapped?.sourceCitation);
       return {
         label: number ? `Table of assessment ${number}` : "Table of assessment",
@@ -1666,7 +1806,7 @@ export async function buildTownPlannerReportPdfV2(
 
     const src = sources.find((s) => {
       const np = normalizeOverlayKey(s?.neighbourhoodPlan);
-      if (!np || np !== key) return false;
+      if (!np || !lookupKeys.includes(np)) return false;
       const citation = String(s?.sourceCitation || s?.label || "");
       return /5\.10\./.test(citation);
     });

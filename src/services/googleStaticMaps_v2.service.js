@@ -685,7 +685,7 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
-  overlayLayers = null, // [{ geoJson, color, fill, weight }]
+  overlayLayers = null, // [{ geoJson, color, fill, weight, maxLines, maxRings }]
   debugLabel = null,
   paddingPx = 110,
   styles = null,
@@ -722,13 +722,19 @@ export async function getParcelOverlayMapImageBufferV2({
 
     const orderedRings = orderOverlayRingsByParcel(ringsRaw, parcelRingRaw);
     const orderedLines = orderOverlayLinesByParcel(linesRaw, parcelRingRaw);
+    const layerMaxRings = Number.isFinite(Number(layer?.maxRings))
+      ? Math.max(1, Math.floor(Number(layer.maxRings)))
+      : maxRingsPerLayer;
+    const layerMaxLines = Number.isFinite(Number(layer?.maxLines))
+      ? Math.max(1, Math.floor(Number(layer.maxLines)))
+      : maxLinesPerLayer;
 
     preparedLayers.push({
       color: layer?.color || overlayColor,
       fill: layer?.fill || overlayFill,
       weight: Number(layer?.weight) || overlayWeight,
-      selectedRings: orderedRings.slice(0, maxRingsPerLayer),
-      selectedLines: orderedLines.slice(0, maxLinesPerLayer),
+      selectedRings: orderedRings.slice(0, layerMaxRings),
+      selectedLines: orderedLines.slice(0, layerMaxLines),
       fallbackRing: selectBestOverlayRing(ringsRaw, parcelRingRaw) || null,
       fallbackLine: orderedLines[0] || null,
     });
@@ -739,8 +745,8 @@ export async function getParcelOverlayMapImageBufferV2({
       weight: Number(layer?.weight) || overlayWeight,
       rawRingCount: ringsRaw.length,
       rawLineCount: linesRaw.length,
-      selectedRingCount: Math.min(orderedRings.length, maxRingsPerLayer),
-      selectedLineCount: Math.min(orderedLines.length, maxLinesPerLayer),
+      selectedRingCount: Math.min(orderedRings.length, layerMaxRings),
+      selectedLineCount: Math.min(orderedLines.length, layerMaxLines),
     });
   }
 

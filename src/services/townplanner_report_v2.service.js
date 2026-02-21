@@ -71,11 +71,35 @@ function overlayLookupKeysForName(v) {
   const raw = normalizeDashes(v);
   if (!raw) return [];
 
+  const pushWithAliases = (candidate) => {
+    const k = normalizeLookupKey(candidate);
+    if (!k) return;
+    keys.add(k);
+
+    // Alias mismatch between planning snapshot names and controls source rows.
+    if (k.includes("critical infrastructure and movement areas overlay")) {
+      keys.add(
+        k.replace(
+          "critical infrastructure and movement areas overlay",
+          "critical infrastructure and movement network overlay"
+        )
+      );
+    }
+    if (k.includes("critical infrastructure and movement network overlay")) {
+      keys.add(
+        k.replace(
+          "critical infrastructure and movement network overlay",
+          "critical infrastructure and movement areas overlay"
+        )
+      );
+    }
+  };
+
   const fullKey = normalizeLookupKey(raw);
-  if (fullKey) keys.add(fullKey);
+  if (fullKey) pushWithAliases(fullKey);
 
   const baseKey = normalizeLookupKey(extractOverlayBaseName(raw));
-  if (baseKey) keys.add(baseKey);
+  if (baseKey) pushWithAliases(baseKey);
 
   return Array.from(keys);
 }
@@ -330,9 +354,11 @@ async function getControlsV2({
 
   const overlayAssessmentRefs = {};
   for (const r of overlayRows) {
-    const k = normalizeLookupKey(r?.neighbourhood_plan);
-    if (!k || overlayAssessmentRefs[k]) continue;
-    overlayAssessmentRefs[k] = toAssessmentRef(r);
+    const keys = overlayLookupKeysForName(r?.neighbourhood_plan);
+    for (const k of keys) {
+      if (!k || overlayAssessmentRefs[k]) continue;
+      overlayAssessmentRefs[k] = toAssessmentRef(r);
+    }
   }
 
   return {
