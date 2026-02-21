@@ -700,7 +700,7 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
-  overlayLayers = null, // [{ geoJson, color, fill, weight, maxLines, maxRings, preserveLineOrder, spreadLines }]
+  overlayLayers = null, // [{ geoJson, color, fill, weight, includeHoles, maxLines, maxRings, preserveLineOrder, spreadLines }]
   debugLabel = null,
   paddingPx = 110,
   styles = null,
@@ -731,8 +731,9 @@ export async function getParcelOverlayMapImageBufferV2({
   const preparedLayers = [];
   const preparedLayerDebug = [];
   for (const layer of rawLayers) {
+    const includeLayerHoles = !!layer?.includeHoles;
     const ringsRaw = extractPolygonRings(layer?.geoJson, {
-      includeHoles: true,
+      includeHoles: includeLayerHoles,
     });
     const linesRaw = extractLinePaths(layer?.geoJson);
     if (!ringsRaw.length && !linesRaw.length) continue;
@@ -766,6 +767,7 @@ export async function getParcelOverlayMapImageBufferV2({
       color: layer?.color || overlayColor,
       fill: layer?.fill || overlayFill,
       weight: Number(layer?.weight) || overlayWeight,
+      includeHoles: includeLayerHoles,
       preserveLineOrder: !!layer?.preserveLineOrder,
       spreadLines: !!layer?.spreadLines,
       rawRingCount: ringsRaw.length,

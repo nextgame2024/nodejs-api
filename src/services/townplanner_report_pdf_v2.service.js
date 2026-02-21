@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.24";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.25";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -954,23 +954,39 @@ export async function buildTownPlannerReportPdfV2(
       }).catch(() => null)
     : null;
 
-  const zoningMap =
-    parcelFeature && zoningFeature
-      ? await getParcelOverlayMapImageBufferV2({
-          apiKey,
-          center: null,
-          parcelGeoJson: parcelFeature,
-          overlayGeoJson: zoningFeature,
-          parcelColor: "0xffeb3bff",
-          parcelFill: "0xffeb3b22",
-          overlayColor: "0xff6b6bff",
-          overlayFill: "0xff8a8a2f",
-          zoom: 17,
-          maptype: "hybrid",
-          size: "640x380",
-          scale: 2,
-        }).catch(() => null)
-      : null;
+  if (parcelFeature && zoningFeature) {
+    console.info("[townplanner_v2][zoning_map_debug] inputs", {
+      center,
+      zoningName: planningSnapshot?.zoning || null,
+      zoningCode: planningSnapshot?.zoningCode || null,
+      parcelGeom: geometryDebugStats(parcelGeom),
+      zoningGeom: geometryDebugStats(zoningGeom),
+    });
+  }
+
+  let zoningMap = null;
+  if (parcelFeature && zoningFeature) {
+    zoningMap = await getParcelOverlayMapImageBufferV2({
+      apiKey,
+      center: null,
+      parcelGeoJson: parcelFeature,
+      overlayGeoJson: zoningFeature,
+      debugLabel: "zoning-map",
+      parcelColor: "0xffeb3bff",
+      parcelFill: "0xffeb3b22",
+      overlayColor: "0xff6b6bff",
+      overlayFill: "0xff8a8a2f",
+      zoom: 17,
+      maptype: "hybrid",
+      size: "640x380",
+      scale: 2,
+    }).catch(() => null);
+
+    console.info("[townplanner_v2][zoning_map_debug] map result", {
+      hasBuffer: !!zoningMap,
+      mapBufferBytes: zoningMap?.length || 0,
+    });
+  }
 
   const overlayColorPalette = [
     { outline: "0xff7f00ff", fill: "0xff7f002e" },
@@ -1031,12 +1047,14 @@ export async function buildTownPlannerReportPdfV2(
             color: "0xffeb3bff",
             fill: "0x00000000",
             weight: 3,
+            includeHoles: true,
           },
           {
             geoJson: featureFromGeometry(airportBlueGeom),
             color: "0x2962ffff",
             fill: "0x00000000",
             weight: 3,
+            includeHoles: true,
           },
         ].filter((x) => x.geoJson)
       : null;
