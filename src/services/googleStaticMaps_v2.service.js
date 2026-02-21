@@ -514,6 +514,21 @@ function orderOverlayLinesByParcel(overlayLines, parcelRing) {
     .map((x) => x.line);
 }
 
+function pickEvenly(items, maxCount) {
+  if (!Array.isArray(items) || !items.length) return [];
+  const n = Math.max(1, Math.floor(Number(maxCount) || 0));
+  if (items.length <= n) return items.slice();
+  if (n === 1) return [items[Math.floor(items.length / 2)]];
+
+  const out = [];
+  const last = items.length - 1;
+  for (let i = 0; i < n; i += 1) {
+    const idx = Math.round((i * last) / (n - 1));
+    out.push(items[idx]);
+  }
+  return out;
+}
+
 function isImage(resp) {
   const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
   return typeof ct === "string" && ct.toLowerCase().startsWith("image/");
@@ -685,7 +700,7 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
-  overlayLayers = null, // [{ geoJson, color, fill, weight, maxLines, maxRings }]
+  overlayLayers = null, // [{ geoJson, color, fill, weight, maxLines, maxRings, preserveLineOrder, spreadLines }]
   debugLabel = null,
   paddingPx = 110,
   styles = null,
@@ -721,32 +736,40 @@ export async function getParcelOverlayMapImageBufferV2({
     if (!ringsRaw.length && !linesRaw.length) continue;
 
     const orderedRings = orderOverlayRingsByParcel(ringsRaw, parcelRingRaw);
-    const orderedLines = orderOverlayLinesByParcel(linesRaw, parcelRingRaw);
+    const linesByProximity = orderOverlayLinesByParcel(linesRaw, parcelRingRaw);
+    const lineCandidates = layer?.preserveLineOrder
+      ? linesRaw.slice()
+      : linesByProximity;
     const layerMaxRings = Number.isFinite(Number(layer?.maxRings))
       ? Math.max(1, Math.floor(Number(layer.maxRings)))
       : maxRingsPerLayer;
     const layerMaxLines = Number.isFinite(Number(layer?.maxLines))
       ? Math.max(1, Math.floor(Number(layer.maxLines)))
       : maxLinesPerLayer;
+    const selectedLines = layer?.spreadLines
+      ? pickEvenly(lineCandidates, layerMaxLines)
+      : lineCandidates.slice(0, layerMaxLines);
 
     preparedLayers.push({
       color: layer?.color || overlayColor,
       fill: layer?.fill || overlayFill,
       weight: Number(layer?.weight) || overlayWeight,
       selectedRings: orderedRings.slice(0, layerMaxRings),
-      selectedLines: orderedLines.slice(0, layerMaxLines),
+      selectedLines,
       fallbackRing: selectBestOverlayRing(ringsRaw, parcelRingRaw) || null,
-      fallbackLine: orderedLines[0] || null,
+      fallbackLine: linesByProximity[0] || selectedLines[0] || null,
     });
 
     preparedLayerDebug.push({
       color: layer?.color || overlayColor,
       fill: layer?.fill || overlayFill,
       weight: Number(layer?.weight) || overlayWeight,
+      preserveLineOrder: !!layer?.preserveLineOrder,
+      spreadLines: !!layer?.spreadLines,
       rawRingCount: ringsRaw.length,
       rawLineCount: linesRaw.length,
       selectedRingCount: Math.min(orderedRings.length, layerMaxRings),
-      selectedLineCount: Math.min(orderedLines.length, layerMaxLines),
+      selectedLineCount: selectedLines.length,
     });
   }
 
