@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.35";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.36";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -559,6 +559,15 @@ function deriveAirportMapCenter(baseCenter, pansGeometry, blueGeometry) {
 
   const deltaLng = Math.max(-0.012, Math.min(0.012, targetLng - lng));
   return { lat, lng: lng + deltaLng };
+}
+
+function deriveDwellingMapCenter(baseCenter) {
+  if (!baseCenter) return null;
+  const lat = Number(baseCenter.lat);
+  const lng = Number(baseCenter.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  // Nudge east slightly so the parcel appears a bit more centered (left in frame).
+  return { lat, lng: lng + 0.00055 };
 }
 
 function geometryDebugStats(geometry) {
@@ -1130,7 +1139,7 @@ export async function buildTownPlannerReportPdfV2(
     const mapCenter = isAirportOverlay
       ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
       : isDwellingOverlay
-        ? null
+        ? deriveDwellingMapCenter(center)
       : center;
 
     if (isAirportOverlay) {
