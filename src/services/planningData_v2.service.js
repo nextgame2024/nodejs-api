@@ -115,11 +115,24 @@ function geomTo4326Sql(geomCol = "geom") {
  *
  * Always returns GeoJSON geometry in EPSG:4326 (parsed object).
  */
-async function queryOne(table, lng, lat, withinDistanceMeters) {
+async function queryOne(table, lng, lat, withinDistanceMeters, options = {}) {
   if (!pool) return null;
 
   // NEW: skip missing tables cleanly
   if (!(await tableExists(table))) return null;
+
+  // Backward-compatible overload:
+  // queryOne(table, lng, lat, { preferLargestArea: true })
+  if (
+    withinDistanceMeters &&
+    typeof withinDistanceMeters === "object" &&
+    !Array.isArray(withinDistanceMeters)
+  ) {
+    options = withinDistanceMeters;
+    withinDistanceMeters = undefined;
+  }
+
+  const preferLargestArea = !!options?.preferLargestArea;
 
   const geom4326 = geomTo4326Sql("geom");
   const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
@@ -132,7 +145,7 @@ async function queryOne(table, lng, lat, withinDistanceMeters) {
   const orderBy =
     typeof withinDistanceMeters === "number"
       ? `ST_Distance((${geom4326})::geography, (${pointExpr})::geography)`
-      : `ST_Area((${geom4326})::geography)`;
+      : `ST_Area((${geom4326})::geography) ${preferLargestArea ? "DESC" : "ASC"}`;
 
   const sql = `
     SELECT
@@ -439,7 +452,9 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     roadHierarchy,
     streetscapeHierarchy,
   ] = await Promise.all([
-    queryOne("bcc_zoning", focusLng, focusLat),
+    queryOne("bcc_zoning", focusLng, focusLat, {
+      preferLargestArea: true,
+    }),
     queryOne("bcc_np_boundaries", focusLng, focusLat),
     queryOne("bcc_np_precincts", focusLng, focusLat),
     ...floodPromises,
