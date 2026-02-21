@@ -529,6 +529,121 @@ function pickEvenly(items, maxCount) {
   return out;
 }
 
+/**
+ * Generate diagonal "hatch" line segments that span a bounding box.
+ * This is a pragmatic workaround for Google Static Maps' lack of hatched/pattern fills.
+ *
+ * IMPORTANT: these lines are NOT clipped to a polygon; they span the bbox.
+ * In practice (small suburban parcels), this visually matches common overlay hatch maps.
+ */
+function generateHatchLinesForBounds(bounds, opts = {}) {
+  if (!bounds) return [];
+  const minLng = Number(bounds.minLng);
+  const maxLng = Number(bounds.maxLng);
+  const minLat = Number(bounds.minLat);
+  const maxLat = Number(bounds.maxLat);
+  if (![minLng, maxLng, minLat, maxLat].every(Number.isFinite)) return [];
+
+  const angleDeg = Number.isFinite(Number(opts.angleDeg))
+    ? Number(opts.angleDeg)
+    : -30; // visually close to the sample
+  const lineCount = Number.isFinite(Number(opts.lineCount))
+    ? Math.max(3, Math.floor(Number(opts.lineCount)))
+    : 28;
+
+  const theta = (angleDeg * Math.PI) / 180;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+
+  // Transform (x=lng,y=lat) -> (u,v) where v is the "offset" for parallel lines.
+  // u = x*c + y*s
+  // v = -x*s + y*c
+  const corners = [
+    [minLng, minLat],
+    [minLng, maxLat],
+    [maxLng, minLat],
+    [maxLng, maxLat],
+  ];
+
+  let vMin = Number.POSITIVE_INFINITY;
+  let vMax = Number.NEGATIVE_INFINITY;
+  for (const [x, y] of corners) {
+    const v = -x * s + y * c;
+    if (v < vMin) vMin = v;
+    if (v > vMax) vMax = v;
+  }
+  if (!Number.isFinite(vMin) || !Number.isFinite(vMax) || vMax <= vMin) return [];
+
+  const dv = (vMax - vMin) / (lineCount - 1);
+
+  // For each v0, intersect the infinite line (-x*s + y*c = v0) with rectangle edges.
+  // Collect up to 2 intersection points to form a segment.
+  function addIfOnRect(pt, out) {
+    const [x, y] = pt;
+    if (
+      x >= minLng - 1e-12 &&
+      x <= maxLng + 1e-12 &&
+      y >= minLat - 1e-12 &&
+      y <= maxLat + 1e-12
+    ) {
+      out.push([round6(x), round6(y)]);
+    }
+  }
+
+  const lines = [];
+  for (let i = 0; i < lineCount; i += 1) {
+    const v0 = vMin + i * dv;
+    const pts = [];
+
+    // Intersect with vertical edges: x = minLng and x = maxLng
+    // y = (v0 + x*s) / c
+    if (Math.abs(c) > 1e-12) {
+      const yAtMinX = (v0 + minLng * s) / c;
+      const yAtMaxX = (v0 + maxLng * s) / c;
+      addIfOnRect([minLng, yAtMinX], pts);
+      addIfOnRect([maxLng, yAtMaxX], pts);
+    }
+
+    // Intersect with horizontal edges: y = minLat and y = maxLat
+    // -x*s + y*c = v0 => x = (y*c - v0) / s
+    if (Math.abs(s) > 1e-12) {
+      const xAtMinY = (minLat * c - v0) / s;
+      const xAtMaxY = (maxLat * c - v0) / s;
+      addIfOnRect([xAtMinY, minLat], pts);
+      addIfOnRect([xAtMaxY, maxLat], pts);
+    }
+
+    // De-dup and keep two endpoints.
+    const uniq = [];
+    for (const p of pts) {
+      const key = `${p[0]},${p[1]}`;
+      if (!uniq.some((q) => `${q[0]},${q[1]}` === key)) uniq.push(p);
+    }
+    if (uniq.length < 2) continue;
+
+    // Choose the farthest pair (robust when we got 3-4 points due to numeric edge hits)
+    let bestA = uniq[0];
+    let bestB = uniq[1];
+    let bestD2 = -1;
+    for (let a = 0; a < uniq.length; a += 1) {
+      for (let b = a + 1; b < uniq.length; b += 1) {
+        const dx = uniq[a][0] - uniq[b][0];
+        const dy = uniq[a][1] - uniq[b][1];
+        const d2 = dx * dx + dy * dy;
+        if (d2 > bestD2) {
+          bestD2 = d2;
+          bestA = uniq[a];
+          bestB = uniq[b];
+        }
+      }
+    }
+
+    lines.push([bestA, bestB]);
+  }
+
+  return lines;
+}
+
 function isImage(resp) {
   const ct = resp?.headers?.["content-type"] || resp?.headers?.["Content-Type"];
   return typeof ct === "string" && ct.toLowerCase().startsWith("image/");
@@ -700,6 +815,9 @@ export async function getParcelOverlayMapImageBufferV2({
   overlayColor = "0xff7f00ff",
   overlayFill = "0xff7f0033",
   overlayWeight = 4,
+  // When true, render diagonal hatch lines across the overlay bounds (for "striped" overlays like your example).
+  // Can be overridden per-layer via overlayLayers[].hatch.
+  overlayHatch = true,
   overlayLayers = null, // [{ geoJson, color, fill, weight, maxLines, maxRings, preserveLineOrder, spreadLines }]
   debugLabel = null,
   paddingPx = 110,
@@ -722,6 +840,7 @@ export async function getParcelOverlayMapImageBufferV2({
             color: overlayColor,
             fill: overlayFill,
             weight: overlayWeight,
+            hatch: overlayHatch ? { enabled: true } : { enabled: false },
           },
         ];
 
@@ -750,12 +869,39 @@ export async function getParcelOverlayMapImageBufferV2({
       ? pickEvenly(lineCandidates, layerMaxLines)
       : lineCandidates.slice(0, layerMaxLines);
 
+    // Optional hatch lines across the overlay bounds (not polygon-clipped).
+    const hatchCfg =
+      typeof layer?.hatch === "object" && layer.hatch
+        ? layer.hatch
+        : { enabled: false };
+    const hatchEnabled =
+      hatchCfg?.enabled === true ||
+      (hatchCfg?.enabled !== false && overlayHatch === true);
+
+    let hatchLines = [];
+    if (hatchEnabled) {
+      const hatchBounds = boundsFromRings(
+        orderedRings.slice(0, layerMaxRings).length
+          ? orderedRings.slice(0, layerMaxRings)
+          : [parcelRingRaw]
+      );
+      hatchLines = generateHatchLinesForBounds(hatchBounds, {
+        angleDeg: Number.isFinite(Number(hatchCfg?.angleDeg))
+          ? Number(hatchCfg.angleDeg)
+          : -30,
+        lineCount: Number.isFinite(Number(hatchCfg?.lineCount))
+          ? Number(hatchCfg.lineCount)
+          : 28,
+      });
+    }
+
     preparedLayers.push({
       color: layer?.color || overlayColor,
       fill: layer?.fill || overlayFill,
       weight: Number(layer?.weight) || overlayWeight,
       selectedRings: orderedRings.slice(0, layerMaxRings),
-      selectedLines,
+      // Keep "real" overlay lines first, then hatch lines, so URL trimming keeps the most meaningful geometry.
+      selectedLines: selectedLines.concat(hatchLines),
       fallbackRing: selectBestOverlayRing(ringsRaw, parcelRingRaw) || null,
       fallbackLine: linesByProximity[0] || selectedLines[0] || null,
     });
@@ -770,6 +916,8 @@ export async function getParcelOverlayMapImageBufferV2({
       rawLineCount: linesRaw.length,
       selectedRingCount: Math.min(orderedRings.length, layerMaxRings),
       selectedLineCount: selectedLines.length,
+      hatchEnabled,
+      hatchLineCount: hatchLines.length,
     });
   }
 
