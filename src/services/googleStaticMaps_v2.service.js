@@ -128,7 +128,8 @@ function extractPolygonRing(geojson) {
  * Extract outer rings (array of [lng,lat] arrays) from GeoJSON Feature/Geometry.
  * Supports Polygon and MultiPolygon.
  */
-function extractPolygonRings(geojson) {
+function extractPolygonRings(geojson, opts = {}) {
+  const includeHoles = !!opts?.includeHoles;
   if (!geojson) return [];
 
   const geom =
@@ -139,13 +140,24 @@ function extractPolygonRings(geojson) {
   if (!geom) return [];
 
   if (geom.type === "Polygon") {
-    const ring = geom.coordinates?.[0];
-    return Array.isArray(ring) && ring.length ? [ring] : [];
+    const rings = geom.coordinates || [];
+    if (!rings.length) return [];
+    const selected = includeHoles ? rings : [rings[0]];
+    return selected.filter((ring) => Array.isArray(ring) && ring.length);
   }
 
   if (geom.type === "MultiPolygon") {
     const polys = geom.coordinates || [];
     if (!polys.length) return [];
+    if (includeHoles) {
+      const out = [];
+      for (const poly of polys) {
+        for (const ring of poly || []) {
+          if (Array.isArray(ring) && ring.length) out.push(ring);
+        }
+      }
+      return out;
+    }
     return polys
       .map((poly) => poly?.[0])
       .filter((ring) => Array.isArray(ring) && ring.length);
@@ -153,7 +165,9 @@ function extractPolygonRings(geojson) {
 
   if (geom.type === "GeometryCollection") {
     const out = [];
-    for (const g of geom.geometries || []) out.push(...extractPolygonRings(g));
+    for (const g of geom.geometries || []) {
+      out.push(...extractPolygonRings(g, opts));
+    }
     return out;
   }
 
@@ -702,7 +716,7 @@ export async function getParcelOverlayMapImageBufferV2({
   const preparedLayers = [];
   const preparedLayerDebug = [];
   for (const layer of rawLayers) {
-    const ringsRaw = extractPolygonRings(layer?.geoJson);
+    const ringsRaw = extractPolygonRings(layer?.geoJson, { includeHoles: true });
     const linesRaw = extractLinePaths(layer?.geoJson);
     if (!ringsRaw.length && !linesRaw.length) continue;
 
