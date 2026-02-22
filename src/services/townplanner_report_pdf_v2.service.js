@@ -1306,7 +1306,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
-            zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 1 : 0,
+            zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 2 : 0,
             fitToParcel: !(isDwellingOverlay || isStreetscapeOverlay),
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
