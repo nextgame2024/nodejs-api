@@ -5,6 +5,8 @@ import {
   getReportRequestByTokenV2,
   markReportRequestStatusV2,
   findReadyReportByHashV2,
+  findLatestReportForLocationV2,
+  refreshReportRequestContextV2,
   markReportRunningV2,
   markReportReadyV2,
   markReportFailedV2,
@@ -31,9 +33,15 @@ function isValidEmail(email) {
 const inFlight = new Set();
 
 function isCachedPdfCurrent(cachedRow) {
-  // cachedRow has pdf_key from findReadyReportByHashV2
+  const reportVersion =
+    cachedRow?.report_json?.templateVersion ||
+    cachedRow?.report_json?.template_version ||
+    null;
+  if (reportVersion) {
+    return String(reportVersion) === String(REPORT_TEMPLATE_VERSION);
+  }
+  // Fallback for old rows that only expose version in key path.
   const key = String(cachedRow?.pdf_key || "");
-  // We now store version in the key path, so this check is reliable.
   return key.includes(REPORT_TEMPLATE_VERSION);
 }
 
@@ -47,6 +55,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     lotPlan = null,
     force = false,
     email = "unknown@local",
+    planningSnapshot = null,
   } = req.body || {};
 
   if (typeof lat !== "number" || typeof lng !== "number") {
@@ -88,27 +97,62 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     }
   }
 
-  const token = tokenFromBody || crypto.randomUUID();
+  const normalizedAddressLabel = addressLabel.trim();
+  const normalizedEmail = String(email || "unknown@local")
+    .trim()
+    .toLowerCase();
+
+  let token = tokenFromBody || null;
+  let row = token ? await getReportRequestByTokenV2(token) : null;
+
+  // Location-level reuse:
+  // If same location is requested again, reuse the same row/token and overwrite it.
+  if (!row && !token) {
+    row = await findLatestReportForLocationV2({
+      placeId: placeId || null,
+      addressLabel: normalizedAddressLabel,
+      lat,
+      lng,
+    });
+    if (row?.token) token = row.token;
+  }
+
+  if (!token) token = crypto.randomUUID();
 
   // Ensure DB row exists
-  let row = await getReportRequestByTokenV2(token);
   if (!row) {
     row = await createReportRequestV2({
       token,
-      email: String(email || "unknown@local")
-        .trim()
-        .toLowerCase(),
-      addressLabel: addressLabel.trim(),
+      email: normalizedEmail,
+      addressLabel: normalizedAddressLabel,
       placeId,
       lat,
       lng,
-      planningSnapshot: null,
+      planningSnapshot: planningSnapshot || null,
       inputsHash,
     });
+  } else {
+    row =
+      (await refreshReportRequestContextV2({
+        token,
+        email: normalizedEmail,
+        addressLabel: normalizedAddressLabel,
+        placeId,
+        lat,
+        lng,
+        planningSnapshot: planningSnapshot || null,
+        inputsHash,
+      })) || row;
   }
 
   // If already ready, return (NOTE: this is token-based, not hash-based; keep behavior)
-  if (row.status === "ready" && row.pdf_url) {
+  if (
+    !force &&
+    row.status === "ready" &&
+    row.pdf_url &&
+    row.inputs_hash === inputsHash &&
+    isCachedPdfCurrent(row)
+  ) {
     return res.json({
       ok: true,
       token: row.token,
@@ -128,11 +172,13 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
 
         const result = await generateTownPlannerReportV2({
           token,
-          addressLabel: addressLabel.trim(),
+          addressLabel: normalizedAddressLabel,
           placeId,
           lat,
           lng,
           lotPlan: lotPlan || null,
+          planningSnapshot:
+            planningSnapshot || row?.planning_snapshot || null,
         });
 
         await markReportReadyV2({

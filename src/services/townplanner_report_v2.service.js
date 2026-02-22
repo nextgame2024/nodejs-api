@@ -1,7 +1,6 @@
 // townplanner_report_v2.service.js
 import crypto from "crypto";
 import axios from "axios";
-import { randomUUID } from "crypto";
 
 import { fetchPlanningDataV2 } from "./planningData_v2.service.js";
 import { putToS3 } from "./s3.js";
@@ -38,13 +37,6 @@ function addressSlug(addressLabel) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 80) || "unknown-address"
   );
-}
-
-function versionSlug(v) {
-  return String(v || "unknown")
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, "_")
-    .slice(0, 80);
 }
 
 function normalizeDashes(v) {
@@ -392,8 +384,16 @@ export async function generateTownPlannerReportV2({
   lat,
   lng,
   lotPlan = null,
+  planningSnapshot = null,
 }) {
-  const planning = await fetchPlanningDataV2({ lat, lng, lotPlan });
+  const hasUsableSnapshot =
+    planningSnapshot &&
+    typeof planningSnapshot === "object" &&
+    !!planningSnapshot.siteParcelPolygon;
+
+  const planning = hasUsableSnapshot
+    ? planningSnapshot
+    : await fetchPlanningDataV2({ lat, lng, lotPlan });
 
   // Keep your existing “must have parcel boundary” guard
   if (!planning || !planning.siteParcelPolygon) {
@@ -461,13 +461,12 @@ export async function generateTownPlannerReportV2({
   });
 
   const address = addressSlug(addressLabel);
-  const ts = Date.now();
-  const vslug = versionSlug(REPORT_TEMPLATE_VERSION);
 
-  // IMPORTANT: versioned key path so old PDFs are obviously old
+  // Stable key per token so subsequent generations for the same location/token
+  // overwrite the previous object instead of creating unlimited copies.
   const key =
     S3_PUBLIC_PREFIX +
-    `townplanner-v2/reports/${vslug}/${address}/${ts}-${randomUUID()}.pdf`;
+    `townplanner-v2/reports/by-location/${address}/${token}.pdf`;
 
   const pdfUrl = await putToS3({
     key,

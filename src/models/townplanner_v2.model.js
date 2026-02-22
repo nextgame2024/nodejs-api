@@ -40,6 +40,94 @@ export async function getReportRequestByTokenV2(token) {
   return rows[0] || null;
 }
 
+export async function findLatestReportForLocationV2({
+  placeId = null,
+  addressLabel = null,
+  lat = null,
+  lng = null,
+}) {
+  if (placeId) {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM townplanner_report_requests_v2
+      WHERE place_id = $1
+      ORDER BY updated_at DESC NULLS LAST, created_at DESC
+      LIMIT 1
+      `,
+      [placeId]
+    );
+    return rows[0] || null;
+  }
+
+  if (
+    typeof lat !== "number" ||
+    typeof lng !== "number" ||
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng)
+  ) {
+    return null;
+  }
+
+  const normalizedAddress = String(addressLabel || "")
+    .trim()
+    .toLowerCase();
+
+  const { rows } = await pool.query(
+    `
+    SELECT *
+    FROM townplanner_report_requests_v2
+    WHERE lower(trim(address_label)) = $1
+      AND abs(lat - $2) < 0.00001
+      AND abs(lng - $3) < 0.00001
+    ORDER BY updated_at DESC NULLS LAST, created_at DESC
+    LIMIT 1
+    `,
+    [normalizedAddress, lat, lng]
+  );
+
+  return rows[0] || null;
+}
+
+export async function refreshReportRequestContextV2({
+  token,
+  email,
+  addressLabel,
+  placeId,
+  lat,
+  lng,
+  planningSnapshot = null,
+  inputsHash = null,
+}) {
+  const { rows } = await pool.query(
+    `
+    UPDATE townplanner_report_requests_v2
+    SET email = $2,
+        address_label = $3,
+        place_id = $4,
+        lat = $5,
+        lng = $6,
+        planning_snapshot = COALESCE($7, planning_snapshot),
+        inputs_hash = COALESCE($8, inputs_hash),
+        expires_at = NOW() + INTERVAL '7 days',
+        updated_at = NOW()
+    WHERE token = $1
+    RETURNING *;
+    `,
+    [
+      token,
+      email,
+      addressLabel,
+      placeId || null,
+      lat,
+      lng,
+      planningSnapshot,
+      inputsHash,
+    ]
+  );
+  return rows[0] || null;
+}
+
 export async function markReportRequestStatusV2({ token, status }) {
   const { rows } = await pool.query(
     `
@@ -58,7 +146,7 @@ export async function findReadyReportByHashV2(inputsHash) {
 
   const { rows } = await pool.query(
     `
-    SELECT token, pdf_url, pdf_key, status, updated_at
+    SELECT token, pdf_url, pdf_key, status, updated_at, report_json
     FROM townplanner_report_requests_v2
     WHERE inputs_hash = $1
       AND status = 'ready'
