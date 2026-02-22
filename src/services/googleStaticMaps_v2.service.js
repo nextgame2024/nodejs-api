@@ -891,7 +891,7 @@ export async function getParcelOverlayMapImageBufferV2({
         debugLabel === "critical-overlay" ||
         debugLabel === "streetscape-overlay";
       const minOverlayPaths = Math.min(
-        denseLineOverlay ? 28 : 4,
+        denseLineOverlay ? 44 : 4,
         selectedOverlayPaths.length
       );
       let workingPaths = selectedOverlayPaths.slice();
