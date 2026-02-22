@@ -27,7 +27,7 @@ import bmCompanyRoutes from "./routes/bm.company.routes.js";
 import bmProjectTypesRoutes from "./routes/bm.project.types.routes.js";
 
 const app = express();
-const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "1mb";
+const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "10mb";
 
 // CORS
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:4200")
