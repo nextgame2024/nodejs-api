@@ -27,6 +27,7 @@ import bmCompanyRoutes from "./routes/bm.company.routes.js";
 import bmProjectTypesRoutes from "./routes/bm.project.types.routes.js";
 
 const app = express();
+const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "1mb";
 
 // CORS
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:4200")
@@ -52,7 +53,7 @@ app.use(
 app.options(/.*/, cors());
 
 // Global middleware
-app.use(express.json());
+app.use(express.json({ limit: jsonBodyLimit }));
 app.use(morgan("dev"));
 
 // Routes
