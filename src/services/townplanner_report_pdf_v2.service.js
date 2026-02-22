@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.47";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.48";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1093,7 +1093,6 @@ export async function buildTownPlannerReportPdfV2(
       pickFirst(reportPayload.narrative, reportPayload?.inputs?.narrative),
     ) || null;
 
-  const mergedControls = controls?.mergedControls || {};
   const sources = Array.isArray(controls?.sources) ? controls.sources : [];
   const assessmentRefs = controls?.assessmentRefs || {};
 
@@ -1628,15 +1627,53 @@ export async function buildTownPlannerReportPdfV2(
 
   // Pagination plan
   const overlayPages = Math.max(1, displayOverlayItems.length);
-  const toc = [
-    { label: "Cover", page: 1 },
-    { label: "Contents", page: 2 },
-    { label: "Site overview", page: 3 },
-    { label: "Zone and categories of assessment", page: 4 },
-    { label: "Overlay constrains", page: 5 },
-    { label: "Lot size and dimensions", page: 5 + overlayPages },
-    { label: "Glossary of terms", page: 6 + overlayPages },
-    { label: "Disclaimer and references", page: 7 + overlayPages },
+  const sectionPages = {
+    tableOfContents: 2,
+    siteOverview: 3,
+    zoningAssessment: 4,
+    overlayStart: 5,
+    lotSizeAndDimensions: 5 + overlayPages,
+    glossary: 6 + overlayPages,
+    disclaimer: 7 + overlayPages,
+  };
+
+  const tocRows = [
+    { label: "Table of contents", page: sectionPages.tableOfContents, level: 0 },
+    { label: "Site Overview", page: sectionPages.siteOverview, level: 0 },
+    { label: "Zoning", page: sectionPages.siteOverview, level: 1 },
+    { label: "Neighbourhood plan", page: sectionPages.siteOverview, level: 1 },
+    { label: "Overlays", page: sectionPages.siteOverview, level: 1 },
+    {
+      label: "Zone and categories of assessment",
+      page: sectionPages.zoningAssessment,
+      level: 0,
+    },
+    ...zoningAssessmentConsiderations.map((item) => ({
+      label: item.heading,
+      page: sectionPages.zoningAssessment,
+      level: 1,
+    })),
+    { label: "Overlay constraints", page: sectionPages.overlayStart, level: 0 },
+    ...displayOverlayItems.flatMap((item, idx) => {
+      const { base } = splitOverlayName(item?.name);
+      const rowPage = sectionPages.overlayStart + idx;
+      return [
+        { label: base || "Overlay", page: rowPage, level: 1 },
+        { label: "Subcategory", page: rowPage, level: 2 },
+        { label: "Category of assessment", page: rowPage, level: 2 },
+      ];
+    }),
+    {
+      label: "Lot size and dimensions",
+      page: sectionPages.lotSizeAndDimensions,
+      level: 0,
+    },
+    { label: "Glossary of terms", page: sectionPages.glossary, level: 0 },
+    {
+      label: "Disclaimer and references",
+      page: sectionPages.disclaimer,
+      level: 0,
+    },
   ];
 
   const doc = new PDFDocument({
@@ -1681,7 +1718,7 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.white)
       .font("Helvetica-Bold")
       .fontSize(24)
-      .text("Property Planning Report", x + 18, y + 70, { width: w - 36 });
+      .text("Property Report", x + 18, y + 70, { width: w - 36 });
 
     boundedText(doc, addressLabel, x + 18, y + 104, w - 36, 28, {
       font: "Helvetica",
@@ -1745,7 +1782,12 @@ export async function buildTownPlannerReportPdfV2(
   // ========== PAGE 2: CONTENTS ==========
   doc.addPage();
   {
-    header(doc, { title: "Contents", addressLabel, schemeVersion, logoBuffer });
+    header(doc, {
+      title: "Table of contents",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
 
     const x = X(doc);
     const w = contentW(doc);
@@ -1755,16 +1797,19 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Report contents", x, top);
+      .text("Table of contents", x, top);
 
     doc
       .fillColor(BRAND.muted)
       .font("Helvetica")
       .fontSize(10)
-      .text("Sections included in this report.", x, top + 26, { width: w });
+      .text("Sections and page numbers included in this report.", x, top + 26, {
+        width: w,
+      });
 
     const listY = top + 64;
-    box(doc, x, listY, w, 520);
+    const listH = 520;
+    box(doc, x, listY, w, listH);
 
     const rowLeftX = x + 18;
     const pageRightX = x + w - 18;
@@ -1772,13 +1817,43 @@ export async function buildTownPlannerReportPdfV2(
 
     let y = listY + 22;
 
-    for (const row of toc) {
+    const rowStyle = (level) => {
+      if (level === 0)
+        return {
+          font: "Helvetica-Bold",
+          fontSize: 11,
+          rowGap: 16,
+          indent: 0,
+          color: BRAND.text,
+        };
+      if (level === 1)
+        return {
+          font: "Helvetica",
+          fontSize: 10,
+          rowGap: 13,
+          indent: 18,
+          color: BRAND.text,
+        };
+      return {
+        font: "Helvetica",
+        fontSize: 9,
+        rowGap: 11,
+        indent: 36,
+        color: BRAND.muted,
+      };
+    };
+
+    for (const row of tocRows) {
+      const style = rowStyle(row.level);
+      if (y > listY + listH - 62) break;
+      const labelX = rowLeftX + style.indent;
+
       // label
-      doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(11);
-      doc.text(row.label, rowLeftX, y);
+      doc.fillColor(style.color).font(style.font).fontSize(style.fontSize);
+      doc.text(row.label, labelX, y, { lineBreak: false });
 
       const labelWidth = doc.widthOfString(row.label);
-      const leaderStart = rowLeftX + labelWidth + leaderMinGap;
+      const leaderStart = labelX + labelWidth + leaderMinGap;
       const leaderEnd = pageRightX - 24;
 
       // dotted leader as dashed stroke (no wrapping)
@@ -1786,7 +1861,7 @@ export async function buildTownPlannerReportPdfV2(
         doc.save();
         doc
           .strokeColor(BRAND.border)
-          .lineWidth(1)
+          .lineWidth(0.8)
           .dash(1, { space: 3 })
           .moveTo(leaderStart, y + 10)
           .lineTo(leaderEnd, y + 10)
@@ -1805,14 +1880,14 @@ export async function buildTownPlannerReportPdfV2(
           align: "right",
         });
 
-      y += 32;
+      y += style.rowGap;
     }
 
     boundedText(
       doc,
       "Maps are indicative only. For authoritative mapping and controls, verify against Brisbane City Plan mapping and relevant codes.",
       x,
-      listY + 520 - 44,
+      listY + listH - 44,
       w,
       36,
       {
@@ -2362,7 +2437,7 @@ export async function buildTownPlannerReportPdfV2(
         .text("Lot size and dimensions", x, top);
       boundedText(
         doc,
-        "Derived from parcel geometry and provided planning controls where available.",
+        "This section provides an indicative summary of lot size and dimensions for the selected property.",
         x,
         top + 26,
         w,
@@ -2381,32 +2456,19 @@ export async function buildTownPlannerReportPdfV2(
       const dimsText = lotDimensions
         ? `${formatLengthM(lotDimensions.longSideM)} × ${formatLengthM(lotDimensions.shortSideM)}`
         : "N/A";
-      const minimumLotSizeValue =
-        mergedControls?.minimumLotSize != null &&
-        String(mergedControls.minimumLotSize).trim() !== ""
-          ? String(mergedControls.minimumLotSize)
-          : "N/A";
-      const minimumFrontageValue =
-        mergedControls?.minimumFrontage != null &&
-        String(mergedControls.minimumFrontage).trim() !== ""
-          ? String(mergedControls.minimumFrontage)
-          : "N/A";
 
       const lines = [
         `Lot/Plan: ${lotPlanLine || "N/A"}`,
         `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
         `Estimated dimensions (approx. envelope): ${dimsText}`,
         `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
-        `Reported street frontage: ${formatLengthM(reportedFrontageM)}`,
-        `Minimum lot size (control): ${minimumLotSizeValue}`,
-        `Minimum frontage (control): ${minimumFrontageValue}`,
         `Coordinates: ${formatCoords(lat, lng)}`,
       ];
-      const sourceLines = [
-        "Data sources:",
-        "• Parcel geometry from planningSnapshot.propertyParcel (bcc_property_parcels).",
-        "• Planning controls from bcc_planning_controls_v2 (if available).",
-      ];
+      if (Number.isFinite(reportedFrontageM) && reportedFrontageM > 0) {
+        lines.splice(4, 0, `Reported street frontage: ${formatLengthM(reportedFrontageM)}`);
+      }
+      const noteText =
+        "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
 
       boundedText(doc, lines.join("\n"), x + 14, srcY + 34, w - 28, 230, {
         font: "Helvetica",
@@ -2414,7 +2476,7 @@ export async function buildTownPlannerReportPdfV2(
         color: BRAND.muted,
         ellipsis: true,
       });
-      boundedText(doc, sourceLines.join("\n"), x + 14, srcY + 286, w - 28, 90, {
+      boundedText(doc, noteText, x + 14, srcY + 286, w - 28, 120, {
         font: "Helvetica",
         fontSize: 9,
         color: BRAND.muted,
