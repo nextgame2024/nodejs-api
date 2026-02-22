@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.45";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.46";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1212,7 +1212,7 @@ export async function buildTownPlannerReportPdfV2(
             geoJson: streetscapeLineGeoJson,
             color: "0xe46e6eff",
             fill: "0x00000000",
-            weight: 2,
+            weight: 3,
             maxLines: 260,
             preserveLineOrder: true,
             spreadLines: true,
