@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.46";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.47";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -66,6 +66,154 @@ function formatCoords(lat, lng) {
   const b = Number(lng);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return "N/A";
   return `${a.toFixed(6)}, ${b.toFixed(6)}`;
+}
+function formatLengthM(value, decimals = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "N/A";
+  return `${n.toLocaleString("en-AU", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })} m`;
+}
+function parseMetersFromValue(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  const raw = String(value);
+  const parsed = Number(raw.replace(/[^0-9.+-]/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+function extractPrimaryParcelRing(geometry) {
+  if (!geometry || typeof geometry !== "object") return null;
+  if (geometry.type === "Polygon") {
+    const ring = geometry?.coordinates?.[0];
+    return Array.isArray(ring) && ring.length >= 4 ? ring : null;
+  }
+  if (geometry.type === "MultiPolygon") {
+    const polygons = Array.isArray(geometry?.coordinates)
+      ? geometry.coordinates
+      : [];
+    let bestRing = null;
+    let bestArea = -Infinity;
+    for (const poly of polygons) {
+      const ring = Array.isArray(poly?.[0]) ? poly[0] : null;
+      if (!ring || ring.length < 4) continue;
+      const polygon = featureFromGeometry({
+        type: "Polygon",
+        coordinates: [ring],
+      });
+      const area = polygon ? Math.abs(turf.area(polygon)) : 0;
+      if (area > bestArea) {
+        bestArea = area;
+        bestRing = ring;
+      }
+    }
+    return bestRing;
+  }
+  return null;
+}
+function ringPerimeterM(ring) {
+  if (!Array.isArray(ring) || ring.length < 2) return null;
+  let total = 0;
+  for (let i = 1; i < ring.length; i += 1) {
+    const a = ring[i - 1];
+    const b = ring[i];
+    if (!Array.isArray(a) || !Array.isArray(b)) continue;
+    const km = turf.distance(turf.point(a), turf.point(b), {
+      units: "kilometers",
+    });
+    if (Number.isFinite(km) && km > 0) total += km * 1000;
+  }
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (
+    Array.isArray(first) &&
+    Array.isArray(last) &&
+    (first[0] !== last[0] || first[1] !== last[1])
+  ) {
+    const km = turf.distance(turf.point(last), turf.point(first), {
+      units: "kilometers",
+    });
+    if (Number.isFinite(km) && km > 0) total += km * 1000;
+  }
+  return total > 0 ? total : null;
+}
+function estimateLotDimensionsM(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) return null;
+  const points = ring.filter(
+    (p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]),
+  );
+  if (points.length < 3) return null;
+
+  const first = points[0];
+  const cleaned =
+    points.length >= 2 &&
+    points[points.length - 1][0] === first[0] &&
+    points[points.length - 1][1] === first[1]
+      ? points.slice(0, -1)
+      : points;
+  if (cleaned.length < 3) return null;
+
+  const meanLat =
+    cleaned.reduce((sum, p) => sum + p[1], 0) / Math.max(1, cleaned.length);
+  const meanLng =
+    cleaned.reduce((sum, p) => sum + p[0], 0) / Math.max(1, cleaned.length);
+  const cosLat = Math.cos((meanLat * Math.PI) / 180);
+  const meterPoints = cleaned.map((p) => ({
+    x: (p[0] - meanLng) * 111320 * cosLat,
+    y: (p[1] - meanLat) * 110540,
+  }));
+
+  const mx =
+    meterPoints.reduce((sum, p) => sum + p.x, 0) /
+    Math.max(1, meterPoints.length);
+  const my =
+    meterPoints.reduce((sum, p) => sum + p.y, 0) /
+    Math.max(1, meterPoints.length);
+
+  let cxx = 0;
+  let cyy = 0;
+  let cxy = 0;
+  for (const p of meterPoints) {
+    const dx = p.x - mx;
+    const dy = p.y - my;
+    cxx += dx * dx;
+    cyy += dy * dy;
+    cxy += dx * dy;
+  }
+  const denom = Math.max(1, meterPoints.length);
+  cxx /= denom;
+  cyy /= denom;
+  cxy /= denom;
+
+  const theta = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+  const cosT = Math.cos(-theta);
+  const sinT = Math.sin(-theta);
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of meterPoints) {
+    const dx = p.x - mx;
+    const dy = p.y - my;
+    const xr = dx * cosT - dy * sinT;
+    const yr = dx * sinT + dy * cosT;
+    if (xr < minX) minX = xr;
+    if (xr > maxX) maxX = xr;
+    if (yr < minY) minY = yr;
+    if (yr > maxY) maxY = yr;
+  }
+
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
+  if (!(spanX > 0 && spanY > 0)) return null;
+
+  return {
+    longSideM: Math.max(spanX, spanY),
+    shortSideM: Math.min(spanX, spanY),
+  };
 }
 
 function formatLotPlanLine(lotPlanRaw, lotNumber, planNumber) {
@@ -995,6 +1143,29 @@ export async function buildTownPlannerReportPdfV2(
     planningSnapshot?.propertyParcel?.debug?.areaM2 ??
     planningSnapshot?.propertyParcel?.debug?.area_m2 ??
     null;
+  const areaM2Computed = parcelFeature ? turf.area(parcelFeature) : null;
+  const lotAreaM2 =
+    Number.isFinite(Number(areaM2)) && Number(areaM2) > 0
+      ? Number(areaM2)
+      : Number.isFinite(Number(areaM2Computed)) && Number(areaM2Computed) > 0
+        ? Number(areaM2Computed)
+        : null;
+  const parcelRing = extractPrimaryParcelRing(parcelGeom);
+  const lotPerimeterM = ringPerimeterM(parcelRing);
+  const lotDimensions = estimateLotDimensionsM(parcelRing);
+  const reportedFrontageM = parseMetersFromValue(
+    pickProp(parcelProps, [
+      "frontage",
+      "frontage_m",
+      "road_frontage",
+      "street_frontage",
+      "street_frontage_m",
+      "frontage_length",
+      "frontage_length_m",
+      "lot_frontage",
+      "lot_frontage_m",
+    ]),
+  );
 
   const center =
     lat != null && lng != null ? { lat: Number(lat), lng: Number(lng) } : null;
@@ -1465,7 +1636,7 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Site overview", page: 3 },
     { label: "Zoning", page: 4 },
     { label: "Overlay constrains", page: 5 },
-    { label: "Development controls", page: 5 + overlayPages },
+    { label: "Lot size and dimensions", page: 5 + overlayPages },
     { label: "Glossary of terms", page: 6 + overlayPages },
     { label: "Disclaimer and references", page: 7 + overlayPages },
   ];
@@ -2174,7 +2345,7 @@ export async function buildTownPlannerReportPdfV2(
     doc.addPage();
     {
       header(doc, {
-        title: "Development controls",
+        title: "Lot size and dimensions",
         addressLabel,
         schemeVersion,
         logoBuffer,
@@ -2188,10 +2359,10 @@ export async function buildTownPlannerReportPdfV2(
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
         .fontSize(20)
-        .text("Key development controls", x, top);
+        .text("Lot size and dimensions", x, top);
       boundedText(
         doc,
-        "Populated from bcc_planning_controls_v2 where available.",
+        "Derived from parcel geometry and provided planning controls where available.",
         x,
         top + 26,
         w,
@@ -2199,105 +2370,68 @@ export async function buildTownPlannerReportPdfV2(
         { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
       );
 
-      const cardY = top + 60;
-      const gap = 12;
-      const cardW = (w - gap) / 2;
-      const cardH = 240;
-
-      const get = (k, fallback = "Not available from provided controls") => {
-        const v = mergedControls?.[k];
-        return v != null && String(v).trim() !== "" ? String(v) : fallback;
-      };
-
-      box(doc, x, cardY, cardW, cardH);
+      const srcY = top + 60;
+      box(doc, x, srcY, w, 540);
       doc
         .fillColor(BRAND.teal2)
         .font("Helvetica-Bold")
         .fontSize(10)
-        .text("Lot & built form", x + 14, cardY + 12);
-      boundedText(
-        doc,
-        [
-          `Maximum building height: ${get("maximumHeight")}`,
-          `Maximum site coverage: ${get("maximumSiteCoverage")}`,
-          `Plot ratio / GFA: ${get("plotRatio")}`,
-          `Density (if applicable): ${get("density")}`,
-        ].join("\n"),
-        x + 14,
-        cardY + 36,
-        cardW - 28,
-        cardH - 54,
-        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
-      );
+        .text("Lot size and dimensions", x + 14, srcY + 12);
 
-      box(doc, x + cardW + gap, cardY, cardW, cardH);
-      doc
-        .fillColor(BRAND.teal2)
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text("Subdivision & dimensions", x + cardW + gap + 14, cardY + 12);
-      boundedText(
-        doc,
-        [
-          `Minimum lot size: ${get("minimumLotSize")}`,
-          `Minimum frontage: ${get("minimumFrontage")}`,
-          `Site area (approx.): ${formatAreaM2(areaM2)}`,
-          `Coordinates: ${formatCoords(lat, lng)}`,
-        ].join("\n"),
-        x + cardW + gap + 14,
-        cardY + 36,
-        cardW - 28,
-        cardH - 54,
-        { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
-      );
+      const dimsText = lotDimensions
+        ? `${formatLengthM(lotDimensions.longSideM)} × ${formatLengthM(lotDimensions.shortSideM)}`
+        : "N/A";
+      const minimumLotSizeValue =
+        mergedControls?.minimumLotSize != null &&
+        String(mergedControls.minimumLotSize).trim() !== ""
+          ? String(mergedControls.minimumLotSize)
+          : "N/A";
+      const minimumFrontageValue =
+        mergedControls?.minimumFrontage != null &&
+        String(mergedControls.minimumFrontage).trim() !== ""
+          ? String(mergedControls.minimumFrontage)
+          : "N/A";
 
-      const srcY = cardY + cardH + 14;
-      box(doc, x, srcY, w, 280);
-      doc
-        .fillColor(BRAND.teal2)
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text("Controls sources", x + 14, srcY + 12);
+      const lines = [
+        `Lot/Plan: ${lotPlanLine || "N/A"}`,
+        `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
+        `Estimated dimensions (approx. envelope): ${dimsText}`,
+        `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
+        `Reported street frontage: ${formatLengthM(reportedFrontageM)}`,
+        `Minimum lot size (control): ${minimumLotSizeValue}`,
+        `Minimum frontage (control): ${minimumFrontageValue}`,
+        `Coordinates: ${formatCoords(lat, lng)}`,
+      ];
+      const sourceLines = [
+        "Data sources:",
+        "• Parcel geometry from planningSnapshot.propertyParcel (bcc_property_parcels).",
+        "• Planning controls from bcc_planning_controls_v2 (if available).",
+      ];
 
-      const srcLines = sources.length
-        ? sources
-            .slice(0, 8)
-            .map(
-              (s) =>
-                `• ${s.label || "Source"}${s.sourceCitation ? ` — ${s.sourceCitation}` : ""}`,
-            )
-        : [
-            "• No matching control records were returned for this site. Populate bcc_planning_controls_v2 to enrich this section.",
-          ];
-
-      boundedText(doc, srcLines.join("\n"), x + 14, srcY + 34, w - 28, 180, {
+      boundedText(doc, lines.join("\n"), x + 14, srcY + 34, w - 28, 230, {
         font: "Helvetica",
         fontSize: 9,
         color: BRAND.muted,
         ellipsis: true,
       });
-
-      const devBullets =
-        narrative?.sections?.find((s) => s?.id === "development")?.bullets ||
-        [];
-      const note = devBullets.length
-        ? devBullets
-            .slice(0, 4)
-            .map((b) => `• ${b}`)
-            .join("\n")
-        : "";
-      if (note) {
-        boundedText(doc, note, x + 14, srcY + 220, w - 28, 50, {
+      boundedText(
+        doc,
+        sourceLines.join("\n"),
+        x + 14,
+        srcY + 286,
+        w - 28,
+        90,
+        {
           font: "Helvetica",
           fontSize: 9,
           color: BRAND.muted,
           ellipsis: true,
-        });
-      }
+        },
+      );
     }
   };
 
-  // ========== PAGE 5 + overlay pages: DEVELOPMENT CONTROLS ==========
+  // ========== PAGE 5 + overlay pages: LOT SIZE & DIMENSIONS ==========
   renderDevelopmentControlsPage();
 
   // ========== PAGE 6 + overlay pages: GLOSSARY ==========
