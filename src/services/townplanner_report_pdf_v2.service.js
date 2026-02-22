@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.41";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.43";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1306,7 +1306,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
-            zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 1 : 0,
+            zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 0 : 0,
             fitToParcel: !isDwellingOverlay,
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
@@ -1466,7 +1466,7 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Zoning", page: 4 },
     { label: "Overlay constrains", page: 5 },
     { label: "Development controls", page: 5 + overlayPages },
-    { label: "References & disclaimer", page: 6 + overlayPages },
+    { label: "Disclaimer and references", page: 6 + overlayPages },
   ];
 
   const doc = new PDFDocument({
@@ -2299,11 +2299,11 @@ export async function buildTownPlannerReportPdfV2(
   // ========== PAGE 5 + overlay pages: DEVELOPMENT CONTROLS ==========
   renderDevelopmentControlsPage();
 
-  // ========== LAST PAGE: REFERENCES & DISCLAIMER ==========
+  // ========== LAST PAGE: DISCLAIMER & REFERENCES ==========
   doc.addPage();
   {
     header(doc, {
-      title: "References & disclaimer",
+      title: "Disclaimer and references",
       addressLabel,
       schemeVersion,
       logoBuffer,
@@ -2317,7 +2317,7 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("References & disclaimer", x, top);
+      .text("Disclaimer and references", x, top);
 
     const bY = top + 50;
     box(doc, x, bY, w, 260);
@@ -2325,27 +2325,18 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("References", x + 14, bY + 12);
+      .text("Disclaimer", x + 14, bY + 12);
 
-    const refsFromNarrative =
-      narrative?.sections?.find((s) => s?.id === "references")?.items || [];
-
-    const refs = [
-      "Brisbane City Plan 2014 (Brisbane City Council).",
-      "Brisbane City Plan mapping (Brisbane City Council).",
-      ...refsFromNarrative.map((r) => String(r)),
-    ].filter(Boolean);
+    const disclaimer =
+      "This report is based solely on the provided factual inputs and the Brisbane City Plan 2014. No other data sources or interpretations have been used. This information is for preliminary guidance only and should not be substituted for professional planning advice. Consult the full Brisbane City Plan 2014 for complete details, along with State and federal mapping resources and applicable legislation. Maps are indicative only.";
 
     boundedText(
       doc,
-      refs
-        .slice(0, 10)
-        .map((r) => `• ${r}`)
-        .join("\n"),
+      disclaimer,
       x + 14,
       bY + 34,
       w - 28,
-      210,
+      212,
       { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
     );
 
@@ -2355,26 +2346,21 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Disclaimer", x + 14, dY + 12);
+      .text("References", x + 14, dY + 12);
 
-    const disclaimer =
-      narrative?.disclaimer ||
-      "This report is based solely on the provided factual inputs and Brisbane City Plan mapping. It does not constitute professional planning advice. Verify requirements against authoritative sources and obtain professional advice for specific development proposals.";
-
-    boundedText(doc, disclaimer, x + 14, dY + 34, w - 28, 160, {
-      font: "Helvetica",
-      fontSize: 9,
-      color: BRAND.muted,
-      ellipsis: true,
-    });
+    const refs = [
+      "Brisbane City Plan 2014 (Brisbane City Council)",
+      "Brisbane City Plan mapping (Brisbane City Council)",
+      "Planning Act 2016",
+    ];
 
     boundedText(
       doc,
-      "Maps are indicative only. For authoritative mapping and rules, refer to Brisbane City Plan mapping and applicable codes.",
+      refs.map((r) => `• ${r}`).join("\n"),
       x + 14,
-      dY + 202,
+      dY + 34,
       w - 28,
-      40,
+      190,
       { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
     );
   }
