@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.39";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.40";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -503,14 +503,14 @@ function lineCandidatesFromGeometry(geometry) {
 
 function buildDashedOverlayLineGeoJson(
   geometry,
-  { dashKm = 0.009, gapKm = 0.004, maxSegments = 1200 } = {},
+  { dashKm = 0.018, gapKm = 0.011, maxSegments = 900 } = {},
 ) {
   const candidates = lineCandidatesFromGeometry(geometry);
   if (!candidates.length) return null;
 
-  const dash = Math.max(0.0015, Number(dashKm) || 0.009);
-  const gap = Math.max(0.0008, Number(gapKm) || 0.004);
-  const limit = Math.max(36, Math.floor(Number(maxSegments) || 1200));
+  const dash = Math.max(0.002, Number(dashKm) || 0.018);
+  const gap = Math.max(0.001, Number(gapKm) || 0.011);
+  const limit = Math.max(24, Math.floor(Number(maxSegments) || 900));
   const dashedSegments = [];
 
   for (const feature of candidates) {
@@ -1132,7 +1132,7 @@ export async function buildTownPlannerReportPdfV2(
         : isDwellingOverlay
           ? "0x00000000"
         : isStreetscapeOverlay
-          ? "0xf607e7ff"
+          ? "0xe46e6eff"
         : isCriticalOverlay
           ? "0xff3b3bff"
           : palette.outline;
@@ -1142,14 +1142,14 @@ export async function buildTownPlannerReportPdfV2(
       : isDwellingOverlay
         ? 18
         : isStreetscapeOverlay
-          ? 20
+          ? 19
           : 19;
     const overlayPaddingPx = isAirportOverlay
       ? 84
       : isDwellingOverlay
         ? 98
         : isStreetscapeOverlay
-          ? 98
+          ? 102
           : 110;
 
     const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
@@ -1207,20 +1207,21 @@ export async function buildTownPlannerReportPdfV2(
 
     const streetscapeDashedGeoJson = isStreetscapeOverlay
       ? buildDashedOverlayLineGeoJson(geom, {
-          dashKm: 0.009,
-          gapKm: 0.004,
-          maxSegments: 1200,
+          dashKm: 0.018,
+          gapKm: 0.011,
+          maxSegments: 900,
         })
       : null;
     const streetscapeOverlayLayers = isStreetscapeOverlay
       ? [
           {
             geoJson: streetscapeDashedGeoJson,
-            color: "0xf607e7ff",
+            color: "0xe46e6eff",
             fill: "0x00000000",
-            weight: 3,
-            maxLines: 300,
+            weight: 2,
+            maxLines: 260,
             preserveLineOrder: true,
+            spreadLines: true,
           },
         ].filter((x) => x.geoJson)
       : null;
