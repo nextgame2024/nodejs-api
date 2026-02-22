@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.48";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.49";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1812,7 +1812,7 @@ export async function buildTownPlannerReportPdfV2(
     box(doc, x, listY, w, listH);
 
     const rowLeftX = x + 18;
-    const pageRightX = x + w - 18;
+    const pageNumRightX = x + w - 30;
     const leaderMinGap = 10;
 
     let y = listY + 22;
@@ -1854,7 +1854,7 @@ export async function buildTownPlannerReportPdfV2(
 
       const labelWidth = doc.widthOfString(row.label);
       const leaderStart = labelX + labelWidth + leaderMinGap;
-      const leaderEnd = pageRightX - 24;
+      const leaderEnd = pageNumRightX - 26;
 
       // dotted leader as dashed stroke (no wrapping)
       if (leaderEnd > leaderStart + 20) {
@@ -1875,29 +1875,13 @@ export async function buildTownPlannerReportPdfV2(
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
         .fontSize(11)
-        .text(String(row.page), pageRightX - 2, y, {
-          width: 20,
+        .text(String(row.page), pageNumRightX - 24, y, {
+          width: 24,
           align: "right",
         });
 
       y += style.rowGap;
     }
-
-    boundedText(
-      doc,
-      "Maps are indicative only. For authoritative mapping and controls, verify against Brisbane City Plan mapping and relevant codes.",
-      x,
-      listY + listH - 44,
-      w,
-      36,
-      {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        align: "center",
-        ellipsis: true,
-      },
-    );
   }
 
   // ========== PAGE 3: SITE OVERVIEW ==========
