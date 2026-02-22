@@ -1302,11 +1302,11 @@ export async function buildTownPlannerReportPdfV2(
         ? "0xffc107ff"
         : isDwellingOverlay
           ? "0x00000000"
-        : isStreetscapeOverlay
-          ? "0xe46e6eff"
-        : isCriticalOverlay
-          ? "0xff3b3bff"
-          : palette.outline;
+          : isStreetscapeOverlay
+            ? "0xe46e6eff"
+            : isCriticalOverlay
+              ? "0xff3b3bff"
+              : palette.outline;
     const overlayFillColor = isDwellingOverlay ? "0xe46e6e66" : "0x00000000";
     const overlayZoom = isAirportOverlay
       ? 14
@@ -1399,7 +1399,7 @@ export async function buildTownPlannerReportPdfV2(
           ? dwellingOverlayLayers
           : isStreetscapeOverlay
             ? streetscapeOverlayLayers
-        : null;
+            : null;
     const hasCustomOverlayLayers =
       Array.isArray(customOverlayLayers) && customOverlayLayers.length > 0;
     const pansNearDebug = isAirportOverlay
@@ -1412,9 +1412,9 @@ export async function buildTownPlannerReportPdfV2(
       ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
       : isDwellingOverlay
         ? deriveDwellingMapCenter(center)
-      : isStreetscapeOverlay
-        ? center
-      : center;
+        : isStreetscapeOverlay
+          ? center
+          : center;
 
     if (isAirportOverlay) {
       const airportCodesInSnapshot = overlayPolygons
@@ -1466,7 +1466,7 @@ export async function buildTownPlannerReportPdfV2(
                   ? "dwelling-overlay"
                   : isStreetscapeOverlay
                     ? "streetscape-overlay"
-                : null,
+                    : null,
             parcelColor: "0xffeb3bff",
             parcelFill:
               isCriticalOverlay || isDwellingOverlay
@@ -1506,9 +1506,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelGeoJson: parcelFeature,
         parcelColor: "0xffeb3bff",
         parcelFill:
-          isCriticalOverlay || isDwellingOverlay
-            ? "0xffeb3b4d"
-            : "0x00000000",
+          isCriticalOverlay || isDwellingOverlay ? "0xffeb3b4d" : "0x00000000",
         parcelWeight: 4,
         zoom:
           isAirportOverlay || isDwellingOverlay || isStreetscapeOverlay
@@ -1634,7 +1632,7 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Cover", page: 1 },
     { label: "Contents", page: 2 },
     { label: "Site overview", page: 3 },
-    { label: "Zoning", page: 4 },
+    { label: "Zone and categories of assessment", page: 4 },
     { label: "Overlay constrains", page: 5 },
     { label: "Lot size and dimensions", page: 5 + overlayPages },
     { label: "Glossary of terms", page: 6 + overlayPages },
@@ -1901,7 +1899,7 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Zoning", leftX + 14, tilesY + 12);
+      .text("Zone and categories of assessment", leftX + 14, tilesY + 12);
     boundedText(doc, "Zone", leftX + 14, tilesY + 34, colW - 28, 14, {
       font: "Helvetica",
       fontSize: 9,
@@ -2034,7 +2032,7 @@ export async function buildTownPlannerReportPdfV2(
   // ========== PAGE 4: ZONING ==========
   doc.addPage();
   {
-    header(doc, { title: "Zoning", addressLabel, schemeVersion, logoBuffer });
+    header(doc, { title: "Zone and categories of assessment", addressLabel, schemeVersion, logoBuffer });
 
     const x = X(doc);
     const w = contentW(doc);
@@ -2282,7 +2280,9 @@ export async function buildTownPlannerReportPdfV2(
       const subBase = /^(mapped overlay|not mapped)$/i.test(subRaw || "")
         ? "N/A"
         : subRaw || "N/A";
-      const subcategory = /procedures for air navigation surfaces/i.test(subBase)
+      const subcategory = /procedures for air navigation surfaces/i.test(
+        subBase,
+      )
         ? `${subBase} subcategory.`
         : subBase;
       const ref = resolveOverlayAssessmentRef(overlayTitle);
@@ -2414,20 +2414,12 @@ export async function buildTownPlannerReportPdfV2(
         color: BRAND.muted,
         ellipsis: true,
       });
-      boundedText(
-        doc,
-        sourceLines.join("\n"),
-        x + 14,
-        srcY + 286,
-        w - 28,
-        90,
-        {
-          font: "Helvetica",
-          fontSize: 9,
-          color: BRAND.muted,
-          ellipsis: true,
-        },
-      );
+      boundedText(doc, sourceLines.join("\n"), x + 14, srcY + 286, w - 28, 90, {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: true,
+      });
     }
   };
 
@@ -2469,15 +2461,12 @@ export async function buildTownPlannerReportPdfV2(
       "Operational work",
     ];
 
-    boundedText(
-      doc,
-      glossaryLines.join("\n"),
-      x + 14,
-      gY + 34,
-      w - 28,
-      210,
-      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
-    );
+    boundedText(doc, glossaryLines.join("\n"), x + 14, gY + 34, w - 28, 210, {
+      font: "Helvetica",
+      fontSize: 10,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
   }
 
   // ========== LAST PAGE: DISCLAIMER & REFERENCES ==========
@@ -2511,15 +2500,12 @@ export async function buildTownPlannerReportPdfV2(
     const disclaimer =
       "This report is based solely on the provided factual inputs and the Brisbane City Plan 2014. No other data sources or interpretations have been used. This information is for preliminary guidance only and should not be substituted for professional planning advice. Consult the full Brisbane City Plan 2014 for complete details, along with State and federal mapping resources and applicable legislation. Maps are indicative only.";
 
-    boundedText(
-      doc,
-      disclaimer,
-      x + 14,
-      bY + 34,
-      w - 28,
-      212,
-      { font: "Helvetica", fontSize: 9, color: BRAND.muted, ellipsis: true },
-    );
+    boundedText(doc, disclaimer, x + 14, bY + 34, w - 28, 212, {
+      font: "Helvetica",
+      fontSize: 9,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
 
     const dY = bY + 276;
     box(doc, x, dY, w, 250);
