@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.43";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.45";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1307,7 +1307,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
             zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 0 : 0,
-            fitToParcel: !isDwellingOverlay,
+            fitToParcel: !(isDwellingOverlay || isStreetscapeOverlay),
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
             size: "640x360",
@@ -1466,7 +1466,8 @@ export async function buildTownPlannerReportPdfV2(
     { label: "Zoning", page: 4 },
     { label: "Overlay constrains", page: 5 },
     { label: "Development controls", page: 5 + overlayPages },
-    { label: "Disclaimer and references", page: 6 + overlayPages },
+    { label: "Glossary of terms", page: 6 + overlayPages },
+    { label: "Disclaimer and references", page: 7 + overlayPages },
   ];
 
   const doc = new PDFDocument({
@@ -2298,6 +2299,52 @@ export async function buildTownPlannerReportPdfV2(
 
   // ========== PAGE 5 + overlay pages: DEVELOPMENT CONTROLS ==========
   renderDevelopmentControlsPage();
+
+  // ========== PAGE 6 + overlay pages: GLOSSARY ==========
+  doc.addPage();
+  {
+    header(doc, {
+      title: "Glossary of terms",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const top = Y(doc) + 84;
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("Glossary of terms", x, top);
+
+    const gY = top + 50;
+    box(doc, x, gY, w, 260);
+    doc
+      .fillColor(BRAND.teal2)
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .text("Glossary of terms", x + 14, gY + 12);
+
+    const glossaryLines = [
+      "Material change of use",
+      "Reconfiguring a lot",
+      "Building work",
+      "Operational work",
+    ];
+
+    boundedText(
+      doc,
+      glossaryLines.join("\n"),
+      x + 14,
+      gY + 34,
+      w - 28,
+      210,
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
+    );
+  }
 
   // ========== LAST PAGE: DISCLAIMER & REFERENCES ==========
   doc.addPage();
