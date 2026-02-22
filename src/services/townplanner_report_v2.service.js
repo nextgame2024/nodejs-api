@@ -8,7 +8,6 @@ import {
   buildTownPlannerReportPdfV2,
   PDF_ENGINE_VERSION,
 } from "./townplanner_report_pdf_v2.service.js";
-import { genTownPlannerReportNarrativeV2 } from "./gemini-townplanner_report_v2.service.js";
 import pool from "../config/db.js";
 
 const S3_PUBLIC_PREFIX = process.env.S3_PUBLIC_PREFIX || "public/";
@@ -428,15 +427,9 @@ export async function generateTownPlannerReportV2({
     overlayNames,
   });
 
-  const narrative = await genTownPlannerReportNarrativeV2({
-    schemeVersion: controls.schemeVersion,
-    addressLabel,
-    placeId,
-    lat,
-    lng,
-    planning,
-    controls,
-  });
+  // Narrative generation is intentionally disabled.
+  // Report content is built from factual planning + controls data only.
+  const narrative = null;
 
   const logoBuffer = await loadLogoBuffer();
   const generatedAt = new Date().toISOString();
