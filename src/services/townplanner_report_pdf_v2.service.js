@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.40";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.41";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1205,17 +1205,11 @@ export async function buildTownPlannerReportPdfV2(
         ].filter((x) => x.geoJson)
       : null;
 
-    const streetscapeDashedGeoJson = isStreetscapeOverlay
-      ? buildDashedOverlayLineGeoJson(geom, {
-          dashKm: 0.018,
-          gapKm: 0.011,
-          maxSegments: 900,
-        })
-      : null;
+    const streetscapeLineGeoJson = isStreetscapeOverlay ? overlayFeature : null;
     const streetscapeOverlayLayers = isStreetscapeOverlay
       ? [
           {
-            geoJson: streetscapeDashedGeoJson,
+            geoJson: streetscapeLineGeoJson,
             color: "0xe46e6eff",
             fill: "0x00000000",
             weight: 2,
@@ -1248,7 +1242,7 @@ export async function buildTownPlannerReportPdfV2(
       : isDwellingOverlay
         ? deriveDwellingMapCenter(center)
       : isStreetscapeOverlay
-        ? null
+        ? center
       : center;
 
     if (isAirportOverlay) {
@@ -1313,7 +1307,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
             zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 1 : 0,
-            fitToParcel: !(isDwellingOverlay || isStreetscapeOverlay),
+            fitToParcel: !isDwellingOverlay,
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
             size: "640x360",
