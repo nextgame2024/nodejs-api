@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.37";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.38";
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -499,6 +499,74 @@ function lineCandidatesFromGeometry(geometry) {
   }
 
   return [];
+}
+
+function buildDashedOverlayLineGeoJson(
+  geometry,
+  { dashKm = 0.018, gapKm = 0.011, maxSegments = 900 } = {},
+) {
+  const candidates = lineCandidatesFromGeometry(geometry);
+  if (!candidates.length) return null;
+
+  const dash = Math.max(0.002, Number(dashKm) || 0.018);
+  const gap = Math.max(0.001, Number(gapKm) || 0.011);
+  const limit = Math.max(24, Math.floor(Number(maxSegments) || 900));
+  const dashedSegments = [];
+
+  for (const feature of candidates) {
+    const g = feature?.geometry || null;
+    const parts =
+      g?.type === "LineString"
+        ? [g.coordinates]
+        : g?.type === "MultiLineString"
+          ? g.coordinates
+          : [];
+
+    for (const coords of parts) {
+      if (!Array.isArray(coords) || coords.length < 2) continue;
+
+      let baseLine = null;
+      try {
+        baseLine = turf.lineString(coords);
+      } catch {
+        baseLine = null;
+      }
+      if (!baseLine) continue;
+
+      let totalKm = 0;
+      try {
+        totalKm = turf.length(baseLine, { units: "kilometers" });
+      } catch {
+        totalKm = 0;
+      }
+      if (!(totalKm > 0)) continue;
+
+      for (let startKm = 0; startKm < totalKm; startKm += dash + gap) {
+        const endKm = Math.min(totalKm, startKm + dash);
+        if (!(endKm > startKm)) continue;
+        try {
+          const seg = turf.lineSliceAlong(baseLine, startKm, endKm, {
+            units: "kilometers",
+          });
+          const segCoords = seg?.geometry?.coordinates;
+          if (Array.isArray(segCoords) && segCoords.length >= 2) {
+            dashedSegments.push(segCoords);
+            if (dashedSegments.length >= limit) break;
+          }
+        } catch {}
+      }
+
+      if (dashedSegments.length >= limit) break;
+    }
+
+    if (dashedSegments.length >= limit) break;
+  }
+
+  if (!dashedSegments.length) return featureFromGeometry(geometry);
+  return featureFromGeometry({
+    type: "MultiLineString",
+    coordinates: dashedSegments,
+  });
 }
 
 function nearestOverlayBoundaryPoint(baseCenter, geometry) {
@@ -1043,6 +1111,8 @@ export async function buildTownPlannerReportPdfV2(
       baseKey === normalizeOverlayKey("Bicycle network overlay");
     const isDwellingOverlay =
       baseKey === normalizeOverlayKey("Dwelling house character overlay");
+    const isStreetscapeOverlay =
+      baseKey === normalizeOverlayKey("Streetscape hierarchy overlay");
     const isCriticalOverlay =
       overlayLookupKeys.includes(
         normalizeOverlayKey(
@@ -1061,12 +1131,26 @@ export async function buildTownPlannerReportPdfV2(
         ? "0xffc107ff"
         : isDwellingOverlay
           ? "0x00000000"
+        : isStreetscapeOverlay
+          ? "0xe46e6eff"
         : isCriticalOverlay
           ? "0xff3b3bff"
           : palette.outline;
     const overlayFillColor = isDwellingOverlay ? "0xe46e6e66" : "0x00000000";
-    const overlayZoom = isAirportOverlay ? 14 : isDwellingOverlay ? 18 : 19;
-    const overlayPaddingPx = isAirportOverlay ? 84 : isDwellingOverlay ? 98 : 110;
+    const overlayZoom = isAirportOverlay
+      ? 14
+      : isDwellingOverlay
+        ? 18
+        : isStreetscapeOverlay
+          ? 19
+          : 19;
+    const overlayPaddingPx = isAirportOverlay
+      ? 84
+      : isDwellingOverlay
+        ? 98
+        : isStreetscapeOverlay
+          ? 102
+          : 110;
 
     const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
     const airportBlueGeom =
@@ -1121,12 +1205,34 @@ export async function buildTownPlannerReportPdfV2(
         ].filter((x) => x.geoJson)
       : null;
 
+    const streetscapeDashedGeoJson = isStreetscapeOverlay
+      ? buildDashedOverlayLineGeoJson(geom, {
+          dashKm: 0.018,
+          gapKm: 0.011,
+          maxSegments: 900,
+        })
+      : null;
+    const streetscapeOverlayLayers = isStreetscapeOverlay
+      ? [
+          {
+            geoJson: streetscapeDashedGeoJson,
+            color: "0xe46e6eff",
+            fill: "0x00000000",
+            weight: 2,
+            maxLines: 220,
+            preserveLineOrder: true,
+          },
+        ].filter((x) => x.geoJson)
+      : null;
+
     const customOverlayLayers = isAirportOverlay
       ? airportOverlayLayers
       : isCriticalOverlay
         ? criticalOverlayLayers
         : isDwellingOverlay
           ? dwellingOverlayLayers
+          : isStreetscapeOverlay
+            ? streetscapeOverlayLayers
         : null;
     const hasCustomOverlayLayers =
       Array.isArray(customOverlayLayers) && customOverlayLayers.length > 0;
@@ -1140,6 +1246,8 @@ export async function buildTownPlannerReportPdfV2(
       ? deriveAirportMapCenter(center, airportPansGeom, airportBlueGeom)
       : isDwellingOverlay
         ? deriveDwellingMapCenter(center)
+      : isStreetscapeOverlay
+        ? null
       : center;
 
     if (isAirportOverlay) {
@@ -1190,6 +1298,8 @@ export async function buildTownPlannerReportPdfV2(
                 ? "critical-overlay"
                 : isDwellingOverlay
                   ? "dwelling-overlay"
+                  : isStreetscapeOverlay
+                    ? "streetscape-overlay"
                 : null,
             parcelColor: "0xffeb3bff",
             parcelFill:
@@ -1201,8 +1311,8 @@ export async function buildTownPlannerReportPdfV2(
             overlayFill: overlayFillColor,
             overlayWeight: isAirportOverlay ? 2 : 3,
             zoom: overlayZoom,
-            zoomNudge: isDwellingOverlay ? 2 : 0,
-            fitToParcel: !isDwellingOverlay,
+            zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 1 : 0,
+            fitToParcel: !(isDwellingOverlay || isStreetscapeOverlay),
             paddingPx: overlayPaddingPx,
             maptype: "hybrid",
             size: "640x360",
@@ -1234,7 +1344,10 @@ export async function buildTownPlannerReportPdfV2(
             ? "0xffeb3b4d"
             : "0x00000000",
         parcelWeight: 4,
-        zoom: isAirportOverlay || isDwellingOverlay ? overlayZoom : 19,
+        zoom:
+          isAirportOverlay || isDwellingOverlay || isStreetscapeOverlay
+            ? overlayZoom
+            : 19,
         maptype: "hybrid",
         size: "640x360",
         scale: 2,

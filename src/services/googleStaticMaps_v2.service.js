@@ -887,8 +887,11 @@ export async function getParcelOverlayMapImageBufferV2({
 
     // If URL is too long, progressively thin overlay paths while keeping broad coverage.
     if (url.length > MAX_URL_LEN) {
+      const denseLineOverlay =
+        debugLabel === "critical-overlay" ||
+        debugLabel === "streetscape-overlay";
       const minOverlayPaths = Math.min(
-        debugLabel === "critical-overlay" ? 24 : 4,
+        denseLineOverlay ? 28 : 4,
         selectedOverlayPaths.length
       );
       let workingPaths = selectedOverlayPaths.slice();

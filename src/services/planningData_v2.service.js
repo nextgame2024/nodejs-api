@@ -719,6 +719,26 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     contextFeatureCount: dwellingContext?.featureCount || 0,
   });
 
+  const streetscapeContext = streetscapeHierarchy?.geometry
+    ? await queryGeometryContextByDistance({
+        table: "bcc_streetscape_hierarchy",
+        lng: focusLng,
+        lat: focusLat,
+        withinDistanceMeters: 220,
+      })
+    : null;
+  const streetscapeHierarchyGeom =
+    streetscapeContext?.geometry || streetscapeHierarchy?.geometry || null;
+  console.info("[townplanner_v2] streetscape overlay context", {
+    lat: safeLat,
+    lng: safeLng,
+    focusLat,
+    focusLng,
+    baseType: streetscapeHierarchy?.geometry?.type || null,
+    contextType: streetscapeContext?.geometry?.type || null,
+    contextFeatureCount: streetscapeContext?.featureCount || 0,
+  });
+
   const zoningProps = zoning?.properties || null;
 
   const zoningName =
@@ -1024,7 +1044,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     streetscapeHierarchy?.properties,
     streetscapeKeys
   );
-  pushOverlay(streetscapeHierarchy?.properties, streetscapeHierarchy?.geometry, {
+  pushOverlay(streetscapeHierarchy?.properties, streetscapeHierarchyGeom, {
     name: overlayName("Streetscape hierarchy overlay", streetscapeDetail),
     code: "overlay_streetscape_hierarchy",
     severity: streetscapeDetail || "mapped overlay",
