@@ -45,34 +45,28 @@ function isCachedPdfCurrent(cachedRow) {
   return key.includes(REPORT_TEMPLATE_VERSION);
 }
 
-export const generateReportV2Controller = asyncHandler(async (req, res) => {
-  const {
-    token: tokenFromBody,
-    addressLabel,
-    placeId = null,
-    lat,
-    lng,
-    lotPlan = null,
-    force = false,
-    email = "unknown@local",
-    planningSnapshot = null,
-  } = req.body || {};
-
-  if (typeof lat !== "number" || typeof lng !== "number") {
-    res.status(400);
-    throw new Error("lat/lng must be numbers");
-  }
-  if (!addressLabel || typeof addressLabel !== "string") {
-    res.status(400);
-    throw new Error("Missing addressLabel");
-  }
-
+async function startOrReuseReportGenerationV2({
+  token: tokenFromBody = null,
+  addressLabel,
+  placeId = null,
+  lat,
+  lng,
+  lotPlan = null,
+  force = false,
+  email = "unknown@local",
+  planningSnapshot = null,
+}) {
   const schemeVersion =
     process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
 
-  // CRITICAL: include template version so cache is invalidated when PDF changes
+  const normalizedAddressLabel = String(addressLabel || "").trim();
+  const normalizedEmail = String(email || "unknown@local")
+    .trim()
+    .toLowerCase();
+
+  // Include template version so cache is invalidated when PDF changes
   const inputsHash = computeInputsHashV2({
-    addressLabel: addressLabel.trim(),
+    addressLabel: normalizedAddressLabel,
     placeId: placeId || null,
     lat,
     lng,
@@ -84,23 +78,17 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
   // Reuse existing ready report for identical inputs (unless forced)
   if (!force) {
     const cached = await findReadyReportByHashV2(inputsHash);
-    // SAFETY: if cached PDF exists but is from a different engine version, regenerate
     if (cached?.pdf_url && isCachedPdfCurrent(cached)) {
-      return res.json({
+      return {
         ok: true,
         token: cached.token,
         status: "ready",
         pdfUrl: cached.pdf_url,
         cached: true,
         templateVersion: REPORT_TEMPLATE_VERSION,
-      });
+      };
     }
   }
-
-  const normalizedAddressLabel = addressLabel.trim();
-  const normalizedEmail = String(email || "unknown@local")
-    .trim()
-    .toLowerCase();
 
   let token = tokenFromBody || null;
   let row = token ? await getReportRequestByTokenV2(token) : null;
@@ -145,7 +133,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
       })) || row;
   }
 
-  // If already ready, return (NOTE: this is token-based, not hash-based; keep behavior)
+  // If already ready, return
   if (
     !force &&
     row.status === "ready" &&
@@ -153,14 +141,16 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     row.inputs_hash === inputsHash &&
     isCachedPdfCurrent(row)
   ) {
-    return res.json({
+    return {
       ok: true,
       token: row.token,
       status: "ready",
       pdfUrl: row.pdf_url,
       templateVersion: REPORT_TEMPLATE_VERSION,
-    });
+    };
   }
+
+  const snapshotForJob = planningSnapshot || row?.planning_snapshot || null;
 
   // Launch async job in-process
   if (!inFlight.has(token)) {
@@ -177,8 +167,7 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
           lat,
           lng,
           lotPlan: lotPlan || null,
-          planningSnapshot:
-            planningSnapshot || row?.planning_snapshot || null,
+          planningSnapshot: snapshotForJob,
         });
 
         await markReportReadyV2({
@@ -200,12 +189,49 @@ export const generateReportV2Controller = asyncHandler(async (req, res) => {
     });
   }
 
-  return res.json({
+  return {
     ok: true,
     token,
     status: "running",
     templateVersion: REPORT_TEMPLATE_VERSION,
+  };
+}
+
+export const generateReportV2Controller = asyncHandler(async (req, res) => {
+  const {
+    token: tokenFromBody,
+    addressLabel,
+    placeId = null,
+    lat,
+    lng,
+    lotPlan = null,
+    force = false,
+    email = "unknown@local",
+    planningSnapshot = null,
+  } = req.body || {};
+
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    res.status(400);
+    throw new Error("lat/lng must be numbers");
+  }
+  if (!addressLabel || typeof addressLabel !== "string") {
+    res.status(400);
+    throw new Error("Missing addressLabel");
+  }
+
+  const report = await startOrReuseReportGenerationV2({
+    token: tokenFromBody,
+    addressLabel,
+    placeId,
+    lat,
+    lng,
+    lotPlan,
+    force,
+    email,
+    planningSnapshot,
   });
+
+  return res.json(report);
 });
 
 export const createReportRequestV2Controller = asyncHandler(
@@ -344,4 +370,74 @@ export const placeDetails_v2 = asyncHandler(async (req, res) => {
   }
 
   res.json({ ...details, planning });
+});
+
+export const bootstrap_v2 = asyncHandler(async (req, res) => {
+  const placeId = (req.body?.placeId || "").toString().trim();
+  const sessionToken = (req.body?.sessionToken || "").toString().trim() || null;
+  const requestedAddressLabel = (req.body?.addressLabel || "").toString().trim();
+  const force = !!req.body?.force;
+  const email = (req.body?.email || "unknown@local").toString();
+
+  if (!placeId) {
+    res.status(400);
+    throw new Error("Missing placeId");
+  }
+
+  const details = await getPlaceDetails({ placeId, sessionToken });
+
+  let planning = null;
+  try {
+    if (typeof details?.lat === "number" && typeof details?.lng === "number") {
+      planning = await fetchPlanningDataV2({
+        lat: details.lat,
+        lng: details.lng,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "[townplanner_v2] planning enrichment failed during bootstrap:",
+      e?.message || e
+    );
+  }
+
+  const addressLabel =
+    requestedAddressLabel ||
+    String(details?.formattedAddress || "").trim() ||
+    null;
+
+  let report = null;
+  if (
+    addressLabel &&
+    typeof details?.lat === "number" &&
+    typeof details?.lng === "number"
+  ) {
+    try {
+      report = await startOrReuseReportGenerationV2({
+        addressLabel,
+        placeId,
+        lat: details.lat,
+        lng: details.lng,
+        force,
+        email,
+        planningSnapshot: planning || null,
+      });
+    } catch (e) {
+      console.error(
+        "[townplanner_v2] bootstrap report pre-generation failed:",
+        e?.message || e
+      );
+      report = {
+        ok: false,
+        status: "failed",
+        errorMessage: e?.message || "Failed to start report generation",
+      };
+    }
+  }
+
+  res.json({
+    ...details,
+    planning,
+    report,
+  });
 });
