@@ -12,6 +12,8 @@ import {
   listProjectLabor,
   upsertProjectLabor,
   removeProjectLabor,
+  getProjectLaborExtras,
+  upsertProjectLaborExtras,
   createDocumentFromProject,
 } from "../controllers/bm.projects.controller.js";
 
@@ -53,6 +55,16 @@ router.delete(
 
 // Project labor (PK: project_id + labor_id)
 router.get("/bm/projects/:projectId/labor", authRequired, listProjectLabor);
+router.get(
+  "/bm/projects/:projectId/labor-extras",
+  authRequired,
+  getProjectLaborExtras
+);
+router.put(
+  "/bm/projects/:projectId/labor-extras",
+  authRequired,
+  upsertProjectLaborExtras
+);
 router.post("/bm/projects/:projectId/labor", authRequired, upsertProjectLabor);
 router.put(
   "/bm/projects/:projectId/labor/:laborId",

@@ -3,6 +3,7 @@ import * as model from "../models/bm.projects.model.js";
 import { createDocumentFromProject as createDocFromProject } from "../models/bm.documents.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const toMoney = (value) => Math.round(Number(value) * 100) / 100;
 
 export async function listProjects(
   companyId,
@@ -72,6 +73,39 @@ export const upsertProjectLabor = (companyId, projectId, laborId, payload) =>
 
 export const removeProjectLabor = (companyId, projectId, laborId) =>
   model.removeProjectLabor(companyId, projectId, laborId);
+
+export async function getProjectLaborExtras(companyId, projectId) {
+  const exists = await model.projectExists(companyId, projectId);
+  if (!exists) return null;
+  return model.getProjectLaborExtras(companyId, projectId);
+}
+
+export async function upsertProjectLaborExtras(companyId, projectId, payload) {
+  const exists = await model.projectExists(companyId, projectId);
+  if (!exists) return null;
+
+  const dailyRateRaw = payload?.daily_rate ?? payload?.dailyRate;
+  const laborHoursRaw = payload?.labor_hours ?? payload?.laborHours;
+
+  const dailyRate = Number(dailyRateRaw);
+  const laborHours = Number(laborHoursRaw);
+
+  if (!Number.isFinite(dailyRate) || dailyRate < 0) {
+    const err = new Error("dailyRate must be a valid non-negative number");
+    err.status = 400;
+    throw err;
+  }
+  if (!Number.isFinite(laborHours) || laborHours < 0) {
+    const err = new Error("laborHours must be a valid non-negative number");
+    err.status = 400;
+    throw err;
+  }
+
+  return model.upsertProjectLaborExtras(companyId, projectId, {
+    dailyRate: toMoney(dailyRate),
+    laborHours: toMoney(laborHours),
+  });
+}
 
 /**
  * Create a quote/invoice from a project using its materials/labor.

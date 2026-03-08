@@ -152,6 +152,31 @@ export const removeProjectLabor = asyncHandler(async (req, res) => {
   res.status(204).send();
 });
 
+export const getProjectLaborExtras = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { projectId } = req.params;
+
+  const laborExtras = await service.getProjectLaborExtras(companyId, projectId);
+  if (!laborExtras) return res.status(404).json({ error: "Project not found" });
+
+  res.json({ laborExtras });
+});
+
+export const upsertProjectLaborExtras = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { projectId } = req.params;
+  const payload = req.body?.laborExtras || req.body || {};
+
+  const laborExtras = await service.upsertProjectLaborExtras(
+    companyId,
+    projectId,
+    payload
+  );
+  if (!laborExtras) return res.status(404).json({ error: "Project not found" });
+
+  res.json({ laborExtras });
+});
+
 /**
  * POST /api/bm/projects/:projectId/create-document
  * Body: { type: "quote"|"invoice", doc_number?, issue_date?, due_date?, notes?, status? }

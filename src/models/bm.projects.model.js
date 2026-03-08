@@ -853,3 +853,149 @@ export async function removeProjectLabor(companyId, projectId, laborId) {
   );
   return res.rowCount > 0;
 }
+
+const ADDITIONAL_COST_NAME_DAILY_RATE = "Daily rate";
+const ADDITIONAL_COST_NAME_LABOR_HOURS = "Labor hours";
+const ADDITIONAL_COST_TYPE_GLOBAL = "global";
+const ADDITIONAL_COST_TYPE_INDIVIDUAL = "individual";
+
+export async function getProjectLaborExtras(companyId, projectId) {
+  const { rows } = await pool.query(
+    `
+    WITH project_daily AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id = $2
+        AND cost_name = $3
+        AND type = $4
+        AND active = true
+      LIMIT 1
+    ),
+    project_hours AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id = $2
+        AND cost_name = $5
+        AND type = $4
+        AND active = true
+      LIMIT 1
+    ),
+    global_daily AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id IS NULL
+        AND cost_name = $3
+        AND type = $6
+        AND active = true
+      LIMIT 1
+    )
+    SELECT
+      COALESCE(
+        (SELECT cost_value FROM project_daily),
+        (SELECT cost_value FROM global_daily),
+        0
+      )::numeric(12,2) AS daily_rate,
+      COALESCE((SELECT cost_value FROM project_hours), 0)::numeric(12,2) AS labor_hours,
+      CASE
+        WHEN EXISTS (SELECT 1 FROM project_daily) THEN 'project'
+        ELSE 'global'
+      END AS daily_rate_source
+    `,
+    [
+      companyId,
+      projectId,
+      ADDITIONAL_COST_NAME_DAILY_RATE,
+      ADDITIONAL_COST_TYPE_INDIVIDUAL,
+      ADDITIONAL_COST_NAME_LABOR_HOURS,
+      ADDITIONAL_COST_TYPE_GLOBAL,
+    ]
+  );
+
+  const dailyRate = Number(rows[0]?.daily_rate ?? 0);
+  const laborHours = Number(rows[0]?.labor_hours ?? 0);
+  const additionalTotal = Math.round(dailyRate * laborHours * 100) / 100;
+
+  return {
+    dailyRate: Math.round(dailyRate * 100) / 100,
+    laborHours: Math.round(laborHours * 100) / 100,
+    additionalTotal,
+    dailyRateSource: rows[0]?.daily_rate_source || "global",
+  };
+}
+
+async function upsertProjectAdditionalCost(
+  companyId,
+  projectId,
+  costName,
+  costValue
+) {
+  await pool.query(
+    `
+    WITH updated AS (
+      UPDATE bm_additional_cost
+      SET cost_value = $4,
+          active = true
+      WHERE company_id = $1
+        AND project_id = $2
+        AND cost_name = $3
+        AND type = $5
+      RETURNING additional_cost_id
+    )
+    INSERT INTO bm_additional_cost (
+      additional_cost_id,
+      company_id,
+      cost_name,
+      type,
+      project_id,
+      cost_value,
+      active
+    )
+    SELECT
+      gen_random_uuid(),
+      $1,
+      $3,
+      $5,
+      $2,
+      $4,
+      true
+    WHERE NOT EXISTS (SELECT 1 FROM updated)
+      AND EXISTS (
+        SELECT 1
+        FROM bm_projects
+        WHERE company_id = $1 AND project_id = $2
+      )
+    `,
+    [
+      companyId,
+      projectId,
+      costName,
+      costValue,
+      ADDITIONAL_COST_TYPE_INDIVIDUAL,
+    ]
+  );
+}
+
+export async function upsertProjectLaborExtras(
+  companyId,
+  projectId,
+  { dailyRate, laborHours }
+) {
+  await upsertProjectAdditionalCost(
+    companyId,
+    projectId,
+    ADDITIONAL_COST_NAME_DAILY_RATE,
+    dailyRate
+  );
+
+  await upsertProjectAdditionalCost(
+    companyId,
+    projectId,
+    ADDITIONAL_COST_NAME_LABOR_HOURS,
+    laborHours
+  );
+
+  return getProjectLaborExtras(companyId, projectId);
+}
