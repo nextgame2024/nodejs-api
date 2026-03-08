@@ -1,6 +1,7 @@
 import * as model from "../models/bm.labor.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const toMoney = (value) => Math.round(Number(value) * 100) / 100;
 
 export async function listLabor(companyId, { q, status, page, limit }) {
   const safeLimit = clamp(Number(limit) || 20, 1, 100);
@@ -31,3 +32,18 @@ export const removeLabor = async (companyId, laborId) => {
   const ok = await model.deleteLabor(companyId, laborId);
   return { ok, action: "deleted" };
 };
+
+export async function getDailyRate(companyId) {
+  return model.getGlobalDailyRate(companyId);
+}
+
+export async function updateDailyRate(companyId, value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    const err = new Error("dailyRate must be a valid non-negative number");
+    err.status = 400;
+    throw err;
+  }
+
+  return model.upsertGlobalDailyRate(companyId, toMoney(amount));
+}

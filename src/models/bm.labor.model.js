@@ -206,3 +206,74 @@ export async function deleteLabor(companyId, laborId) {
   );
   return res.rowCount > 0;
 }
+
+const DAILY_RATE_COST_NAME = "Daily rate";
+const DAILY_RATE_TYPE = "global";
+
+export async function getGlobalDailyRate(companyId) {
+  const { rows } = await pool.query(
+    `
+    SELECT cost_value AS "costValue"
+    FROM bm_additional_cost
+    WHERE company_id = $1
+      AND cost_name = $2
+      AND type = $3
+      AND project_id IS NULL
+      AND active = true
+    ORDER BY additional_cost_id DESC
+    LIMIT 1
+    `,
+    [companyId, DAILY_RATE_COST_NAME, DAILY_RATE_TYPE]
+  );
+
+  const value = Number(rows[0]?.costValue);
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+export async function upsertGlobalDailyRate(companyId, costValue) {
+  const { rows } = await pool.query(
+    `
+    WITH updated AS (
+      UPDATE bm_additional_cost
+      SET cost_value = $2,
+          active = true
+      WHERE company_id = $1
+        AND cost_name = $3
+        AND type = $4
+        AND project_id IS NULL
+      RETURNING cost_value
+    ),
+    inserted AS (
+      INSERT INTO bm_additional_cost (
+        additional_cost_id,
+        company_id,
+        cost_name,
+        type,
+        project_id,
+        cost_value,
+        active
+      )
+      SELECT
+        gen_random_uuid(),
+        $1,
+        $3,
+        $4,
+        NULL,
+        $2,
+        true
+      WHERE NOT EXISTS (SELECT 1 FROM updated)
+      RETURNING cost_value
+    )
+    SELECT cost_value AS "costValue" FROM updated
+    UNION ALL
+    SELECT cost_value AS "costValue" FROM inserted
+    LIMIT 1
+    `,
+    [companyId, costValue, DAILY_RATE_COST_NAME, DAILY_RATE_TYPE]
+  );
+
+  const value = Number(rows[0]?.costValue);
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}

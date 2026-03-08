@@ -59,3 +59,16 @@ export const removeLabor = asyncHandler(async (req, res) => {
 
   res.json({ laborId, action: result.action });
 });
+
+export const getDailyRate = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const dailyRate = await service.getDailyRate(companyId);
+  res.json({ dailyRate });
+});
+
+export const updateDailyRate = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const rawValue = req.body?.dailyRate ?? req.body?.cost_value ?? req.body?.costValue;
+  const dailyRate = await service.updateDailyRate(companyId, rawValue);
+  res.json({ dailyRate });
+});
