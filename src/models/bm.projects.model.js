@@ -1,5 +1,53 @@
 import pool from "../config/db.js";
 
+const PROJECT_SURCHARGES_TABLE = "bm_project_surcharges";
+let hasCheckedProjectSurchargesTable = false;
+let projectSurchargesTableExistsCache = false;
+
+function isMissingProjectSurchargesTableError(error) {
+  if (!error || error.code !== "42P01") return false;
+  const message = String(error.message || "").toLowerCase();
+  return message.includes(PROJECT_SURCHARGES_TABLE);
+}
+
+async function projectSurchargesTableExists() {
+  if (hasCheckedProjectSurchargesTable) {
+    return projectSurchargesTableExistsCache;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT to_regclass('public.${PROJECT_SURCHARGES_TABLE}') IS NOT NULL AS "exists"
+      `
+    );
+    projectSurchargesTableExistsCache = !!rows[0]?.exists;
+  } catch {
+    projectSurchargesTableExistsCache = false;
+  } finally {
+    hasCheckedProjectSurchargesTable = true;
+  }
+
+  return projectSurchargesTableExistsCache;
+}
+
+const PROJECT_SURCHARGES_EXISTS_FOR_LIST_SQL = `
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_surcharges ps
+          WHERE ps.company_id = p.company_id
+            AND ps.project_id = p.project_id
+        )
+`;
+
+const PROJECT_SURCHARGES_EXISTS_FOR_RELATIONS_SQL = `
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_surcharges ps
+        WHERE ps.company_id = $1 AND ps.project_id = $2
+      )
+`;
+
 const PROJECT_SELECT = `
   p.project_id AS "projectId",
   p.company_id AS "companyId",
@@ -55,8 +103,8 @@ export async function listProjects(
 
   params.push(limit, offset);
 
-  const { rows } = await pool.query(
-    `
+  const includeSurcharges = await projectSurchargesTableExists();
+  const query = `
     SELECT
       ${PROJECT_SELECT},
       (
@@ -71,20 +119,15 @@ export async function listProjects(
           FROM bm_project_materials pm
           WHERE pm.company_id = p.company_id
             AND pm.project_id = p.project_id
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM bm_project_labor pl
-        WHERE pl.company_id = p.company_id
-          AND pl.project_id = p.project_id
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM bm_project_surcharges ps
-        WHERE ps.company_id = p.company_id
-          AND ps.project_id = p.project_id
-      )
-    ) AS "hasProjects"
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_project_labor pl
+          WHERE pl.company_id = p.company_id
+            AND pl.project_id = p.project_id
+        )
+        ${includeSurcharges ? PROJECT_SURCHARGES_EXISTS_FOR_LIST_SQL : ""}
+      ) AS "hasProjects"
     FROM bm_projects p
     JOIN bm_clients c
       ON c.client_id = p.client_id
@@ -116,9 +159,25 @@ export async function listProjects(
     WHERE ${where.join(" AND ")}
     ORDER BY (p.status = 'archived') ASC, p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
-    `,
-    params
-  );
+    `;
+
+  let rows = [];
+  try {
+    const res = await pool.query(query, params);
+    rows = res.rows;
+  } catch (error) {
+    if (!isMissingProjectSurchargesTableError(error)) throw error;
+    // Deployment race condition: code may be released before migration.
+    hasCheckedProjectSurchargesTable = true;
+    projectSurchargesTableExistsCache = false;
+
+    const fallbackQuery = query.replace(
+      PROJECT_SURCHARGES_EXISTS_FOR_LIST_SQL,
+      ""
+    );
+    const res = await pool.query(fallbackQuery, params);
+    rows = res.rows;
+  }
 
   return rows;
 }
@@ -604,8 +663,8 @@ export async function archiveProject(companyId, projectId) {
 }
 
 export async function projectHasRelations(companyId, projectId) {
-  const { rows } = await pool.query(
-    `
+  const includeSurcharges = await projectSurchargesTableExists();
+  const query = `
     SELECT (
       EXISTS (
         SELECT 1
@@ -622,15 +681,25 @@ export async function projectHasRelations(companyId, projectId) {
         FROM bm_project_labor pl
         WHERE pl.company_id = $1 AND pl.project_id = $2
       )
-      OR EXISTS (
-        SELECT 1
-        FROM bm_project_surcharges ps
-        WHERE ps.company_id = $1 AND ps.project_id = $2
-      )
+      ${includeSurcharges ? PROJECT_SURCHARGES_EXISTS_FOR_RELATIONS_SQL : ""}
     ) AS "hasRelations"
-    `,
-    [companyId, projectId]
-  );
+    `;
+
+  let rows = [];
+  try {
+    const res = await pool.query(query, [companyId, projectId]);
+    rows = res.rows;
+  } catch (error) {
+    if (!isMissingProjectSurchargesTableError(error)) throw error;
+    hasCheckedProjectSurchargesTable = true;
+    projectSurchargesTableExistsCache = false;
+    const fallbackQuery = query.replace(
+      PROJECT_SURCHARGES_EXISTS_FOR_RELATIONS_SQL,
+      ""
+    );
+    const res = await pool.query(fallbackQuery, [companyId, projectId]);
+    rows = res.rows;
+  }
 
   return rows[0]?.hasRelations ?? false;
 }
@@ -877,17 +946,26 @@ const PROJECT_SURCHARGE_SELECT = `
 `;
 
 export async function listProjectSurcharges(companyId, projectId) {
-  const { rows } = await pool.query(
-    `
-    SELECT ${PROJECT_SURCHARGE_SELECT}
-    FROM bm_project_surcharges s
-    WHERE s.company_id = $1
-      AND s.project_id = $2
-    ORDER BY s.createdat ASC
-    `,
-    [companyId, projectId]
-  );
-  return rows;
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT ${PROJECT_SURCHARGE_SELECT}
+      FROM bm_project_surcharges s
+      WHERE s.company_id = $1
+        AND s.project_id = $2
+      ORDER BY s.createdat ASC
+      `,
+      [companyId, projectId]
+    );
+    return rows;
+  } catch (error) {
+    if (isMissingProjectSurchargesTableError(error)) {
+      hasCheckedProjectSurchargesTable = true;
+      projectSurchargesTableExistsCache = false;
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function createProjectSurcharge(
@@ -895,39 +973,54 @@ export async function createProjectSurcharge(
   projectId,
   payload
 ) {
-  const { rows } = await pool.query(
-    `
-    INSERT INTO bm_project_surcharges (
-      surcharge_id,
-      company_id,
-      project_id,
-      surcharge_type,
-      surcharge_name,
-      surcharge_cost
-    )
-    SELECT
-      gen_random_uuid(),
-      $1,
-      $2,
-      $3,
-      $4,
-      $5
-    WHERE EXISTS (
-      SELECT 1
-      FROM bm_projects p
-      WHERE p.company_id = $1
-        AND p.project_id = $2
-    )
-    RETURNING surcharge_id
-    `,
-    [
-      companyId,
-      projectId,
-      payload.type,
-      payload.name,
-      payload.cost,
-    ]
-  );
+  let rows = [];
+  try {
+    const res = await pool.query(
+      `
+      INSERT INTO bm_project_surcharges (
+        surcharge_id,
+        company_id,
+        project_id,
+        surcharge_type,
+        surcharge_name,
+        surcharge_cost
+      )
+      SELECT
+        gen_random_uuid(),
+        $1,
+        $2,
+        $3,
+        $4,
+        $5
+      WHERE EXISTS (
+        SELECT 1
+        FROM bm_projects p
+        WHERE p.company_id = $1
+          AND p.project_id = $2
+      )
+      RETURNING surcharge_id
+      `,
+      [
+        companyId,
+        projectId,
+        payload.type,
+        payload.name,
+        payload.cost,
+      ]
+    );
+    rows = res.rows;
+  } catch (error) {
+    if (isMissingProjectSurchargesTableError(error)) {
+      hasCheckedProjectSurchargesTable = true;
+      projectSurchargesTableExistsCache = false;
+      const migrationError = new Error(
+        "Surcharges table is missing. Please run migration bm_project_surcharges.sql."
+      );
+      migrationError.status = 503;
+      throw migrationError;
+    }
+    throw error;
+  }
 
   const surchargeId = rows[0]?.surcharge_id;
   if (!surchargeId) return null;
@@ -952,16 +1045,29 @@ export async function removeProjectSurcharge(
   projectId,
   surchargeId
 ) {
-  const res = await pool.query(
-    `
-    DELETE FROM bm_project_surcharges
-    WHERE company_id = $1
-      AND project_id = $2
-      AND surcharge_id = $3
-    `,
-    [companyId, projectId, surchargeId]
-  );
-  return res.rowCount > 0;
+  try {
+    const res = await pool.query(
+      `
+      DELETE FROM bm_project_surcharges
+      WHERE company_id = $1
+        AND project_id = $2
+        AND surcharge_id = $3
+      `,
+      [companyId, projectId, surchargeId]
+    );
+    return res.rowCount > 0;
+  } catch (error) {
+    if (isMissingProjectSurchargesTableError(error)) {
+      hasCheckedProjectSurchargesTable = true;
+      projectSurchargesTableExistsCache = false;
+      const migrationError = new Error(
+        "Surcharges table is missing. Please run migration bm_project_surcharges.sql."
+      );
+      migrationError.status = 503;
+      throw migrationError;
+    }
+    throw error;
+  }
 }
 
 const ADDITIONAL_COST_NAME_DAILY_RATE = "Daily rate";
