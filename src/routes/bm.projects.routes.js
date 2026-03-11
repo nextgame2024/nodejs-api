@@ -12,6 +12,9 @@ import {
   listProjectLabor,
   upsertProjectLabor,
   removeProjectLabor,
+  listProjectSurcharges,
+  createProjectSurcharge,
+  removeProjectSurcharge,
   getProjectLaborExtras,
   upsertProjectLaborExtras,
   createDocumentFromProject,
@@ -75,6 +78,23 @@ router.delete(
   "/bm/projects/:projectId/labor/:laborId",
   authRequired,
   removeProjectLabor
+);
+
+// Project surcharges
+router.get(
+  "/bm/projects/:projectId/surcharges",
+  authRequired,
+  listProjectSurcharges
+);
+router.post(
+  "/bm/projects/:projectId/surcharges",
+  authRequired,
+  createProjectSurcharge
+);
+router.delete(
+  "/bm/projects/:projectId/surcharges/:surchargeId",
+  authRequired,
+  removeProjectSurcharge
 );
 
 export default router;

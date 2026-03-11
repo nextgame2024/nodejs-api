@@ -4,6 +4,7 @@ import { createDocumentFromProject as createDocFromProject } from "../models/bm.
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const toMoney = (value) => Math.round(Number(value) * 100) / 100;
+const SURCHARGE_TYPES = new Set(["transportation", "other"]);
 
 export async function listProjects(
   companyId,
@@ -73,6 +74,54 @@ export const upsertProjectLabor = (companyId, projectId, laborId, payload) =>
 
 export const removeProjectLabor = (companyId, projectId, laborId) =>
   model.removeProjectLabor(companyId, projectId, laborId);
+
+// Project surcharges
+export async function listProjectSurcharges(companyId, projectId) {
+  const exists = await model.projectExists(companyId, projectId);
+  if (!exists) return null;
+  return model.listProjectSurcharges(companyId, projectId);
+}
+
+export async function createProjectSurcharge(companyId, projectId, payload) {
+  const exists = await model.projectExists(companyId, projectId);
+  if (!exists) return null;
+
+  const type = String(payload?.type || "")
+    .trim()
+    .toLowerCase();
+  const name = String(payload?.name || "").trim();
+  const cost = Number(payload?.cost);
+
+  if (!type) {
+    const err = new Error("type is required");
+    err.status = 400;
+    throw err;
+  }
+  if (!SURCHARGE_TYPES.has(type)) {
+    const err = new Error("type must be transportation or other");
+    err.status = 400;
+    throw err;
+  }
+  if (!name) {
+    const err = new Error("name is required");
+    err.status = 400;
+    throw err;
+  }
+  if (!Number.isFinite(cost) || cost < 0) {
+    const err = new Error("cost must be a valid non-negative number");
+    err.status = 400;
+    throw err;
+  }
+
+  return model.createProjectSurcharge(companyId, projectId, {
+    type,
+    name,
+    cost: toMoney(cost),
+  });
+}
+
+export const removeProjectSurcharge = (companyId, projectId, surchargeId) =>
+  model.removeProjectSurcharge(companyId, projectId, surchargeId);
 
 export async function getProjectLaborExtras(companyId, projectId) {
   const exists = await model.projectExists(companyId, projectId);

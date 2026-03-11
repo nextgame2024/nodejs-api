@@ -152,6 +152,48 @@ export const removeProjectLabor = asyncHandler(async (req, res) => {
   res.status(204).send();
 });
 
+// Surcharges
+export const listProjectSurcharges = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { projectId } = req.params;
+
+  const surcharges = await service.listProjectSurcharges(companyId, projectId);
+  if (surcharges === null)
+    return res.status(404).json({ error: "Project not found" });
+
+  res.json({ surcharges });
+});
+
+export const createProjectSurcharge = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { projectId } = req.params;
+  const payload = req.body?.projectSurcharge || req.body || {};
+
+  const projectSurcharge = await service.createProjectSurcharge(
+    companyId,
+    projectId,
+    payload
+  );
+  if (!projectSurcharge)
+    return res.status(404).json({ error: "Project not found" });
+
+  res.status(201).json({ projectSurcharge });
+});
+
+export const removeProjectSurcharge = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const { projectId, surchargeId } = req.params;
+
+  const ok = await service.removeProjectSurcharge(
+    companyId,
+    projectId,
+    surchargeId
+  );
+  if (!ok) return res.status(404).json({ error: "Project surcharge not found" });
+
+  res.status(204).send();
+});
+
 export const getProjectLaborExtras = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { projectId } = req.params;

@@ -71,14 +71,20 @@ export async function listProjects(
           FROM bm_project_materials pm
           WHERE pm.company_id = p.company_id
             AND pm.project_id = p.project_id
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM bm_project_labor pl
-          WHERE pl.company_id = p.company_id
-            AND pl.project_id = p.project_id
-        )
-      ) AS "hasProjects"
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_labor pl
+        WHERE pl.company_id = p.company_id
+          AND pl.project_id = p.project_id
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_surcharges ps
+        WHERE ps.company_id = p.company_id
+          AND ps.project_id = p.project_id
+      )
+    ) AS "hasProjects"
     FROM bm_projects p
     JOIN bm_clients c
       ON c.client_id = p.client_id
@@ -616,6 +622,11 @@ export async function projectHasRelations(companyId, projectId) {
         FROM bm_project_labor pl
         WHERE pl.company_id = $1 AND pl.project_id = $2
       )
+      OR EXISTS (
+        SELECT 1
+        FROM bm_project_surcharges ps
+        WHERE ps.company_id = $1 AND ps.project_id = $2
+      )
     ) AS "hasRelations"
     `,
     [companyId, projectId]
@@ -850,6 +861,105 @@ export async function removeProjectLabor(companyId, projectId, laborId) {
       AND pl.labor_id = $3
     `,
     [companyId, projectId, laborId]
+  );
+  return res.rowCount > 0;
+}
+
+/* Project Surcharges */
+const PROJECT_SURCHARGE_SELECT = `
+  s.surcharge_id AS "surchargeId",
+  s.project_id AS "projectId",
+  s.surcharge_type AS "type",
+  s.surcharge_name AS "name",
+  s.surcharge_cost AS "cost",
+  s.createdat AS "createdAt",
+  s.updatedat AS "updatedAt"
+`;
+
+export async function listProjectSurcharges(companyId, projectId) {
+  const { rows } = await pool.query(
+    `
+    SELECT ${PROJECT_SURCHARGE_SELECT}
+    FROM bm_project_surcharges s
+    WHERE s.company_id = $1
+      AND s.project_id = $2
+    ORDER BY s.createdat ASC
+    `,
+    [companyId, projectId]
+  );
+  return rows;
+}
+
+export async function createProjectSurcharge(
+  companyId,
+  projectId,
+  payload
+) {
+  const { rows } = await pool.query(
+    `
+    INSERT INTO bm_project_surcharges (
+      surcharge_id,
+      company_id,
+      project_id,
+      surcharge_type,
+      surcharge_name,
+      surcharge_cost
+    )
+    SELECT
+      gen_random_uuid(),
+      $1,
+      $2,
+      $3,
+      $4,
+      $5
+    WHERE EXISTS (
+      SELECT 1
+      FROM bm_projects p
+      WHERE p.company_id = $1
+        AND p.project_id = $2
+    )
+    RETURNING surcharge_id
+    `,
+    [
+      companyId,
+      projectId,
+      payload.type,
+      payload.name,
+      payload.cost,
+    ]
+  );
+
+  const surchargeId = rows[0]?.surcharge_id;
+  if (!surchargeId) return null;
+
+  const { rows: createdRows } = await pool.query(
+    `
+    SELECT ${PROJECT_SURCHARGE_SELECT}
+    FROM bm_project_surcharges s
+    WHERE s.company_id = $1
+      AND s.project_id = $2
+      AND s.surcharge_id = $3
+    LIMIT 1
+    `,
+    [companyId, projectId, surchargeId]
+  );
+
+  return createdRows[0] || null;
+}
+
+export async function removeProjectSurcharge(
+  companyId,
+  projectId,
+  surchargeId
+) {
+  const res = await pool.query(
+    `
+    DELETE FROM bm_project_surcharges
+    WHERE company_id = $1
+      AND project_id = $2
+      AND surcharge_id = $3
+    `,
+    [companyId, projectId, surchargeId]
   );
   return res.rowCount > 0;
 }
