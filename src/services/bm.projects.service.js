@@ -10,6 +10,8 @@ const SURCHARGE_TYPES = new Set(["transportation", "other"]);
 
 const DISTANCE_MATRIX_URL =
   "https://maps.googleapis.com/maps/api/distancematrix/json";
+const TRANSPORTATION_GENERIC_ERROR =
+  "Unable to calculate transportation time right now.";
 
 function normalizeAddress(value) {
   return String(value || "")
@@ -43,6 +45,37 @@ function formatTravelTime(totalMinutesRaw) {
   return `${hoursLabel} ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+function buildTransportationServiceError(rawMessage, status = 502) {
+  const message = String(rawMessage || "").trim();
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("not authorized to use this service or api") ||
+    lower.includes("api restrictions") ||
+    lower.includes("referer restrictions")
+  ) {
+    const err = new Error(
+      "Unable to calculate transportation time. Google Maps Distance Matrix API is not authorized for this API key. Enable it in Google Cloud and include it in the API key restrictions."
+    );
+    err.status = 503;
+    return err;
+  }
+
+  if (lower.includes("billing")) {
+    const err = new Error(
+      "Unable to calculate transportation time. Google Maps billing is not enabled for this project."
+    );
+    err.status = 503;
+    return err;
+  }
+
+  const err = new Error(
+    message ? `${TRANSPORTATION_GENERIC_ERROR} ${message}` : TRANSPORTATION_GENERIC_ERROR
+  );
+  err.status = status;
+  return err;
+}
+
 async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
   const key = getGoogleMapsKey();
 
@@ -64,26 +97,35 @@ async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
       error?.response?.data?.error_message ||
       error?.response?.data?.message ||
       error?.message ||
-      "Unable to calculate transportation time";
-    const err = new Error(`Unable to calculate transportation time: ${upstream}`);
-    err.status = 502;
-    throw err;
+      "";
+    throw buildTransportationServiceError(upstream, 502);
   }
 
   if (data?.status !== "OK") {
-    const err = new Error(
-      `Unable to calculate transportation time: ${
-        data?.error_message || data?.status || "Unknown Google Maps error"
-      }`
+    throw buildTransportationServiceError(
+      data?.error_message || data?.status || "",
+      502
     );
-    err.status = 502;
-    throw err;
   }
 
   const element = data?.rows?.[0]?.elements?.[0];
   if (!element || element.status !== "OK") {
+    if (element?.status === "ZERO_RESULTS") {
+      const err = new Error(
+        "Unable to calculate transportation time. No driving route was found between company and client addresses."
+      );
+      err.status = 400;
+      throw err;
+    }
+    if (element?.status === "NOT_FOUND") {
+      const err = new Error(
+        "Unable to calculate transportation time. One or both addresses are invalid."
+      );
+      err.status = 400;
+      throw err;
+    }
     const err = new Error(
-      `Unable to calculate transportation time: ${
+      `Unable to calculate transportation time. ${
         element?.status || "Route not found"
       }`
     );
