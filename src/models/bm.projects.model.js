@@ -968,6 +968,34 @@ export async function listProjectSurcharges(companyId, projectId) {
   }
 }
 
+export async function projectHasSurchargeType(
+  companyId,
+  projectId,
+  surchargeType
+) {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT 1
+      FROM bm_project_surcharges
+      WHERE company_id = $1
+        AND project_id = $2
+        AND surcharge_type = $3
+      LIMIT 1
+      `,
+      [companyId, projectId, surchargeType]
+    );
+    return rows.length > 0;
+  } catch (error) {
+    if (isMissingProjectSurchargesTableError(error)) {
+      hasCheckedProjectSurchargesTable = true;
+      projectSurchargesTableExistsCache = false;
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function createProjectSurcharge(
   companyId,
   projectId,

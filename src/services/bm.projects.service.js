@@ -1,10 +1,105 @@
 // src/services/bm.projects.service.js
+import axios from "axios";
 import * as model from "../models/bm.projects.model.js";
+import * as companyModel from "../models/bm.company.model.js";
 import { createDocumentFromProject as createDocFromProject } from "../models/bm.documents.model.js";
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const toMoney = (value) => Math.round(Number(value) * 100) / 100;
 const SURCHARGE_TYPES = new Set(["transportation", "other"]);
+
+const DISTANCE_MATRIX_URL =
+  "https://maps.googleapis.com/maps/api/distancematrix/json";
+
+function normalizeAddress(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getGoogleMapsKey() {
+  const key =
+    process.env.GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY_SERVER ||
+    "";
+  if (!key) {
+    const err = new Error("Google Maps API key is not configured");
+    err.status = 503;
+    throw err;
+  }
+  return key;
+}
+
+function formatTravelTime(totalMinutesRaw) {
+  const totalMinutes = Math.max(0, Math.round(Number(totalMinutesRaw) || 0));
+  if (totalMinutes < 60) {
+    return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const hoursLabel = `${hours} hour${hours === 1 ? "" : "s"}`;
+  if (!minutes) return hoursLabel;
+  return `${hoursLabel} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
+  const key = getGoogleMapsKey();
+
+  let data = null;
+  try {
+    const response = await axios.get(DISTANCE_MATRIX_URL, {
+      params: {
+        origins: companyAddress,
+        destinations: clientAddress,
+        mode: "driving",
+        units: "metric",
+        key,
+      },
+      timeout: 10_000,
+    });
+    data = response?.data;
+  } catch (error) {
+    const upstream =
+      error?.response?.data?.error_message ||
+      error?.response?.data?.message ||
+      error?.message ||
+      "Unable to calculate transportation time";
+    const err = new Error(`Unable to calculate transportation time: ${upstream}`);
+    err.status = 502;
+    throw err;
+  }
+
+  if (data?.status !== "OK") {
+    const err = new Error(
+      `Unable to calculate transportation time: ${
+        data?.error_message || data?.status || "Unknown Google Maps error"
+      }`
+    );
+    err.status = 502;
+    throw err;
+  }
+
+  const element = data?.rows?.[0]?.elements?.[0];
+  if (!element || element.status !== "OK") {
+    const err = new Error(
+      `Unable to calculate transportation time: ${
+        element?.status || "Route not found"
+      }`
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const durationSeconds = Number(element?.duration?.value);
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    const err = new Error("Unable to calculate transportation time");
+    err.status = 502;
+    throw err;
+  }
+
+  return durationSeconds;
+}
 
 export async function listProjects(
   companyId,
@@ -113,6 +208,21 @@ export async function createProjectSurcharge(companyId, projectId, payload) {
     throw err;
   }
 
+  if (type === "transportation") {
+    const transportationExists = await model.projectHasSurchargeType(
+      companyId,
+      projectId,
+      "transportation"
+    );
+    if (transportationExists) {
+      const err = new Error(
+        "Transportation surcharge already exists for this project"
+      );
+      err.status = 409;
+      throw err;
+    }
+  }
+
   return model.createProjectSurcharge(companyId, projectId, {
     type,
     name,
@@ -122,6 +232,42 @@ export async function createProjectSurcharge(companyId, projectId, payload) {
 
 export const removeProjectSurcharge = (companyId, projectId, surchargeId) =>
   model.removeProjectSurcharge(companyId, projectId, surchargeId);
+
+export async function getProjectSurchargeTransportationTime(
+  companyId,
+  projectId
+) {
+  const project = await model.getProject(companyId, projectId);
+  if (!project) return null;
+
+  const company = await companyModel.getCompany(companyId, companyId);
+  const companyAddress = normalizeAddress(company?.address);
+  const clientAddress = normalizeAddress(project?.clientAddress);
+
+  if (!companyAddress) {
+    const err = new Error("Company address is required to calculate travel time");
+    err.status = 400;
+    throw err;
+  }
+  if (!clientAddress) {
+    const err = new Error("Client address is required to calculate travel time");
+    err.status = 400;
+    throw err;
+  }
+
+  const durationSeconds = await fetchTravelDurationSeconds(
+    companyAddress,
+    clientAddress
+  );
+  const durationMinutes = Math.max(0, Math.round(durationSeconds / 60));
+
+  return {
+    companyAddress,
+    clientAddress,
+    durationMinutes,
+    formattedTime: formatTravelTime(durationMinutes),
+  };
+}
 
 export async function getProjectLaborExtras(companyId, projectId) {
   const exists = await model.projectExists(companyId, projectId);
