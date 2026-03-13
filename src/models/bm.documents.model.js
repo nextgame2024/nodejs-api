@@ -38,6 +38,96 @@ const COMPANY_SELECT = `
   logo_url AS "logoUrl"
 `;
 
+const PROJECT_SURCHARGES_TABLE = "bm_project_surcharges";
+const ADDITIONAL_COST_NAME_DAILY_RATE = "Daily rate";
+const ADDITIONAL_COST_NAME_LABOR_HOURS = "Labor hours";
+const ADDITIONAL_COST_TYPE_GLOBAL = "global";
+const ADDITIONAL_COST_TYPE_INDIVIDUAL = "individual";
+
+function isMissingProjectSurchargesTableError(error) {
+  if (!error || error.code !== "42P01") return false;
+  const message = String(error.message || "").toLowerCase();
+  return message.includes(PROJECT_SURCHARGES_TABLE);
+}
+
+async function getProjectLaborExtrasTotals(db, companyId, projectId) {
+  const { rows } = await db.query(
+    `
+    WITH project_daily AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id = $2
+        AND cost_name = $3
+        AND type = $4
+        AND active = true
+      LIMIT 1
+    ),
+    project_hours AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id = $2
+        AND cost_name = $5
+        AND type = $4
+        AND active = true
+      LIMIT 1
+    ),
+    global_daily AS (
+      SELECT cost_value
+      FROM bm_additional_cost
+      WHERE company_id = $1
+        AND project_id IS NULL
+        AND cost_name = $3
+        AND type = $6
+        AND active = true
+      LIMIT 1
+    )
+    SELECT
+      COALESCE(
+        (SELECT cost_value FROM project_daily),
+        (SELECT cost_value FROM global_daily),
+        0
+      )::numeric(12,2) AS daily_rate,
+      COALESCE((SELECT cost_value FROM project_hours), 0)::numeric(12,2) AS labor_hours
+    `,
+    [
+      companyId,
+      projectId,
+      ADDITIONAL_COST_NAME_DAILY_RATE,
+      ADDITIONAL_COST_TYPE_INDIVIDUAL,
+      ADDITIONAL_COST_NAME_LABOR_HOURS,
+      ADDITIONAL_COST_TYPE_GLOBAL,
+    ]
+  );
+
+  const dailyRate = Number(rows[0]?.daily_rate ?? 0);
+  const laborHours = Number(rows[0]?.labor_hours ?? 0);
+  return {
+    dailyRate: Math.round(dailyRate * 100) / 100,
+    laborHours: Math.round(laborHours * 100) / 100,
+    additionalTotal: Math.round(dailyRate * laborHours * 100) / 100,
+  };
+}
+
+async function getProjectSurchargeTotal(db, companyId, projectId) {
+  try {
+    const { rows } = await db.query(
+      `
+      SELECT COALESCE(SUM(surcharge_cost), 0)::numeric(12,2) AS surcharge_total
+      FROM bm_project_surcharges
+      WHERE company_id = $1
+        AND project_id = $2
+      `,
+      [companyId, projectId]
+    );
+    return Number(rows[0]?.surcharge_total ?? 0);
+  } catch (error) {
+    if (isMissingProjectSurchargesTableError(error)) return 0;
+    throw error;
+  }
+}
+
 export async function getCompanyProfile(companyId) {
   const { rows } = await pool.query(
     `
@@ -717,6 +807,7 @@ export async function recalcDocumentTotals(companyId, documentId) {
 
   let materialTotal = 0;
   let laborTotal = 0;
+  let surchargeTotal = 0;
 
   if (projectId) {
     const { rows: projRows } = await pool.query(
@@ -730,9 +821,16 @@ export async function recalcDocumentTotals(companyId, documentId) {
     );
 
     const project = projRows[0];
+    const laborExtras = await getProjectLaborExtrasTotals(
+      pool,
+      companyId,
+      projectId
+    );
+    laborTotal = Number(laborExtras.additionalTotal ?? 0);
+    surchargeTotal = await getProjectSurchargeTotal(pool, companyId, projectId);
 
     if (project && project.cost_in_quote === false) {
-      const { materialMarkup, laborMarkup } = await resolvePricing(
+      const { materialMarkup } = await resolvePricing(
         pool,
         companyId,
         projectId
@@ -771,58 +869,18 @@ export async function recalcDocumentTotals(companyId, documentId) {
         [companyId, projectId, materialMarkup]
       );
 
-      const { rows: labRows } = await pool.query(
-        `
-        SELECT COALESCE(
-          SUM(
-            (CASE
-              WHEN p.project_type_id IS NULL THEN pl.quantity
-              ELSE COALESCE(p.meters_required, 0) / NULLIF(COALESCE(pl.unit_productivity, l.unit_productivity, 0), 0)
-            END)
-            *
-            CASE
-              WHEN p.default_pricing = true THEN COALESCE(pl.sell_cost_override, l.sell_cost, l.unit_cost, 0)
-              ELSE COALESCE(pl.unit_cost_override, l.unit_cost, 0) * (1::numeric + $3::numeric)
-            END
-          ), 0
-        )::numeric(12,2) AS labor_total
-        FROM bm_project_labor pl
-        JOIN bm_projects p
-          ON p.project_id = pl.project_id
-         AND p.company_id = pl.company_id
-        JOIN bm_labor l
-          ON l.labor_id = pl.labor_id
-         AND l.company_id = p.company_id
-        WHERE p.company_id = $1
-          AND p.project_id = $2
-          AND pl.company_id = $1
-        `,
-        [companyId, projectId, laborMarkup]
-      );
-
       materialTotal = Number(matRows[0]?.material_total ?? 0);
-      laborTotal = Number(labRows[0]?.labor_total ?? 0);
     } else {
       const { rows: sumRows } = await pool.query(
         `
-        WITH mat AS (
-          SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
-          FROM bm_document_material_lines
-          WHERE company_id = $1 AND document_id = $2
-        ),
-        lab AS (
-          SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS labor_total
-          FROM bm_document_labor_lines
-          WHERE company_id = $1 AND document_id = $2
-        )
-        SELECT mat.material_total, lab.labor_total
-        FROM mat, lab
+        SELECT COALESCE(SUM(line_total),0)::numeric(12,2) AS material_total
+        FROM bm_document_material_lines
+        WHERE company_id = $1 AND document_id = $2
         `,
         [companyId, documentId]
       );
 
       materialTotal = Number(sumRows[0]?.material_total ?? 0);
-      laborTotal = Number(sumRows[0]?.labor_total ?? 0);
     }
   } else {
     const { rows: sumRows } = await pool.query(
@@ -846,7 +904,8 @@ export async function recalcDocumentTotals(companyId, documentId) {
     materialTotal = Number(sumRows[0]?.material_total ?? 0);
     laborTotal = Number(sumRows[0]?.labor_total ?? 0);
   }
-  const subtotal = Number(materialTotal) + Number(laborTotal);
+  const subtotal =
+    Number(materialTotal) + Number(laborTotal) + Number(surchargeTotal);
 
   const { rows: gstRows } = await pool.query(
     `

@@ -150,18 +150,37 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "Document is not a quote" });
   }
 
-  const [materialLines, laborLines, company, client] = await Promise.all([
+  const [
+    materialLines,
+    laborLines,
+    company,
+    client,
+    refreshed,
+    project,
+    laborExtras,
+    surcharges,
+  ] = await Promise.all([
     service.listDocumentMaterialLines(companyId, documentId),
     service.listDocumentLaborLines(companyId, documentId),
     service.getCompanyProfile(companyId),
     clientsModel.getClient(companyId, doc.clientId),
+    service.recalcDocumentTotals(companyId, documentId),
+    doc.projectId
+      ? projectsService.getProject(companyId, doc.projectId)
+      : Promise.resolve(null),
+    doc.projectId
+      ? projectsService.getProjectLaborExtras(companyId, doc.projectId)
+      : Promise.resolve(null),
+    doc.projectId
+      ? projectsService.listProjectSurcharges(companyId, doc.projectId)
+      : Promise.resolve([]),
   ]);
 
-  const refreshed = await service.recalcDocumentTotals(companyId, documentId);
   const document = refreshed || doc;
-  const project = doc.projectId
-    ? await projectsService.getProject(companyId, doc.projectId)
-    : null;
+  const surchargeTotal = (surcharges || []).reduce(
+    (sum, item) => sum + Number(item?.cost ?? 0),
+    0
+  );
 
   const pdfBuffer = await buildQuotePdf({
     document,
@@ -170,6 +189,8 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
     project: project || (doc.projectName ? { projectName: doc.projectName } : null),
     materialLines,
     laborLines,
+    laborSummary: laborExtras,
+    surchargeTotal,
   });
 
   const filename = `Quote-${doc.docNumber || doc.documentId}.pdf`;
@@ -204,18 +225,37 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
     }
   }
 
-  const [materialLines, laborLines, company, client] = await Promise.all([
+  const [
+    materialLines,
+    laborLines,
+    company,
+    client,
+    refreshed,
+    project,
+    laborExtras,
+    surcharges,
+  ] = await Promise.all([
     service.listDocumentMaterialLines(companyId, documentId),
     service.listDocumentLaborLines(companyId, documentId),
     service.getCompanyProfile(companyId),
     clientsModel.getClient(companyId, doc.clientId),
+    service.recalcDocumentTotals(companyId, documentId),
+    doc.projectId
+      ? projectsService.getProject(companyId, doc.projectId)
+      : Promise.resolve(null),
+    doc.projectId
+      ? projectsService.getProjectLaborExtras(companyId, doc.projectId)
+      : Promise.resolve(null),
+    doc.projectId
+      ? projectsService.listProjectSurcharges(companyId, doc.projectId)
+      : Promise.resolve([]),
   ]);
 
-  const refreshed = await service.recalcDocumentTotals(companyId, documentId);
   const document = refreshed || doc;
-  const project = doc.projectId
-    ? await projectsService.getProject(companyId, doc.projectId)
-    : null;
+  const surchargeTotal = (surcharges || []).reduce(
+    (sum, item) => sum + Number(item?.cost ?? 0),
+    0
+  );
 
   const pdfBuffer = await buildInvoicePdf({
     document,
@@ -224,6 +264,8 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
     project: project || (doc.projectName ? { projectName: doc.projectName } : null),
     materialLines,
     laborLines,
+    laborSummary: laborExtras,
+    surchargeTotal,
   });
 
   const filename = `Invoice-${doc.docNumber || doc.documentId}.pdf`;

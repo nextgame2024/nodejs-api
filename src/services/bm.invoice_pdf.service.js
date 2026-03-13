@@ -175,6 +175,34 @@ function drawTable(doc, title, columns, rows) {
   doc.moveDown(0.8);
 }
 
+function resolveLaborRows(laborLines, laborSummary) {
+  if (!laborSummary) {
+    return (laborLines || []).map((line) => ({
+      description: line.laborName || line.description || "Labor",
+      quantity: formatMoney(line.quantity ?? 0),
+      unitPrice: formatMoney(line.unitPrice ?? 0),
+      lineTotal: formatMoney(line.lineTotal ?? 0),
+    }));
+  }
+
+  const dailyRate = Number(laborSummary?.dailyRate ?? 0);
+  const laborHours = Number(laborSummary?.laborHours ?? 0);
+  const additionalTotal = Number(laborSummary?.additionalTotal ?? 0);
+  const description =
+    (laborLines || []).length === 1
+      ? laborLines[0]?.laborName || laborLines[0]?.description || "Labor"
+      : "Labor";
+
+  return [
+    {
+      description,
+      quantity: formatMoney(laborHours),
+      unitPrice: formatMoney(dailyRate),
+      lineTotal: formatMoney(additionalTotal),
+    },
+  ];
+}
+
 export async function buildInvoicePdf({
   document,
   company,
@@ -182,6 +210,8 @@ export async function buildInvoicePdf({
   project,
   materialLines,
   laborLines,
+  laborSummary,
+  surchargeTotal = 0,
 }) {
   const doc = new PDFDocument({ size: PAGE.size, margins: PAGE.margin });
 
@@ -285,6 +315,8 @@ export async function buildInvoicePdf({
         { key: "quantity", label: "Qty", width: tableW * 0.3, align: "right" },
       ];
 
+  const displayLaborRows = resolveLaborRows(laborLines, laborSummary);
+
   if (costInQuote) {
     drawTable(
       doc,
@@ -298,20 +330,17 @@ export async function buildInvoicePdf({
       })),
     );
 
-    drawTable(
-      doc,
-      "Labor",
-      columns,
-      (laborLines || []).map((line) => ({
-        description: line.laborName || line.description || "Labor",
-        quantity: formatMoney(line.quantity ?? 0),
-        unitPrice: formatMoney(line.unitPrice ?? 0),
-        lineTotal: formatMoney(line.lineTotal ?? 0),
-      })),
-    );
+    if (displayLaborRows.length > 0) {
+      drawTable(
+        doc,
+        "Labor",
+        columns,
+        displayLaborRows,
+      );
+    }
   }
 
-  ensureSpace(doc, costInQuote ? 120 : 90);
+  ensureSpace(doc, costInQuote ? 136 : 90);
 
   const subtotal = Number(document.subtotal ?? 0);
   const gst = Number(document.gst ?? 0);
@@ -332,7 +361,8 @@ export async function buildInvoicePdf({
   const totals = costInQuote
     ? [
         ["Materials", formatMoney(document.materialTotal ?? 0)],
-        ["Labor", formatMoney(document.laborTotal ?? 0)],
+        ["Labor Cost", formatMoney(document.laborTotal ?? 0)],
+        ["Surcharges", formatMoney(surchargeTotal)],
         ["Subtotal", formatMoney(subtotal)],
         [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
         ["Total", formatMoney(total)],
