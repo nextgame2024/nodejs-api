@@ -181,6 +181,10 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
     (sum, item) => sum + Number(item?.cost ?? 0),
     0
   );
+  const surchargeLines = (surcharges || []).map((item) => ({
+    name: item?.name || "Surcharge",
+    cost: Number(item?.cost ?? 0),
+  }));
 
   const pdfBuffer = await buildQuotePdf({
     document,
@@ -189,6 +193,7 @@ export const getDocumentQuotePdf = asyncHandler(async (req, res) => {
     project: project || (doc.projectName ? { projectName: doc.projectName } : null),
     materialLines,
     laborLines,
+    surchargeLines,
     laborSummary: laborExtras,
     surchargeTotal,
   });
@@ -256,6 +261,10 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
     (sum, item) => sum + Number(item?.cost ?? 0),
     0
   );
+  const surchargeLines = (surcharges || []).map((item) => ({
+    name: item?.name || "Surcharge",
+    cost: Number(item?.cost ?? 0),
+  }));
 
   const pdfBuffer = await buildInvoicePdf({
     document,
@@ -264,6 +273,7 @@ export const getDocumentInvoicePdf = asyncHandler(async (req, res) => {
     project: project || (doc.projectName ? { projectName: doc.projectName } : null),
     materialLines,
     laborLines,
+    surchargeLines,
     laborSummary: laborExtras,
     surchargeTotal,
   });

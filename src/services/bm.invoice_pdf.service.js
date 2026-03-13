@@ -210,6 +210,7 @@ export async function buildInvoicePdf({
   project,
   materialLines,
   laborLines,
+  surchargeLines = [],
   laborSummary,
   surchargeTotal = 0,
 }) {
@@ -316,6 +317,12 @@ export async function buildInvoicePdf({
       ];
 
   const displayLaborRows = resolveLaborRows(laborLines, laborSummary);
+  const displaySurchargeRows = (surchargeLines || []).map((line) => ({
+    description: line.name || "Surcharge",
+    quantity: formatMoney(1),
+    unitPrice: formatMoney(line.cost ?? 0),
+    lineTotal: formatMoney(line.cost ?? 0),
+  }));
 
   if (costInQuote) {
     drawTable(
@@ -336,6 +343,15 @@ export async function buildInvoicePdf({
         "Labor",
         columns,
         displayLaborRows,
+      );
+    }
+
+    if (displaySurchargeRows.length > 0) {
+      drawTable(
+        doc,
+        "Surcharges",
+        columns,
+        displaySurchargeRows,
       );
     }
   }
