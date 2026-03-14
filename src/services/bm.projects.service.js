@@ -10,6 +10,8 @@ const SURCHARGE_TYPES = new Set(["transportation", "other"]);
 
 const DISTANCE_MATRIX_URL =
   "https://maps.googleapis.com/maps/api/distancematrix/json";
+const ROUTES_COMPUTE_URL =
+  "https://routes.googleapis.com/directions/v2:computeRoutes";
 const TRANSPORTATION_GENERIC_ERROR =
   "Unable to calculate transportation time right now.";
 
@@ -43,6 +45,14 @@ function formatTravelTime(totalMinutesRaw) {
   const hoursLabel = `${hours} hour${hours === 1 ? "" : "s"}`;
   if (!minutes) return hoursLabel;
   return `${hoursLabel} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function parseDurationSeconds(rawDuration) {
+  const value = String(rawDuration || "")
+    .trim()
+    .toLowerCase();
+  if (!value.endsWith("s")) return NaN;
+  return Number(value.slice(0, -1));
 }
 
 function buildTransportationServiceError(rawMessage, status = 502) {
@@ -141,6 +151,75 @@ async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
   }
 
   return durationSeconds;
+}
+
+async function fetchDrivingRouteSummary(companyAddress, clientAddress) {
+  const key = getGoogleMapsKey();
+
+  let data = null;
+  try {
+    const response = await axios.post(
+      ROUTES_COMPUTE_URL,
+      {
+        origin: { address: companyAddress },
+        destination: { address: clientAddress },
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_AWARE",
+        computeAlternativeRoutes: false,
+        languageCode: "en-AU",
+        units: "METRIC",
+      },
+      {
+        headers: {
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask":
+            "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline",
+        },
+        timeout: 12_000,
+      }
+    );
+    data = response?.data;
+  } catch (error) {
+    const upstream =
+      error?.response?.data?.error?.message ||
+      error?.response?.data?.error_message ||
+      error?.response?.data?.message ||
+      error?.message ||
+      "";
+    throw buildTransportationServiceError(upstream, 502);
+  }
+
+  const route = data?.routes?.[0];
+  if (!route) {
+    const err = new Error(
+      "Unable to calculate transportation route. No driving route was returned."
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const encodedPolyline = String(route?.polyline?.encodedPolyline || "").trim();
+  if (!encodedPolyline) {
+    const err = new Error(
+      "Unable to calculate transportation route. Route polyline is unavailable."
+    );
+    err.status = 502;
+    throw err;
+  }
+
+  const durationSeconds = parseDurationSeconds(route?.duration);
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    const err = new Error("Unable to calculate transportation route duration");
+    err.status = 502;
+    throw err;
+  }
+
+  const distanceMeters = Number(route?.distanceMeters);
+  return {
+    encodedPolyline,
+    durationSeconds,
+    distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null,
+  };
 }
 
 export async function listProjects(
@@ -308,6 +387,41 @@ export async function getProjectSurchargeTransportationTime(
     clientAddress,
     durationMinutes,
     formattedTime: formatTravelTime(durationMinutes),
+  };
+}
+
+export async function getProjectSurchargeTransportationRoute(
+  companyId,
+  projectId
+) {
+  const project = await model.getProject(companyId, projectId);
+  if (!project) return null;
+
+  const company = await companyModel.getCompany(companyId, companyId);
+  const companyAddress = normalizeAddress(company?.address);
+  const clientAddress = normalizeAddress(project?.clientAddress);
+
+  if (!companyAddress) {
+    const err = new Error("Company address is required to calculate route");
+    err.status = 400;
+    throw err;
+  }
+  if (!clientAddress) {
+    const err = new Error("Client address is required to calculate route");
+    err.status = 400;
+    throw err;
+  }
+
+  const route = await fetchDrivingRouteSummary(companyAddress, clientAddress);
+  const durationMinutes = Math.max(0, Math.round(route.durationSeconds / 60));
+
+  return {
+    companyAddress,
+    clientAddress,
+    durationMinutes,
+    formattedTime: formatTravelTime(durationMinutes),
+    distanceMeters: route.distanceMeters,
+    encodedPolyline: route.encodedPolyline,
   };
 }
 

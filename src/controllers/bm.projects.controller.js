@@ -210,6 +210,20 @@ export const getProjectSurchargeTransportationTime = asyncHandler(
   }
 );
 
+export const getProjectSurchargeTransportationRoute = asyncHandler(
+  async (req, res) => {
+    const companyId = req.user.companyId;
+    const { projectId } = req.params;
+
+    const transportationRoute =
+      await service.getProjectSurchargeTransportationRoute(companyId, projectId);
+    if (!transportationRoute)
+      return res.status(404).json({ error: "Project not found" });
+
+    res.json({ transportationRoute });
+  }
+);
+
 export const getProjectLaborExtras = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { projectId } = req.params;

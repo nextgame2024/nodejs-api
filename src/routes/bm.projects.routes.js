@@ -16,6 +16,7 @@ import {
   createProjectSurcharge,
   removeProjectSurcharge,
   getProjectSurchargeTransportationTime,
+  getProjectSurchargeTransportationRoute,
   getProjectLaborExtras,
   upsertProjectLaborExtras,
   createDocumentFromProject,
@@ -91,6 +92,11 @@ router.get(
   "/bm/projects/:projectId/surcharges/transportation-time",
   authRequired,
   getProjectSurchargeTransportationTime
+);
+router.get(
+  "/bm/projects/:projectId/surcharges/transportation-route",
+  authRequired,
+  getProjectSurchargeTransportationRoute
 );
 router.post(
   "/bm/projects/:projectId/surcharges",
