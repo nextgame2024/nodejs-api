@@ -12,6 +12,7 @@ const DISTANCE_MATRIX_URL =
   "https://maps.googleapis.com/maps/api/distancematrix/json";
 const ROUTES_COMPUTE_URL =
   "https://routes.googleapis.com/directions/v2:computeRoutes";
+const DIRECTIONS_API_URL = "https://maps.googleapis.com/maps/api/directions/json";
 const TRANSPORTATION_GENERIC_ERROR =
   "Unable to calculate transportation time right now.";
 
@@ -62,10 +63,12 @@ function buildTransportationServiceError(rawMessage, status = 502) {
   if (
     lower.includes("not authorized to use this service or api") ||
     lower.includes("api restrictions") ||
-    lower.includes("referer restrictions")
+    lower.includes("referer restrictions") ||
+    lower.includes("are blocked") ||
+    lower.includes("api not activated")
   ) {
     const err = new Error(
-      "Unable to calculate transportation time. Google Maps Distance Matrix API is not authorized for this API key. Enable it in Google Cloud and include it in the API key restrictions."
+      "Unable to calculate transportation route right now. Google routing APIs are blocked for this API key. Enable Routes API and/or Directions API in Google Cloud and include them in API key restrictions."
     );
     err.status = 503;
     return err;
@@ -84,6 +87,16 @@ function buildTransportationServiceError(rawMessage, status = 502) {
   );
   err.status = status;
   return err;
+}
+
+function extractUpstreamErrorMessage(error) {
+  return (
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.error_message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    ""
+  );
 }
 
 async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
@@ -154,6 +167,32 @@ async function fetchTravelDurationSeconds(companyAddress, clientAddress) {
 }
 
 async function fetchDrivingRouteSummary(companyAddress, clientAddress) {
+  try {
+    return await fetchDrivingRouteSummaryFromRoutesApi(
+      companyAddress,
+      clientAddress
+    );
+  } catch (routesError) {
+    try {
+      return await fetchDrivingRouteSummaryFromDirectionsApi(
+        companyAddress,
+        clientAddress
+      );
+    } catch (directionsError) {
+      const primaryMessage = extractUpstreamErrorMessage(directionsError);
+      const fallbackMessage = extractUpstreamErrorMessage(routesError);
+      throw buildTransportationServiceError(
+        primaryMessage || fallbackMessage,
+        502
+      );
+    }
+  }
+}
+
+async function fetchDrivingRouteSummaryFromRoutesApi(
+  companyAddress,
+  clientAddress
+) {
   const key = getGoogleMapsKey();
 
   let data = null;
@@ -180,13 +219,10 @@ async function fetchDrivingRouteSummary(companyAddress, clientAddress) {
     );
     data = response?.data;
   } catch (error) {
-    const upstream =
-      error?.response?.data?.error?.message ||
-      error?.response?.data?.error_message ||
-      error?.response?.data?.message ||
-      error?.message ||
-      "";
-    throw buildTransportationServiceError(upstream, 502);
+    const upstream = extractUpstreamErrorMessage(error);
+    const err = new Error(upstream || "Routes API request failed");
+    err.status = 502;
+    throw err;
   }
 
   const route = data?.routes?.[0];
@@ -215,6 +251,63 @@ async function fetchDrivingRouteSummary(companyAddress, clientAddress) {
   }
 
   const distanceMeters = Number(route?.distanceMeters);
+  return {
+    encodedPolyline,
+    durationSeconds,
+    distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null,
+  };
+}
+
+async function fetchDrivingRouteSummaryFromDirectionsApi(
+  companyAddress,
+  clientAddress
+) {
+  const key = getGoogleMapsKey();
+
+  let data = null;
+  try {
+    const response = await axios.get(DIRECTIONS_API_URL, {
+      params: {
+        origin: companyAddress,
+        destination: clientAddress,
+        mode: "driving",
+        units: "metric",
+        key,
+      },
+      timeout: 12_000,
+    });
+    data = response?.data;
+  } catch (error) {
+    const upstream = extractUpstreamErrorMessage(error);
+    const err = new Error(upstream || "Directions API request failed");
+    err.status = 502;
+    throw err;
+  }
+
+  if (data?.status !== "OK") {
+    const upstream = data?.error_message || data?.status || "";
+    const err = new Error(upstream || "Directions API request failed");
+    err.status = 502;
+    throw err;
+  }
+
+  const route = data?.routes?.[0];
+  const leg = route?.legs?.[0];
+  const encodedPolyline = String(route?.overview_polyline?.points || "").trim();
+  if (!encodedPolyline) {
+    const err = new Error("Directions API did not return route geometry");
+    err.status = 502;
+    throw err;
+  }
+
+  const durationSeconds = Number(leg?.duration?.value);
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    const err = new Error("Directions API did not return route duration");
+    err.status = 502;
+    throw err;
+  }
+
+  const distanceMeters = Number(leg?.distance?.value);
   return {
     encodedPolyline,
     durationSeconds,
