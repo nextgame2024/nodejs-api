@@ -176,30 +176,30 @@ function drawTable(doc, title, columns, rows) {
   doc.moveDown(0.8);
 }
 
-function resolveLaborRows(laborLines, laborSummary) {
-  if (!laborSummary) {
-    return (laborLines || []).map((line) => ({
-      description: line.laborName || line.description || "Labor",
-      quantity: formatMoney(line.quantity ?? 0),
-      unitPrice: formatMoney(line.unitPrice ?? 0),
-      lineTotal: formatMoney(line.lineTotal ?? 0),
-    }));
-  }
+function resolveLaborRows(laborTotal, laborLines, laborSummary) {
+  const lines = laborLines || [];
+  const summaryTotal = Number(laborSummary?.additionalTotal ?? 0);
+  const documentTotal = Number(laborTotal ?? 0);
+  const linesTotal = lines.reduce(
+    (sum, line) => sum + Number(line?.lineTotal ?? 0),
+    0,
+  );
+  const resolvedTotal = Number.isFinite(documentTotal) && documentTotal > 0
+    ? documentTotal
+    : Number.isFinite(summaryTotal) && summaryTotal > 0
+      ? summaryTotal
+      : Number.isFinite(linesTotal)
+        ? linesTotal
+        : 0;
 
-  const dailyRate = Number(laborSummary?.dailyRate ?? 0);
-  const laborHours = Number(laborSummary?.laborHours ?? 0);
-  const additionalTotal = Number(laborSummary?.additionalTotal ?? 0);
-  const description =
-    (laborLines || []).length === 1
-      ? laborLines[0]?.laborName || laborLines[0]?.description || "Labor"
-      : "Labor";
+  const hasLaborSummary = Number.isFinite(summaryTotal) && summaryTotal > 0;
+  const hasLabor = lines.length > 0 || hasLaborSummary || resolvedTotal > 0;
+  if (!hasLabor) return [];
 
   return [
     {
-      description,
-      quantity: formatMoney(laborHours),
-      unitPrice: formatMoney(dailyRate),
-      lineTotal: formatMoney(additionalTotal),
+      description: "Labor cost",
+      lineTotal: formatMoney(resolvedTotal),
     },
   ];
 }
@@ -289,7 +289,7 @@ export async function buildQuotePdf({
   const column3 = Math.floor(tableW * 0.18);
   const column4 = tableW - (column1 + column2 + column3);
 
-  const columns = costInQuote
+  const materialsColumns = costInQuote
     ? [
         { key: "description", label: "Description", width: column1 },
         { key: "quantity", label: "Qty", width: column2, align: "right" },
@@ -300,44 +300,61 @@ export async function buildQuotePdf({
         { key: "description", label: "Description", width: tableW * 0.7 },
         { key: "quantity", label: "Qty", width: tableW * 0.3, align: "right" },
       ];
+  const compactColumns = [
+    { key: "description", label: "Description", width: Math.floor(tableW * 0.7) },
+    { key: "lineTotal", label: "Total", width: Math.ceil(tableW * 0.3), align: "right" },
+  ];
 
-  const displayLaborRows = resolveLaborRows(laborLines, laborSummary);
+  const materialRows = (materialLines || []).map((line) => ({
+    description: line.materialName || line.description || "Material",
+    quantity: formatMoney(line.quantity ?? 0),
+    unitPrice: formatMoney(line.unitPrice ?? 0),
+    lineTotal: formatMoney(line.lineTotal ?? 0),
+  }));
+  const displayLaborRows = resolveLaborRows(
+    document?.laborTotal,
+    laborLines,
+    laborSummary,
+  );
   const displaySurchargeRows = (surchargeLines || []).map((line) => ({
     description: line.name || "Surcharge",
-    quantity: formatMoney(1),
-    unitPrice: formatMoney(line.cost ?? 0),
     lineTotal: formatMoney(line.cost ?? 0),
   }));
 
+  let renderedCostTable = false;
   if (costInQuote) {
-    drawTable(
-      doc,
-      "Materials",
-      columns,
-      (materialLines || []).map((line) => ({
-        description: line.materialName || line.description || "Material",
-        quantity: formatMoney(line.quantity ?? 0),
-        unitPrice: formatMoney(line.unitPrice ?? 0),
-        lineTotal: formatMoney(line.lineTotal ?? 0),
-      })),
-    );
+    if (materialRows.length > 0) {
+      drawTable(
+        doc,
+        "Materials",
+        materialsColumns,
+        materialRows,
+      );
+      renderedCostTable = true;
+    }
 
     if (displayLaborRows.length > 0) {
       drawTable(
         doc,
         "Labor",
-        columns,
+        compactColumns,
         displayLaborRows,
       );
+      renderedCostTable = true;
     }
 
     if (displaySurchargeRows.length > 0) {
       drawTable(
         doc,
         "Surcharges",
-        columns,
+        compactColumns,
         displaySurchargeRows,
       );
+      renderedCostTable = true;
+    }
+
+    if (renderedCostTable) {
+      doc.moveDown(0.3);
     }
   }
 
@@ -376,20 +393,29 @@ export async function buildQuotePdf({
 
   doc.moveDown(0.5);
 
-  const totals = costInQuote
-    ? [
-        ["Materials", formatMoney(document.materialTotal ?? 0)],
-        ["Labor Cost", formatMoney(document.laborTotal ?? 0)],
-        ["Surcharges", formatMoney(surchargeTotal)],
-        ["Subtotal", formatMoney(subtotal)],
-        [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
-        ["Total", formatMoney(total)],
-      ]
-    : [
-        ["Subtotal", formatMoney(subtotal)],
-        [`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)],
-        ["Total", formatMoney(total)],
-      ];
+  const materialTotalValue = Number(document.materialTotal ?? 0);
+  const laborTotalValue = Number(document.laborTotal ?? 0);
+  const surchargeTotalValue = Number(surchargeTotal ?? 0);
+  const showMaterialTotals = materialRows.length > 0 || materialTotalValue > 0;
+  const showLaborTotals = displayLaborRows.length > 0 || laborTotalValue > 0;
+  const showSurchargeTotals =
+    displaySurchargeRows.length > 0 || surchargeTotalValue > 0;
+
+  const totals = [];
+  if (costInQuote) {
+    if (showMaterialTotals) {
+      totals.push(["Materials", formatMoney(materialTotalValue)]);
+    }
+    if (showLaborTotals) {
+      totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
+    }
+    if (showSurchargeTotals) {
+      totals.push(["Surcharges", formatMoney(surchargeTotalValue)]);
+    }
+  }
+  totals.push(["Subtotal", formatMoney(subtotal)]);
+  totals.push([`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)]);
+  totals.push(["Total", formatMoney(total)]);
 
   totals.forEach(([label, value]) => {
     doc
@@ -404,6 +430,7 @@ export async function buildQuotePdf({
     doc.moveDown(0.4);
   });
 
+  doc.moveDown(0.6);
   ensureSpace(doc, 90);
 
   doc
