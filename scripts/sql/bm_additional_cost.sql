@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS bm_additional_cost (
   active boolean NOT NULL DEFAULT true
 );
 
--- Optional indexes (recommended)
+-- Optional indexes (recommended) Hola
 CREATE INDEX IF NOT EXISTS idx_bm_additional_cost_company
   ON bm_additional_cost (company_id);
 
