@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.51";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.52";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1342,6 +1342,9 @@ export async function buildTownPlannerReportPdfV2(
       baseKey === normalizeOverlayKey("Airport environs overlay");
     const isBicycleOverlay =
       baseKey === normalizeOverlayKey("Bicycle network overlay");
+    const isDamsTransportOverlay = String(code || "").startsWith(
+      "dams_state_transport_",
+    );
     const isDwellingOverlay =
       baseKey === normalizeOverlayKey("Dwelling house character overlay");
     const isStreetscapeOverlay =
@@ -1384,7 +1387,6 @@ export async function buildTownPlannerReportPdfV2(
         : isStreetscapeOverlay
           ? 102
           : 110;
-
     const airportPansGeom = findOverlayGeometry("overlay_airport_pans");
     const airportBlueGeom =
       findOverlayGeometry("overlay_airport_ols") ||
@@ -1477,6 +1479,15 @@ export async function buildTownPlannerReportPdfV2(
         : isStreetscapeOverlay
           ? center
           : center;
+    const overlayCenter = isDamsTransportOverlay ? null : mapCenter;
+    const overlayMapType = isDamsTransportOverlay ? "roadmap" : "hybrid";
+    const overlayFitToParcel = isDamsTransportOverlay
+      ? false
+      : !(isDwellingOverlay || isStreetscapeOverlay);
+    const overlayRenderZoom = isDamsTransportOverlay ? 18 : overlayZoom;
+    const overlayRenderPadding = isDamsTransportOverlay
+      ? Math.max(72, overlayPaddingPx - 18)
+      : overlayPaddingPx;
 
     if (isAirportOverlay) {
       const airportCodesInSnapshot = overlayPolygons
@@ -1516,12 +1527,14 @@ export async function buildTownPlannerReportPdfV2(
       parcelFeature && (overlayFeature || hasCustomOverlayLayers)
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
-            center: mapCenter,
+            center: overlayCenter,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
             overlayLayers: customOverlayLayers,
             debugLabel: isAirportOverlay
               ? "airport-overlay"
+              : isDamsTransportOverlay
+                ? "dams-overlay"
               : isCriticalOverlay
                 ? "critical-overlay"
                 : isDwellingOverlay
@@ -1537,12 +1550,12 @@ export async function buildTownPlannerReportPdfV2(
             parcelWeight: 4,
             overlayColor,
             overlayFill: overlayFillColor,
-            overlayWeight: isAirportOverlay ? 2 : 3,
-            zoom: overlayZoom,
+            overlayWeight: isDamsTransportOverlay ? 4 : isAirportOverlay ? 2 : 3,
+            zoom: overlayRenderZoom,
             zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 2 : 0,
-            fitToParcel: !(isDwellingOverlay || isStreetscapeOverlay),
-            paddingPx: overlayPaddingPx,
-            maptype: "hybrid",
+            fitToParcel: overlayFitToParcel,
+            paddingPx: overlayRenderPadding,
+            maptype: overlayMapType,
             size: "640x360",
             scale: 2,
           }).catch(() => null)
