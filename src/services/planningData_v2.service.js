@@ -12,6 +12,69 @@ import pool from "../config/db.js";
 
 const _tableExistsCache = new Map();
 
+const DAMS_STATE_TRANSPORT_LAYERS = [
+  {
+    table: "qld_dams_state_transport_25m_railway_corridor",
+    code: "dams_state_transport_25m_railway_corridor",
+    detail: "Area within 25m of a railway corridor",
+  },
+  {
+    table: "qld_dams_state_transport_25m_state_controlled_road",
+    code: "dams_state_transport_25m_state_controlled_road",
+    detail: "Area within 25m of a State-controlled road",
+  },
+  {
+    table: "qld_dams_state_transport_25m_busway_corridor",
+    code: "dams_state_transport_25m_busway_corridor",
+    detail: "Area within 25m of a busway corridor",
+  },
+  {
+    table: "qld_dams_state_transport_25m_light_rail_corridor",
+    code: "dams_state_transport_25m_light_rail_corridor",
+    detail: "Area within 25m of a light rail corridor",
+  },
+  {
+    table: "qld_dams_state_transport_future_busway_corridor",
+    code: "dams_state_transport_future_busway_corridor",
+    detail: "Future busway corridor",
+  },
+  {
+    table: "qld_dams_state_transport_busway_corridor",
+    code: "dams_state_transport_busway_corridor",
+    detail: "Busway corridor",
+  },
+  {
+    table: "qld_dams_state_transport_future_light_rail_corridor",
+    code: "dams_state_transport_future_light_rail_corridor",
+    detail: "Future light rail corridor",
+  },
+  {
+    table: "qld_dams_state_transport_light_rail_corridor",
+    code: "dams_state_transport_light_rail_corridor",
+    detail: "Light rail corridor",
+  },
+  {
+    table: "qld_dams_state_transport_state_controlled_road",
+    code: "dams_state_transport_state_controlled_road",
+    detail: "State-controlled road",
+  },
+  {
+    table: "qld_dams_state_transport_future_state_controlled_road",
+    code: "dams_state_transport_future_state_controlled_road",
+    detail: "Future State-controlled road",
+  },
+  {
+    table: "qld_dams_state_transport_future_railway_corridor",
+    code: "dams_state_transport_future_railway_corridor",
+    detail: "Future railway corridor",
+  },
+  {
+    table: "qld_dams_state_transport_railway_corridor",
+    code: "dams_state_transport_railway_corridor",
+    detail: "Railway corridor",
+  },
+];
+
 async function tableExists(tableName) {
   if (!tableName) return false;
   if (_tableExistsCache.has(tableName)) return true;
@@ -599,6 +662,14 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
         queryOne("bcc_flood_river", focusLng, focusLat),
       ];
 
+  const stateTransportPromises = parcel?.geometry
+    ? DAMS_STATE_TRANSPORT_LAYERS.map((layer) =>
+        queryIntersects(layer.table, parcel.geometry)
+      )
+    : DAMS_STATE_TRANSPORT_LAYERS.map((layer) =>
+        queryOne(layer.table, focusLng, focusLat)
+      );
+
   const [
     zoning,
     npB,
@@ -622,6 +693,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     criticalInfrastructureMovementAssets,
     roadHierarchy,
     streetscapeHierarchy,
+    ...stateTransportHits
   ] = await Promise.all([
     queryOne("bcc_zoning", focusLng, focusLat, {
       preferLargestArea: true,
@@ -673,6 +745,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       parcelGeom,
       LINE_OVERLAY_DISTANCE_M
     ),
+    ...stateTransportPromises,
   ]);
 
   if (bicycleNetwork?.properties) {
@@ -1050,6 +1123,20 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     severity: streetscapeDetail || "mapped overlay",
   });
 
+  const rawDamsStateTransport = {};
+  for (let i = 0; i < DAMS_STATE_TRANSPORT_LAYERS.length; i += 1) {
+    const layer = DAMS_STATE_TRANSPORT_LAYERS[i];
+    const hit = stateTransportHits?.[i] || null;
+    if (!hit?.properties) continue;
+
+    rawDamsStateTransport[layer.code] = hit.properties;
+    pushOverlay(hit.properties, hit.geometry, {
+      name: overlayName("State transport corridor", layer.detail),
+      code: layer.code,
+      severity: layer.detail,
+    });
+  }
+
   // Services meta for reporting (not necessarily a map overlay page)
   const rawLgipNetworkKey = lgipNetworkKey?.properties || null;
 
@@ -1103,5 +1190,9 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       criticalInfrastructureMovementAssets?.properties || null,
     rawRoadHierarchy: roadHierarchy?.properties || null,
     rawStreetscapeHierarchy: streetscapeHierarchy?.properties || null,
+    rawDamsStateTransport:
+      Object.keys(rawDamsStateTransport).length > 0
+        ? rawDamsStateTransport
+        : null,
   };
 }
