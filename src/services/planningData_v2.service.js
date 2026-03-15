@@ -423,6 +423,7 @@ async function queryGeometryContextByDistance({
   lng,
   lat,
   withinDistanceMeters = 260,
+  clipDistanceMeters = null,
 }) {
   if (!pool) return null;
   if (!table) return null;
@@ -430,18 +431,39 @@ async function queryGeometryContextByDistance({
 
   const geom4326 = geomTo4326Sql("geom");
   const pointExpr = "ST_SetSRID(ST_MakePoint($1, $2), 4326)";
+  const clipMeters = Number(clipDistanceMeters);
+  const safeClipMeters =
+    Number.isFinite(clipMeters) && clipMeters > 0 ? clipMeters : 0;
 
   const sql = `
-    WITH src AS (
+    WITH pt AS (
+      SELECT ${pointExpr} AS p
+    ),
+    src AS (
       SELECT ST_MakeValid(${geom4326}) AS g
-      FROM ${table}
-      WHERE ST_DWithin((${geom4326})::geography, (${pointExpr})::geography, $3)
+      FROM ${table}, pt
+      WHERE ST_DWithin((${geom4326})::geography, pt.p::geography, $3)
+    ),
+    clipped AS (
+      SELECT
+        CASE
+          WHEN $4 > 0
+            THEN ST_MakeValid(
+              ST_Intersection(
+                g,
+                ST_Buffer(pt.p::geography, $4)::geometry
+              )
+            )
+          ELSE g
+        END AS g
+      FROM src, pt
     ),
     merged AS (
       SELECT
         COUNT(*)::int AS feature_count,
         ST_UnaryUnion(ST_Collect(g)) AS g
-      FROM src
+      FROM clipped
+      WHERE g IS NOT NULL AND NOT ST_IsEmpty(g)
     )
     SELECT
       feature_count,
@@ -455,7 +477,12 @@ async function queryGeometryContextByDistance({
   `;
 
   try {
-    const { rows } = await pool.query(sql, [lng, lat, withinDistanceMeters]);
+    const { rows } = await pool.query(sql, [
+      lng,
+      lat,
+      withinDistanceMeters,
+      safeClipMeters,
+    ]);
     const row = rows?.[0];
     const featureCount = Number(row?.feature_count || 0);
     const geometry = safeJsonParse(row?.geom_geojson);
@@ -1140,6 +1167,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     const layer = DAMS_STATE_TRANSPORT_LAYERS[i];
     const hit = stateTransportHits?.[i] || null;
     if (!hit?.properties) continue;
+    const is25mLayer = String(layer?.code || "").includes("_25m_");
 
     let renderGeometry = hit.geometry || null;
     const context = await queryGeometryContextByDistance({
@@ -1147,6 +1175,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       lng: focusLng,
       lat: focusLat,
       withinDistanceMeters: DAMS_CONTEXT_DISTANCE_M,
+      clipDistanceMeters: is25mLayer ? DAMS_CONTEXT_DISTANCE_M : null,
     });
     if (context?.geometry) {
       renderGeometry = context.geometry;
