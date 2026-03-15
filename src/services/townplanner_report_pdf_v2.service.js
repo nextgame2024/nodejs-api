@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.54";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.55";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1345,6 +1345,8 @@ export async function buildTownPlannerReportPdfV2(
     const isDamsTransportOverlay = String(code || "").startsWith(
       "dams_state_transport_",
     );
+    const isFutureBuswayDamsOverlay =
+      String(code || "") === "dams_state_transport_future_busway_corridor";
     const isDwellingOverlay =
       baseKey === normalizeOverlayKey("Dwelling house character overlay");
     const isStreetscapeOverlay =
@@ -1491,6 +1493,7 @@ export async function buildTownPlannerReportPdfV2(
       ? false
       : !(isDwellingOverlay || isStreetscapeOverlay);
     const overlayRenderZoom = isDamsTransportOverlay ? 18 : overlayZoom;
+    const effectiveDamsZoom = isFutureBuswayDamsOverlay ? 17 : overlayRenderZoom;
     const overlayRenderPadding = isDamsTransportOverlay
       ? Math.max(72, overlayPaddingPx - 18)
       : overlayPaddingPx;
@@ -1566,7 +1569,7 @@ export async function buildTownPlannerReportPdfV2(
             overlayColor,
             overlayFill: overlayFillColor,
             overlayWeight: isDamsTransportOverlay ? 4 : isAirportOverlay ? 2 : 3,
-            zoom: overlayRenderZoom,
+            zoom: effectiveDamsZoom,
             zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 2 : 0,
             fitToParcel: overlayFitToParcel,
             paddingPx: overlayRenderPadding,
@@ -2004,7 +2007,7 @@ export async function buildTownPlannerReportPdfV2(
 
     for (const row of tocRows) {
       const style = rowStyle(row.level);
-      if (y > listY + listH - 62) break;
+      if (y > listY + listH - 20) break;
       const labelX = rowLeftX + style.indent;
 
       // label
