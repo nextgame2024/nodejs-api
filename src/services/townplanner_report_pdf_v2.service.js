@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.50";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.51";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {

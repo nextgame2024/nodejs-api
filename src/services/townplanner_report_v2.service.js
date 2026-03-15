@@ -17,11 +17,14 @@ const PDF_LOGO_URL =
 
 const SCHEME_VERSION = process.env.CITY_PLAN_SCHEME_VERSION || "City Plan 2014";
 
-// Use env override if desired, otherwise use PDF generator’s version stamp
-export const REPORT_TEMPLATE_VERSION =
-  process.env.TOWNPLANNER_REPORT_TEMPLATE_VERSION ||
-  PDF_ENGINE_VERSION ||
+// Keep cache keys tied to the actual PDF engine version even if an env override
+// is configured, so template/code changes always invalidate stale PDFs.
+const REPORT_TEMPLATE_BASE =
+  String(process.env.TOWNPLANNER_REPORT_TEMPLATE_VERSION || "").trim() ||
   "TPR-PDFKIT-V3";
+const REPORT_TEMPLATE_ENGINE =
+  String(PDF_ENGINE_VERSION || "").trim() || "TPR-PDFKIT-V3";
+export const REPORT_TEMPLATE_VERSION = `${REPORT_TEMPLATE_BASE}::${REPORT_TEMPLATE_ENGINE}`;
 
 function sha256(obj) {
   return crypto.createHash("sha256").update(JSON.stringify(obj)).digest("hex");
