@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.52";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.53";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1365,6 +1365,8 @@ export async function buildTownPlannerReportPdfV2(
       ? "0x2962ffff"
       : isBicycleOverlay
         ? "0xffc107ff"
+        : isDamsTransportOverlay
+          ? "0xc2185bff"
         : isDwellingOverlay
           ? "0x00000000"
           : isStreetscapeOverlay
@@ -1372,7 +1374,11 @@ export async function buildTownPlannerReportPdfV2(
             : isCriticalOverlay
               ? "0xff3b3bff"
               : palette.outline;
-    const overlayFillColor = isDwellingOverlay ? "0xe46e6e66" : "0x00000000";
+    const overlayFillColor = isDwellingOverlay
+      ? "0xe46e6e66"
+      : isDamsTransportOverlay
+        ? "0xf8bbd055"
+        : "0x00000000";
     const overlayZoom = isAirportOverlay
       ? 14
       : isDwellingOverlay
@@ -1488,6 +1494,15 @@ export async function buildTownPlannerReportPdfV2(
     const overlayRenderPadding = isDamsTransportOverlay
       ? Math.max(72, overlayPaddingPx - 18)
       : overlayPaddingPx;
+    const overlayStyles = isDamsTransportOverlay
+      ? [
+          "feature:all|saturation:-100|lightness:18",
+          "feature:poi|visibility:off",
+          "feature:transit|visibility:off",
+          "feature:road|color:0xb8bec6",
+          "feature:water|color:0xdde2e8",
+        ]
+      : null;
 
     if (isAirportOverlay) {
       const airportCodesInSnapshot = overlayPolygons
@@ -1558,6 +1573,7 @@ export async function buildTownPlannerReportPdfV2(
             maptype: overlayMapType,
             size: "640x360",
             scale: 2,
+            styles: overlayStyles,
           }).catch(() => null)
         : null;
 

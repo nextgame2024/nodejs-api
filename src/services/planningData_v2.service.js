@@ -652,6 +652,11 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const DAMS_LAYER_DISTANCE_M = Number(
     process.env.TOWNPLANNER_DAMS_LAYER_DISTANCE_M || 2000
   );
+  // For report maps, use merged nearby DAMS geometry so corridor context
+  // matches the official DAMS map view rather than a single nearest feature.
+  const DAMS_CONTEXT_DISTANCE_M = Number(
+    process.env.TOWNPLANNER_DAMS_CONTEXT_DISTANCE_M || 2200
+  );
   const parcelGeom = parcel?.geometry || null;
 
   // 2) Spatial lookups
@@ -1136,8 +1141,19 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     const hit = stateTransportHits?.[i] || null;
     if (!hit?.properties) continue;
 
+    let renderGeometry = hit.geometry || null;
+    const context = await queryGeometryContextByDistance({
+      table: layer.table,
+      lng: focusLng,
+      lat: focusLat,
+      withinDistanceMeters: DAMS_CONTEXT_DISTANCE_M,
+    });
+    if (context?.geometry) {
+      renderGeometry = context.geometry;
+    }
+
     rawDamsStateTransport[layer.code] = hit.properties;
-    pushOverlay(hit.properties, hit.geometry, {
+    pushOverlay(hit.properties, renderGeometry, {
       name: overlayName("State transport corridor", layer.detail),
       code: layer.code,
       severity: layer.detail,
