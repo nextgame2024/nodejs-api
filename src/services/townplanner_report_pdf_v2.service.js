@@ -2690,6 +2690,16 @@ export async function buildTownPlannerReportPdfV2(
     const mapY = blockTopY + 44;
     const mapH = 286;
     drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    if (!item?.mapBuffer) {
+      doc
+        .fillColor(BRAND.muted)
+        .font("Helvetica")
+        .fontSize(10)
+        .text("Map not available.", x + 14, mapY + mapH / 2 - 6, {
+          width: w - 28,
+          align: "center",
+        });
+    }
 
     let tableY = mapY + mapH + 12;
     const tableX = x + 14;

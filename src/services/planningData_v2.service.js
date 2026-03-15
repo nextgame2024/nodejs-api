@@ -647,6 +647,11 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const focusLat = parcel?.point?.coordinates?.[1] ?? safeLat;
   const focusLng = parcel?.point?.coordinates?.[0] ?? safeLng;
   const LINE_OVERLAY_DISTANCE_M = 40;
+  // DAMS transport layers are rendered as nearby contextual constraints.
+  // Keep configurable via env for tuning without code changes.
+  const DAMS_LAYER_DISTANCE_M = Number(
+    process.env.TOWNPLANNER_DAMS_LAYER_DISTANCE_M || 2000
+  );
   const parcelGeom = parcel?.geometry || null;
 
   // 2) Spatial lookups
@@ -662,13 +667,15 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
         queryOne("bcc_flood_river", focusLng, focusLat),
       ];
 
-  const stateTransportPromises = parcel?.geometry
-    ? DAMS_STATE_TRANSPORT_LAYERS.map((layer) =>
-        queryIntersects(layer.table, parcel.geometry)
-      )
-    : DAMS_STATE_TRANSPORT_LAYERS.map((layer) =>
-        queryOne(layer.table, focusLng, focusLat)
-      );
+  const stateTransportPromises = DAMS_STATE_TRANSPORT_LAYERS.map((layer) =>
+    queryNearParcel(
+      layer.table,
+      focusLng,
+      focusLat,
+      parcelGeom,
+      DAMS_LAYER_DISTANCE_M
+    )
+  );
 
   const [
     zoning,
