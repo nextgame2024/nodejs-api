@@ -6,7 +6,70 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-02-20.49";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-15.50";
+
+const DAMS_STATE_TRANSPORT_LAYER_META = [
+  {
+    code: "dams_state_transport_state_controlled_road",
+    layerLabel: "State-controlled road corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_railway_corridor",
+    layerLabel: "Railway corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_busway_corridor",
+    layerLabel: "Busway corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_light_rail_corridor",
+    layerLabel: "Light rail corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_future_state_controlled_road",
+    layerLabel: "Future State-controlled road corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_future_railway_corridor",
+    layerLabel: "Future railway corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_future_busway_corridor",
+    layerLabel: "Future busway corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_future_light_rail_corridor",
+    layerLabel: "Future light rail corridor",
+    groupLabel: "State transport corridor",
+  },
+  {
+    code: "dams_state_transport_25m_state_controlled_road",
+    layerLabel: "Area within 25m of a State-controlled road",
+    groupLabel: "Areas within 25m of a state transport corridor",
+  },
+  {
+    code: "dams_state_transport_25m_railway_corridor",
+    layerLabel: "Area within 25m of a railway corridor",
+    groupLabel: "Areas within 25m of a state transport corridor",
+  },
+  {
+    code: "dams_state_transport_25m_busway_corridor",
+    layerLabel: "Area within 25m of a busway corridor",
+    groupLabel: "Areas within 25m of a state transport corridor",
+  },
+  {
+    code: "dams_state_transport_25m_light_rail_corridor",
+    layerLabel: "Area within 25m of a light rail corridor",
+    groupLabel: "Areas within 25m of a state transport corridor",
+  },
+];
 
 function safeJsonParse(v) {
   if (!v) return null;
@@ -1547,6 +1610,15 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
+  const isDamsTransportCode = (code) =>
+    String(code || "").startsWith("dams_state_transport_");
+  const nonDamsOverlayItems = overlayItems.filter(
+    (item) => !isDamsTransportCode(item?.code),
+  );
+  const damsOverlayItems = overlayItems.filter((item) =>
+    isDamsTransportCode(item?.code),
+  );
+
   const overlayNamePriority = [
     "Airport environs overlay",
     "Bicycle network overlay",
@@ -1571,8 +1643,8 @@ export async function buildTownPlannerReportPdfV2(
     if (codeIdx >= 0) return overlayNamePriority.length + codeIdx;
     return Number.MAX_SAFE_INTEGER;
   };
-  const orderedOverlayItems = overlayItems.length
-    ? [...overlayItems].sort((a, b) => {
+  const orderedOverlayItems = nonDamsOverlayItems.length
+    ? [...nonDamsOverlayItems].sort((a, b) => {
         const rankDiff = overlayRank(a) - overlayRank(b);
         if (rankDiff !== 0) return rankDiff;
         const aSplit = splitOverlayName(a?.name);
@@ -1606,6 +1678,48 @@ export async function buildTownPlannerReportPdfV2(
     displayOverlayItems.push(item);
   }
 
+  const rawDamsStateTransport =
+    planningSnapshot?.rawDamsStateTransport &&
+    typeof planningSnapshot.rawDamsStateTransport === "object"
+      ? planningSnapshot.rawDamsStateTransport
+      : {};
+
+  const damsOverlayByCode = new Map(
+    damsOverlayItems.map((item) => [String(item?.code || ""), item]),
+  );
+  const damsTransportItems = [];
+
+  for (const meta of DAMS_STATE_TRANSPORT_LAYER_META) {
+    const item = damsOverlayByCode.get(meta.code);
+    if (!item) continue;
+    const rawProps =
+      rawDamsStateTransport && typeof rawDamsStateTransport === "object"
+        ? rawDamsStateTransport[meta.code] || null
+        : null;
+    damsTransportItems.push({
+      ...item,
+      layerLabel: meta.layerLabel,
+      groupLabel: meta.groupLabel,
+      rawProps,
+    });
+  }
+
+  for (const item of damsOverlayItems) {
+    const key = String(item?.code || "");
+    if (DAMS_STATE_TRANSPORT_LAYER_META.some((meta) => meta.code === key))
+      continue;
+    const fallbackName = splitOverlayName(item?.name).detail || item?.name || key;
+    damsTransportItems.push({
+      ...item,
+      layerLabel: fallbackName,
+      groupLabel: "State transport corridor",
+      rawProps:
+        rawDamsStateTransport && typeof rawDamsStateTransport === "object"
+          ? rawDamsStateTransport[key] || null
+          : null,
+    });
+  }
+
   const zoningAssessmentConsiderations = [
     {
       heading: "Material change of use considerations",
@@ -1627,14 +1741,16 @@ export async function buildTownPlannerReportPdfV2(
 
   // Pagination plan
   const overlayPages = Math.max(1, displayOverlayItems.length);
+  const damsPages = damsTransportItems.length;
   const sectionPages = {
     tableOfContents: 2,
     siteOverview: 3,
     zoningAssessment: 4,
     overlayStart: 5,
     lotSizeAndDimensions: 5 + overlayPages,
-    glossary: 6 + overlayPages,
-    disclaimer: 7 + overlayPages,
+    damsStart: damsPages > 0 ? 6 + overlayPages : null,
+    glossary: 6 + overlayPages + damsPages,
+    disclaimer: 7 + overlayPages + damsPages,
   };
 
   const tocRows = [
@@ -1668,6 +1784,20 @@ export async function buildTownPlannerReportPdfV2(
       page: sectionPages.lotSizeAndDimensions,
       level: 0,
     },
+    ...(damsPages > 0
+      ? [
+          {
+            label: "State transport mapping (DAMS)",
+            page: sectionPages.damsStart,
+            level: 0,
+          },
+          ...damsTransportItems.map((item, idx) => ({
+            label: item.layerLabel || "State transport layer",
+            page: (sectionPages.damsStart || 0) + idx,
+            level: 1,
+          })),
+        ]
+      : []),
     { label: "Glossary of terms", page: sectionPages.glossary, level: 0 },
     {
       label: "Disclaimer and references",
@@ -2471,6 +2601,127 @@ export async function buildTownPlannerReportPdfV2(
 
   // ========== PAGE 5 + overlay pages: LOT SIZE & DIMENSIONS ==========
   renderDevelopmentControlsPage();
+
+  const formatDamsFieldLabel = (key) =>
+    String(key || "")
+      .replace(/^_+/, "")
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+
+  const formatDamsFieldValue = (value) => {
+    if (value === undefined || value === null || value === "") return "N/A";
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value.toLocaleString("en-AU", {
+        minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+        maximumFractionDigits: 2,
+      });
+    }
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value);
+  };
+
+  const extractDamsRows = (item) => {
+    const baseRows = [
+      ["Layer", item?.layerLabel || "N/A"],
+      ["Category", item?.groupLabel || "State transport corridor"],
+      [
+        "Approx. intersected area",
+        item?.areaIntersectM2 != null ? formatAreaM2(item.areaIntersectM2) : "N/A",
+      ],
+      ["Source", "Queensland DAMS (SARA State Transport)"],
+    ];
+
+    const props =
+      item?.rawProps && typeof item.rawProps === "object" ? item.rawProps : {};
+    const extraRows = Object.entries(props)
+      .filter(([k, v]) => {
+        if (!k) return false;
+        if (String(k).startsWith("__")) return false;
+        if (v === undefined || v === null || v === "") return false;
+        return true;
+      })
+      .map(([k, v]) => [formatDamsFieldLabel(k), formatDamsFieldValue(v)])
+      .slice(0, 8);
+
+    return [...baseRows, ...extraRows];
+  };
+
+  const renderDamsStateTransportPage = (item) => {
+    doc.addPage();
+    header(doc, {
+      title: "State transport mapping (DAMS)",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const top = Y(doc) + 84;
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("State transport mapping (DAMS)", x, top);
+    boundedText(
+      doc,
+      "Map and extracted data for Queensland State Transport layers relevant to this property.",
+      x,
+      top + 26,
+      w,
+      18,
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
+    );
+
+    const blockTopY = top + 52;
+    const blockH = 540;
+    box(doc, x, blockTopY, w, blockH);
+
+    const sectionTitle = item?.layerLabel || item?.name || "State transport layer";
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(13)
+      .text(sectionTitle, x + 14, blockTopY + 12, { width: w - 28 });
+
+    const mapY = blockTopY + 44;
+    const mapH = 286;
+    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+
+    let tableY = mapY + mapH + 12;
+    const tableX = x + 14;
+    const tableW = w - 28;
+    const kW = Math.round(tableW * 0.36);
+    const vW = tableW - kW;
+    tableY += drawSectionRow(doc, tableX, tableY, tableW, "Layer data");
+
+    const rows = extractDamsRows(item);
+    for (const row of rows) {
+      const projected = tableRowHeight(
+        doc,
+        row,
+        [kW, vW],
+        "Helvetica",
+        9,
+        TABLE.pad,
+      );
+      if (tableY + projected > blockTopY + blockH - 12) break;
+      tableY += drawTableRow(doc, tableX, tableY, [kW, vW], row, {
+        fill: BRAND.white,
+        font: "Helvetica",
+        fontSize: 9,
+      });
+    }
+  };
+
+  if (damsPages > 0) {
+    for (const item of damsTransportItems) {
+      renderDamsStateTransportPage(item);
+    }
+  }
 
   // ========== PAGE 6 + overlay pages: GLOSSARY ==========
   doc.addPage();
