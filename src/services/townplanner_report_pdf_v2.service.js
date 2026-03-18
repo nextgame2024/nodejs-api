@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-18.58";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-18.59";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -540,43 +540,6 @@ function boundedText(
 
   const out = (best || full.slice(0, 1)) + suffix;
   doc.text(out, x, y, measureOpts);
-}
-
-function paginateTextByLines(
-  doc,
-  text,
-  width,
-  maxHeight,
-  { font = "Helvetica", fontSize = 10, lineGap = 0 } = {},
-) {
-  const source = String(text ?? "");
-  if (!source) return [""];
-
-  const lines = source.split("\n");
-  const pages = [];
-  let current = [];
-
-  doc.font(font).fontSize(fontSize);
-
-  const fits = (content) =>
-    doc.heightOfString(content, {
-      width,
-      lineGap,
-    }) <= maxHeight;
-
-  for (const line of lines) {
-    const candidate = current.length ? `${current.join("\n")}\n${line}` : line;
-    if (current.length === 0 || fits(candidate)) {
-      current.push(line);
-      continue;
-    }
-
-    pages.push(current.join("\n"));
-    current = [line];
-  }
-
-  if (current.length) pages.push(current.join("\n"));
-  return pages.length ? pages : [""];
 }
 
 function splitOverlayName(name) {
@@ -1808,104 +1771,187 @@ export async function buildTownPlannerReportPdfV2(
     },
   ];
 
-  const glossaryBody = `Development means-
-  (a) carrying out-
-      (i) building work; or
-      (ii) plumbing or drainage work; or
-      (iii) operational work; or
-  (b) reconfiguring a lot; or
-  (c) making a material change of use of premises.
-
-Development application means an application for a development approval.
-
-Material change of use, of premises, means any of the following that a regulation made under section 284(2)(a) does not prescribe to be minor change of use-
-  (a) the start of a new use of the premises;
-  (b) the re-establishment on the premises of a use that has been abandoned;
-  (c) a material increase in the intensity or scale of the use of the premises.
-
-Reconfiguring a lot means-
-  (a) creating lots by subdividing another lot; or
-  (b) amalgamating 2 or more lots; or
-  (c) rearranging the boundaries of a lot by registering a plan of subdivision under the Land Act or Land Title Act; or
-  (d) dividing land into parts by agreement rendering different parts of a lot immediately available for separate disposition or separate occupation, other than by an agreement that is-
-      (i) a lease for a term, including renewal options, not exceeding 10 years; or
-      (ii) an agreement for the exclusive use of part of the common property for a community titles scheme under the Body Corporate and Community Management Act 1997; or
-  (e) creating an easement giving access to a lot from a constructed road.
-
-Building work-
-  (a) means-
-      (i) building, repairing, altering, underpinning (whether by vertical or lateral support), moving or demolishing a building or other structure; or
-      (ii) works regulated under the building assessment provisions; or
-      (iii) excavating or filling for, or incidental to, the activities stated in subparagraph (i); or
-      (iv) excavating or filling that may adversely affect the stability of a building or other structure, whether on the premises on which the building or other structure is situated or on adjacent premises; or
-      (v) supporting (vertically or laterally) premises for activities stated in subparagraph (i); and
-  (b) for a Queensland heritage place, includes-
-      (i) altering, repairing, maintaining or moving a built, natural or landscape feature on the place; and
-      (ii) excavating, filling or other disturbances to premises that damage, expose or move archaeological artefacts, as defined under the Heritage Act, on the place; and
-      (iii) altering, repairing or removing artefacts that contribute to the place's cultural heritage significance (furniture or fittings, for example); and
-      (iv) altering, repairing or removing building finishes that contribute to the place's cultural heritage significance (paint, wallpaper or plaster, for example); and
-  (c) does not include undertaking-
-      (i) operations of any type and all things constructed or installed that allow taking or interfering with water under the Water Act 2000; or
-      (ii) tidal works; or
-      (iii) works for reconfiguring a lot.
-
-Operational work means work, other than building work or plumbing or drainage work, in, on, over or under premises that materially affects premises or the use of premises.`;
   const glossaryFootnote =
     "The above terms are as per Schedule 2 of the Planning Act 2016.";
-  const glossaryAcronym = "SARA - State Assessment and Referral Agency";
+  const glossaryRows = [
+    {
+      segments: [{ text: "Development means-", font: "Helvetica-Bold" }],
+      afterGap: 2,
+    },
+    {
+      text: `(a) carrying out-
+    (i) building work; or
+    (ii) plumbing or drainage work; or
+    (iii) operational work; or
+(b) reconfiguring a lot; or
+(c) making a material change of use of premises.`,
+      afterGap: 10,
+    },
+    {
+      segments: [
+        { text: "Development application", font: "Helvetica-Bold" },
+        {
+          text: " means an application for a development approval.",
+          font: "Helvetica",
+        },
+      ],
+      afterGap: 10,
+    },
+    {
+      segments: [
+        { text: "Material change of use,", font: "Helvetica-Bold" },
+        {
+          text: " of premises, means any of the following that a regulation made under section 284(2)(a) does not prescribe to be minor change of use-",
+          font: "Helvetica",
+        },
+      ],
+      afterGap: 2,
+    },
+    {
+      text: `(a) the start of a new use of the premises;
+(b) the re-establishment on the premises of a use that has been abandoned;
+(c) a material increase in the intensity or scale of the use of the premises.`,
+      afterGap: 10,
+    },
+    {
+      segments: [
+        { text: "Reconfiguring a lot", font: "Helvetica-Bold" },
+        { text: " means-", font: "Helvetica" },
+      ],
+      afterGap: 2,
+    },
+    {
+      text: `(a) creating lots by subdividing another lot; or
+(b) amalgamating 2 or more lots; or
+(c) rearranging the boundaries of a lot by registering a plan of subdivision under the Land Act or Land Title Act; or
+(d) dividing land into parts by agreement rendering different parts of a lot immediately available for separate disposition or separate occupation, other than by an agreement that is-
+    (i) a lease for a term, including renewal options, not exceeding 10 years; or
+    (ii) an agreement for the exclusive use of part of the common property for a community titles scheme under the Body Corporate and Community Management Act 1997; or
+(e) creating an easement giving access to a lot from a constructed road.`,
+      afterGap: 10,
+    },
+    {
+      segments: [{ text: "Building work-", font: "Helvetica-Bold" }],
+      afterGap: 2,
+    },
+    {
+      text: `(a) means-
+    (i) building, repairing, altering, underpinning (whether by vertical or lateral support), moving or demolishing a building or other structure; or
+    (ii) works regulated under the building assessment provisions; or
+    (iii) excavating or filling for, or incidental to, the activities stated in subparagraph (i); or
+    (iv) excavating or filling that may adversely affect the stability of a building or other structure, whether on the premises on which the building or other structure is situated or on adjacent premises; or
+    (v) supporting (vertically or laterally) premises for activities stated in subparagraph (i); and
+(b) for a Queensland heritage place, includes-
+    (i) altering, repairing, maintaining or moving a built, natural or landscape feature on the place; and
+    (ii) excavating, filling or other disturbances to premises that damage, expose or move archaeological artefacts, as defined under the Heritage Act, on the place; and
+    (iii) altering, repairing or removing artefacts that contribute to the place's cultural heritage significance (furniture or fittings, for example); and`,
+      afterGap: 6,
+    },
+    {
+      text: `    (iv) altering, repairing or removing building finishes that contribute to the place's cultural heritage significance (paint, wallpaper or plaster, for example); and
+(c) does not include undertaking-
+    (i) operations of any type and all things constructed or installed that allow taking or interfering with water under the Water Act 2000; or
+    (ii) tidal works; or
+    (iii) works for reconfiguring a lot.`,
+      afterGap: 10,
+    },
+    {
+      segments: [
+        { text: "Operational work", font: "Helvetica-Bold" },
+        {
+          text: " means work, other than building work or plumbing or drainage work, in, on, over or under premises that materially affects premises or the use of premises.",
+          font: "Helvetica",
+        },
+      ],
+      afterGap: 14,
+    },
+    {
+      text: glossaryFootnote,
+      font: "Helvetica-Oblique",
+      fontSize: 8.8,
+      color: BRAND.muted,
+      lineGap: 1,
+      afterGap: 14,
+    },
+    {
+      segments: [
+        { text: "SARA", font: "Helvetica-Bold", fontSize: 11.2 },
+        {
+          text: " - State Assessment and Referral Agency",
+          font: "Helvetica",
+          fontSize: 11.2,
+        },
+      ],
+      afterGap: 0,
+    },
+  ];
+
+  const glossaryCardMetrics = (pdfDoc) => {
+    const top = Y(pdfDoc) + 84;
+    const cardY = top + 50;
+    const cardH = Math.min(
+      570,
+      pdfDoc.page.height - pdfDoc.page.margins.bottom - 30 - cardY,
+    );
+    return {
+      cardY,
+      cardH,
+      textX: X(pdfDoc) + 14,
+      textW: contentW(pdfDoc) - 28,
+      textStartY: cardY + 16,
+      textBottomY: cardY + cardH - 14,
+    };
+  };
+
+  const measureGlossaryRowHeight = (pdfDoc, row, width) => {
+    if (row?.type === "spacer") return Number(row?.height || 8);
+    const lineGap = Number.isFinite(row?.lineGap) ? row.lineGap : 0;
+    const text = Array.isArray(row?.segments)
+      ? row.segments.map((segment) => String(segment?.text || "")).join("")
+      : String(row?.text || "");
+    const measureFont = row?.font || "Helvetica";
+    const measureSize = Number(
+      row?.fontSize ||
+        row?.segments?.[0]?.fontSize ||
+        10,
+    );
+    pdfDoc.font(measureFont).fontSize(measureSize);
+    return pdfDoc.heightOfString(text, {
+      width,
+      lineGap,
+    });
+  };
+
+  const countGlossaryPages = (pdfDoc, rows) => {
+    const { textW, textStartY, textBottomY } = glossaryCardMetrics(pdfDoc);
+    let pages = 1;
+    let cursorY = textStartY;
+    for (const row of rows) {
+      const rowHeight = measureGlossaryRowHeight(pdfDoc, row, textW);
+      const isSpacer = row?.type === "spacer";
+      if (cursorY + rowHeight > textBottomY && cursorY > textStartY) {
+        pages += 1;
+        cursorY = textStartY;
+      }
+      if (isSpacer) {
+        cursorY += rowHeight;
+        continue;
+      }
+      const afterGap = Number.isFinite(row?.afterGap) ? row.afterGap : 8;
+      cursorY += rowHeight + afterGap;
+    }
+    return Math.max(1, pages);
+  };
 
   // Pagination plan
   const overlayPages = Math.max(1, displayOverlayItems.length);
   const damsPages = damsTransportItems.length;
-
   const glossaryMeasureDoc = new PDFDocument({
     size: PAGE.size,
     margin: PAGE.margin,
   });
-  const glossaryCardTop = Y(glossaryMeasureDoc) + 84 + 50;
-  const glossaryCardHeight = Math.min(
-    570,
-    glossaryMeasureDoc.page.height -
-      glossaryMeasureDoc.page.margins.bottom -
-      30 -
-      glossaryCardTop,
-  );
-  const glossaryTextWidth = contentW(glossaryMeasureDoc) - 28;
-  const glossaryBodyMaxHeight = glossaryCardHeight - 46;
-
-  const glossaryBodyChunks = paginateTextByLines(
-    glossaryMeasureDoc,
-    glossaryBody,
-    glossaryTextWidth,
-    glossaryBodyMaxHeight,
-    { font: "Helvetica", fontSize: 10, lineGap: 0 },
-  );
-
-  const glossaryLastChunk = glossaryBodyChunks[glossaryBodyChunks.length - 1] || "";
-  glossaryMeasureDoc.font("Helvetica").fontSize(10);
-  const glossaryLastChunkHeight = glossaryMeasureDoc.heightOfString(
-    glossaryLastChunk,
-    { width: glossaryTextWidth, lineGap: 0 },
-  );
-
-  glossaryMeasureDoc.font("Helvetica-Oblique").fontSize(8.8);
-  const glossaryFootnoteHeight = glossaryMeasureDoc.heightOfString(
-    glossaryFootnote,
-    { width: glossaryTextWidth, lineGap: 1 },
-  );
-
-  glossaryMeasureDoc.font("Helvetica-Bold").fontSize(11.2);
-  const glossaryAcronymHeight = glossaryMeasureDoc.heightOfString(
-    glossaryAcronym,
-    { width: glossaryTextWidth, lineGap: 1 },
-  );
+  const glossaryPages = countGlossaryPages(glossaryMeasureDoc, glossaryRows);
   glossaryMeasureDoc.end();
-
-  const glossaryTailHeight = glossaryFootnoteHeight + 14 + glossaryAcronymHeight;
-  const glossaryNeedsTailPage =
-    glossaryLastChunkHeight + 10 + glossaryTailHeight > glossaryBodyMaxHeight;
-  const glossaryPages =
-    glossaryBodyChunks.length + (glossaryNeedsTailPage ? 1 : 0);
 
   const sectionPages = {
     tableOfContents: 2,
@@ -2899,7 +2945,7 @@ Operational work means work, other than building work or plumbing or drainage wo
   }
 
   // ========== PAGE 6 + overlay pages: GLOSSARY ==========
-  const renderGlossaryPage = ({ bodyText = "", includeTail = false }) => {
+  const renderGlossaryPageFrame = () => {
     doc.addPage();
     header(doc, {
       title: "Glossary of key terms",
@@ -2918,65 +2964,78 @@ Operational work means work, other than building work or plumbing or drainage wo
       .fontSize(20)
       .text("Glossary of key terms", x, top);
 
-    const gY = top + 50;
-    const gH = Math.min(
-      570,
-      doc.page.height - doc.page.margins.bottom - 30 - gY,
+    const metrics = glossaryCardMetrics(doc);
+    box(doc, x, metrics.cardY, w, metrics.cardH);
+    return metrics;
+  };
+
+  const drawGlossaryRow = (row, x, y, width) => {
+    const lineGap = Number.isFinite(row?.lineGap) ? row.lineGap : 0;
+    const defaultColor = row?.color || BRAND.text;
+    const defaultFont = row?.font || "Helvetica";
+    const defaultFontSize = Number(
+      row?.fontSize ||
+        row?.segments?.[0]?.fontSize ||
+        10,
     );
-    const textX = x + 14;
-    const textW = w - 28;
-    const bodyY = gY + 34;
-    const bodyH = gH - 46;
 
-    box(doc, x, gY, w, gH);
-    doc
-      .fillColor(BRAND.teal2)
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .text("Glossary of key terms", textX, gY + 12);
-
-    boundedText(doc, bodyText, textX, bodyY, textW, bodyH, {
-      font: "Helvetica",
-      fontSize: 10,
-      color: BRAND.muted,
-      ellipsis: false,
-      lineGap: 0,
-    });
-
-    if (!includeTail) return;
-
-    const noteY = Math.max(doc.y + 10, bodyY + 10);
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica-Oblique")
-      .fontSize(8.8)
-      .text(glossaryFootnote, textX, noteY, {
-        width: textW,
-        lineGap: 1,
+    if (Array.isArray(row?.segments) && row.segments.length > 0) {
+      row.segments.forEach((segment, idx) => {
+        doc
+          .fillColor(segment?.color || defaultColor)
+          .font(segment?.font || defaultFont)
+          .fontSize(Number(segment?.fontSize || defaultFontSize))
+          .text(
+            String(segment?.text || ""),
+            idx === 0 ? x : undefined,
+            idx === 0 ? y : undefined,
+            {
+              width,
+              lineGap,
+              continued: idx < row.segments.length - 1,
+            },
+          );
       });
+      return;
+    }
 
     doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(11.2)
-      .text(glossaryAcronym, textX, doc.y + 14, {
-        width: textW,
+      .fillColor(defaultColor)
+      .font(defaultFont)
+      .fontSize(defaultFontSize)
+      .text(String(row?.text || ""), x, y, {
+        width,
+        lineGap,
       });
   };
 
-  for (let i = 0; i < glossaryBodyChunks.length; i += 1) {
-    const isLastChunk = i === glossaryBodyChunks.length - 1;
-    renderGlossaryPage({
-      bodyText: glossaryBodyChunks[i],
-      includeTail: isLastChunk && !glossaryNeedsTailPage,
-    });
-  }
+  let glossaryLayout = renderGlossaryPageFrame();
+  let glossaryCursorY = glossaryLayout.textStartY;
 
-  if (glossaryNeedsTailPage) {
-    renderGlossaryPage({
-      bodyText: "",
-      includeTail: true,
-    });
+  for (const row of glossaryRows) {
+    const rowHeight = measureGlossaryRowHeight(doc, row, glossaryLayout.textW);
+    const isSpacer = row?.type === "spacer";
+    if (
+      glossaryCursorY + rowHeight > glossaryLayout.textBottomY &&
+      glossaryCursorY > glossaryLayout.textStartY
+    ) {
+      glossaryLayout = renderGlossaryPageFrame();
+      glossaryCursorY = glossaryLayout.textStartY;
+    }
+
+    if (isSpacer) {
+      glossaryCursorY += rowHeight;
+      continue;
+    }
+
+    drawGlossaryRow(
+      row,
+      glossaryLayout.textX,
+      glossaryCursorY,
+      glossaryLayout.textW,
+    );
+    const afterGap = Number.isFinite(row?.afterGap) ? row.afterGap : 8;
+    glossaryCursorY = doc.y + afterGap;
   }
 
   // ========== LAST PAGE: DISCLAIMER & REFERENCES ==========
