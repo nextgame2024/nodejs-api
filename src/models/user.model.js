@@ -15,6 +15,12 @@ const USER_SELECT = `
   type,
   status,
   company_id AS "companyId",
+  (
+    SELECT c.company_name
+    FROM bm_company c
+    WHERE c.company_id = users.company_id
+    LIMIT 1
+  ) AS "companyName",
   createdat AS "createdAt",
   updatedat AS "updatedAt"
 `;
@@ -113,6 +119,7 @@ export async function updateUserById(
     cel,
     tel,
     contacts,
+    companyId,
     // Intentionally not allowing type/status here unless you explicitly add it later
   },
 ) {
@@ -161,6 +168,10 @@ export async function updateUserById(
     sets.push(`contacts = $${i++}`);
     params.push(contacts);
   }
+  if (companyId !== undefined) {
+    sets.push(`company_id = $${i++}`);
+    params.push(companyId);
+  }
 
   if (!sets.length) return findById(id);
 
@@ -187,13 +198,23 @@ export async function listUsersByCompany({
   limit,
   offset,
 }) {
-  const filters = [`company_id = $1`];
-  const params = [companyId];
-  let i = 2;
+  const filters = [];
+  const params = [];
+  let i = 1;
+
+  if (companyId) {
+    filters.push(`company_id = $${i++}`);
+    params.push(companyId);
+  }
 
   if (q) {
     filters.push(
-      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i})`,
+      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i} OR EXISTS (
+          SELECT 1
+          FROM bm_company c
+          WHERE c.company_id = users.company_id
+            AND c.company_name ILIKE $${i}
+        ))`,
     );
     params.push(`%${q}%`);
     i++;
@@ -215,7 +236,7 @@ export async function listUsersByCompany({
     `SELECT
        ${USER_SELECT}
      FROM users
-     WHERE ${filters.join(" AND ")}
+     ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
      ORDER BY name ASC NULLS LAST, username ASC NULLS LAST, createdat DESC
      LIMIT $${i++} OFFSET $${i}`,
     params,
@@ -225,13 +246,23 @@ export async function listUsersByCompany({
 
 /** Count users by company (for pagination) */
 export async function countUsersByCompany({ companyId, q, status, type }) {
-  const filters = [`company_id = $1`];
-  const params = [companyId];
-  let i = 2;
+  const filters = [];
+  const params = [];
+  let i = 1;
+
+  if (companyId) {
+    filters.push(`company_id = $${i++}`);
+    params.push(companyId);
+  }
 
   if (q) {
     filters.push(
-      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i})`,
+      `(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i} OR EXISTS (
+          SELECT 1
+          FROM bm_company c
+          WHERE c.company_id = users.company_id
+            AND c.company_name ILIKE $${i}
+        ))`,
     );
     params.push(`%${q}%`);
     i++;
@@ -250,7 +281,7 @@ export async function countUsersByCompany({ companyId, q, status, type }) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS total
      FROM users
-     WHERE ${filters.join(" AND ")}`,
+     ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}`,
     params,
   );
   return rows[0]?.total ?? 0;

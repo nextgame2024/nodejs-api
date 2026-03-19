@@ -11,6 +11,8 @@ import {
 import pool from "../config/db.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
+const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
+const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 
 const isUniqueViolation = (e) =>
   e?.code === "23505" || e?.code === "ER_DUP_ENTRY"; // PG + legacy MySQL check
@@ -30,6 +32,8 @@ const mapUserResponse = (u, token) => ({
   contacts: u.contacts ?? null,
   type: u.type ?? null,
   status: u.status ?? null,
+  companyId: u.companyId ?? null,
+  companyName: u.companyName ?? null,
 
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),
@@ -56,7 +60,26 @@ export const registerUser = asyncHandler(async (req, res) => {
       [req.user.id],
     );
     companyId = rows[0]?.company_id ?? null;
-    if (!companyId) {
+    if (isSuperAdmin(req)) {
+      const requestedCompanyId =
+        payload.companyId ?? payload.company_id ?? null;
+      if (!requestedCompanyId) {
+        return res
+          .status(400)
+          .json({ error: "companyId is required for super admin" });
+      }
+      const { rows: companyRows } = await pool.query(
+        `SELECT company_id
+         FROM bm_company
+         WHERE company_id = $1
+         LIMIT 1`,
+        [requestedCompanyId],
+      );
+      if (!companyRows[0]?.company_id) {
+        return res.status(400).json({ error: "Invalid companyId" });
+      }
+      companyId = companyRows[0].company_id;
+    } else if (!companyId) {
       return res
         .status(403)
         .json({ error: "User is not assigned to a company" });
@@ -100,7 +123,7 @@ export const registerUser = asyncHandler(async (req, res) => {
 
 /** GET /api/users — list users in company (auth required) */
 export const listUsers = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId = isSuperAdmin(req) ? null : req.user.companyId;
 
   const page = Math.max(1, Number(req.query.page || 1));
   const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));
@@ -192,6 +215,7 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
 /** PUT /api/users/:id — update any user in company (auth required) */
 export const updateUserByAdmin = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
+  const superAdmin = isSuperAdmin(req);
   const userId = req.params.id;
   const payload = req.body?.user || {};
 
@@ -199,7 +223,7 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
   if (!target) return res.status(404).json({ error: "User not found" });
 
   // company guard
-  if (target.companyId && target.companyId !== companyId) {
+  if (!superAdmin && target.companyId && target.companyId !== companyId) {
     return res.status(403).json({ error: "Forbidden" });
   }
 
@@ -217,6 +241,26 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
     type: payload.type,
     status: payload.status,
   };
+
+  if (superAdmin && (payload.companyId !== undefined || payload.company_id !== undefined)) {
+    const requestedCompanyId = payload.companyId ?? payload.company_id ?? null;
+    if (!requestedCompanyId) {
+      return res
+        .status(400)
+        .json({ error: "companyId is required for super admin" });
+    }
+    const { rows: companyRows } = await pool.query(
+      `SELECT company_id
+       FROM bm_company
+       WHERE company_id = $1
+       LIMIT 1`,
+      [requestedCompanyId],
+    );
+    if (!companyRows[0]?.company_id) {
+      return res.status(400).json({ error: "Invalid companyId" });
+    }
+    next.companyId = companyRows[0].company_id;
+  }
 
   if (payload.password) {
     next.passwordHash = await bcrypt.hash(payload.password, 10);
