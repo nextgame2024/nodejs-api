@@ -2259,6 +2259,54 @@ export async function buildTownPlannerReportPdfV2(
         ? pages.stateMappingStart + vegetationIdx
         : null;
 
+    const stateMappingTocRows =
+      stateMappingPages > 0
+        ? (() => {
+            const rows = [
+              {
+                label: "State mapping considerations",
+                page: pages.stateMappingStart,
+                level: 0,
+              },
+            ];
+
+            let lastSectionKey = "";
+            for (let idx = 0; idx < stateMappingItems.length; idx += 1) {
+              const item = stateMappingItems[idx];
+              const rowPage = (pages.stateMappingStart || 0) + idx;
+              const sectionLabel = String(item?.sectionTitle || "State mapping").trim();
+              const sectionKey = sectionLabel.toLowerCase();
+              if (sectionLabel && sectionKey !== lastSectionKey) {
+                rows.push({
+                  label: sectionLabel,
+                  page: rowPage,
+                  level: 1,
+                });
+                lastSectionKey = sectionKey;
+              }
+
+              rows.push({
+                label: item?.subsectionTitle || item?.name || "State mapping layer",
+                page: rowPage,
+                level: 2,
+              });
+
+              if (
+                nonSaraPages === 0 &&
+                vegetationPage &&
+                String(item?.code || "") === vegetationCode
+              ) {
+                rows.push({
+                  label: "Non-SARA DA Mapping",
+                  page: vegetationPage,
+                  level: 2,
+                });
+              }
+            }
+            return rows;
+          })()
+        : [];
+
     return [
       { label: "Table of contents", page: pages.tableOfContents, level: 0 },
       { label: "Site Overview", page: pages.siteOverview, level: 0 },
@@ -2285,20 +2333,7 @@ export async function buildTownPlannerReportPdfV2(
           { label: "Category of assessment", page: rowPage, level: 2 },
         ];
       }),
-      ...(stateMappingPages > 0
-        ? [
-            {
-              label: "State mapping considerations",
-              page: pages.stateMappingStart,
-              level: 0,
-            },
-            ...stateMappingItems.map((item, idx) => ({
-              label: item.subsectionTitle || item.name || "State mapping layer",
-              page: (pages.stateMappingStart || 0) + idx,
-              level: 1,
-            })),
-          ]
-        : []),
+      ...stateMappingTocRows,
       ...(nonSaraPages > 0
         ? [
             {
@@ -2312,9 +2347,7 @@ export async function buildTownPlannerReportPdfV2(
               level: 1,
             })),
           ]
-        : vegetationPage
-          ? [{ label: "Non-SARA DA Mapping", page: vegetationPage, level: 1 }]
-          : []),
+        : []),
       {
         label: "Lot size and dimensions",
         page: pages.lotSizeAndDimensions,
@@ -3163,7 +3196,19 @@ export async function buildTownPlannerReportPdfV2(
       layerLines.push(`Approx. intersected area: ${areaLabel}`);
     }
 
-    boundedText(doc, layerLines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 86, {
+    const layersText = layerLines.join("\n");
+    const layersTextY = mapY + mapH + 34;
+    const layersTextMaxH = 86;
+    doc.font("Helvetica").fontSize(10);
+    const measuredLayersH = doc.heightOfString(layersText || " ", {
+      width: w - 28,
+      lineGap: 0,
+    });
+    const renderedLayersH = Math.max(
+      12,
+      Math.min(layersTextMaxH, measuredLayersH),
+    );
+    boundedText(doc, layersText, x + 14, layersTextY, w - 28, layersTextMaxH, {
       font: "Helvetica",
       fontSize: 10,
       color: BRAND.text,
@@ -3173,7 +3218,8 @@ export async function buildTownPlannerReportPdfV2(
     const sourceText = `Source: ${String(
       item?.source || "Queensland Development Assessment Mapping System"
     )}`;
-    boundedText(doc, sourceText, x + 14, mapY + mapH + 122, w - 28, 24, {
+    const sourceY = layersTextY + renderedLayersH + 4;
+    boundedText(doc, sourceText, x + 14, sourceY, w - 28, 24, {
       font: "Helvetica-Oblique",
       fontSize: 8.6,
       color: BRAND.muted,
@@ -3184,13 +3230,14 @@ export async function buildTownPlannerReportPdfV2(
       String(item?.code || "") ===
       "state_mapping_sara_regulated_vegetation_management_map";
     if (isNativeVegetation && nonSaraPages === 0) {
-      boundedText(doc, "Non-SARA DA Mapping", x + 14, mapY + mapH + 156, w - 28, 22, {
+      const nonSaraTitleY = sourceY + 34;
+      boundedText(doc, "Non-SARA DA Mapping", x + 14, nonSaraTitleY, w - 28, 22, {
         font: "Helvetica-Bold",
         fontSize: 14,
         color: BRAND.text,
         ellipsis: true,
       });
-      boundedText(doc, "None identified over the site.", x + 14, mapY + mapH + 180, w - 28, 18, {
+      boundedText(doc, "None identified over the site.", x + 14, nonSaraTitleY + 24, w - 28, 18, {
         font: "Helvetica",
         fontSize: 10,
         color: BRAND.text,
@@ -3272,17 +3319,30 @@ export async function buildTownPlannerReportPdfV2(
     const areaLabel = formatAreaM2(item?.areaIntersectM2);
     if (areaLabel !== "N/A") lines.push(`Approx. intersected area: ${areaLabel}`);
 
-    boundedText(doc, lines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 86, {
+    const nonSaraLayersText = lines.join("\n");
+    const nonSaraLayersTextY = mapY + mapH + 34;
+    const nonSaraLayersTextMaxH = 86;
+    doc.font("Helvetica").fontSize(10);
+    const nonSaraMeasuredH = doc.heightOfString(nonSaraLayersText || " ", {
+      width: w - 28,
+      lineGap: 0,
+    });
+    const nonSaraRenderedH = Math.max(
+      12,
+      Math.min(nonSaraLayersTextMaxH, nonSaraMeasuredH),
+    );
+    boundedText(doc, nonSaraLayersText, x + 14, nonSaraLayersTextY, w - 28, nonSaraLayersTextMaxH, {
       font: "Helvetica",
       fontSize: 10,
       color: BRAND.text,
       ellipsis: true,
     });
+    const nonSaraSourceY = nonSaraLayersTextY + nonSaraRenderedH + 4;
     boundedText(
       doc,
       `Source: ${String(item?.source || "Queensland Development Assessment Mapping System")}`,
       x + 14,
-      mapY + mapH + 122,
+      nonSaraSourceY,
       w - 28,
       24,
       {
