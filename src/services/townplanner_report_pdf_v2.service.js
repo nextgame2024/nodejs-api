@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.60";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.61";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1246,10 +1246,23 @@ export async function buildTownPlannerReportPdfV2(
   const stateMappingPolygons = Array.isArray(planningSnapshot?.stateMappingPolygons)
     ? planningSnapshot.stateMappingPolygons
     : [];
+  const nonSaraMappingConsiderations = Array.isArray(
+    planningSnapshot?.nonSaraMappingConsiderations,
+  )
+    ? planningSnapshot.nonSaraMappingConsiderations
+    : [];
+  const nonSaraMappingPolygons = Array.isArray(planningSnapshot?.nonSaraMappingPolygons)
+    ? planningSnapshot.nonSaraMappingPolygons
+    : [];
   const rawStateMappingConsiderations =
     planningSnapshot?.rawStateMappingConsiderations &&
     typeof planningSnapshot.rawStateMappingConsiderations === "object"
       ? planningSnapshot.rawStateMappingConsiderations
+      : {};
+  const rawNonSaraMappingConsiderations =
+    planningSnapshot?.rawNonSaraMappingConsiderations &&
+    typeof planningSnapshot.rawNonSaraMappingConsiderations === "object"
+      ? planningSnapshot.rawNonSaraMappingConsiderations
       : {};
 
   const findOverlayGeometry = (code) => {
@@ -1258,6 +1271,12 @@ export async function buildTownPlannerReportPdfV2(
   };
   const findStateMappingGeometry = (code) => {
     const hit = stateMappingPolygons.find(
+      (o) => o?.code === code && o?.geometry,
+    );
+    return hit?.geometry || null;
+  };
+  const findNonSaraGeometry = (code) => {
+    const hit = nonSaraMappingPolygons.find(
       (o) => o?.code === code && o?.geometry,
     );
     return hit?.geometry || null;
@@ -1780,7 +1799,8 @@ export async function buildTownPlannerReportPdfV2(
 
     const geom = findStateMappingGeometry(code);
     const overlayFeature = featureFromGeometry(geom);
-    const sectionTitle = String(rawItem?.sectionTitle || "").trim() || "State mapping";
+    const sectionTitle =
+      String(rawItem?.sectionTitle || "").trim() || "State mapping";
     const sectionKey = normalizeOverlayKey(sectionTitle);
     const style = sectionKey.includes("spp")
       ? { outline: "0x29b6f6ff", fill: "0x29b6f652" }
@@ -1792,7 +1812,7 @@ export async function buildTownPlannerReportPdfV2(
       parcelFeature && overlayFeature
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
-            center: null,
+            center,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
             parcelColor: "0xff0000ff",
@@ -1801,9 +1821,10 @@ export async function buildTownPlannerReportPdfV2(
             overlayColor: style.outline,
             overlayFill: style.fill,
             overlayWeight: 2,
-            zoom: 18,
+            zoom: 19,
+            zoomNudge: 2,
             fitToParcel: false,
-            paddingPx: 92,
+            paddingPx: 66,
             maptype: "hybrid",
             size: "640x360",
             scale: 2,
@@ -1818,7 +1839,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelColor: "0xff0000ff",
         parcelFill: "0x00000000",
         parcelWeight: 4,
-        zoom: 19,
+        zoom: 20,
         maptype: "hybrid",
         size: "640x360",
         scale: 2,
@@ -1841,6 +1862,109 @@ export async function buildTownPlannerReportPdfV2(
         rawStateMappingConsiderations &&
         typeof rawStateMappingConsiderations === "object"
           ? rawStateMappingConsiderations[code] || null
+          : null,
+    });
+  }
+
+  const stateMappingCodePriority = [
+    "state_mapping_sara_seq_regional_plan_land_use_categories",
+    "state_mapping_sara_water_resource_planning_area_boundaries",
+    "state_mapping_sara_regulated_vegetation_management_map",
+    "state_mapping_spp_flood_hazard_local_government",
+    "state_mapping_rpi_priority_living_area",
+  ];
+  stateMappingItems.sort((a, b) => {
+    const aIdx = stateMappingCodePriority.indexOf(String(a?.code || ""));
+    const bIdx = stateMappingCodePriority.indexOf(String(b?.code || ""));
+    const left = aIdx >= 0 ? aIdx : Number.MAX_SAFE_INTEGER;
+    const right = bIdx >= 0 ? bIdx : Number.MAX_SAFE_INTEGER;
+    if (left !== right) return left - right;
+    return String(a?.subsectionTitle || "").localeCompare(
+      String(b?.subsectionTitle || ""),
+    );
+  });
+
+  const vegetationCode = "state_mapping_sara_regulated_vegetation_management_map";
+  if (!stateMappingItems.some((item) => String(item?.code || "") === vegetationCode)) {
+    const waterCode = "state_mapping_sara_water_resource_planning_area_boundaries";
+    const waterIdx = stateMappingItems.findIndex(
+      (item) => String(item?.code || "") === waterCode,
+    );
+    const insertAt =
+      waterIdx >= 0 ? waterIdx + 1 : Math.min(2, stateMappingItems.length);
+    stateMappingItems.splice(insertAt, 0, {
+      code: vegetationCode,
+      sectionTitle: "SARA DA Mapping",
+      subsectionTitle: "Native vegetation clearing",
+      name: "Regulated vegetation management map",
+      detail: "None identified over the site.",
+      source: "Queensland DAMS (SARA/SARA_Data layer 5)",
+      areaIntersectM2: null,
+      mapBuffer: siteContextMap || parcelRoadMap || null,
+      rawProps: null,
+    });
+  }
+
+  const nonSaraItems = [];
+  for (const rawItem of nonSaraMappingConsiderations) {
+    const code = String(rawItem?.code || "").trim();
+    const geom = code ? findNonSaraGeometry(code) : null;
+    const overlayFeature = featureFromGeometry(geom);
+
+    let mapBuffer =
+      parcelFeature && overlayFeature
+        ? await getParcelOverlayMapImageBufferV2({
+            apiKey,
+            center,
+            parcelGeoJson: parcelFeature,
+            overlayGeoJson: overlayFeature,
+            parcelColor: "0xff0000ff",
+            parcelFill: "0x00000000",
+            parcelWeight: 4,
+            overlayColor: "0xff6f00ff",
+            overlayFill: "0xff6f004d",
+            overlayWeight: 2,
+            zoom: 19,
+            zoomNudge: 2,
+            fitToParcel: false,
+            paddingPx: 66,
+            maptype: "hybrid",
+            size: "640x360",
+            scale: 2,
+          }).catch(() => null)
+        : null;
+
+    if (!mapBuffer && parcelFeature) {
+      mapBuffer = await getParcelMapImageBufferV2({
+        apiKey,
+        center,
+        parcelGeoJson: parcelFeature,
+        parcelColor: "0xff0000ff",
+        parcelFill: "0x00000000",
+        parcelWeight: 4,
+        zoom: 20,
+        maptype: "hybrid",
+        size: "640x360",
+        scale: 2,
+      }).catch(() => null);
+    }
+
+    nonSaraItems.push({
+      code,
+      sectionTitle: String(rawItem?.sectionTitle || "Non-SARA DA Mapping").trim(),
+      subsectionTitle: String(rawItem?.subsectionTitle || rawItem?.name || "Mapped layer").trim(),
+      name: String(rawItem?.name || "Mapped layer").trim(),
+      detail: String(rawItem?.detail || "Mapped area").trim(),
+      source:
+        String(rawItem?.source || "").trim() ||
+        "Queensland Development Assessment Mapping System",
+      areaIntersectM2: computeIntersectionAreaM2(parcelGeom, geom),
+      mapBuffer,
+      rawProps:
+        rawNonSaraMappingConsiderations &&
+        typeof rawNonSaraMappingConsiderations === "object" &&
+        code
+          ? rawNonSaraMappingConsiderations[code] || null
           : null,
     });
   }
@@ -2047,84 +2171,190 @@ export async function buildTownPlannerReportPdfV2(
   const glossaryPages = countGlossaryPages(glossaryMeasureDoc, glossaryRows);
   glossaryMeasureDoc.end();
 
-  const sectionPages = {
-    tableOfContents: 2,
-    siteOverview: 3,
-    zoningAssessment: 4,
-    overlayStart: 5,
-    stateMappingStart: stateMappingPages > 0 ? 5 + overlayPages : null,
-    lotSizeAndDimensions: 5 + overlayPages + stateMappingPages,
-    damsStart: damsPages > 0 ? 6 + overlayPages + stateMappingPages : null,
-    glossary: 6 + overlayPages + stateMappingPages + damsPages,
-    disclaimer: 6 + overlayPages + stateMappingPages + damsPages + glossaryPages,
+  const nonSaraPages = nonSaraItems.length;
+  const tocRowStyle = (level) => {
+    if (level === 0) {
+      return {
+        font: "Helvetica-Bold",
+        fontSize: 11,
+        rowGap: 16,
+        indent: 0,
+        color: BRAND.text,
+      };
+    }
+    if (level === 1) {
+      return {
+        font: "Helvetica",
+        fontSize: 10,
+        rowGap: 13,
+        indent: 18,
+        color: BRAND.text,
+      };
+    }
+    return {
+      font: "Helvetica",
+      fontSize: 9,
+      rowGap: 11,
+      indent: 36,
+      color: BRAND.muted,
+    };
   };
 
-  const tocRows = [
-    { label: "Table of contents", page: sectionPages.tableOfContents, level: 0 },
-    { label: "Site Overview", page: sectionPages.siteOverview, level: 0 },
-    { label: "Zoning", page: sectionPages.siteOverview, level: 1 },
-    { label: "Neighbourhood plan", page: sectionPages.siteOverview, level: 1 },
-    { label: "Overlays", page: sectionPages.siteOverview, level: 1 },
-    {
-      label: "Zone and categories of assessment",
-      page: sectionPages.zoningAssessment,
-      level: 0,
-    },
-    ...zoningAssessmentConsiderations.map((item) => ({
-      label: item.heading,
-      page: sectionPages.zoningAssessment,
-      level: 1,
-    })),
-    { label: "Overlay constraints", page: sectionPages.overlayStart, level: 0 },
-    ...displayOverlayItems.flatMap((item, idx) => {
-      const { base } = splitOverlayName(item?.name);
-      const rowPage = sectionPages.overlayStart + idx;
-      return [
-        { label: base || "Overlay", page: rowPage, level: 1 },
-        { label: "Subcategory", page: rowPage, level: 2 },
-        { label: "Category of assessment", page: rowPage, level: 2 },
-      ];
-    }),
-    ...(stateMappingPages > 0
-      ? [
-          {
-            label: "State mapping considerations",
-            page: sectionPages.stateMappingStart,
-            level: 0,
-          },
-          ...stateMappingItems.map((item, idx) => ({
-            label: item.subsectionTitle || item.name || "State mapping layer",
-            page: (sectionPages.stateMappingStart || 0) + idx,
-            level: 1,
-          })),
-        ]
-      : []),
-    {
-      label: "Lot size and dimensions",
-      page: sectionPages.lotSizeAndDimensions,
-      level: 0,
-    },
-    ...(damsPages > 0
-      ? [
-          {
-            label: "State transport mapping (DAMS)",
-            page: sectionPages.damsStart,
-            level: 0,
-          },
-          ...damsTransportItems.map((item, idx) => ({
-            label: item.layerLabel || "State transport layer",
-            page: (sectionPages.damsStart || 0) + idx,
-            level: 1,
-          })),
-        ]
-      : []),
-    { label: "Glossary of key terms", page: sectionPages.glossary, level: 0 },
-    {
-      label: "Disclaimer and references",
-      page: sectionPages.disclaimer,
-      level: 0,
-    },
-  ];
+  const countTocPages = (rows) => {
+    const listH = 520;
+    const startY = 22;
+    const maxY = listH - 20;
+    let pages = 1;
+    let y = startY;
+    for (const row of rows) {
+      const style = tocRowStyle(row.level);
+      if (y > maxY) {
+        pages += 1;
+        y = startY;
+      }
+      y += style.rowGap;
+    }
+    return Math.max(1, pages);
+  };
+
+  const buildSectionPages = (tocPagesCount) => {
+    const tocPagesSafe = Math.max(1, Number(tocPagesCount) || 1);
+    const siteOverview = 2 + tocPagesSafe;
+    const zoningAssessment = siteOverview + 1;
+    const overlayStart = zoningAssessment + 1;
+    const stateMappingStart =
+      stateMappingPages > 0 ? overlayStart + overlayPages : null;
+    const nonSaraStart =
+      nonSaraPages > 0
+        ? overlayStart + overlayPages + stateMappingPages
+        : null;
+    const lotSizeAndDimensions =
+      overlayStart + overlayPages + stateMappingPages + nonSaraPages;
+    const damsStart = damsPages > 0 ? lotSizeAndDimensions + 1 : null;
+    const glossary = lotSizeAndDimensions + 1 + damsPages;
+    const disclaimer = glossary + glossaryPages;
+
+    return {
+      tableOfContents: 2,
+      tocPages: tocPagesSafe,
+      siteOverview,
+      zoningAssessment,
+      overlayStart,
+      stateMappingStart,
+      nonSaraStart,
+      lotSizeAndDimensions,
+      damsStart,
+      glossary,
+      disclaimer,
+    };
+  };
+
+  const buildTocRows = (pages) => {
+    const vegetationCode = "state_mapping_sara_regulated_vegetation_management_map";
+    const vegetationIdx = stateMappingItems.findIndex(
+      (item) => String(item?.code || "") === vegetationCode,
+    );
+    const vegetationPage =
+      pages.stateMappingStart && vegetationIdx >= 0
+        ? pages.stateMappingStart + vegetationIdx
+        : null;
+
+    return [
+      { label: "Table of contents", page: pages.tableOfContents, level: 0 },
+      { label: "Site Overview", page: pages.siteOverview, level: 0 },
+      { label: "Zoning", page: pages.siteOverview, level: 1 },
+      { label: "Neighbourhood plan", page: pages.siteOverview, level: 1 },
+      { label: "Overlays", page: pages.siteOverview, level: 1 },
+      {
+        label: "Zone and categories of assessment",
+        page: pages.zoningAssessment,
+        level: 0,
+      },
+      ...zoningAssessmentConsiderations.map((item) => ({
+        label: item.heading,
+        page: pages.zoningAssessment,
+        level: 1,
+      })),
+      { label: "Overlay constraints", page: pages.overlayStart, level: 0 },
+      ...displayOverlayItems.flatMap((item, idx) => {
+        const { base } = splitOverlayName(item?.name);
+        const rowPage = pages.overlayStart + idx;
+        return [
+          { label: base || "Overlay", page: rowPage, level: 1 },
+          { label: "Subcategory", page: rowPage, level: 2 },
+          { label: "Category of assessment", page: rowPage, level: 2 },
+        ];
+      }),
+      ...(stateMappingPages > 0
+        ? [
+            {
+              label: "State mapping considerations",
+              page: pages.stateMappingStart,
+              level: 0,
+            },
+            ...stateMappingItems.map((item, idx) => ({
+              label: item.subsectionTitle || item.name || "State mapping layer",
+              page: (pages.stateMappingStart || 0) + idx,
+              level: 1,
+            })),
+          ]
+        : []),
+      ...(nonSaraPages > 0
+        ? [
+            {
+              label: "Non-SARA DA Mapping",
+              page: pages.nonSaraStart,
+              level: 0,
+            },
+            ...nonSaraItems.map((item, idx) => ({
+              label: item?.subsectionTitle || item?.name || "Mapped item",
+              page: (pages.nonSaraStart || 0) + idx,
+              level: 1,
+            })),
+          ]
+        : vegetationPage
+          ? [{ label: "Non-SARA DA Mapping", page: vegetationPage, level: 1 }]
+          : []),
+      {
+        label: "Lot size and dimensions",
+        page: pages.lotSizeAndDimensions,
+        level: 0,
+      },
+      ...(damsPages > 0
+        ? [
+            {
+              label: "State transport mapping (DAMS)",
+              page: pages.damsStart,
+              level: 0,
+            },
+            ...damsTransportItems.map((item, idx) => ({
+              label: item.layerLabel || "State transport layer",
+              page: (pages.damsStart || 0) + idx,
+              level: 1,
+            })),
+          ]
+        : []),
+      { label: "Glossary of key terms", page: pages.glossary, level: 0 },
+      {
+        label: "Disclaimer and references",
+        page: pages.disclaimer,
+        level: 0,
+      },
+      { label: "Disclaimer", page: pages.disclaimer, level: 1 },
+      { label: "References", page: pages.disclaimer, level: 1 },
+    ];
+  };
+
+  let tocPages = 1;
+  let sectionPages = buildSectionPages(tocPages);
+  let tocRows = buildTocRows(sectionPages);
+  for (let i = 0; i < 3; i += 1) {
+    const needed = countTocPages(tocRows);
+    if (needed === tocPages) break;
+    tocPages = needed;
+    sectionPages = buildSectionPages(tocPages);
+    tocRows = buildTocRows(sectionPages);
+  }
 
   const doc = new PDFDocument({
     size: PAGE.size,
@@ -2229,112 +2459,86 @@ export async function buildTownPlannerReportPdfV2(
     }
   }
 
-  // ========== PAGE 2: CONTENTS ==========
-  doc.addPage();
+  // ========== PAGE 2..: CONTENTS ==========
   {
-    header(doc, {
-      title: "Table of contents",
-      addressLabel,
-      schemeVersion,
-      logoBuffer,
-    });
-
-    const x = X(doc);
-    const w = contentW(doc);
-    const top = Y(doc) + 78;
-
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica-Bold")
-      .fontSize(20)
-      .text("Table of contents", x, top);
-
-    doc
-      .fillColor(BRAND.muted)
-      .font("Helvetica")
-      .fontSize(10)
-      .text("Sections and page numbers included in this report.", x, top + 26, {
-        width: w,
+    let tocIndex = 0;
+    for (let tocPage = 0; tocPage < tocPages; tocPage += 1) {
+      doc.addPage();
+      header(doc, {
+        title: "Table of contents",
+        addressLabel,
+        schemeVersion,
+        logoBuffer,
       });
 
-    const listY = top + 64;
-    const listH = 520;
-    box(doc, x, listY, w, listH);
+      const x = X(doc);
+      const w = contentW(doc);
+      const top = Y(doc) + 78;
 
-    const rowLeftX = x + 18;
-    const pageNumRightX = x + w - 30;
-    const leaderMinGap = 10;
-
-    let y = listY + 22;
-
-    const rowStyle = (level) => {
-      if (level === 0)
-        return {
-          font: "Helvetica-Bold",
-          fontSize: 11,
-          rowGap: 16,
-          indent: 0,
-          color: BRAND.text,
-        };
-      if (level === 1)
-        return {
-          font: "Helvetica",
-          fontSize: 10,
-          rowGap: 13,
-          indent: 18,
-          color: BRAND.text,
-        };
-      return {
-        font: "Helvetica",
-        fontSize: 9,
-        rowGap: 11,
-        indent: 36,
-        color: BRAND.muted,
-      };
-    };
-
-    for (const row of tocRows) {
-      const style = rowStyle(row.level);
-      if (y > listY + listH - 20) break;
-      const labelX = rowLeftX + style.indent;
-
-      // label
-      doc.fillColor(style.color).font(style.font).fontSize(style.fontSize);
-      doc.text(row.label, labelX, y, { lineBreak: false });
-
-      const labelWidth = doc.widthOfString(row.label);
-      const leaderStart = labelX + labelWidth + leaderMinGap;
-      const leaderEnd = pageNumRightX - 26;
-
-      // dotted leader as dashed stroke (no wrapping)
-      if (leaderEnd > leaderStart + 20) {
-        doc.save();
-        doc
-          .strokeColor(BRAND.border)
-          .lineWidth(0.8)
-          .dash(1, { space: 3 })
-          .moveTo(leaderStart, y + 10)
-          .lineTo(leaderEnd, y + 10)
-          .stroke();
-        doc.undash();
-        doc.restore();
-      }
-
-      // page number
       doc
         .fillColor(BRAND.text)
         .font("Helvetica-Bold")
-        .fontSize(11)
-        .text(String(row.page), pageNumRightX - 24, y, {
-          width: 24,
-          align: "right",
+        .fontSize(20)
+        .text("Table of contents", x, top);
+
+      doc
+        .fillColor(BRAND.muted)
+        .font("Helvetica")
+        .fontSize(10)
+        .text("Sections and page numbers included in this report.", x, top + 26, {
+          width: w,
         });
 
-      y += style.rowGap;
+      const listY = top + 64;
+      const listH = 520;
+      box(doc, x, listY, w, listH);
+
+      const rowLeftX = x + 18;
+      const pageNumRightX = x + w - 30;
+      const leaderMinGap = 10;
+      let y = listY + 22;
+
+      while (tocIndex < tocRows.length) {
+        const row = tocRows[tocIndex];
+        const style = tocRowStyle(row.level);
+        if (y > listY + listH - 20) break;
+        const labelX = rowLeftX + style.indent;
+
+        doc.fillColor(style.color).font(style.font).fontSize(style.fontSize);
+        doc.text(row.label, labelX, y, { lineBreak: false });
+
+        const labelWidth = doc.widthOfString(row.label);
+        const leaderStart = labelX + labelWidth + leaderMinGap;
+        const leaderEnd = pageNumRightX - 26;
+        if (leaderEnd > leaderStart + 20) {
+          doc.save();
+          doc
+            .strokeColor(BRAND.border)
+            .lineWidth(0.8)
+            .dash(1, { space: 3 })
+            .moveTo(leaderStart, y + 10)
+            .lineTo(leaderEnd, y + 10)
+            .stroke();
+          doc.undash();
+          doc.restore();
+        }
+
+        doc
+          .fillColor(BRAND.text)
+          .font("Helvetica-Bold")
+          .fontSize(11)
+          .text(String(row.page), pageNumRightX - 24, y, {
+            width: 24,
+            align: "right",
+          });
+
+        y += style.rowGap;
+        tocIndex += 1;
+      }
     }
   }
 
-  // ========== PAGE 3: SITE OVERVIEW ==========
+  // ========== PAGE AFTER TOC: SITE OVERVIEW ==========
   doc.addPage();
   {
     header(doc, {
@@ -2850,7 +3054,7 @@ export async function buildTownPlannerReportPdfV2(
     drawOverlayBlock(item, blockTopY);
   }
 
-  const renderStateMappingConsiderationsPage = (item) => {
+  const renderStateMappingConsiderationsPage = (item, index) => {
     doc.addPage();
     header(doc, {
       title: "State mapping considerations",
@@ -2868,32 +3072,35 @@ export async function buildTownPlannerReportPdfV2(
       .font("Helvetica-Bold")
       .fontSize(20)
       .text("State mapping considerations", x, top);
-    boundedText(
-      doc,
-      "The following mapping can assist in identifying State planning considerations and referral triggers under the Planning Regulation 2017.",
-      x,
-      top + 26,
-      w,
-      30,
-      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
-    );
-    boundedText(
-      doc,
-      "The mapping shown is indicative and should be read with legislation, plans and frameworks.",
-      x,
-      top + 58,
-      w,
-      18,
-      {
-        font: "Helvetica-Oblique",
-        fontSize: 9,
-        color: BRAND.text,
-        ellipsis: true,
-      },
-    );
+    const showIntroText = index === 0;
+    if (showIntroText) {
+      boundedText(
+        doc,
+        "The following mapping can assist in identifying State planning considerations including but not limited to development assessment triggers and referrals under the Planning Regulation 2017.",
+        x,
+        top + 26,
+        w,
+        30,
+        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
+      );
+      boundedText(
+        doc,
+        "Note, the following mapping is provided for information purposes only, and should be read in conjunction with relevant legislation, plans and frameworks.",
+        x,
+        top + 58,
+        w,
+        24,
+        {
+          font: "Helvetica-Oblique",
+          fontSize: 9,
+          color: BRAND.text,
+          ellipsis: false,
+        },
+      );
+    }
 
-    const blockTopY = top + 84;
-    const blockH = 508;
+    const blockTopY = showIntroText ? top + 84 : top + 42;
+    const blockH = showIntroText ? 508 : 550;
     box(doc, x, blockTopY, w, blockH);
 
     const sectionTitle = String(item?.sectionTitle || "State mapping");
@@ -2930,25 +3137,166 @@ export async function buildTownPlannerReportPdfV2(
       ellipsis: false,
     });
 
-    const layerLines = [
-      String(item?.name || "State mapping layer"),
-      String(item?.detail || "Mapped area"),
-      `Approx. intersected area: ${formatAreaM2(item?.areaIntersectM2)}`,
-      `Source: ${String(
-        item?.source || "Queensland Development Assessment Mapping System"
-      )}`,
-    ];
-    boundedText(doc, layerLines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 120, {
+    const nameLine = String(item?.name || "State mapping layer").trim();
+    const detailLine = String(item?.detail || "").trim();
+    const normalizeLine = (v) =>
+      String(v || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const layerLines = [];
+    if (detailLine) {
+      const nameNorm = normalizeLine(nameLine);
+      const detailNorm = normalizeLine(detailLine);
+      if (nameNorm && detailNorm && detailNorm.startsWith(nameNorm)) {
+        layerLines.push(detailLine);
+      } else {
+        if (nameLine) layerLines.push(nameLine);
+        layerLines.push(detailLine);
+      }
+    } else if (nameLine) {
+      layerLines.push(nameLine);
+    }
+
+    const areaLabel = formatAreaM2(item?.areaIntersectM2);
+    if (areaLabel !== "N/A") {
+      layerLines.push(`Approx. intersected area: ${areaLabel}`);
+    }
+
+    boundedText(doc, layerLines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 86, {
       font: "Helvetica",
       fontSize: 10,
       color: BRAND.text,
       ellipsis: true,
     });
+
+    const sourceText = `Source: ${String(
+      item?.source || "Queensland Development Assessment Mapping System"
+    )}`;
+    boundedText(doc, sourceText, x + 14, mapY + mapH + 122, w - 28, 24, {
+      font: "Helvetica-Oblique",
+      fontSize: 8.6,
+      color: BRAND.muted,
+      ellipsis: true,
+    });
+
+    const isNativeVegetation =
+      String(item?.code || "") ===
+      "state_mapping_sara_regulated_vegetation_management_map";
+    if (isNativeVegetation && nonSaraPages === 0) {
+      boundedText(doc, "Non-SARA DA Mapping", x + 14, mapY + mapH + 156, w - 28, 22, {
+        font: "Helvetica-Bold",
+        fontSize: 14,
+        color: BRAND.text,
+        ellipsis: true,
+      });
+      boundedText(doc, "None identified over the site.", x + 14, mapY + mapH + 180, w - 28, 18, {
+        font: "Helvetica",
+        fontSize: 10,
+        color: BRAND.text,
+        ellipsis: true,
+      });
+    }
   };
 
   if (stateMappingPages > 0) {
-    for (const item of stateMappingItems) {
-      renderStateMappingConsiderationsPage(item);
+    for (let i = 0; i < stateMappingItems.length; i += 1) {
+      renderStateMappingConsiderationsPage(stateMappingItems[i], i);
+    }
+  }
+
+  const renderNonSaraMappingPage = (item) => {
+    doc.addPage();
+    header(doc, {
+      title: "State mapping considerations",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const top = Y(doc) + 84;
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("State mapping considerations", x, top);
+
+    const blockTopY = top + 42;
+    const blockH = 550;
+    box(doc, x, blockTopY, w, blockH);
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .text("Non-SARA DA Mapping", x + 14, blockTopY + 12, { width: w - 28 });
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .text(String(item?.subsectionTitle || item?.name || "Mapped layer"), x + 14, blockTopY + 34, {
+        width: w - 28,
+      });
+
+    const mapY = blockTopY + 58;
+    const mapH = 280;
+    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    if (!item?.mapBuffer) {
+      doc
+        .fillColor(BRAND.muted)
+        .font("Helvetica")
+        .fontSize(10)
+        .text("Map not available.", x + 14, mapY + mapH / 2 - 6, {
+          width: w - 28,
+          align: "center",
+        });
+    }
+
+    boundedText(doc, "Layers", x + 14, mapY + mapH + 14, w - 28, 16, {
+      font: "Helvetica-Bold",
+      fontSize: 11,
+      color: BRAND.text,
+      ellipsis: false,
+    });
+
+    const lines = [];
+    const nameLine = String(item?.name || "").trim();
+    const detailLine = String(item?.detail || "").trim();
+    if (nameLine) lines.push(nameLine);
+    if (detailLine && detailLine.toLowerCase() !== nameLine.toLowerCase()) {
+      lines.push(detailLine);
+    }
+    const areaLabel = formatAreaM2(item?.areaIntersectM2);
+    if (areaLabel !== "N/A") lines.push(`Approx. intersected area: ${areaLabel}`);
+
+    boundedText(doc, lines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 86, {
+      font: "Helvetica",
+      fontSize: 10,
+      color: BRAND.text,
+      ellipsis: true,
+    });
+    boundedText(
+      doc,
+      `Source: ${String(item?.source || "Queensland Development Assessment Mapping System")}`,
+      x + 14,
+      mapY + mapH + 122,
+      w - 28,
+      24,
+      {
+        font: "Helvetica-Oblique",
+        fontSize: 8.6,
+        color: BRAND.muted,
+        ellipsis: true,
+      },
+    );
+  };
+
+  if (nonSaraPages > 0) {
+    for (const item of nonSaraItems) {
+      renderNonSaraMappingPage(item);
     }
   }
 

@@ -248,6 +248,14 @@ function formatStateMappingDetail(layerCode, rawDetail, props = {}) {
   }
 
   if (code === "state_mapping_rpi_priority_living_area") {
+    const regionRaw = readPropCI(props, ["REGION"]);
+    const region = String(regionRaw || "").trim();
+    if (region) {
+      const regionLabel = /south\s*east\s*queensland/i.test(region)
+        ? "SEQ"
+        : region;
+      return `Priority living area (${regionLabel}).`;
+    }
     const areaName = readPropCI(props, ["NAME"]);
     if (areaName) return `Priority living area (${areaName}).`;
     return "Priority living area.";
