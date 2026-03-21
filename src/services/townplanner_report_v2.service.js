@@ -143,6 +143,20 @@ function hasDamsTransportData(snapshot) {
   return Object.keys(raw).length > 0;
 }
 
+function hasStateMappingData(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return false;
+
+  const considerations = snapshot?.stateMappingConsiderations;
+  if (Array.isArray(considerations)) return true;
+
+  const polygons = snapshot?.stateMappingPolygons;
+  if (Array.isArray(polygons)) return true;
+
+  const raw = snapshot?.rawStateMappingConsiderations;
+  if (!raw || typeof raw !== "object") return false;
+  return Object.keys(raw).length > 0;
+}
+
 async function loadLogoBuffer() {
   try {
     const resp = await axios.get(PDF_LOGO_URL, { responseType: "arraybuffer" });
@@ -408,7 +422,9 @@ export async function generateTownPlannerReportV2({
     !!planningSnapshot.siteParcelPolygon;
 
   const snapshotHasDams = hasDamsTransportData(planningSnapshot);
-  const shouldRefreshSnapshot = hasUsableSnapshot && !snapshotHasDams;
+  const snapshotHasStateMapping = hasStateMappingData(planningSnapshot);
+  const shouldRefreshSnapshot =
+    hasUsableSnapshot && (!snapshotHasDams || !snapshotHasStateMapping);
 
   let planning = null;
   if (hasUsableSnapshot && !shouldRefreshSnapshot) {
@@ -416,8 +432,16 @@ export async function generateTownPlannerReportV2({
   } else {
     if (shouldRefreshSnapshot) {
       console.info(
-        "[townplanner_v2] refreshing stale planning snapshot (missing DAMS transport data)",
-        { token, lat, lng, placeId, addressLabel }
+        "[townplanner_v2] refreshing stale planning snapshot (missing DAMS/state mapping data)",
+        {
+          token,
+          lat,
+          lng,
+          placeId,
+          addressLabel,
+          snapshotHasDams,
+          snapshotHasStateMapping,
+        }
       );
     }
     planning = await fetchPlanningDataV2({ lat, lng, lotPlan });

@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-18.59";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.60";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1238,9 +1238,28 @@ export async function buildTownPlannerReportPdfV2(
   const overlayPolygons = Array.isArray(planningSnapshot?.overlayPolygons)
     ? planningSnapshot.overlayPolygons
     : [];
+  const stateMappingConsiderations = Array.isArray(
+    planningSnapshot?.stateMappingConsiderations,
+  )
+    ? planningSnapshot.stateMappingConsiderations
+    : [];
+  const stateMappingPolygons = Array.isArray(planningSnapshot?.stateMappingPolygons)
+    ? planningSnapshot.stateMappingPolygons
+    : [];
+  const rawStateMappingConsiderations =
+    planningSnapshot?.rawStateMappingConsiderations &&
+    typeof planningSnapshot.rawStateMappingConsiderations === "object"
+      ? planningSnapshot.rawStateMappingConsiderations
+      : {};
 
   const findOverlayGeometry = (code) => {
     const hit = overlayPolygons.find((o) => o?.code === code && o?.geometry);
+    return hit?.geometry || null;
+  };
+  const findStateMappingGeometry = (code) => {
+    const hit = stateMappingPolygons.find(
+      (o) => o?.code === code && o?.geometry,
+    );
     return hit?.geometry || null;
   };
 
@@ -1749,6 +1768,80 @@ export async function buildTownPlannerReportPdfV2(
         rawDamsStateTransport && typeof rawDamsStateTransport === "object"
           ? rawDamsStateTransport[key] || null
           : null,
+      });
+  }
+
+  const stateMappingItems = [];
+  const seenStateMappingCodes = new Set();
+  for (const rawItem of stateMappingConsiderations) {
+    const code = String(rawItem?.code || "").trim();
+    if (!code || seenStateMappingCodes.has(code)) continue;
+    seenStateMappingCodes.add(code);
+
+    const geom = findStateMappingGeometry(code);
+    const overlayFeature = featureFromGeometry(geom);
+    const sectionTitle = String(rawItem?.sectionTitle || "").trim() || "State mapping";
+    const sectionKey = normalizeOverlayKey(sectionTitle);
+    const style = sectionKey.includes("spp")
+      ? { outline: "0x29b6f6ff", fill: "0x29b6f652" }
+      : sectionKey.includes("other state")
+        ? { outline: "0xf9a825ff", fill: "0xf9a8254d" }
+        : { outline: "0xff8a65ff", fill: "0xff8a654d" };
+
+    let mapBuffer =
+      parcelFeature && overlayFeature
+        ? await getParcelOverlayMapImageBufferV2({
+            apiKey,
+            center: null,
+            parcelGeoJson: parcelFeature,
+            overlayGeoJson: overlayFeature,
+            parcelColor: "0xff0000ff",
+            parcelFill: "0x00000000",
+            parcelWeight: 4,
+            overlayColor: style.outline,
+            overlayFill: style.fill,
+            overlayWeight: 2,
+            zoom: 18,
+            fitToParcel: false,
+            paddingPx: 92,
+            maptype: "hybrid",
+            size: "640x360",
+            scale: 2,
+          }).catch(() => null)
+        : null;
+
+    if (!mapBuffer && parcelFeature) {
+      mapBuffer = await getParcelMapImageBufferV2({
+        apiKey,
+        center,
+        parcelGeoJson: parcelFeature,
+        parcelColor: "0xff0000ff",
+        parcelFill: "0x00000000",
+        parcelWeight: 4,
+        zoom: 19,
+        maptype: "hybrid",
+        size: "640x360",
+        scale: 2,
+      }).catch(() => null);
+    }
+
+    stateMappingItems.push({
+      code,
+      sectionTitle,
+      subsectionTitle:
+        String(rawItem?.subsectionTitle || "").trim() || "Mapped layer",
+      name: String(rawItem?.name || "").trim() || "State mapping layer",
+      detail: String(rawItem?.detail || "").trim() || "Mapped area",
+      source:
+        String(rawItem?.source || "").trim() ||
+        "Queensland Development Assessment Mapping System",
+      areaIntersectM2: computeIntersectionAreaM2(parcelGeom, geom),
+      mapBuffer,
+      rawProps:
+        rawStateMappingConsiderations &&
+        typeof rawStateMappingConsiderations === "object"
+          ? rawStateMappingConsiderations[code] || null
+          : null,
     });
   }
 
@@ -1945,6 +2038,7 @@ export async function buildTownPlannerReportPdfV2(
 
   // Pagination plan
   const overlayPages = Math.max(1, displayOverlayItems.length);
+  const stateMappingPages = stateMappingItems.length;
   const damsPages = damsTransportItems.length;
   const glossaryMeasureDoc = new PDFDocument({
     size: PAGE.size,
@@ -1958,10 +2052,11 @@ export async function buildTownPlannerReportPdfV2(
     siteOverview: 3,
     zoningAssessment: 4,
     overlayStart: 5,
-    lotSizeAndDimensions: 5 + overlayPages,
-    damsStart: damsPages > 0 ? 6 + overlayPages : null,
-    glossary: 6 + overlayPages + damsPages,
-    disclaimer: 6 + overlayPages + damsPages + glossaryPages,
+    stateMappingStart: stateMappingPages > 0 ? 5 + overlayPages : null,
+    lotSizeAndDimensions: 5 + overlayPages + stateMappingPages,
+    damsStart: damsPages > 0 ? 6 + overlayPages + stateMappingPages : null,
+    glossary: 6 + overlayPages + stateMappingPages + damsPages,
+    disclaimer: 6 + overlayPages + stateMappingPages + damsPages + glossaryPages,
   };
 
   const tocRows = [
@@ -1990,6 +2085,20 @@ export async function buildTownPlannerReportPdfV2(
         { label: "Category of assessment", page: rowPage, level: 2 },
       ];
     }),
+    ...(stateMappingPages > 0
+      ? [
+          {
+            label: "State mapping considerations",
+            page: sectionPages.stateMappingStart,
+            level: 0,
+          },
+          ...stateMappingItems.map((item, idx) => ({
+            label: item.subsectionTitle || item.name || "State mapping layer",
+            page: (sectionPages.stateMappingStart || 0) + idx,
+            level: 1,
+          })),
+        ]
+      : []),
     {
       label: "Lot size and dimensions",
       page: sectionPages.lotSizeAndDimensions,
@@ -2741,6 +2850,108 @@ export async function buildTownPlannerReportPdfV2(
     drawOverlayBlock(item, blockTopY);
   }
 
+  const renderStateMappingConsiderationsPage = (item) => {
+    doc.addPage();
+    header(doc, {
+      title: "State mapping considerations",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
+
+    const x = X(doc);
+    const w = contentW(doc);
+    const top = Y(doc) + 84;
+
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("State mapping considerations", x, top);
+    boundedText(
+      doc,
+      "The following mapping can assist in identifying State planning considerations and referral triggers under the Planning Regulation 2017.",
+      x,
+      top + 26,
+      w,
+      30,
+      { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
+    );
+    boundedText(
+      doc,
+      "The mapping shown is indicative and should be read with legislation, plans and frameworks.",
+      x,
+      top + 58,
+      w,
+      18,
+      {
+        font: "Helvetica-Oblique",
+        fontSize: 9,
+        color: BRAND.text,
+        ellipsis: true,
+      },
+    );
+
+    const blockTopY = top + 84;
+    const blockH = 508;
+    box(doc, x, blockTopY, w, blockH);
+
+    const sectionTitle = String(item?.sectionTitle || "State mapping");
+    const subsectionTitle = String(item?.subsectionTitle || item?.name || "Layer");
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .text(sectionTitle, x + 14, blockTopY + 12, { width: w - 28 });
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .text(subsectionTitle, x + 14, blockTopY + 34, { width: w - 28 });
+
+    const mapY = blockTopY + 58;
+    const mapH = 280;
+    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    if (!item?.mapBuffer) {
+      doc
+        .fillColor(BRAND.muted)
+        .font("Helvetica")
+        .fontSize(10)
+        .text("Map not available.", x + 14, mapY + mapH / 2 - 6, {
+          width: w - 28,
+          align: "center",
+        });
+    }
+
+    boundedText(doc, "Layers", x + 14, mapY + mapH + 14, w - 28, 16, {
+      font: "Helvetica-Bold",
+      fontSize: 11,
+      color: BRAND.text,
+      ellipsis: false,
+    });
+
+    const layerLines = [
+      String(item?.name || "State mapping layer"),
+      String(item?.detail || "Mapped area"),
+      `Approx. intersected area: ${formatAreaM2(item?.areaIntersectM2)}`,
+      `Source: ${String(
+        item?.source || "Queensland Development Assessment Mapping System"
+      )}`,
+    ];
+    boundedText(doc, layerLines.join("\n"), x + 14, mapY + mapH + 34, w - 28, 120, {
+      font: "Helvetica",
+      fontSize: 10,
+      color: BRAND.text,
+      ellipsis: true,
+    });
+  };
+
+  if (stateMappingPages > 0) {
+    for (const item of stateMappingItems) {
+      renderStateMappingConsiderationsPage(item);
+    }
+  }
+
   const renderDevelopmentControlsPage = () => {
     doc.addPage();
     {
@@ -2778,6 +2989,21 @@ export async function buildTownPlannerReportPdfV2(
         .fontSize(10)
         .text("Lot size and dimensions", x + 14, srcY + 12);
 
+      const lotMapBuffer = parcelRoadMap || siteContextMap || null;
+      const mapY = srcY + 34;
+      const mapH = 250;
+      drawCoverImageInRoundedBox(doc, lotMapBuffer, x + 14, mapY, w - 28, mapH, 10);
+      if (!lotMapBuffer) {
+        doc
+          .fillColor(BRAND.muted)
+          .font("Helvetica")
+          .fontSize(10)
+          .text("Map not available.", x + 14, mapY + mapH / 2 - 6, {
+            width: w - 28,
+            align: "center",
+          });
+      }
+
       const dimsText = lotDimensions
         ? `${formatLengthM(lotDimensions.longSideM)} × ${formatLengthM(lotDimensions.shortSideM)}`
         : "N/A";
@@ -2795,13 +3021,13 @@ export async function buildTownPlannerReportPdfV2(
       const noteText =
         "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
 
-      boundedText(doc, lines.join("\n"), x + 14, srcY + 34, w - 28, 230, {
+      boundedText(doc, lines.join("\n"), x + 14, mapY + mapH + 14, w - 28, 140, {
         font: "Helvetica",
         fontSize: 9,
         color: BRAND.muted,
         ellipsis: true,
       });
-      boundedText(doc, noteText, x + 14, srcY + 286, w - 28, 120, {
+      boundedText(doc, noteText, x + 14, mapY + mapH + 156, w - 28, 90, {
         font: "Helvetica",
         fontSize: 9,
         color: BRAND.muted,
@@ -2810,7 +3036,7 @@ export async function buildTownPlannerReportPdfV2(
     }
   };
 
-  // ========== PAGE 5 + overlay pages: LOT SIZE & DIMENSIONS ==========
+  // ========== NEXT PAGE: LOT SIZE & DIMENSIONS ==========
   renderDevelopmentControlsPage();
 
   const formatDamsFieldLabel = (key) =>
@@ -2944,7 +3170,7 @@ export async function buildTownPlannerReportPdfV2(
     }
   }
 
-  // ========== PAGE 6 + overlay pages: GLOSSARY ==========
+  // ========== NEXT PAGES: GLOSSARY ==========
   const renderGlossaryPageFrame = () => {
     doc.addPage();
     header(doc, {

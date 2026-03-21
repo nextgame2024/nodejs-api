@@ -75,6 +75,69 @@ const DAMS_STATE_TRANSPORT_LAYERS = [
   },
 ];
 
+const STATE_MAPPING_CONSIDERATION_LAYERS = [
+  {
+    table: "qld_state_mapping_seq_regional_plan_land_use_categories",
+    code: "state_mapping_sara_seq_regional_plan_land_use_categories",
+    sectionTitle: "SARA DA Mapping",
+    subsectionTitle: "SEQ Regional Plan Triggers",
+    name: "SEQ Regional Plan land use categories",
+    detailKeys: ["RLUC2023", "RLUC", "CATEGORY", "TYPE", "CLASS"],
+    fallbackDetail: "Mapped area",
+    source: "Queensland DAMS (SARA/SARA_Data layer 51)",
+    contextDistanceMeters: 1200,
+    clipDistanceMeters: 1200,
+  },
+  {
+    table: "qld_state_mapping_water_resource_planning_area_boundaries",
+    code: "state_mapping_sara_water_resource_planning_area_boundaries",
+    sectionTitle: "SARA DA Mapping",
+    subsectionTitle: "Water resources",
+    name: "Water resources planning area boundaries",
+    detailKeys: ["WRPREGION", "REGION", "NAME", "DESCRIPTION"],
+    fallbackDetail: "Mapped area",
+    source: "Queensland DAMS (SARA/SARA_Data layer 9)",
+    contextDistanceMeters: 1400,
+    clipDistanceMeters: 1400,
+  },
+  {
+    table: "qld_state_mapping_regulated_vegetation_management_map",
+    code: "state_mapping_sara_regulated_vegetation_management_map",
+    sectionTitle: "SARA DA Mapping",
+    subsectionTitle: "Native vegetation clearing",
+    name: "Regulated vegetation management map",
+    detailKeys: ["rvm_cat", "RVM_CAT", "CATEGORY", "CLASS"],
+    fallbackDetail: "Mapped area",
+    source: "Queensland DAMS (SARA/SARA_Data layer 5)",
+    contextDistanceMeters: 900,
+    clipDistanceMeters: 900,
+  },
+  {
+    table: "qld_state_mapping_spp_flood_hazard_lg_flood_mapping_area",
+    code: "state_mapping_spp_flood_hazard_local_government",
+    sectionTitle: "SPP Assessment Benchmark Mapping",
+    subsectionTitle: "Natural hazards risk and resilience",
+    name: "Flood hazard area - local government flood mapping area",
+    detailKeys: ["LGA", "LOCAL_GOVERNMENT", "NAME", "DESCRIPTION"],
+    fallbackDetail: "Mapped area",
+    source: "Queensland DAMS (SPP/SPP_Data layer 62)",
+    contextDistanceMeters: 1000,
+    clipDistanceMeters: 1000,
+  },
+  {
+    table: "qld_state_mapping_rpi_priority_living_area",
+    code: "state_mapping_rpi_priority_living_area",
+    sectionTitle: "Other State Planning matters",
+    subsectionTitle: "Areas of Regional Interest",
+    name: "Priority living area",
+    detailKeys: ["RPITYPE", "NAME", "REGION", "STATUS"],
+    fallbackDetail: "Mapped area",
+    source: "Queensland Regional Planning Interests (RPI layer 5)",
+    contextDistanceMeters: 1200,
+    clipDistanceMeters: 1200,
+  },
+];
+
 async function tableExists(tableName) {
   if (!tableName) return false;
   if (_tableExistsCache.has(tableName)) return true;
@@ -152,6 +215,52 @@ function overlayDetail(props, keys, fallback = null) {
 
 function overlayName(base, detail) {
   return detail ? `${base} – ${detail}` : base;
+}
+
+function formatStateMappingDetail(layerCode, rawDetail, props = {}) {
+  const code = String(layerCode || "").trim();
+  const detail = String(rawDetail || "").trim();
+  if (!detail) return null;
+
+  if (code === "state_mapping_sara_regulated_vegetation_management_map") {
+    const normalized = detail.toUpperCase();
+    if (normalized === "A")
+      return "Category A on the regulated vegetation management map.";
+    if (normalized === "B")
+      return "Category B on the regulated vegetation management map.";
+    if (normalized === "C")
+      return "Category C on the regulated vegetation management map.";
+    if (normalized === "R")
+      return "Category R on the regulated vegetation management map.";
+    if (normalized === "X")
+      return "Category X on the regulated vegetation management map.";
+    return `${detail} on the regulated vegetation management map.`;
+  }
+
+  if (code === "state_mapping_sara_water_resource_planning_area_boundaries") {
+    return `${detail} water resources planning area boundary.`;
+  }
+
+  if (code === "state_mapping_spp_flood_hazard_local_government") {
+    const lga = readPropCI(props, ["LGA", "LOCAL_GOVERNMENT", "NAME"]);
+    if (lga) return `Local government flood mapping area (${lga}).`;
+    return "Local government flood mapping area.";
+  }
+
+  if (code === "state_mapping_rpi_priority_living_area") {
+    const areaName = readPropCI(props, ["NAME"]);
+    if (areaName) return `Priority living area (${areaName}).`;
+    return "Priority living area.";
+  }
+
+  return detail;
+}
+
+function buildStateMappingDetail(layer, props) {
+  const rawDetail = readPropCI(props, layer?.detailKeys || []);
+  const formatted = formatStateMappingDetail(layer?.code, rawDetail, props);
+  if (formatted) return formatted;
+  return String(layer?.fallbackDetail || "Mapped area").trim();
 }
 
 /**
@@ -558,6 +667,48 @@ async function queryNearParcel(
   }
 }
 
+async function queryStateMappingLayer({
+  table,
+  lng,
+  lat,
+  parcelGeomGeoJSON,
+  contextDistanceMeters = 1200,
+  clipDistanceMeters = null,
+}) {
+  if (!table) return null;
+
+  let hit = null;
+  if (parcelGeomGeoJSON) {
+    hit = await queryIntersects(table, parcelGeomGeoJSON);
+  }
+  if (!hit) {
+    hit = await queryOne(table, lng, lat);
+  }
+  if (!hit?.properties) return null;
+
+  let renderGeometry = hit.geometry || null;
+  const contextDistance = Number(contextDistanceMeters);
+  if (Number.isFinite(contextDistance) && contextDistance > 0) {
+    const context = await queryGeometryContextByDistance({
+      table,
+      lng,
+      lat,
+      withinDistanceMeters: contextDistance,
+      clipDistanceMeters:
+        Number.isFinite(Number(clipDistanceMeters)) &&
+        Number(clipDistanceMeters) > 0
+          ? Number(clipDistanceMeters)
+          : contextDistance,
+    });
+    if (context?.geometry) renderGeometry = context.geometry;
+  }
+
+  return {
+    properties: hit.properties || {},
+    geometry: renderGeometry,
+  };
+}
+
 /**
  * Property parcel lookup – uses the bcc_property_parcels table.
  *
@@ -709,6 +860,17 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     )
   );
 
+  const stateMappingPromises = STATE_MAPPING_CONSIDERATION_LAYERS.map((layer) =>
+    queryStateMappingLayer({
+      table: layer.table,
+      lng: focusLng,
+      lat: focusLat,
+      parcelGeomGeoJSON: parcelGeom,
+      contextDistanceMeters: layer.contextDistanceMeters,
+      clipDistanceMeters: layer.clipDistanceMeters,
+    })
+  );
+
   const [
     zoning,
     npB,
@@ -732,7 +894,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     criticalInfrastructureMovementAssets,
     roadHierarchy,
     streetscapeHierarchy,
-    ...stateTransportHits
+    ...stateTransportHitsAndStateMappingHits
   ] = await Promise.all([
     queryOne("bcc_zoning", focusLng, focusLat, {
       preferLargestArea: true,
@@ -785,7 +947,16 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       LINE_OVERLAY_DISTANCE_M
     ),
     ...stateTransportPromises,
+    ...stateMappingPromises,
   ]);
+
+  const stateTransportHits = stateTransportHitsAndStateMappingHits.slice(
+    0,
+    DAMS_STATE_TRANSPORT_LAYERS.length
+  );
+  const stateMappingHits = stateTransportHitsAndStateMappingHits.slice(
+    DAMS_STATE_TRANSPORT_LAYERS.length
+  );
 
   if (bicycleNetwork?.properties) {
     const bp = bicycleNetwork.properties || {};
@@ -1189,6 +1360,35 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     });
   }
 
+  const stateMappingConsiderations = [];
+  const stateMappingPolygons = [];
+  const rawStateMappingConsiderations = {};
+
+  for (let i = 0; i < STATE_MAPPING_CONSIDERATION_LAYERS.length; i += 1) {
+    const layer = STATE_MAPPING_CONSIDERATION_LAYERS[i];
+    const hit = stateMappingHits?.[i] || null;
+    if (!hit?.properties) continue;
+
+    const detail = buildStateMappingDetail(layer, hit.properties || {});
+    stateMappingConsiderations.push({
+      code: layer.code,
+      sectionTitle: layer.sectionTitle,
+      subsectionTitle: layer.subsectionTitle,
+      name: layer.name,
+      detail,
+      source: layer.source,
+    });
+
+    if (hit.geometry) {
+      stateMappingPolygons.push({
+        code: layer.code,
+        geometry: hit.geometry,
+      });
+    }
+
+    rawStateMappingConsiderations[layer.code] = hit.properties;
+  }
+
   // Services meta for reporting (not necessarily a map overlay page)
   const rawLgipNetworkKey = lgipNetworkKey?.properties || null;
 
@@ -1211,6 +1411,8 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     hasTransportNoiseCorridor,
     overlays,
     overlayPolygons,
+    stateMappingConsiderations,
+    stateMappingPolygons,
 
     // Cadastral parcel for the site (draw this as the green outline)
     siteParcelPolygon: parcel?.geometry || null,
@@ -1245,6 +1447,10 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     rawDamsStateTransport:
       Object.keys(rawDamsStateTransport).length > 0
         ? rawDamsStateTransport
+        : null,
+    rawStateMappingConsiderations:
+      Object.keys(rawStateMappingConsiderations).length > 0
+        ? rawStateMappingConsiderations
         : null,
   };
 }
