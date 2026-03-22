@@ -158,16 +158,39 @@ function hasStateMappingData(snapshot) {
     typeof snapshot.rawStateMappingConsiderations === "object"
       ? snapshot.rawStateMappingConsiderations
       : {};
+  const vegetationInConsiderations = considerations.find(
+    (item) => String(item?.code || "") === vegetationCode
+  );
+  const vegetationRaw =
+    Object.prototype.hasOwnProperty.call(raw, vegetationCode) &&
+    raw[vegetationCode] &&
+    typeof raw[vegetationCode] === "object"
+      ? raw[vegetationCode]
+      : null;
 
   if (considerations.length > 0 || polygons.length > 0 || Object.keys(raw).length > 0) {
-    const hasVegetationInConsiderations = considerations.some(
-      (item) => String(item?.code || "") === vegetationCode
-    );
+    const hasVegetationInConsiderations = !!vegetationInConsiderations;
     const hasVegetationInPolygons = polygons.some(
       (item) => String(item?.code || "") === vegetationCode
     );
-    const hasVegetationInRaw =
-      Object.prototype.hasOwnProperty.call(raw, vegetationCode) && !!raw[vegetationCode];
+    const hasVegetationInRaw = !!vegetationRaw;
+
+    // Force refresh if snapshot still carries legacy vegetation source/layer
+    // from DAMS SARA layer 5, so regenerated reports pick up category A/B/C/R/X
+    // from VegetationManagement layer 109.
+    const vegetationSource = String(vegetationInConsiderations?.source || "");
+    const vegetationRawLayerId = String(
+      vegetationRaw?.__source_layer_id ?? vegetationRaw?.source_layer_id ?? ""
+    ).trim();
+    const vegetationRawServicePath = String(
+      vegetationRaw?.__source_service_path ?? vegetationRaw?.source_service_path ?? ""
+    );
+    const isLegacyVegetationSource =
+      /SARA\/SARA_Data\s*layer\s*5/i.test(vegetationSource) ||
+      vegetationRawLayerId === "5" ||
+      /SARA\/SARA_Data\/MapServer/i.test(vegetationRawServicePath);
+    if (isLegacyVegetationSource) return false;
+
     return (
       hasVegetationInConsiderations || hasVegetationInPolygons || hasVegetationInRaw
     );

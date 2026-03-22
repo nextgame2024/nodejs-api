@@ -6,7 +6,12 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.63";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-22.64";
+
+const VEGETATION_STATE_MAPPING_CODE =
+  "state_mapping_sara_regulated_vegetation_management_map";
+const VEGETATION_STATE_MAPPING_SOURCE =
+  "Queensland Vegetation Management (Biota/VegetationManagement layer 109)";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1857,23 +1862,45 @@ export async function buildTownPlannerReportPdfV2(
       }).catch(() => null);
     }
 
+    const rawPropsForCode =
+      rawStateMappingConsiderations &&
+      typeof rawStateMappingConsiderations === "object"
+        ? rawStateMappingConsiderations[code] || null
+        : null;
+
+    let detailText = String(rawItem?.detail || "").trim() || "Mapped area";
+    let sourceText =
+      String(rawItem?.source || "").trim() ||
+      "Queensland Development Assessment Mapping System";
+    if (code === VEGETATION_STATE_MAPPING_CODE) {
+      const rawCategory = pickProp(rawPropsForCode, [
+        "rvm_cat",
+        "RVM_CAT",
+        "CATEGORY",
+        "CLASS",
+      ]);
+      const cat = String(rawCategory || "").trim().toUpperCase();
+      if (/^[ABCRX]$/.test(cat)) {
+        detailText = `Category ${cat} on the regulated vegetation management map.`;
+      } else if (cat) {
+        detailText = `${cat} on the regulated vegetation management map.`;
+      }
+      if (/SARA\/SARA_Data\s*layer\s*5/i.test(sourceText)) {
+        sourceText = VEGETATION_STATE_MAPPING_SOURCE;
+      }
+    }
+
     stateMappingItems.push({
       code,
       sectionTitle,
       subsectionTitle:
         String(rawItem?.subsectionTitle || "").trim() || "Mapped layer",
       name: String(rawItem?.name || "").trim() || "State mapping layer",
-      detail: String(rawItem?.detail || "").trim() || "Mapped area",
-      source:
-        String(rawItem?.source || "").trim() ||
-        "Queensland Development Assessment Mapping System",
+      detail: detailText,
+      source: sourceText,
       areaIntersectM2: computeIntersectionAreaM2(parcelGeom, geom),
       mapBuffer,
-      rawProps:
-        rawStateMappingConsiderations &&
-        typeof rawStateMappingConsiderations === "object"
-          ? rawStateMappingConsiderations[code] || null
-          : null,
+      rawProps: rawPropsForCode,
     });
   }
 
@@ -1895,8 +1922,7 @@ export async function buildTownPlannerReportPdfV2(
     );
   });
 
-  const vegetationCode =
-    "state_mapping_sara_regulated_vegetation_management_map";
+  const vegetationCode = VEGETATION_STATE_MAPPING_CODE;
   if (
     !stateMappingItems.some(
       (item) => String(item?.code || "") === vegetationCode,
@@ -1915,8 +1941,7 @@ export async function buildTownPlannerReportPdfV2(
       subsectionTitle: "Native vegetation clearing",
       name: "Regulated vegetation management map",
       detail: "None identified over the site.",
-      source:
-        "Queensland Vegetation Management (Biota/VegetationManagement layer 109)",
+      source: VEGETATION_STATE_MAPPING_SOURCE,
       areaIntersectM2: null,
       mapBuffer: siteContextMap || parcelRoadMap || null,
       rawProps: null,
