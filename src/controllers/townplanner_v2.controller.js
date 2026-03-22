@@ -45,6 +45,29 @@ function isCachedPdfCurrent(cachedRow) {
   return key.includes(REPORT_TEMPLATE_VERSION);
 }
 
+function withPdfCacheBuster(pdfUrl, row = null) {
+  const raw = String(pdfUrl || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    const seed =
+      row?.updated_at ||
+      row?.completed_at ||
+      row?.report_json?.generatedAt ||
+      Date.now();
+    const v = new Date(seed).getTime();
+    if (Number.isFinite(v) && v > 0) {
+      u.searchParams.set("v", String(v));
+    } else {
+      u.searchParams.set("v", String(Date.now()));
+    }
+    return u.toString();
+  } catch {
+    const sep = raw.includes("?") ? "&" : "?";
+    return `${raw}${sep}v=${Date.now()}`;
+  }
+}
+
 async function startOrReuseReportGenerationV2({
   token: tokenFromBody = null,
   addressLabel,
@@ -83,7 +106,7 @@ async function startOrReuseReportGenerationV2({
         ok: true,
         token: cached.token,
         status: "ready",
-        pdfUrl: cached.pdf_url,
+        pdfUrl: withPdfCacheBuster(cached.pdf_url, cached),
         cached: true,
         templateVersion: REPORT_TEMPLATE_VERSION,
       };
@@ -145,7 +168,7 @@ async function startOrReuseReportGenerationV2({
       ok: true,
       token: row.token,
       status: "ready",
-      pdfUrl: row.pdf_url,
+      pdfUrl: withPdfCacheBuster(row.pdf_url, row),
       templateVersion: REPORT_TEMPLATE_VERSION,
     };
   }
@@ -314,7 +337,7 @@ export const getReportByTokenV2Controller = asyncHandler(async (req, res) => {
       lng: row.lng,
       planningSnapshot: row.planning_snapshot,
       status: row.status,
-      pdfUrl: row.pdf_url || null,
+      pdfUrl: row.pdf_url ? withPdfCacheBuster(row.pdf_url, row) : null,
       errorMessage: row.error_message || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
