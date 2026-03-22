@@ -11,6 +11,7 @@
 //   --no-truncate        keep existing rows
 //   --key=<layer-key>    import a single configured layer key
 //   --layer-id=<id>      import all configured layers with this ArcGIS layer id
+//   --start-oid=<n>      override cursor start object id (imports where OID > n)
 //   --delay-ms=750       request pacing delay (default 750)
 //   --page-size=1000     ArcGIS page size cap (default 1000)
 
@@ -44,8 +45,11 @@ const LAYERS = [
   },
   {
     key: "sara_regulated_vegetation_management_map",
-    servicePath: "SARA/SARA_Data/MapServer",
-    id: 5,
+    // Use the official Queensland Vegetation Management service "RVM - all"
+    // so categories A/B/C/R/X/Water are available (not just A/B extract).
+    baseUrl: "https://spatial-gis.information.qld.gov.au/arcgis/rest/services",
+    servicePath: "Biota/VegetationManagement/MapServer",
+    id: 109,
     table: "qld_state_mapping_regulated_vegetation_management_map",
   },
   {
@@ -91,6 +95,7 @@ function parseArgs(argv) {
     truncate: !argv.includes("--no-truncate"),
     layerId: null,
     key: null,
+    startOid: null,
     delayMs: DEFAULT_DELAY_MS,
     pageSize: DEFAULT_PAGE_SIZE,
   };
@@ -103,6 +108,10 @@ function parseArgs(argv) {
     if (arg.startsWith("--key=")) {
       const v = String(arg.slice("--key=".length)).trim();
       if (v) options.key = v;
+    }
+    if (arg.startsWith("--start-oid=")) {
+      const v = Number(arg.slice("--start-oid=".length));
+      if (Number.isFinite(v)) options.startOid = Math.floor(v);
     }
     if (arg.startsWith("--delay-ms=")) {
       const v = Number(arg.slice("--delay-ms=".length));
@@ -177,26 +186,103 @@ function getObjectIdFieldName(layerMeta) {
 }
 
 async function fetchLayerMetadata(layer, delayMs) {
-  const url = `${ARCGIS_BASE}/${layer.servicePath}/${layer.id}`;
+  const baseUrl = String(layer?.baseUrl || ARCGIS_BASE).replace(/\/+$/, "");
+  const url = `${baseUrl}/${layer.servicePath}/${layer.id}`;
   return requestJson(url, {
     params: { f: "pjson" },
     delayMs,
   });
 }
 
-async function fetchLayerFeaturesPage({ layer, delayMs, offset, pageSize, orderByField }) {
-  const url = `${ARCGIS_BASE}/${layer.servicePath}/${layer.id}/query`;
+function readFieldCI(props, fieldName) {
+  if (!props || typeof props !== "object") return null;
+  if (
+    Object.prototype.hasOwnProperty.call(props, fieldName) &&
+    props[fieldName] != null
+  ) {
+    return props[fieldName];
+  }
+  const wanted = String(fieldName || "").toLowerCase();
+  for (const [k, v] of Object.entries(props)) {
+    if (String(k).toLowerCase() === wanted && v != null) return v;
+  }
+  return null;
+}
+
+function readFeatureObjectId(feature, orderByField) {
+  const props = feature?.properties;
+  if (!props || typeof props !== "object") return null;
+
+  const candidates = [orderByField, "OBJECTID", "objectid", "ObjectId", "OID"];
+  for (const field of candidates) {
+    const raw = readFieldCI(props, field);
+    if (raw == null || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+async function fetchLayerFeaturesPage({
+  layer,
+  delayMs,
+  pageSize,
+  orderByField,
+  lastOid,
+}) {
+  const baseUrl = String(layer?.baseUrl || ARCGIS_BASE).replace(/\/+$/, "");
+  const url = `${baseUrl}/${layer.servicePath}/${layer.id}/query`;
+  const cursor = Number.isFinite(Number(lastOid))
+    ? Math.floor(Number(lastOid))
+    : -1;
+  const whereClause = `${orderByField} > ${cursor}`;
   return requestJson(url, {
     params: {
-      where: "1=1",
+      where: whereClause,
       outFields: "*",
       f: "geojson",
-      resultOffset: offset,
       resultRecordCount: pageSize,
       orderByFields: `${orderByField} ASC`,
     },
     delayMs,
   });
+}
+
+function pageSizeCandidates(basePageSize) {
+  const seed = Math.max(1, Math.floor(Number(basePageSize) || 1));
+  const sizes = [seed];
+  let current = seed;
+  while (current > 1) {
+    current = Math.max(1, Math.floor(current / 2));
+    if (!sizes.includes(current)) sizes.push(current);
+    if (current === 1) break;
+  }
+  return sizes;
+}
+
+async function resolveInitialCursor(client, tableNameRaw, orderByField, options) {
+  if (options?.startOid != null && Number.isFinite(Number(options.startOid))) {
+    return Math.floor(Number(options.startOid));
+  }
+  if (options?.truncate) return -1;
+
+  const tableName = quoteIdent(tableNameRaw);
+  const sql = `
+    SELECT COALESCE(MAX(
+      CASE
+        WHEN properties ? $1 AND (properties->>$1) ~ '^[0-9]+$'
+          THEN (properties->>$1)::bigint
+        WHEN properties ? 'OBJECTID' AND (properties->>'OBJECTID') ~ '^[0-9]+$'
+          THEN (properties->>'OBJECTID')::bigint
+        WHEN properties ? 'objectid' AND (properties->>'objectid') ~ '^[0-9]+$'
+          THEN (properties->>'objectid')::bigint
+        ELSE NULL
+      END
+    ), -1) AS max_oid
+    FROM ${tableName}
+  `;
+  const { rows } = await client.query(sql, [String(orderByField || "OBJECTID")]);
+  return Number(rows?.[0]?.max_oid || -1);
 }
 
 async function flushBatch(client, table, batch) {
@@ -238,29 +324,76 @@ async function importLayer(client, layer, options) {
     `Table: ${layer.table} | pageSize=${effectivePageSize} | orderBy=${orderByField}`
   );
 
-  let offset = 0;
+  let lastOid = await resolveInitialCursor(client, layer.table, orderByField, options);
+  if (lastOid >= 0) {
+    console.log(`Resuming cursor at object id > ${lastOid}`);
+  }
   let totalInserted = 0;
   let pageNumber = 0;
   let batch = [];
   const importedAt = new Date().toISOString();
+  let consecutiveSkippedCursors = 0;
 
   while (true) {
-    const page = await fetchLayerFeaturesPage({
-      layer,
-      delayMs,
-      offset,
-      pageSize: effectivePageSize,
-      orderByField,
-    });
+    let page = null;
+    let usedPageSize = effectivePageSize;
+    let lastFetchError = null;
+    for (const candidateSize of pageSizeCandidates(effectivePageSize)) {
+      try {
+        page = await fetchLayerFeaturesPage({
+          layer,
+          delayMs,
+          pageSize: candidateSize,
+          orderByField,
+          lastOid,
+        });
+        usedPageSize = candidateSize;
+        lastFetchError = null;
+        break;
+      } catch (err) {
+        lastFetchError = err;
+      }
+    }
+
+    if (!page) {
+      const oldCursor = lastOid;
+      lastOid += 1;
+      consecutiveSkippedCursors += 1;
+      console.warn(
+        `\n⚠️ Query failed after object id ${oldCursor}; skipping to > ${lastOid}. Error: ${
+          lastFetchError?.message || lastFetchError
+        }`
+      );
+      if (consecutiveSkippedCursors > 1000) {
+        throw new Error(
+          `Aborting after ${consecutiveSkippedCursors} consecutive cursor skips at ${layer.key}`
+        );
+      }
+      continue;
+    }
+    consecutiveSkippedCursors = 0;
+    if (usedPageSize !== effectivePageSize) {
+      console.warn(
+        `\n⚠️ Reduced page size to ${usedPageSize} for cursor > ${lastOid}`
+      );
+    }
 
     const features = Array.isArray(page?.features) ? page.features : [];
     if (!features.length) break;
 
+    let maxPageOid = lastOid;
     for (const feature of features) {
       if (!feature?.geometry) continue;
+      const featureOid = readFeatureObjectId(feature, orderByField);
+      if (Number.isFinite(featureOid)) {
+        maxPageOid = Math.max(maxPageOid, featureOid);
+      }
 
       const props = {
         ...(feature.properties || {}),
+        ...(Number.isFinite(featureOid)
+          ? { __source_object_id: Math.floor(featureOid) }
+          : {}),
         __source: "qld_state_mapping_considerations",
         __source_layer_key: layer.key,
         __source_service_path: layer.servicePath,
@@ -287,7 +420,12 @@ async function importLayer(client, layer, options) {
       ).padStart(7, " ")}`
     );
 
-    offset += features.length;
+    if (maxPageOid <= lastOid) {
+      throw new Error(
+        `Unable to advance object id cursor for ${layer.key} (lastOid=${lastOid})`
+      );
+    }
+    lastOid = maxPageOid;
     if (features.length < effectivePageSize) break;
   }
 

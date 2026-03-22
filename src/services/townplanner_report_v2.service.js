@@ -146,15 +146,34 @@ function hasDamsTransportData(snapshot) {
 function hasStateMappingData(snapshot) {
   if (!snapshot || typeof snapshot !== "object") return false;
 
-  const considerations = snapshot?.stateMappingConsiderations;
-  if (Array.isArray(considerations)) return true;
+  const vegetationCode = "state_mapping_sara_regulated_vegetation_management_map";
+  const considerations = Array.isArray(snapshot?.stateMappingConsiderations)
+    ? snapshot.stateMappingConsiderations
+    : [];
+  const polygons = Array.isArray(snapshot?.stateMappingPolygons)
+    ? snapshot.stateMappingPolygons
+    : [];
+  const raw =
+    snapshot?.rawStateMappingConsiderations &&
+    typeof snapshot.rawStateMappingConsiderations === "object"
+      ? snapshot.rawStateMappingConsiderations
+      : {};
 
-  const polygons = snapshot?.stateMappingPolygons;
-  if (Array.isArray(polygons)) return true;
+  if (considerations.length > 0 || polygons.length > 0 || Object.keys(raw).length > 0) {
+    const hasVegetationInConsiderations = considerations.some(
+      (item) => String(item?.code || "") === vegetationCode
+    );
+    const hasVegetationInPolygons = polygons.some(
+      (item) => String(item?.code || "") === vegetationCode
+    );
+    const hasVegetationInRaw =
+      Object.prototype.hasOwnProperty.call(raw, vegetationCode) && !!raw[vegetationCode];
+    return (
+      hasVegetationInConsiderations || hasVegetationInPolygons || hasVegetationInRaw
+    );
+  }
 
-  const raw = snapshot?.rawStateMappingConsiderations;
-  if (!raw || typeof raw !== "object") return false;
-  return Object.keys(raw).length > 0;
+  return false;
 }
 
 async function loadLogoBuffer() {

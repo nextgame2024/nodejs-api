@@ -11,6 +11,11 @@
 import pool from "../config/db.js";
 
 const _tableExistsCache = new Map();
+const VEGETATION_LAYER_CODE =
+  "state_mapping_sara_regulated_vegetation_management_map";
+const VEGETATION_ARCGIS_QUERY_URL =
+  process.env.STATE_MAPPING_VEGETATION_ARCGIS_QUERY_URL ||
+  "https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Biota/VegetationManagement/MapServer/109/query";
 
 const DAMS_STATE_TRANSPORT_LAYERS = [
   {
@@ -108,7 +113,7 @@ const STATE_MAPPING_CONSIDERATION_LAYERS = [
     name: "Regulated vegetation management map",
     detailKeys: ["rvm_cat", "RVM_CAT", "CATEGORY", "CLASS"],
     fallbackDetail: "Mapped area",
-    source: "Queensland DAMS (SARA/SARA_Data layer 5)",
+    source: "Queensland Vegetation Management (Biota/VegetationManagement layer 109)",
     contextDistanceMeters: 900,
     clipDistanceMeters: 900,
   },
@@ -269,6 +274,47 @@ function buildStateMappingDetail(layer, props) {
   const formatted = formatStateMappingDetail(layer?.code, rawDetail, props);
   if (formatted) return formatted;
   return String(layer?.fallbackDetail || "Mapped area").trim();
+}
+
+async function queryVegetationCategoryArcgis({ lng, lat }) {
+  if (!Number.isFinite(Number(lng)) || !Number.isFinite(Number(lat))) return null;
+  const geometry = {
+    x: Number(lng),
+    y: Number(lat),
+    spatialReference: { wkid: 4326 },
+  };
+  const params = new URLSearchParams({
+    f: "pjson",
+    geometry: JSON.stringify(geometry),
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: "rvm_cat,map_no,objectid",
+    returnGeometry: "false",
+  });
+
+  try {
+    const resp = await fetch(`${VEGETATION_ARCGIS_QUERY_URL}?${params.toString()}`, {
+      headers: {
+        Referer:
+          process.env.DAMS_REFERER || "https://sppims-dams.dsdilgp.qld.gov.au/",
+        Origin:
+          process.env.DAMS_ORIGIN || "https://sppims-dams.dsdilgp.qld.gov.au",
+      },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => null);
+    const attrs = data?.features?.[0]?.attributes || null;
+    if (!attrs || typeof attrs !== "object") return null;
+    const cat = readPropCI(attrs, ["rvm_cat", "RVM_CAT"]);
+    if (!cat) return null;
+    return {
+      ...attrs,
+      __source: "qld_vegetation_management_arcgis_fallback",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1374,7 +1420,22 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
 
   for (let i = 0; i < STATE_MAPPING_CONSIDERATION_LAYERS.length; i += 1) {
     const layer = STATE_MAPPING_CONSIDERATION_LAYERS[i];
-    const hit = stateMappingHits?.[i] || null;
+    let hit = stateMappingHits?.[i] || null;
+    if (
+      !hit?.properties &&
+      String(layer?.code || "") === VEGETATION_LAYER_CODE
+    ) {
+      const fallbackProps = await queryVegetationCategoryArcgis({
+        lng: focusLng,
+        lat: focusLat,
+      });
+      if (fallbackProps) {
+        hit = {
+          properties: fallbackProps,
+          geometry: null,
+        };
+      }
+    }
     if (!hit?.properties) continue;
 
     const detail = buildStateMappingDetail(layer, hit.properties || {});

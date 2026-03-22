@@ -1898,7 +1898,8 @@ export async function buildTownPlannerReportPdfV2(
       subsectionTitle: "Native vegetation clearing",
       name: "Regulated vegetation management map",
       detail: "None identified over the site.",
-      source: "Queensland DAMS (SARA/SARA_Data layer 5)",
+      source:
+        "Queensland Vegetation Management (Biota/VegetationManagement layer 109)",
       areaIntersectM2: null,
       mapBuffer: siteContextMap || parcelRoadMap || null,
       rawProps: null,
