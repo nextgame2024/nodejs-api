@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.62";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-21.63";
 
 const DAMS_STATE_TRANSPORT_LAYER_META = [
   {
@@ -1243,7 +1243,9 @@ export async function buildTownPlannerReportPdfV2(
   )
     ? planningSnapshot.stateMappingConsiderations
     : [];
-  const stateMappingPolygons = Array.isArray(planningSnapshot?.stateMappingPolygons)
+  const stateMappingPolygons = Array.isArray(
+    planningSnapshot?.stateMappingPolygons,
+  )
     ? planningSnapshot.stateMappingPolygons
     : [];
   const nonSaraMappingConsiderations = Array.isArray(
@@ -1251,7 +1253,9 @@ export async function buildTownPlannerReportPdfV2(
   )
     ? planningSnapshot.nonSaraMappingConsiderations
     : [];
-  const nonSaraMappingPolygons = Array.isArray(planningSnapshot?.nonSaraMappingPolygons)
+  const nonSaraMappingPolygons = Array.isArray(
+    planningSnapshot?.nonSaraMappingPolygons,
+  )
     ? planningSnapshot.nonSaraMappingPolygons
     : [];
   const rawStateMappingConsiderations =
@@ -1407,13 +1411,13 @@ export async function buildTownPlannerReportPdfV2(
         ? "0xffc107ff"
         : isDamsTransportOverlay
           ? "0xc2185bff"
-        : isDwellingOverlay
-          ? "0x00000000"
-          : isStreetscapeOverlay
-            ? "0xe46e6eff"
-            : isCriticalOverlay
-              ? "0xff3b3bff"
-              : palette.outline;
+          : isDwellingOverlay
+            ? "0x00000000"
+            : isStreetscapeOverlay
+              ? "0xe46e6eff"
+              : isCriticalOverlay
+                ? "0xff3b3bff"
+                : palette.outline;
     const overlayFillColor = isDwellingOverlay
       ? "0xe46e6e66"
       : isDamsTransportOverlay
@@ -1531,7 +1535,9 @@ export async function buildTownPlannerReportPdfV2(
       ? false
       : !(isDwellingOverlay || isStreetscapeOverlay);
     const overlayRenderZoom = isDamsTransportOverlay ? 18 : overlayZoom;
-    const effectiveDamsZoom = isFutureBuswayDamsOverlay ? 17 : overlayRenderZoom;
+    const effectiveDamsZoom = isFutureBuswayDamsOverlay
+      ? 17
+      : overlayRenderZoom;
     const overlayRenderPadding = isDamsTransportOverlay
       ? Math.max(72, overlayPaddingPx - 18)
       : overlayPaddingPx;
@@ -1591,13 +1597,13 @@ export async function buildTownPlannerReportPdfV2(
               ? "airport-overlay"
               : isDamsTransportOverlay
                 ? "dams-overlay"
-              : isCriticalOverlay
-                ? "critical-overlay"
-                : isDwellingOverlay
-                  ? "dwelling-overlay"
-                  : isStreetscapeOverlay
-                    ? "streetscape-overlay"
-                    : null,
+                : isCriticalOverlay
+                  ? "critical-overlay"
+                  : isDwellingOverlay
+                    ? "dwelling-overlay"
+                    : isStreetscapeOverlay
+                      ? "streetscape-overlay"
+                      : null,
             parcelColor: "0xffeb3bff",
             parcelFill:
               isCriticalOverlay || isDwellingOverlay
@@ -1606,7 +1612,11 @@ export async function buildTownPlannerReportPdfV2(
             parcelWeight: 4,
             overlayColor,
             overlayFill: overlayFillColor,
-            overlayWeight: isDamsTransportOverlay ? 4 : isAirportOverlay ? 2 : 3,
+            overlayWeight: isDamsTransportOverlay
+              ? 4
+              : isAirportOverlay
+                ? 2
+                : 3,
             zoom: effectiveDamsZoom,
             zoomNudge: isDwellingOverlay ? 2 : isStreetscapeOverlay ? 2 : 0,
             fitToParcel: overlayFitToParcel,
@@ -1778,7 +1788,8 @@ export async function buildTownPlannerReportPdfV2(
     const key = String(item?.code || "");
     if (DAMS_STATE_TRANSPORT_LAYER_META.some((meta) => meta.code === key))
       continue;
-    const fallbackName = splitOverlayName(item?.name).detail || item?.name || key;
+    const fallbackName =
+      splitOverlayName(item?.name).detail || item?.name || key;
     damsTransportItems.push({
       ...item,
       layerLabel: fallbackName,
@@ -1787,7 +1798,7 @@ export async function buildTownPlannerReportPdfV2(
         rawDamsStateTransport && typeof rawDamsStateTransport === "object"
           ? rawDamsStateTransport[key] || null
           : null,
-      });
+    });
   }
 
   const stateMappingItems = [];
@@ -1884,9 +1895,15 @@ export async function buildTownPlannerReportPdfV2(
     );
   });
 
-  const vegetationCode = "state_mapping_sara_regulated_vegetation_management_map";
-  if (!stateMappingItems.some((item) => String(item?.code || "") === vegetationCode)) {
-    const waterCode = "state_mapping_sara_water_resource_planning_area_boundaries";
+  const vegetationCode =
+    "state_mapping_sara_regulated_vegetation_management_map";
+  if (
+    !stateMappingItems.some(
+      (item) => String(item?.code || "") === vegetationCode,
+    )
+  ) {
+    const waterCode =
+      "state_mapping_sara_water_resource_planning_area_boundaries";
     const waterIdx = stateMappingItems.findIndex(
       (item) => String(item?.code || "") === waterCode,
     );
@@ -1952,8 +1969,12 @@ export async function buildTownPlannerReportPdfV2(
 
     nonSaraItems.push({
       code,
-      sectionTitle: String(rawItem?.sectionTitle || "Non-SARA DA Mapping").trim(),
-      subsectionTitle: String(rawItem?.subsectionTitle || rawItem?.name || "Mapped layer").trim(),
+      sectionTitle: String(
+        rawItem?.sectionTitle || "Non-SARA DA Mapping",
+      ).trim(),
+      subsectionTitle: String(
+        rawItem?.subsectionTitle || rawItem?.name || "Mapped layer",
+      ).trim(),
       name: String(rawItem?.name || "Mapped layer").trim(),
       detail: String(rawItem?.detail || "Mapped area").trim(),
       source:
@@ -2129,9 +2150,7 @@ export async function buildTownPlannerReportPdfV2(
       : String(row?.text || "");
     const measureFont = row?.font || "Helvetica";
     const measureSize = Number(
-      row?.fontSize ||
-        row?.segments?.[0]?.fontSize ||
-        10,
+      row?.fontSize || row?.segments?.[0]?.fontSize || 10,
     );
     pdfDoc.font(measureFont).fontSize(measureSize);
     return pdfDoc.heightOfString(text, {
@@ -2226,9 +2245,7 @@ export async function buildTownPlannerReportPdfV2(
     const stateMappingStart =
       stateMappingPages > 0 ? overlayStart + overlayPages : null;
     const nonSaraStart =
-      nonSaraPages > 0
-        ? overlayStart + overlayPages + stateMappingPages
-        : null;
+      nonSaraPages > 0 ? overlayStart + overlayPages + stateMappingPages : null;
     const lotSizeAndDimensions =
       overlayStart + overlayPages + stateMappingPages + nonSaraPages;
     const damsStart = damsPages > 0 ? lotSizeAndDimensions + 1 : null;
@@ -2251,7 +2268,8 @@ export async function buildTownPlannerReportPdfV2(
   };
 
   const buildTocRows = (pages) => {
-    const vegetationCode = "state_mapping_sara_regulated_vegetation_management_map";
+    const vegetationCode =
+      "state_mapping_sara_regulated_vegetation_management_map";
     const vegetationIdx = stateMappingItems.findIndex(
       (item) => String(item?.code || "") === vegetationCode,
     );
@@ -2275,7 +2293,9 @@ export async function buildTownPlannerReportPdfV2(
             for (let idx = 0; idx < stateMappingItems.length; idx += 1) {
               const item = stateMappingItems[idx];
               const rowPage = (pages.stateMappingStart || 0) + idx;
-              const sectionLabel = String(item?.sectionTitle || "State mapping").trim();
+              const sectionLabel = String(
+                item?.sectionTitle || "State mapping",
+              ).trim();
               const sectionKey = sectionLabel.toLowerCase();
               if (sectionLabel && sectionKey !== lastSectionKey) {
                 rows.push({
@@ -2287,7 +2307,8 @@ export async function buildTownPlannerReportPdfV2(
               }
 
               rows.push({
-                label: item?.subsectionTitle || item?.name || "State mapping layer",
+                label:
+                  item?.subsectionTitle || item?.name || "State mapping layer",
                 page: rowPage,
                 level: 2,
               });
@@ -2519,9 +2540,14 @@ export async function buildTownPlannerReportPdfV2(
         .fillColor(BRAND.muted)
         .font("Helvetica")
         .fontSize(10)
-        .text("Sections and page numbers included in this report.", x, top + 26, {
-          width: w,
-        });
+        .text(
+          "Sections and page numbers included in this report.",
+          x,
+          top + 26,
+          {
+            width: w,
+          },
+        );
 
       const listY = top + 64;
       const listH = 520;
@@ -2779,7 +2805,12 @@ export async function buildTownPlannerReportPdfV2(
   // ========== PAGE 4: ZONING ==========
   doc.addPage();
   {
-    header(doc, { title: "Zone and categories of assessment", addressLabel, schemeVersion, logoBuffer });
+    header(doc, {
+      title: "Zone and categories of assessment",
+      addressLabel,
+      schemeVersion,
+      logoBuffer,
+    });
 
     const x = X(doc);
     const w = contentW(doc);
@@ -3138,7 +3169,9 @@ export async function buildTownPlannerReportPdfV2(
     box(doc, x, blockTopY, w, blockH);
 
     const sectionTitle = String(item?.sectionTitle || "State mapping");
-    const subsectionTitle = String(item?.subsectionTitle || item?.name || "Layer");
+    const subsectionTitle = String(
+      item?.subsectionTitle || item?.name || "Layer",
+    );
     doc
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
@@ -3152,7 +3185,15 @@ export async function buildTownPlannerReportPdfV2(
 
     const mapY = blockTopY + 58;
     const mapH = 280;
-    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    drawCoverImageInRoundedBox(
+      doc,
+      item?.mapBuffer || null,
+      x + 14,
+      mapY,
+      w - 28,
+      mapH,
+      10,
+    );
     if (!item?.mapBuffer) {
       doc
         .fillColor(BRAND.muted)
@@ -3217,7 +3258,7 @@ export async function buildTownPlannerReportPdfV2(
     });
 
     const sourceText = `Source: ${String(
-      item?.source || "Queensland Development Assessment Mapping System"
+      item?.source || "Queensland Development Assessment Mapping System",
     )}`;
     const sourceY = layersTextY + renderedLayersH + 4;
     boundedText(doc, sourceText, x + 14, sourceY, w - 28, 24, {
@@ -3232,18 +3273,34 @@ export async function buildTownPlannerReportPdfV2(
       "state_mapping_sara_regulated_vegetation_management_map";
     if (isNativeVegetation && nonSaraPages === 0) {
       const nonSaraTitleY = sourceY + 34;
-      boundedText(doc, "Non-SARA DA Mapping", x + 14, nonSaraTitleY, w - 28, 22, {
-        font: "Helvetica-Bold",
-        fontSize: 14,
-        color: BRAND.text,
-        ellipsis: true,
-      });
-      boundedText(doc, "None identified over the site.", x + 14, nonSaraTitleY + 24, w - 28, 18, {
-        font: "Helvetica",
-        fontSize: 10,
-        color: BRAND.text,
-        ellipsis: true,
-      });
+      boundedText(
+        doc,
+        "Non-SARA DA Mapping",
+        x + 14,
+        nonSaraTitleY,
+        w - 28,
+        22,
+        {
+          font: "Helvetica-Bold",
+          fontSize: 14,
+          color: BRAND.text,
+          ellipsis: true,
+        },
+      );
+      boundedText(
+        doc,
+        "None identified over the site.",
+        x + 14,
+        nonSaraTitleY + 24,
+        w - 28,
+        18,
+        {
+          font: "Helvetica",
+          fontSize: 10,
+          color: BRAND.text,
+          ellipsis: true,
+        },
+      );
     }
   };
 
@@ -3285,13 +3342,26 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(12)
-      .text(String(item?.subsectionTitle || item?.name || "Mapped layer"), x + 14, blockTopY + 34, {
-        width: w - 28,
-      });
+      .text(
+        String(item?.subsectionTitle || item?.name || "Mapped layer"),
+        x + 14,
+        blockTopY + 34,
+        {
+          width: w - 28,
+        },
+      );
 
     const mapY = blockTopY + 58;
     const mapH = 280;
-    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    drawCoverImageInRoundedBox(
+      doc,
+      item?.mapBuffer || null,
+      x + 14,
+      mapY,
+      w - 28,
+      mapH,
+      10,
+    );
     if (!item?.mapBuffer) {
       doc
         .fillColor(BRAND.muted)
@@ -3318,7 +3388,8 @@ export async function buildTownPlannerReportPdfV2(
       lines.push(detailLine);
     }
     const areaLabel = formatAreaM2(item?.areaIntersectM2);
-    if (areaLabel !== "N/A") lines.push(`Approx. intersected area: ${areaLabel}`);
+    if (areaLabel !== "N/A")
+      lines.push(`Approx. intersected area: ${areaLabel}`);
 
     const nonSaraLayersText = lines.join("\n");
     const nonSaraLayersTextY = mapY + mapH + 34;
@@ -3332,12 +3403,20 @@ export async function buildTownPlannerReportPdfV2(
       12,
       Math.min(nonSaraLayersTextMaxH, nonSaraMeasuredH),
     );
-    boundedText(doc, nonSaraLayersText, x + 14, nonSaraLayersTextY, w - 28, nonSaraLayersTextMaxH, {
-      font: "Helvetica",
-      fontSize: 10,
-      color: BRAND.text,
-      ellipsis: true,
-    });
+    boundedText(
+      doc,
+      nonSaraLayersText,
+      x + 14,
+      nonSaraLayersTextY,
+      w - 28,
+      nonSaraLayersTextMaxH,
+      {
+        font: "Helvetica",
+        fontSize: 10,
+        color: BRAND.text,
+        ellipsis: true,
+      },
+    );
     const nonSaraSourceY = nonSaraLayersTextY + nonSaraRenderedH + 4;
     boundedText(
       doc,
@@ -3401,7 +3480,15 @@ export async function buildTownPlannerReportPdfV2(
       const lotMapBuffer = parcelRoadMap || siteContextMap || null;
       const mapY = srcY + 34;
       const mapH = 250;
-      drawCoverImageInRoundedBox(doc, lotMapBuffer, x + 14, mapY, w - 28, mapH, 10);
+      drawCoverImageInRoundedBox(
+        doc,
+        lotMapBuffer,
+        x + 14,
+        mapY,
+        w - 28,
+        mapH,
+        10,
+      );
       if (!lotMapBuffer) {
         doc
           .fillColor(BRAND.muted)
@@ -3425,17 +3512,29 @@ export async function buildTownPlannerReportPdfV2(
         `Coordinates: ${formatCoords(lat, lng)}`,
       ];
       if (Number.isFinite(reportedFrontageM) && reportedFrontageM > 0) {
-        lines.splice(4, 0, `Reported street frontage: ${formatLengthM(reportedFrontageM)}`);
+        lines.splice(
+          4,
+          0,
+          `Reported street frontage: ${formatLengthM(reportedFrontageM)}`,
+        );
       }
       const noteText =
         "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
 
-      boundedText(doc, lines.join("\n"), x + 14, mapY + mapH + 14, w - 28, 140, {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: true,
-      });
+      boundedText(
+        doc,
+        lines.join("\n"),
+        x + 14,
+        mapY + mapH + 14,
+        w - 28,
+        140,
+        {
+          font: "Helvetica",
+          fontSize: 9,
+          color: BRAND.muted,
+          ellipsis: true,
+        },
+      );
       boundedText(doc, noteText, x + 14, mapY + mapH + 156, w - 28, 90, {
         font: "Helvetica",
         fontSize: 9,
@@ -3474,7 +3573,9 @@ export async function buildTownPlannerReportPdfV2(
       ["Category", item?.groupLabel || "State transport corridor"],
       [
         "Approx. intersected area",
-        item?.areaIntersectM2 != null ? formatAreaM2(item.areaIntersectM2) : "N/A",
+        item?.areaIntersectM2 != null
+          ? formatAreaM2(item.areaIntersectM2)
+          : "N/A",
       ],
       ["Source", "Queensland DAMS (SARA State Transport)"],
     ];
@@ -3526,7 +3627,8 @@ export async function buildTownPlannerReportPdfV2(
     const blockH = 540;
     box(doc, x, blockTopY, w, blockH);
 
-    const sectionTitle = item?.layerLabel || item?.name || "State transport layer";
+    const sectionTitle =
+      item?.layerLabel || item?.name || "State transport layer";
     doc
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
@@ -3535,7 +3637,15 @@ export async function buildTownPlannerReportPdfV2(
 
     const mapY = blockTopY + 44;
     const mapH = 286;
-    drawCoverImageInRoundedBox(doc, item?.mapBuffer || null, x + 14, mapY, w - 28, mapH, 10);
+    drawCoverImageInRoundedBox(
+      doc,
+      item?.mapBuffer || null,
+      x + 14,
+      mapY,
+      w - 28,
+      mapH,
+      10,
+    );
     if (!item?.mapBuffer) {
       doc
         .fillColor(BRAND.muted)
@@ -3609,9 +3719,7 @@ export async function buildTownPlannerReportPdfV2(
     const defaultColor = row?.color || BRAND.text;
     const defaultFont = row?.font || "Helvetica";
     const defaultFontSize = Number(
-      row?.fontSize ||
-        row?.segments?.[0]?.fontSize ||
-        10,
+      row?.fontSize || row?.segments?.[0]?.fontSize || 10,
     );
 
     if (Array.isArray(row?.segments) && row.segments.length > 0) {
