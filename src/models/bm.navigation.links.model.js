@@ -257,6 +257,25 @@ export async function listActiveNavigationLinks(companyId, { navigationType }) {
   return rows;
 }
 
+export async function listNavigationLinksByCompanyAndType(
+  companyId,
+  navigationType,
+) {
+  const { rows } = await pool.query(
+    `
+    SELECT ${NAVIGATION_LINK_SELECT}
+    FROM bm_navigation_links nl
+    JOIN bm_company c ON c.company_id = nl.company_id
+    WHERE nl.company_id = $1
+      AND nl.navigation_type = $2
+    ORDER BY nl.navigation_label ASC NULLS LAST, nl.createdat DESC
+    `,
+    [companyId, navigationType],
+  );
+
+  return rows;
+}
+
 export default {
   companyExists,
   listNavigationLinks,
@@ -266,4 +285,5 @@ export default {
   updateNavigationLink,
   deleteNavigationLink,
   listActiveNavigationLinks,
+  listNavigationLinksByCompanyAndType,
 };

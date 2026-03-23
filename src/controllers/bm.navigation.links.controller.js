@@ -77,6 +77,27 @@ const validateTypeAndLabel = ({ navigationType, navigationLabel }) => {
   }
 };
 
+const validateTypeAndLabels = ({ navigationType, navigationLabels }) => {
+  if (!navigationType) throw badRequest("navigation_type is required");
+  if (!ALLOWED_TYPES.has(navigationType)) {
+    throw badRequest("navigation_type must be one of: header, menu");
+  }
+  if (!Array.isArray(navigationLabels)) {
+    throw badRequest("navigation_labels must be an array");
+  }
+
+  const allowedLabels = NAVIGATION_LABELS_BY_TYPE[navigationType] ?? [];
+  const invalid = navigationLabels.find(
+    (label) => !allowedLabels.some((allowed) => labelEquals(allowed, label)),
+  );
+
+  if (invalid) {
+    throw badRequest(
+      `navigation_label '${invalid}' is invalid for navigation_type '${navigationType}'`,
+    );
+  }
+};
+
 const normalizePayload = (rawPayload) => {
   const payload = rawPayload || {};
   const next = {
@@ -99,6 +120,23 @@ const normalizePayload = (rawPayload) => {
       next.navigation_label = canonical || rawLabel;
     } else {
       next.navigation_label = null;
+    }
+  }
+
+  if (next.navigation_labels !== undefined) {
+    if (!Array.isArray(next.navigation_labels)) {
+      throw badRequest("navigation_labels must be an array");
+    }
+    next.navigation_labels = next.navigation_labels
+      .map((label) => normalizeText(label))
+      .filter((label) => !!label);
+
+    if (next.navigation_type) {
+      const labels = NAVIGATION_LABELS_BY_TYPE[next.navigation_type] ?? [];
+      next.navigation_labels = next.navigation_labels.map((rawLabel) => {
+        const canonical = labels.find((label) => labelEquals(label, rawLabel));
+        return canonical || rawLabel;
+      });
     }
   }
 
@@ -211,6 +249,26 @@ export const createNavigationLink = asyncHandler(async (req, res) => {
   );
 
   res.status(201).json({ navigationLink });
+});
+
+export const syncNavigationLabels = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const payload = normalizePayload(req.body?.navigationLinksSync || req.body || {});
+
+  const companyId = await resolveCompanyIdForCreate(req, payload);
+  validateTypeAndLabels({
+    navigationType: payload.navigation_type,
+    navigationLabels: payload.navigation_labels ?? [],
+  });
+
+  const result = await withDuplicateKeyHandling(() =>
+    service.syncNavigationLabels(companyId, userId, {
+      navigation_type: payload.navigation_type,
+      navigation_labels: payload.navigation_labels ?? [],
+    }),
+  );
+
+  res.json(result);
 });
 
 export const updateNavigationLink = asyncHandler(async (req, res) => {

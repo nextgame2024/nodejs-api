@@ -4,6 +4,7 @@ import {
   listNavigationLinks,
   getNavigationLink,
   createNavigationLink,
+  syncNavigationLabels,
   updateNavigationLink,
   deleteNavigationLink,
   listActiveNavigationLinks,
@@ -15,6 +16,7 @@ router.get("/bm/navigation-links/active", authRequired, listActiveNavigationLink
 
 router.get("/bm/navigation-links", authRequired, listNavigationLinks);
 router.post("/bm/navigation-links", authRequired, createNavigationLink);
+router.post("/bm/navigation-links/sync", authRequired, syncNavigationLabels);
 router.get("/bm/navigation-links/:navigationLinkId", authRequired, getNavigationLink);
 router.put("/bm/navigation-links/:navigationLinkId", authRequired, updateNavigationLink);
 router.delete(
