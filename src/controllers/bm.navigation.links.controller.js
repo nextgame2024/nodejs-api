@@ -9,7 +9,6 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Home",
     "Town planner",
     "Business manager",
-    "Navigation links",
     "Settings",
   ],
   menu: [
