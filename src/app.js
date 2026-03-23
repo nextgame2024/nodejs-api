@@ -25,6 +25,7 @@ import bmProjectsRoutes from "./routes/bm.projects.routes.js";
 import bmDocumentsRoutes from "./routes/bm.documents.routes.js";
 import bmCompanyRoutes from "./routes/bm.company.routes.js";
 import bmProjectTypesRoutes from "./routes/bm.project.types.routes.js";
+import bmNavigationLinksRoutes from "./routes/bm.navigation.links.routes.js";
 
 const app = express();
 const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "10mb";
@@ -79,6 +80,7 @@ app.use("/api", bmProjectsRoutes);
 app.use("/api", bmDocumentsRoutes);
 app.use("/api", bmCompanyRoutes);
 app.use("/api", bmProjectTypesRoutes);
+app.use("/api", bmNavigationLinksRoutes);
 app.use("/api/townplanner/v2", townplannerV2Routes);
 
 // Error handler
