@@ -14,7 +14,12 @@ const COMPANY_SELECT = `
   email,
   phone,
   tel,
+  website,
   cel,
+  bank,
+  account_name AS "accountName",
+  bsb_number AS "bsbNumber",
+  account_number AS "accountNumber",
   logo_url AS "logoUrl"
 `;
 
@@ -111,7 +116,12 @@ export async function createCompany(companyId, userId, payload) {
         email,
         phone,
         tel,
+        website,
         cel,
+        bank,
+        account_name,
+        bsb_number,
+        account_number,
         logo_url
      ) VALUES (
         COALESCE($1::uuid, gen_random_uuid()),
@@ -126,7 +136,12 @@ export async function createCompany(companyId, userId, payload) {
         $10,
         $11,
         $12,
-        $13
+        $13,
+        $14,
+        $15,
+        $16,
+        $17,
+        $18
      )
      RETURNING ${COMPANY_SELECT}`,
     [
@@ -141,7 +156,12 @@ export async function createCompany(companyId, userId, payload) {
       payload.email ?? null,
       payload.phone ?? null,
       payload.tel ?? null,
+      payload.website ?? null,
       payload.cel ?? null,
+      payload.bank ?? null,
+      payload.account_name ?? null,
+      payload.bsb_number ?? null,
+      payload.account_number ?? null,
       payload.logo_url ?? null,
     ],
   );
@@ -163,7 +183,12 @@ export async function updateCompany(companyId, targetCompanyId, payload) {
     email: "email",
     phone: "phone",
     tel: "tel",
+    website: "website",
     cel: "cel",
+    bank: "bank",
+    account_name: "account_name",
+    bsb_number: "bsb_number",
+    account_number: "account_number",
     logo_url: "logo_url",
   };
 
