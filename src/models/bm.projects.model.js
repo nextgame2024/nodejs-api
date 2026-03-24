@@ -3,6 +3,11 @@ import pool from "../config/db.js";
 const PROJECT_SURCHARGES_TABLE = "bm_project_surcharges";
 let hasCheckedProjectSurchargesTable = false;
 let projectSurchargesTableExistsCache = false;
+const DEFAULT_SCOPE_AND_CONDITIONS = `Design Specification
+Metallic epoxy design as approved via email, including agreed colour palette, description, and reference photos on previous quote. (sample board to be presented by photos before installation).
+
+Terms
+By accepting this invoice, the client confirms approval of the pre-installation guidelines, quotation, and Sunshine Resin's terms and conditions.`;
 
 function isMissingProjectSurchargesTableError(error) {
   if (!error || error.code !== "42P01") return false;
@@ -58,6 +63,7 @@ const PROJECT_SELECT = `
   p.project_name AS "projectName",
   p.meters_required AS "metersRequired",
   p.description,
+  p.scope_and_conditions AS "scopeAndConditions",
   p.status,
   p.status_before_hold AS "statusBeforeHold",
   p.default_pricing AS "defaultPricing",
@@ -95,7 +101,7 @@ export async function listProjects(
   }
   if (q) {
     where.push(
-      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i})`
+      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i} OR p.scope_and_conditions ILIKE $${i})`
     );
     params.push(`%${q}%`);
     i++;
@@ -197,7 +203,7 @@ export async function countProjects(companyId, { q, status, clientId }) {
   }
   if (q) {
     where.push(
-      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i})`
+      `(p.project_name ILIKE $${i} OR c.client_name ILIKE $${i} OR c.address ILIKE $${i} OR p.description ILIKE $${i} OR p.scope_and_conditions ILIKE $${i})`
     );
     params.push(`%${q}%`);
     i++;
@@ -286,6 +292,7 @@ export async function createProject(companyId, userId, payload) {
       project_name,
       meters_required,
       description,
+      scope_and_conditions,
       status,
       default_pricing,
       cost_in_quote,
@@ -300,11 +307,12 @@ export async function createProject(companyId, userId, payload) {
       $4,
       $5,
       $6,
-      COALESCE($7::bm_project_status, 'to_do'::bm_project_status),
-      COALESCE($8, true),
-      COALESCE($9, false),
-      (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $10),
-      $11
+      $7,
+      COALESCE($8::bm_project_status, 'to_do'::bm_project_status),
+      COALESCE($9, true),
+      COALESCE($10, false),
+      (SELECT project_type_id FROM bm_project_types WHERE company_id = $1 AND project_type_id = $11),
+      $12
       WHERE EXISTS (
         SELECT 1 FROM bm_clients WHERE company_id = $1 AND client_id = $3
       )
@@ -317,6 +325,7 @@ export async function createProject(companyId, userId, payload) {
         payload.project_name,
         payload.meters_required ?? null,
         payload.description ?? null,
+        payload.scope_and_conditions ?? DEFAULT_SCOPE_AND_CONDITIONS,
         payload.status ?? null,
         payload.default_pricing ?? true,
         payload.cost_in_quote ?? false,
@@ -453,6 +462,7 @@ export async function updateProject(companyId, projectId, payload) {
     project_name: "project_name",
     meters_required: "meters_required",
     description: "description",
+    scope_and_conditions: "scope_and_conditions",
     status: "status",
     default_pricing: "default_pricing",
     cost_in_quote: "cost_in_quote",

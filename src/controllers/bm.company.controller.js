@@ -47,11 +47,16 @@ export const createCompany = asyncHandler(async (req, res) => {
 });
 
 export const updateCompany = asyncHandler(async (req, res) => {
+  const superAdmin = isSuperAdmin(req);
   const companyId = isSuperAdmin(req)
     ? req.params.companyId
     : req.user.companyId;
   const { companyId: targetCompanyId } = req.params;
   const payload = req.body?.company || req.body || {};
+
+  if (!superAdmin) {
+    delete payload.status;
+  }
 
   const company = await service.updateCompany(
     companyId,
