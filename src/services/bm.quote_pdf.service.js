@@ -66,6 +66,17 @@ function companyDisplayName(company) {
   );
 }
 
+function topBarInfoLines(company) {
+  return [
+    companyDisplayName(company),
+    clean(company?.country) || "Australia",
+    clean(company?.email),
+    clean(company?.website),
+    clean(company?.abn) ? `ABN: ${clean(company?.abn)}` : null,
+  ]
+    .filter(Boolean);
+}
+
 async function fetchBuffer(url) {
   try {
     const res = await fetch(url);
@@ -77,40 +88,49 @@ async function fetchBuffer(url) {
   }
 }
 
-function drawHeader(doc, { title, logoBuffer, companyName }) {
+function drawHeader(doc, { title, logoBuffer, company }) {
   const x = X(doc);
   const y = Y(doc);
   const w = contentW(doc);
+  const barH = 50;
+  const companyName = companyDisplayName(company);
+  const topBarLines = topBarInfoLines(company);
 
   doc.save();
-  doc.roundedRect(x, y - 6, w, 44, 14);
+  doc.roundedRect(x, y - 6, w, barH, 14);
   doc.fillColor(BRAND.teal).fill();
   doc.restore();
 
+  const logoX = x + 12;
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, x + 14, y + 1, { fit: [56, 34] });
+      doc.image(logoBuffer, logoX, y + 2, { fit: [40, 40], align: "center" });
     } catch {
       doc
         .fillColor(BRAND.white)
         .font("Helvetica-Bold")
-        .fontSize(13)
-        .text(companyName || "Company", x + 14, y + 10);
+        .fontSize(10)
+        .text(companyName || "Company", logoX, y + 12);
     }
   } else {
     doc
       .fillColor(BRAND.white)
       .font("Helvetica-Bold")
-      .fontSize(13)
-      .text(companyName || "Company", x + 14, y + 10);
+      .fontSize(10)
+      .text(companyName || "Company", logoX, y + 12);
   }
 
+  const titleW = 160;
+  const infoX = logoX + 52;
+  const infoW = Math.max(120, w - (infoX - x) - titleW - 14);
   doc
     .fillColor(BRAND.white)
-    .font("Helvetica-Bold")
-    .fontSize(12)
-    .text(companyName || "Company", x + 76, y + 9, {
-      width: w * 0.5,
+    .font("Helvetica")
+    .fontSize(8)
+    .text(topBarLines.join("\n"), infoX, y + 2, {
+      width: infoW,
+      lineGap: 0.6,
+      height: 42,
       ellipsis: true,
     });
 
@@ -118,9 +138,9 @@ function drawHeader(doc, { title, logoBuffer, companyName }) {
     .fillColor(BRAND.white)
     .font("Helvetica-Bold")
     .fontSize(16)
-    .text(title, x, y + 4, { width: w - 20, align: "right" });
+    .text(title, x, y + 8, { width: titleW, align: "right" });
 
-  doc.y = y + 52;
+  doc.y = y + barH + 8;
 }
 
 function ensureSpace(doc, height) {
@@ -214,39 +234,14 @@ function resolveLaborRows(laborTotal, laborLines, laborSummary) {
 }
 
 function drawDocumentIntro(doc, { document, company, client, project, logoBuffer }) {
-  ensureSpace(doc, 170);
+  ensureSpace(doc, 120);
 
   const x = X(doc);
   const y = doc.y;
   const w = contentW(doc);
-  const leftW = Math.floor(w * 0.62);
+  const leftW = Math.floor(w * 0.64);
   const rightX = x + leftW;
   const rightW = w - leftW;
-  const logoSize = 90;
-
-  const companyInfoLines = [
-    companyDisplayName(company),
-    "Australia",
-    clean(company?.email),
-    clean(company?.website),
-    clean(company?.abn) ? `ABN: ${clean(company?.abn)}` : null,
-  ].filter(Boolean);
-
-  if (logoBuffer) {
-    try {
-      doc.image(logoBuffer, x, y + 2, { fit: [logoSize, logoSize], align: "center" });
-    } catch {
-      // Ignore logo rendering errors.
-    }
-  }
-
-  const infoX = x + logoSize + 10;
-  const infoW = Math.max(80, leftW - logoSize - 10);
-  doc.fillColor(BRAND.text).font("Helvetica").fontSize(13);
-  const companyText = companyInfoLines.join("\n");
-  doc.text(companyText, infoX, y + 2, { width: infoW, lineGap: 2 });
-  const companyBlockHeight = doc.heightOfString(companyText, { width: infoW, lineGap: 2 });
-  const leftBottom = y + Math.max(logoSize, companyBlockHeight + 2);
 
   const issueDate = document.issueDate || new Date();
   const validUntil = new Date(issueDate);
@@ -274,7 +269,7 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
     }) +
     6;
 
-  const billedY = Math.max(leftBottom, rightBottom) + 12;
+  const billedY = y + 2;
   const clientLines = [
     clean(client?.clientName),
     clean(client?.email),
@@ -289,10 +284,11 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
   });
 
   const billedHeight = doc.heightOfString(clientLines.join("\n"), {
-    width: Math.floor(w * 0.72),
+    width: leftW - 10,
     lineGap: 2,
   });
-  doc.y = billedY + 24 + billedHeight + 16;
+  const leftBottom = billedY + 24 + billedHeight;
+  doc.y = Math.max(leftBottom, rightBottom) + 14;
 }
 
 function drawScopeAndTotals(doc, { scopeText, totals }) {
@@ -437,7 +433,7 @@ export async function buildQuotePdf({
   drawHeader(doc, {
     title: "Quote",
     logoBuffer,
-    companyName: companyDisplayName(company),
+    company,
   });
   drawDocumentIntro(doc, { document, company, client, project, logoBuffer });
 
