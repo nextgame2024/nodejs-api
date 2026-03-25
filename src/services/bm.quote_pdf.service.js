@@ -344,19 +344,19 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   const totalRow = totals.find(([label]) => label === "Total");
   if (totalRow) {
     const totalBarY = rowY + 6;
-    const totalBarH = 50;
+    const totalBarH = 40;
     doc.save();
     doc.rect(rightX, totalBarY, rightW, totalBarH).fill(BRAND.totalBar);
     doc.restore();
 
-    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(14).text("Total", rightX + 14, totalBarY + 18, {
+    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(14).text("Total", rightX + 14, totalBarY + 13, {
       width: rightW * 0.5,
     });
     const totalValue = String(totalRow[1] ?? "");
     const totalValueWithCurrency = totalValue.startsWith("$")
       ? totalValue
       : `$${totalValue}`;
-    doc.fontSize(16).text(totalValueWithCurrency, rightX, totalBarY + 16, {
+    doc.fontSize(16).text(totalValueWithCurrency, rightX, totalBarY + 13, {
       width: rightW - 12,
       align: "right",
     });
@@ -519,7 +519,7 @@ export async function buildQuotePdf({
     }
 
     if (displaySurchargeRows.length > 0) {
-      drawTable(doc, "Other concepts", compactColumns, displaySurchargeRows);
+      drawTable(doc, "Other concepts ", compactColumns, displaySurchargeRows);
       renderedCostTable = true;
     }
 
@@ -562,7 +562,7 @@ export async function buildQuotePdf({
   if (costInQuote) {
     if (showMaterialTotals) totals.push(["Materials", formatMoney(materialTotalValue)]);
     if (showLaborTotals) totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
-    if (showSurchargeTotals) totals.push(["Other concepts", formatMoney(surchargeTotalValue)]);
+    if (showSurchargeTotals) totals.push(["Other concepts ", formatMoney(surchargeTotalValue)]);
   }
   totals.push(["Subtotal", formatMoney(subtotal)]);
   totals.push([`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)]);

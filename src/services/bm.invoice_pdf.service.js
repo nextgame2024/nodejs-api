@@ -86,8 +86,7 @@ function topBarInfoLines(company) {
     clean(company?.email),
     clean(company?.website),
     clean(company?.abn) ? `ABN: ${clean(company?.abn)}` : null,
-  ]
-    .filter(Boolean);
+  ].filter(Boolean);
 }
 
 async function fetchBuffer(url) {
@@ -161,7 +160,10 @@ function drawHeader(doc, { title, logoBuffer, company }) {
     .fillColor(BRAND.white)
     .font("Helvetica-Bold")
     .fontSize(18)
-    .text(title, x + w - titleW - 10, y + 20, { width: titleW, align: "right" });
+    .text(title, x + w - titleW - 10, y + 20, {
+      width: titleW,
+      align: "right",
+    });
 
   doc.y = y + barH + 8;
 }
@@ -236,13 +238,14 @@ function resolveLaborRows(laborTotal, laborLines, laborSummary) {
     (sum, line) => sum + Number(line?.lineTotal ?? 0),
     0,
   );
-  const resolvedTotal = Number.isFinite(documentTotal) && documentTotal > 0
-    ? documentTotal
-    : Number.isFinite(summaryTotal) && summaryTotal > 0
-      ? summaryTotal
-      : Number.isFinite(linesTotal)
-        ? linesTotal
-        : 0;
+  const resolvedTotal =
+    Number.isFinite(documentTotal) && documentTotal > 0
+      ? documentTotal
+      : Number.isFinite(summaryTotal) && summaryTotal > 0
+        ? summaryTotal
+        : Number.isFinite(linesTotal)
+          ? linesTotal
+          : 0;
 
   const hasLaborSummary = Number.isFinite(summaryTotal) && summaryTotal > 0;
   const hasLabor = lines.length > 0 || hasLaborSummary || resolvedTotal > 0;
@@ -256,7 +259,10 @@ function resolveLaborRows(laborTotal, laborLines, laborSummary) {
   ];
 }
 
-function drawDocumentIntro(doc, { document, company, client, project, logoBuffer }) {
+function drawDocumentIntro(
+  doc,
+  { document, company, client, project, logoBuffer },
+) {
   ensureSpace(doc, 120);
 
   const x = X(doc);
@@ -296,11 +302,19 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
     clean(client?.phone),
   ].filter(Boolean);
 
-  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Billed to:", x, billedY);
-  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(clientLines.join("\n"), x, billedY + 24, {
-    width: Math.floor(w * 0.72),
-    lineGap: 2,
-  });
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("Billed to:", x, billedY);
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica")
+    .fontSize(10)
+    .text(clientLines.join("\n"), x, billedY + 24, {
+      width: Math.floor(w * 0.72),
+      lineGap: 2,
+    });
 
   const billedHeight = doc.heightOfString(clientLines.join("\n"), {
     width: leftW - 10,
@@ -325,14 +339,21 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
     .font("Helvetica")
     .fontSize(10)
     .text(safeScope, x, y, { width: leftW, lineGap: 3 });
-  const leftHeight = doc.heightOfString(safeScope, { width: leftW, lineGap: 3 });
+  const leftHeight = doc.heightOfString(safeScope, {
+    width: leftW,
+    lineGap: 3,
+  });
 
   let rowY = y + 4;
   const summaryRows = totals.filter(([label]) => label !== "Total");
   summaryRows.forEach(([label, value]) => {
-    doc.fillColor(BRAND.text).font("Helvetica").fontSize(11).text(label, rightX, rowY, {
-      width: rightW * 0.55,
-    });
+    doc
+      .fillColor(BRAND.text)
+      .font("Helvetica")
+      .fontSize(11)
+      .text(label, rightX, rowY, {
+        width: rightW * 0.55,
+      });
     doc.font("Helvetica").text(value, rightX, rowY, {
       width: rightW,
       align: "right",
@@ -343,19 +364,23 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   const totalRow = totals.find(([label]) => label === "Total");
   if (totalRow) {
     const totalBarY = rowY + 6;
-    const totalBarH = 50;
+    const totalBarH = 40;
     doc.save();
     doc.rect(rightX, totalBarY, rightW, totalBarH).fill(BRAND.totalBar);
     doc.restore();
 
-    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(14).text("Total", rightX + 14, totalBarY + 18, {
-      width: rightW * 0.5,
-    });
+    doc
+      .fillColor(BRAND.white)
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .text("Total", rightX + 14, totalBarY + 13, {
+        width: rightW * 0.5,
+      });
     const totalValue = String(totalRow[1] ?? "");
     const totalValueWithCurrency = totalValue.startsWith("$")
       ? totalValue
       : `$${totalValue}`;
-    doc.fontSize(16).text(totalValueWithCurrency, rightX, totalBarY + 16, {
+    doc.fontSize(16).text(totalValueWithCurrency, rightX, totalBarY + 13, {
       width: rightW - 12,
       align: "right",
     });
@@ -380,38 +405,62 @@ function drawFooter(doc, { company, logoBuffer, hasBelindaFont }) {
     .font(hasBelindaFont ? "Belinda" : "Times-Italic")
     .fontSize(28)
     .text("Thank you", x, y, {
-    width: leftW,
-  });
-  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Payment Information", x, y + 56, {
-    width: leftW,
-  });
+      width: leftW,
+    });
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text("Payment Information", x, y + 56, {
+      width: leftW,
+    });
 
   const paymentLines = [
     clean(company?.bank),
-    clean(company?.accountName) ? `Account Name: ${clean(company?.accountName)}` : null,
-    clean(company?.bsbNumber) ? `BSB Number: ${clean(company?.bsbNumber)}` : null,
-    clean(company?.accountNumber) ? `Account Number: ${clean(company?.accountNumber)}` : null,
+    clean(company?.accountName)
+      ? `Account Name: ${clean(company?.accountName)}`
+      : null,
+    clean(company?.bsbNumber)
+      ? `BSB Number: ${clean(company?.bsbNumber)}`
+      : null,
+    clean(company?.accountNumber)
+      ? `Account Number: ${clean(company?.accountNumber)}`
+      : null,
   ].filter(Boolean);
 
-  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(
-    paymentLines.length ? paymentLines.join("\n") : "Bank details available on request.",
-    x,
-    y + 88,
-    { width: leftW, lineGap: 4 },
-  );
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica")
+    .fontSize(10)
+    .text(
+      paymentLines.length
+        ? paymentLines.join("\n")
+        : "Bank details available on request.",
+      x,
+      y + 88,
+      { width: leftW, lineGap: 4 },
+    );
   const leftHeight =
     88 +
-    doc.heightOfString(paymentLines.length ? paymentLines.join("\n") : "Bank details available on request.", {
-      width: leftW,
-      lineGap: 4,
-    });
+    doc.heightOfString(
+      paymentLines.length
+        ? paymentLines.join("\n")
+        : "Bank details available on request.",
+      {
+        width: leftW,
+        lineGap: 4,
+      },
+    );
 
   let rightBottom = y;
   if (logoBuffer) {
     try {
       const logoW = Math.min(230, rightW - 16);
       const logoX = rightX + (rightW - logoW) / 2;
-      doc.image(logoBuffer, logoX, y + 20, { fit: [logoW, 110], align: "center" });
+      doc.image(logoBuffer, logoX, y + 20, {
+        fit: [logoW, 110],
+        align: "center",
+      });
       rightBottom = y + 132;
     } catch {
       rightBottom = y + 40;
@@ -422,10 +471,15 @@ function drawFooter(doc, { company, logoBuffer, hasBelindaFont }) {
     .fillColor(BRAND.text)
     .font("Helvetica")
     .fontSize(12)
-    .text(clean(company?.address) || "", rightX, Math.max(rightBottom, y + 120), {
-      width: rightW,
-      align: "center",
-    });
+    .text(
+      clean(company?.address) || "",
+      rightX,
+      Math.max(rightBottom, y + 120),
+      {
+        width: rightW,
+        align: "center",
+      },
+    );
   rightBottom =
     Math.max(rightBottom, y + 120) +
     doc.heightOfString(clean(company?.address) || "", {
@@ -502,8 +556,17 @@ export async function buildInvoicePdf({
         { key: "quantity", label: "Qty", width: tableW * 0.3, align: "right" },
       ];
   const compactColumns = [
-    { key: "description", label: "Description", width: Math.floor(tableW * 0.7) },
-    { key: "lineTotal", label: "Total", width: Math.ceil(tableW * 0.3), align: "right" },
+    {
+      key: "description",
+      label: "Description",
+      width: Math.floor(tableW * 0.7),
+    },
+    {
+      key: "lineTotal",
+      label: "Total",
+      width: Math.ceil(tableW * 0.3),
+      align: "right",
+    },
   ];
 
   const materialRows = (materialLines || []).map((line) => ({
@@ -535,7 +598,7 @@ export async function buildInvoicePdf({
     }
 
     if (displaySurchargeRows.length > 0) {
-      drawTable(doc, "Other concepts", compactColumns, displaySurchargeRows);
+      drawTable(doc, "Other concepts ", compactColumns, displaySurchargeRows);
       renderedCostTable = true;
     }
 
@@ -559,9 +622,12 @@ export async function buildInvoicePdf({
 
   const totals = [];
   if (costInQuote) {
-    if (showMaterialTotals) totals.push(["Materials", formatMoney(materialTotalValue)]);
-    if (showLaborTotals) totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
-    if (showSurchargeTotals) totals.push(["Other concepts", formatMoney(surchargeTotalValue)]);
+    if (showMaterialTotals)
+      totals.push(["Materials", formatMoney(materialTotalValue)]);
+    if (showLaborTotals)
+      totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
+    if (showSurchargeTotals)
+      totals.push(["Other concepts ", formatMoney(surchargeTotalValue)]);
   }
   totals.push(["Subtotal", formatMoney(subtotal)]);
   totals.push([`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)]);
