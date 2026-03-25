@@ -18,12 +18,6 @@ const PAGE = {
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/sophiaAi-logo.png";
 
-const DEFAULT_SCOPE_AND_CONDITIONS = `Design Specification
-Metallic epoxy design as approved via email, including agreed colour palette, description, and reference photos on previous quote. (sample board to be presented by photos before installation).
-
-Terms
-By accepting this invoice, the client confirms approval of the pre-installation guidelines, quotation, and Sunshine Resin's terms and conditions.`;
-
 function formatDateAU(value) {
   const dt = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(dt.getTime())) return "";
@@ -272,7 +266,7 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
     clean(client?.phone),
   ].filter(Boolean);
 
-  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(16).text("Billed to:", x, billedY);
+  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Billed to:", x, billedY);
   doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(clientLines.join("\n"), x, billedY + 24, {
     width: Math.floor(w * 0.72),
     lineGap: 2,
@@ -295,7 +289,7 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   const rightX = x + leftW + 14;
   const rightW = w - leftW - 14;
 
-  const safeScope = clean(scopeText) || DEFAULT_SCOPE_AND_CONDITIONS;
+  const safeScope = clean(scopeText) || "";
   doc
     .fillColor(BRAND.text)
     .font("Helvetica")
@@ -327,7 +321,11 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
     doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(20).text("Total", rightX + 14, totalBarY + 14, {
       width: rightW * 0.5,
     });
-    doc.fontSize(22).text(totalRow[1], rightX, totalBarY + 13, {
+    const totalValue = String(totalRow[1] ?? "");
+    const totalValueWithCurrency = totalValue.startsWith("$")
+      ? totalValue
+      : `$${totalValue}`;
+    doc.fontSize(16).text(totalValueWithCurrency, rightX, totalBarY + 16, {
       width: rightW - 12,
       align: "right",
     });
@@ -347,10 +345,10 @@ function drawFooter(doc, { company, logoBuffer }) {
   const rightX = x + leftW + 14;
   const rightW = w - leftW - 14;
 
-  doc.fillColor(BRAND.text).font("Times-Italic").fontSize(44).text("Thank you", x, y, {
+  doc.fillColor(BRAND.text).font("Times-Italic").fontSize(34).text("Thank you", x, y, {
     width: leftW,
   });
-  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(16).text("Payment Information", x, y + 56, {
+  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Payment Information", x, y + 56, {
     width: leftW,
   });
 
