@@ -1,10 +1,14 @@
 import PDFDocument from "pdfkit";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const BRAND = {
   teal: "#0F2B2B",
   teal2: "#143838",
   text: "#111111",
   muted: "#5A5F66",
+  mutedLight: "#7A8088",
   border: "#E2E6E9",
   white: "#FFFFFF",
   totalBar: "#1E1E1E",
@@ -17,6 +21,23 @@ const PAGE = {
 
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/sophiaAi-logo.png";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const BELINDA_FONT_CANDIDATES = [
+  process.env.PDF_BELINDA_FONT_PATH || "",
+  path.resolve(__dirname, "../assets/fonts/Belinda.ttf"),
+  path.resolve(__dirname, "../assets/fonts/Belinda.otf"),
+  path.resolve(__dirname, "../assets/fonts/Belinda-Regular.ttf"),
+  "/Library/Fonts/Belinda.ttf",
+  "/Library/Fonts/Belinda.otf",
+  "/Library/Fonts/Belinda Regular.ttf",
+  "/Users/josecorredor/Library/Fonts/Belinda.ttf",
+  "/Users/josecorredor/Library/Fonts/Belinda Regular.ttf",
+];
+const BELINDA_FONT_PATH = BELINDA_FONT_CANDIDATES.find(
+  (p) => p && fs.existsSync(p),
+);
 
 function formatDateAU(value) {
   const dt = value instanceof Date ? value : new Date(value);
@@ -77,6 +98,16 @@ async function fetchBuffer(url) {
     return Buffer.from(arr);
   } catch {
     return null;
+  }
+}
+
+function registerBelindaFont(doc) {
+  if (!BELINDA_FONT_PATH) return false;
+  try {
+    doc.registerFont("Belinda", BELINDA_FONT_PATH);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -291,9 +322,9 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
 
   const safeScope = clean(scopeText) || "";
   doc
-    .fillColor(BRAND.text)
+    .fillColor(BRAND.mutedLight)
     .font("Helvetica")
-    .fontSize(12)
+    .fontSize(10)
     .text(safeScope, x, y, { width: leftW, lineGap: 3 });
   const leftHeight = doc.heightOfString(safeScope, { width: leftW, lineGap: 3 });
 
@@ -318,7 +349,7 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
     doc.rect(rightX, totalBarY, rightW, totalBarH).fill(BRAND.totalBar);
     doc.restore();
 
-    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(20).text("Total", rightX + 14, totalBarY + 14, {
+    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(14).text("Total", rightX + 14, totalBarY + 18, {
       width: rightW * 0.5,
     });
     const totalValue = String(totalRow[1] ?? "");
@@ -335,7 +366,7 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   doc.y = Math.max(y + leftHeight, rowY) + 16;
 }
 
-function drawFooter(doc, { company, logoBuffer }) {
+function drawFooter(doc, { company, logoBuffer, hasBelindaFont }) {
   ensureSpace(doc, 180);
 
   const x = X(doc);
@@ -345,7 +376,11 @@ function drawFooter(doc, { company, logoBuffer }) {
   const rightX = x + leftW + 14;
   const rightW = w - leftW - 14;
 
-  doc.fillColor(BRAND.text).font("Times-Italic").fontSize(34).text("Thank you", x, y, {
+  doc
+    .fillColor(BRAND.text)
+    .font(hasBelindaFont ? "Belinda" : "Times-Italic")
+    .fontSize(28)
+    .text("Thank you", x, y, {
     width: leftW,
   });
   doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Payment Information", x, y + 56, {
@@ -414,6 +449,7 @@ export async function buildQuotePdf({
   surchargeTotal = 0,
 }) {
   const doc = new PDFDocument({ size: PAGE.size, margins: PAGE.margin });
+  const hasBelindaFont = registerBelindaFont(doc);
 
   const chunks = [];
   doc.on("data", (d) => chunks.push(d));
@@ -537,7 +573,7 @@ export async function buildQuotePdf({
     totals,
   });
 
-  drawFooter(doc, { company, logoBuffer });
+  drawFooter(doc, { company, logoBuffer, hasBelindaFont });
 
   doc.end();
 
