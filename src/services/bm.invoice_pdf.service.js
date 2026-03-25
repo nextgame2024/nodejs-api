@@ -5,9 +5,9 @@ const BRAND = {
   teal2: "#143838",
   text: "#111111",
   muted: "#5A5F66",
-  light: "#F5F7F8",
   border: "#E2E6E9",
   white: "#FFFFFF",
+  totalBar: "#1E1E1E",
 };
 
 const PAGE = {
@@ -18,10 +18,11 @@ const PAGE = {
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/sophiaAi-logo.png";
 
-const TERMS = {
-  paymentTerms:
-    "Payment due within 7 days of invoice date after acceptance of this invoice.",
-};
+const DEFAULT_SCOPE_AND_CONDITIONS = `Design Specification
+Metallic epoxy design as approved via email, including agreed colour palette, description, and reference photos on previous quote. (sample board to be presented by photos before installation).
+
+Terms
+By accepting this invoice, the client confirms approval of the pre-installation guidelines, quotation, and Sunshine Resin's terms and conditions.`;
 
 function formatDateAU(value) {
   const dt = value instanceof Date ? value : new Date(value);
@@ -49,6 +50,20 @@ function Y(doc) {
   return doc.page.margins.top;
 }
 
+function clean(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function companyDisplayName(company) {
+  return (
+    clean(company?.legalName) ||
+    clean(company?.tradingName) ||
+    clean(company?.companyName) ||
+    "Company"
+  );
+}
+
 async function fetchBuffer(url) {
   try {
     const res = await fetch(url);
@@ -60,7 +75,7 @@ async function fetchBuffer(url) {
   }
 }
 
-function drawHeader(doc, { title, logoBuffer }) {
+function drawHeader(doc, { title, logoBuffer, companyName }) {
   const x = X(doc);
   const y = Y(doc);
   const w = contentW(doc);
@@ -72,21 +87,30 @@ function drawHeader(doc, { title, logoBuffer }) {
 
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, x + 14, y + 3, { height: 30 });
+      doc.image(logoBuffer, x + 14, y + 1, { fit: [56, 34] });
     } catch {
       doc
         .fillColor(BRAND.white)
         .font("Helvetica-Bold")
         .fontSize(13)
-        .text("sophiaAi", x + 14, y + 10);
+        .text(companyName || "Company", x + 14, y + 10);
     }
   } else {
     doc
       .fillColor(BRAND.white)
       .font("Helvetica-Bold")
       .fontSize(13)
-      .text("sophiaAi", x + 14, y + 10);
+      .text(companyName || "Company", x + 14, y + 10);
   }
+
+  doc
+    .fillColor(BRAND.white)
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .text(companyName || "Company", x + 76, y + 9, {
+      width: w * 0.5,
+      ellipsis: true,
+    });
 
   doc
     .fillColor(BRAND.white)
@@ -94,7 +118,7 @@ function drawHeader(doc, { title, logoBuffer }) {
     .fontSize(16)
     .text(title, x, y + 4, { width: w - 20, align: "right" });
 
-  doc.moveDown(2);
+  doc.y = y + 52;
 }
 
 function ensureSpace(doc, height) {
@@ -103,22 +127,6 @@ function ensureSpace(doc, height) {
     doc.addPage();
     doc.y = Y(doc);
   }
-}
-
-function drawInfoBlock(doc, title, lines, x, y, w) {
-  doc
-    .fillColor(BRAND.teal2)
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .text(title, x, y);
-
-  doc
-    .fillColor(BRAND.text)
-    .font("Helvetica")
-    .fontSize(9)
-    .text(lines.filter(Boolean).join("\n"), x, y + 14, {
-      width: w,
-    });
 }
 
 function drawTable(doc, title, columns, rows) {
@@ -203,6 +211,202 @@ function resolveLaborRows(laborTotal, laborLines, laborSummary) {
   ];
 }
 
+function drawDocumentIntro(doc, { document, company, client, project, logoBuffer }) {
+  ensureSpace(doc, 170);
+
+  const x = X(doc);
+  const y = doc.y;
+  const w = contentW(doc);
+  const leftW = Math.floor(w * 0.62);
+  const rightX = x + leftW;
+  const rightW = w - leftW;
+  const logoSize = 90;
+
+  const companyInfoLines = [
+    companyDisplayName(company),
+    "Australia",
+    clean(company?.email),
+    clean(company?.website),
+    clean(company?.abn) ? `ABN: ${clean(company?.abn)}` : null,
+  ].filter(Boolean);
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, x, y + 2, { fit: [logoSize, logoSize], align: "center" });
+    } catch {
+      // Ignore logo rendering errors.
+    }
+  }
+
+  const infoX = x + logoSize + 10;
+  const infoW = Math.max(80, leftW - logoSize - 10);
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(13);
+  const companyText = companyInfoLines.join("\n");
+  doc.text(companyText, infoX, y + 2, { width: infoW, lineGap: 2 });
+  const companyBlockHeight = doc.heightOfString(companyText, { width: infoW, lineGap: 2 });
+  const leftBottom = y + Math.max(logoSize, companyBlockHeight + 2);
+
+  const issueDate = document.issueDate || new Date();
+  const rightMeta = [
+    `Invoice No. ${document.docNumber || document.documentId}`,
+    formatDateAU(issueDate),
+  ].filter(Boolean);
+  if (project?.projectName) rightMeta.push(project.projectName);
+
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(18);
+  doc.text(rightMeta.join("\n"), rightX, y + 6, {
+    width: rightW,
+    align: "right",
+    lineGap: 4,
+  });
+  const rightBottom =
+    y +
+    doc.heightOfString(rightMeta.join("\n"), {
+      width: rightW,
+      align: "right",
+      lineGap: 4,
+    }) +
+    6;
+
+  const billedY = Math.max(leftBottom, rightBottom) + 12;
+  const clientLines = [
+    clean(client?.clientName),
+    clean(client?.email),
+    clean(client?.address),
+    clean(client?.phone),
+  ].filter(Boolean);
+
+  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(16).text("Billed to:", x, billedY);
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(clientLines.join("\n"), x, billedY + 24, {
+    width: Math.floor(w * 0.72),
+    lineGap: 2,
+  });
+
+  const billedHeight = doc.heightOfString(clientLines.join("\n"), {
+    width: Math.floor(w * 0.72),
+    lineGap: 2,
+  });
+  doc.y = billedY + 24 + billedHeight + 16;
+}
+
+function drawScopeAndTotals(doc, { scopeText, totals }) {
+  ensureSpace(doc, 210);
+  const x = X(doc);
+  const y = doc.y;
+  const w = contentW(doc);
+  const leftW = Math.floor(w * 0.58);
+  const rightX = x + leftW + 14;
+  const rightW = w - leftW - 14;
+
+  const safeScope = clean(scopeText) || DEFAULT_SCOPE_AND_CONDITIONS;
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica")
+    .fontSize(12)
+    .text(safeScope, x, y, { width: leftW, lineGap: 3 });
+  const leftHeight = doc.heightOfString(safeScope, { width: leftW, lineGap: 3 });
+
+  let rowY = y + 4;
+  const summaryRows = totals.filter(([label]) => label !== "Total");
+  summaryRows.forEach(([label, value]) => {
+    doc.fillColor(BRAND.text).font("Helvetica").fontSize(11).text(label, rightX, rowY, {
+      width: rightW * 0.55,
+    });
+    doc.font("Helvetica").text(value, rightX, rowY, {
+      width: rightW,
+      align: "right",
+    });
+    rowY += 20;
+  });
+
+  const totalRow = totals.find(([label]) => label === "Total");
+  if (totalRow) {
+    const totalBarY = rowY + 6;
+    const totalBarH = 50;
+    doc.save();
+    doc.rect(rightX, totalBarY, rightW, totalBarH).fill(BRAND.totalBar);
+    doc.restore();
+
+    doc.fillColor(BRAND.white).font("Helvetica-Bold").fontSize(20).text("Total", rightX + 14, totalBarY + 14, {
+      width: rightW * 0.5,
+    });
+    doc.fontSize(22).text(totalRow[1], rightX, totalBarY + 13, {
+      width: rightW - 12,
+      align: "right",
+    });
+    rowY = totalBarY + totalBarH;
+  }
+
+  doc.y = Math.max(y + leftHeight, rowY) + 16;
+}
+
+function drawFooter(doc, { company, logoBuffer }) {
+  ensureSpace(doc, 180);
+
+  const x = X(doc);
+  const y = doc.y;
+  const w = contentW(doc);
+  const leftW = Math.floor(w * 0.52);
+  const rightX = x + leftW + 14;
+  const rightW = w - leftW - 14;
+
+  doc.fillColor(BRAND.text).font("Times-Italic").fontSize(44).text("Thank you", x, y, {
+    width: leftW,
+  });
+  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(16).text("Payment Information", x, y + 56, {
+    width: leftW,
+  });
+
+  const paymentLines = [
+    clean(company?.bank),
+    clean(company?.accountName) ? `Account Name: ${clean(company?.accountName)}` : null,
+    clean(company?.bsbNumber) ? `BSB Number: ${clean(company?.bsbNumber)}` : null,
+    clean(company?.accountNumber) ? `Account Number: ${clean(company?.accountNumber)}` : null,
+  ].filter(Boolean);
+
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(
+    paymentLines.length ? paymentLines.join("\n") : "Bank details available on request.",
+    x,
+    y + 88,
+    { width: leftW, lineGap: 4 },
+  );
+  const leftHeight =
+    88 +
+    doc.heightOfString(paymentLines.length ? paymentLines.join("\n") : "Bank details available on request.", {
+      width: leftW,
+      lineGap: 4,
+    });
+
+  let rightBottom = y;
+  if (logoBuffer) {
+    try {
+      const logoW = Math.min(230, rightW - 16);
+      const logoX = rightX + (rightW - logoW) / 2;
+      doc.image(logoBuffer, logoX, y + 20, { fit: [logoW, 110], align: "center" });
+      rightBottom = y + 132;
+    } catch {
+      rightBottom = y + 40;
+    }
+  }
+
+  doc
+    .fillColor(BRAND.text)
+    .font("Helvetica")
+    .fontSize(12)
+    .text(clean(company?.address) || "", rightX, Math.max(rightBottom, y + 120), {
+      width: rightW,
+      align: "center",
+    });
+  rightBottom =
+    Math.max(rightBottom, y + 120) +
+    doc.heightOfString(clean(company?.address) || "", {
+      width: rightW,
+      align: "center",
+    });
+
+  doc.y = Math.max(y + leftHeight, rightBottom) + 10;
+}
+
 export async function buildInvoicePdf({
   document,
   company,
@@ -223,61 +427,13 @@ export async function buildInvoicePdf({
   const logoBuffer =
     (await fetchBuffer(logoUrl)) ||
     (logoUrl !== LOGO_URL ? await fetchBuffer(LOGO_URL) : null);
-  drawHeader(doc, { title: "Invoice", logoBuffer });
 
-  const leftX = X(doc);
-  const rightX = X(doc) + contentW(doc) / 2 + 10;
-  const colW = contentW(doc) / 2 - 10;
-
-  const companyLines = [
-    company.legalName || company.tradingName || "Company",
-    company.tradingName ? `Trading as ${company.tradingName}` : null,
-    company.abn ? `ABN: ${company.abn}` : null,
-    company.address,
-    company.email,
-    company.phone,
-  ];
-
-  const clientLines = [
-    client.clientName,
-    client.address,
-    client.email,
-    client.phone,
-  ];
-
-  const infoY = doc.y;
-  drawInfoBlock(doc, "From", companyLines, leftX, infoY, colW);
-  drawInfoBlock(doc, "To", clientLines, rightX, infoY, colW);
-
-  const fromHeight =
-    14 +
-    doc.heightOfString(companyLines.filter(Boolean).join("\n"), {
-      width: colW,
-    });
-  const toHeight =
-    14 +
-    doc.heightOfString(clientLines.filter(Boolean).join("\n"), {
-      width: colW,
-    });
-  doc.y = infoY + Math.max(fromHeight, toHeight) + 18;
-
-  const issueDate = document.issueDate || new Date();
-  const dueDate = document.dueDate ? new Date(document.dueDate) : null;
-
-  const metaLines = [
-    `Invoice # ${document.docNumber || document.documentId}`,
-    `Issue date: ${formatDateAU(issueDate)}`,
-    dueDate ? `Due date: ${formatDateAU(dueDate)}` : null,
-    project?.projectName ? `Project: ${project.projectName}` : null,
-  ];
-
-  doc
-    .fillColor(BRAND.muted)
-    .font("Helvetica")
-    .fontSize(9)
-    .text(metaLines.filter(Boolean).join("  •  "), X(doc), doc.y);
-
-  doc.moveDown(1.2);
+  drawHeader(doc, {
+    title: "Invoice",
+    logoBuffer,
+    companyName: companyDisplayName(company),
+  });
+  drawDocumentIntro(doc, { document, company, client, project, logoBuffer });
 
   const tableW = contentW(doc);
   const costInQuote = project?.costInQuote ?? true;
@@ -332,39 +488,24 @@ export async function buildInvoicePdf({
     laborSummary,
   );
   const displaySurchargeRows = (surchargeLines || []).map((line) => ({
-    description: line.name || "Surcharge",
+    description: line.name || "Other concept",
     lineTotal: formatMoney(line.cost ?? 0),
   }));
 
   let renderedCostTable = false;
   if (costInQuote) {
     if (materialRows.length > 0) {
-      drawTable(
-        doc,
-        "Materials",
-        materialsColumns,
-        materialRows,
-      );
+      drawTable(doc, "Materials", materialsColumns, materialRows);
       renderedCostTable = true;
     }
 
     if (displayLaborRows.length > 0) {
-      drawTable(
-        doc,
-        "Labor",
-        compactColumns,
-        displayLaborRows,
-      );
+      drawTable(doc, "Labor", compactColumns, displayLaborRows);
       renderedCostTable = true;
     }
 
     if (displaySurchargeRows.length > 0) {
-      drawTable(
-        doc,
-        "Surcharges",
-        compactColumns,
-        displaySurchargeRows,
-      );
+      drawTable(doc, "Other concepts", compactColumns, displaySurchargeRows);
       renderedCostTable = true;
     }
 
@@ -373,23 +514,10 @@ export async function buildInvoicePdf({
     }
   }
 
-  ensureSpace(doc, costInQuote ? 136 : 90);
-
   const subtotal = Number(document.subtotal ?? 0);
   const gst = Number(document.gst ?? 0);
   const total = Number(document.totalAmount ?? subtotal + gst);
   const gstRate = subtotal > 0 ? (gst / subtotal) * 100 : 0;
-
-  const totalsX = X(doc) + contentW(doc) * 0.5;
-  const totalsW = contentW(doc) * 0.5;
-
-  doc
-    .fillColor(BRAND.teal2)
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .text("Totals", totalsX, doc.y, { width: totalsW });
-
-  doc.moveDown(0.5);
 
   const materialTotalValue = Number(document.materialTotal ?? 0);
   const laborTotalValue = Number(document.laborTotal ?? 0);
@@ -401,41 +529,20 @@ export async function buildInvoicePdf({
 
   const totals = [];
   if (costInQuote) {
-    if (showMaterialTotals) {
-      totals.push(["Materials", formatMoney(materialTotalValue)]);
-    }
-    if (showLaborTotals) {
-      totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
-    }
-    if (showSurchargeTotals) {
-      totals.push(["Surcharges", formatMoney(surchargeTotalValue)]);
-    }
+    if (showMaterialTotals) totals.push(["Materials", formatMoney(materialTotalValue)]);
+    if (showLaborTotals) totals.push(["Labor Cost", formatMoney(laborTotalValue)]);
+    if (showSurchargeTotals) totals.push(["Other concepts", formatMoney(surchargeTotalValue)]);
   }
   totals.push(["Subtotal", formatMoney(subtotal)]);
   totals.push([`GST (${gstRate.toFixed(2)}%)`, formatMoney(gst)]);
   totals.push(["Total", formatMoney(total)]);
 
-  totals.forEach(([label, value]) => {
-    doc
-      .fillColor(BRAND.text)
-      .font("Helvetica")
-      .fontSize(9)
-      .text(label, totalsX, doc.y, { width: totalsW * 0.6 });
-    doc.font("Helvetica-Bold").text(value, totalsX, doc.y - 12, {
-      width: totalsW,
-      align: "right",
-    });
-    doc.moveDown(0.4);
+  drawScopeAndTotals(doc, {
+    scopeText: project?.scopeAndConditions,
+    totals,
   });
 
-  doc.moveDown(0.6);
-  ensureSpace(doc, 70);
-
-  doc
-    .fillColor(BRAND.muted)
-    .font("Helvetica")
-    .fontSize(9)
-    .text(`Payment terms: ${TERMS.paymentTerms}`, X(doc), doc.y);
+  drawFooter(doc, { company, logoBuffer });
 
   doc.end();
 

@@ -35,6 +35,11 @@ const COMPANY_SELECT = `
   address,
   email,
   COALESCE(phone, tel, cel) AS "phone",
+  website,
+  bank,
+  account_name AS "accountName",
+  bsb_number AS "bsbNumber",
+  account_number AS "accountNumber",
   logo_url AS "logoUrl"
 `;
 
