@@ -115,18 +115,25 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   const y = Y(doc);
   const w = contentW(doc);
   const barH = 70;
+  const barY = y - 6;
+  const logoSize = 56;
+  const logoGap = 14;
   const companyName = companyDisplayName(company);
   const topBarLines = topBarInfoLines(company);
 
   doc.save();
-  doc.roundedRect(x, y - 6, w, barH, 14);
+  doc.roundedRect(x, barY, w, barH, 14);
   doc.fillColor(BRAND.teal).fill();
   doc.restore();
 
   const logoX = x + 12;
+  const logoY = barY + Math.round((barH - logoSize) / 2) + 1;
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, logoX, y + 1, { fit: [56, 56], align: "center" });
+      doc.image(logoBuffer, logoX, logoY, {
+        fit: [logoSize, logoSize],
+        align: "center",
+      });
     } catch {
       doc
         .fillColor(BRAND.white)
@@ -143,7 +150,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   }
 
   const titleW = 160;
-  const infoX = logoX + 52;
+  const infoX = logoX + logoSize + logoGap;
   const infoW = Math.max(120, w - (infoX - x) - titleW - 14);
   doc
     .fillColor(BRAND.white)
@@ -279,7 +286,7 @@ function drawDocumentIntro(
   ].filter(Boolean);
   if (project?.projectName) rightMeta.push(project.projectName);
 
-  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(10);
+  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(11);
   doc.text(rightMeta.join("\n"), rightX, y + 6, {
     width: rightW,
     align: "right",
@@ -305,13 +312,13 @@ function drawDocumentIntro(
   doc
     .fillColor(BRAND.text)
     .font("Helvetica-Bold")
-    .fontSize(10)
+    .fontSize(11)
     .text("Billed to:", x, billedY);
   doc
     .fillColor(BRAND.text)
     .font("Helvetica")
-    .fontSize(10)
-    .text(clientLines.join("\n"), x, billedY + 24, {
+    .fontSize(11)
+    .text(clientLines.join("\n"), x, billedY + 25, {
       width: Math.floor(w * 0.72),
       lineGap: 2,
     });
@@ -320,7 +327,7 @@ function drawDocumentIntro(
     width: leftW - 10,
     lineGap: 2,
   });
-  const leftBottom = billedY + 24 + billedHeight;
+  const leftBottom = billedY + 25 + billedHeight;
   doc.y = Math.max(leftBottom, rightBottom) + 14;
 }
 
