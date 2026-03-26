@@ -128,12 +128,13 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   doc.restore();
 
   const logoX = x + 12;
-  const logoY = barY + Math.round((barH - logoSize) / 2) + 1;
+  const logoY = barY + Math.round((barH - logoSize) / 2);
   if (logoBuffer) {
     try {
       doc.image(logoBuffer, logoX, logoY, {
         fit: [logoSize, logoSize],
         align: "center",
+        valign: "center",
       });
     } catch {
       doc
@@ -401,7 +402,7 @@ function drawFooter(doc, { company, logoBuffer, hasBelindaFont }) {
     clean(company?.accountNumber) ? `Account Number: ${clean(company?.accountNumber)}` : null,
   ].filter(Boolean);
 
-  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(11).text(
     paymentLines.length ? paymentLines.join("\n") : "Bank details available on request.",
     x,
     y + 88,

@@ -127,12 +127,13 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   doc.restore();
 
   const logoX = x + 12;
-  const logoY = barY + Math.round((barH - logoSize) / 2) + 1;
+  const logoY = barY + Math.round((barH - logoSize) / 2);
   if (logoBuffer) {
     try {
       doc.image(logoBuffer, logoX, logoY, {
         fit: [logoSize, logoSize],
         align: "center",
+        valign: "center",
       });
     } catch {
       doc
@@ -438,7 +439,7 @@ function drawFooter(doc, { company, logoBuffer, hasBelindaFont }) {
   doc
     .fillColor(BRAND.text)
     .font("Helvetica")
-    .fontSize(10)
+    .fontSize(9)
     .text(
       paymentLines.length
         ? paymentLines.join("\n")
