@@ -114,7 +114,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   const x = X(doc);
   const y = Y(doc);
   const w = contentW(doc);
-  const barH = 64;
+  const barH = 70;
   const companyName = companyDisplayName(company);
   const topBarLines = topBarInfoLines(company);
 
@@ -126,7 +126,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   const logoX = x + 12;
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, logoX, y + 2, { fit: [48, 48], align: "center" });
+      doc.image(logoBuffer, logoX, y + 1, { fit: [56, 56], align: "center" });
     } catch {
       doc
         .fillColor(BRAND.white)
@@ -160,7 +160,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
     .fillColor(BRAND.white)
     .font("Helvetica-Bold")
     .fontSize(18)
-    .text(title, x + w - titleW - 10, y + 20, {
+    .text(title, x + w - titleW - 10, y + 23, {
       width: titleW,
       align: "right",
     });
@@ -279,7 +279,7 @@ function drawDocumentIntro(
   ].filter(Boolean);
   if (project?.projectName) rightMeta.push(project.projectName);
 
-  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(12);
+  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(10);
   doc.text(rightMeta.join("\n"), rightX, y + 6, {
     width: rightW,
     align: "right",

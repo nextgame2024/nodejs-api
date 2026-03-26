@@ -115,7 +115,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   const x = X(doc);
   const y = Y(doc);
   const w = contentW(doc);
-  const barH = 64;
+  const barH = 70;
   const companyName = companyDisplayName(company);
   const topBarLines = topBarInfoLines(company);
 
@@ -127,7 +127,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
   const logoX = x + 12;
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, logoX, y + 2, { fit: [48, 48], align: "center" });
+      doc.image(logoBuffer, logoX, y + 1, { fit: [56, 56], align: "center" });
     } catch {
       doc
         .fillColor(BRAND.white)
@@ -161,7 +161,7 @@ function drawHeader(doc, { title, logoBuffer, company }) {
     .fillColor(BRAND.white)
     .font("Helvetica-Bold")
     .fontSize(18)
-    .text(title, x + w - titleW - 10, y + 20, { width: titleW, align: "right" });
+    .text(title, x + w - titleW - 10, y + 23, { width: titleW, align: "right" });
 
   doc.y = y + barH + 8;
 }
@@ -274,7 +274,7 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
   ].filter(Boolean);
   if (project?.projectName) rightMeta.push(project.projectName);
 
-  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(12);
+  doc.fillColor(BRAND.muted).font("Helvetica").fontSize(10);
   doc.text(rightMeta.join("\n"), rightX, y + 6, {
     width: rightW,
     align: "right",
@@ -297,8 +297,8 @@ function drawDocumentIntro(doc, { document, company, client, project, logoBuffer
     clean(client?.phone),
   ].filter(Boolean);
 
-  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(12).text("Billed to:", x, billedY);
-  doc.fillColor(BRAND.text).font("Helvetica").fontSize(12).text(clientLines.join("\n"), x, billedY + 24, {
+  doc.fillColor(BRAND.text).font("Helvetica-Bold").fontSize(10).text("Billed to:", x, billedY);
+  doc.fillColor(BRAND.text).font("Helvetica").fontSize(10).text(clientLines.join("\n"), x, billedY + 24, {
     width: Math.floor(w * 0.72),
     lineGap: 2,
   });
