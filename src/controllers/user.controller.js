@@ -12,6 +12,9 @@ import pool from "../config/db.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
 const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
+const DEFAULT_REGISTRATION_COMPANY_ID =
+  process.env.REGISTRATION_COMPANY_ID ||
+  "81c2f065-aceb-4043-add5-b11271d21fb3";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 
 const isUniqueViolation = (e) =>
@@ -44,6 +47,7 @@ const mapUserResponse = (u, token) => ({
 export const registerUser = asyncHandler(async (req, res) => {
   const payload = req.body?.user || {};
   const { username, email, password } = payload;
+  const requestedCompanyId = payload.companyId ?? payload.company_id ?? null;
 
   if (!username || !email || !password) {
     return res
@@ -61,8 +65,6 @@ export const registerUser = asyncHandler(async (req, res) => {
     );
     companyId = rows[0]?.company_id ?? null;
     if (isSuperAdmin(req)) {
-      const requestedCompanyId =
-        payload.companyId ?? payload.company_id ?? null;
       if (!requestedCompanyId) {
         return res
           .status(400)
@@ -83,6 +85,21 @@ export const registerUser = asyncHandler(async (req, res) => {
       return res
         .status(403)
         .json({ error: "User is not assigned to a company" });
+    }
+  } else {
+    companyId = DEFAULT_REGISTRATION_COMPANY_ID;
+    if (requestedCompanyId && requestedCompanyId !== companyId) {
+      return res.status(400).json({ error: "Invalid companyId" });
+    }
+    const { rows: companyRows } = await pool.query(
+      `SELECT company_id
+       FROM bm_company
+       WHERE company_id = $1
+       LIMIT 1`,
+      [companyId],
+    );
+    if (!companyRows[0]?.company_id) {
+      return res.status(400).json({ error: "Invalid companyId" });
     }
   }
 
