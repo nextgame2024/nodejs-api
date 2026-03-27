@@ -5,6 +5,8 @@ const CLIENT_SELECT = `
   company_id AS "companyId",
   user_id AS "userId",
   client_name AS "clientName",
+  owner_name AS "ownerName",
+  abn,
   address,
   email,
   cel,
@@ -25,7 +27,9 @@ export async function listClients(companyId, { q, status, limit, offset }) {
     params.push(status);
   }
   if (q) {
-    where.push(`(client_name ILIKE $${i} OR email ILIKE $${i})`);
+    where.push(
+      `(client_name ILIKE $${i} OR owner_name ILIKE $${i} OR abn ILIKE $${i} OR email ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
@@ -56,7 +60,9 @@ export async function countClients(companyId, { q, status }) {
     params.push(status);
   }
   if (q) {
-    where.push(`(client_name ILIKE $${i} OR email ILIKE $${i})`);
+    where.push(
+      `(client_name ILIKE $${i} OR owner_name ILIKE $${i} OR abn ILIKE $${i} OR email ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
@@ -103,9 +109,9 @@ export async function createClient(companyId, userId, payload) {
   const { rows } = await pool.query(
     `
     INSERT INTO bm_clients (
-      client_id, company_id, user_id, client_name, address, email, cel, tel, notes
+      client_id, company_id, user_id, client_name, owner_name, abn, address, email, cel, tel, notes
     ) VALUES (
-      gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
+      gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
     )
     RETURNING ${CLIENT_SELECT}
     `,
@@ -113,6 +119,8 @@ export async function createClient(companyId, userId, payload) {
       companyId,
       userId,
       payload.client_name,
+      payload.owner_name ?? null,
+      payload.abn ?? null,
       payload.address ?? null,
       payload.email ?? null,
       payload.cel ?? null,
@@ -130,6 +138,8 @@ export async function updateClient(companyId, clientId, payload) {
 
   const map = {
     client_name: "client_name",
+    owner_name: "owner_name",
+    abn: "abn",
     address: "address",
     email: "email",
     cel: "cel",
