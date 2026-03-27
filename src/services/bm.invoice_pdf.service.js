@@ -70,6 +70,40 @@ function clean(value) {
   return text || null;
 }
 
+function decodeHtmlEntities(value) {
+  return String(value ?? "")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    )
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"');
+}
+
+function richTextToPlain(value) {
+  const raw = clean(value);
+  if (!raw) return null;
+
+  const normalized = decodeHtmlEntities(raw)
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*li[^>]*>/gi, "• ")
+    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr|ul|ol|blockquote)\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+
+  const text = decodeHtmlEntities(normalized)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return text || null;
+}
+
 function companyDisplayName(company) {
   return (
     clean(company?.legalName) ||
@@ -343,7 +377,7 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   const rightX = x + leftW + 14;
   const rightW = w - leftW - 14;
 
-  const safeScope = clean(scopeText) || "";
+  const safeScope = richTextToPlain(scopeText) || "";
   doc
     .fillColor(BRAND.mutedLight)
     .font("Helvetica")
@@ -532,7 +566,8 @@ export async function buildInvoicePdf({
   const tableW = contentW(doc);
   const costInQuote = project?.costInQuote ?? true;
 
-  if (!costInQuote && project?.description) {
+  const projectDescription = richTextToPlain(project?.description);
+  if (!costInQuote && projectDescription) {
     ensureSpace(doc, 36);
     doc
       .fillColor(BRAND.teal2)
@@ -543,7 +578,7 @@ export async function buildInvoicePdf({
       .fillColor(BRAND.text)
       .font("Helvetica")
       .fontSize(9)
-      .text(project.description, X(doc), doc.y + 14, {
+      .text(projectDescription, X(doc), doc.y + 14, {
         width: contentW(doc),
       });
     doc.moveDown(2.2);
