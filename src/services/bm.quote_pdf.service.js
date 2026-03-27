@@ -84,24 +84,335 @@ function decodeHtmlEntities(value) {
     .replace(/&quot;/gi, '"');
 }
 
-function richTextToPlain(value) {
+function decodeHtmlEntitiesDeep(value, iterations = 4) {
+  let current = String(value ?? "");
+  for (let i = 0; i < iterations; i += 1) {
+    const decoded = decodeHtmlEntities(current);
+    if (decoded === current) break;
+    current = decoded;
+  }
+  return current;
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseInlineFontSize(attrs) {
+  if (!attrs) return null;
+
+  const fontSizeAttr = attrs.match(/\bsize\s*=\s*["']?(\d+)["']?/i);
+  if (fontSizeAttr) {
+    const sizeMap = {
+      1: 8,
+      2: 9,
+      3: 10,
+      4: 12,
+      5: 14,
+      6: 18,
+      7: 24,
+    };
+    const mapped = sizeMap[Number(fontSizeAttr[1])];
+    if (mapped) return mapped;
+  }
+
+  const styleAttr =
+    attrs.match(/\bstyle\s*=\s*"([^"]*)"/i)?.[1] ||
+    attrs.match(/\bstyle\s*=\s*'([^']*)'/i)?.[1] ||
+    "";
+  if (!styleAttr) return null;
+
+  const sizeMatch = styleAttr.match(
+    /font-size\s*:\s*([0-9.]+)\s*(px|pt|em|rem)?/i,
+  );
+  if (!sizeMatch) return null;
+
+  const raw = Number(sizeMatch[1]);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+
+  const unit = (sizeMatch[2] || "px").toLowerCase();
+  let pt = raw;
+  if (unit === "px") pt = raw * 0.75;
+  if (unit === "em" || unit === "rem") pt = raw * 10;
+  return clampNumber(pt, 8, 24);
+}
+
+function parseBlockMeta(attrs) {
+  const meta = { align: null, indent: 0, fontSize: null };
+  if (!attrs) return meta;
+
+  const alignAttr = attrs.match(/\balign\s*=\s*["']?([a-z]+)["']?/i)?.[1];
+  if (alignAttr) {
+    const normalized = alignAttr.toLowerCase();
+    if (["left", "center", "right", "justify"].includes(normalized)) {
+      meta.align = normalized;
+    }
+  }
+
+  const styleAttr =
+    attrs.match(/\bstyle\s*=\s*"([^"]*)"/i)?.[1] ||
+    attrs.match(/\bstyle\s*=\s*'([^']*)'/i)?.[1] ||
+    "";
+  if (!styleAttr) return meta;
+
+  const alignStyle = styleAttr.match(/text-align\s*:\s*([a-z]+)/i)?.[1];
+  if (alignStyle) {
+    const normalized = alignStyle.toLowerCase();
+    if (["left", "center", "right", "justify"].includes(normalized)) {
+      meta.align = normalized;
+    }
+  }
+
+  const indentMatch = styleAttr.match(
+    /(margin-left|padding-left)\s*:\s*([0-9.]+)\s*(px|pt|em|rem)?/i,
+  );
+  if (indentMatch) {
+    const raw = Number(indentMatch[2]);
+    if (Number.isFinite(raw) && raw > 0) {
+      const unit = (indentMatch[3] || "px").toLowerCase();
+      let points = raw;
+      if (unit === "px") points = raw * 0.75;
+      if (unit === "em" || unit === "rem") points = raw * 10;
+      meta.indent = clampNumber(points, 0, 120);
+    }
+  }
+
+  const inlineFont = parseInlineFontSize(`style="${styleAttr}"`);
+  if (inlineFont) meta.fontSize = inlineFont;
+
+  return meta;
+}
+
+function richTextToStyledLines(value, defaultFontSize = 10) {
   const raw = clean(value);
-  if (!raw) return null;
+  if (!raw) return [];
 
-  const normalized = decodeHtmlEntities(raw)
-    .replace(/<\s*br\s*\/?>/gi, "\n")
-    .replace(/<\s*li[^>]*>/gi, "• ")
-    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr|ul|ol|blockquote)\s*>/gi, "\n")
-    .replace(/<[^>]+>/g, "");
-
-  const text = decodeHtmlEntities(normalized)
+  const source = decodeHtmlEntitiesDeep(raw)
     .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
+    .replace(/\r/g, "\n");
+  const tokens = source.match(/<[^>]+>|[^<]+/g) || [];
+
+  const blockStack = [{ align: "left", indent: 0, fontSize: null }];
+  const inlineFontStack = [];
+  let boldCount = 0;
+  let italicCount = 0;
+  let underlineCount = 0;
+  const lines = [];
+  let currentText = "";
+  let currentStyle = {
+    align: "left",
+    indent: 0,
+    bold: false,
+    italic: false,
+    underline: false,
+    fontSize: null,
+  };
+
+  const currentBlock = () => blockStack[blockStack.length - 1];
+  const currentInlineSize = () => {
+    for (let i = inlineFontStack.length - 1; i >= 0; i -= 1) {
+      if (inlineFontStack[i]) return inlineFontStack[i];
+    }
+    return null;
+  };
+  const effectiveFontSize = () =>
+    currentInlineSize() || currentBlock().fontSize || defaultFontSize;
+  const normalizeAlign = (value) =>
+    ["left", "center", "right", "justify"].includes(value) ? value : "left";
+  const hasVisibleText = () => currentText.replace(/\s+/g, "").length > 0;
+  const refreshStyle = () => {
+    currentStyle = {
+      align: normalizeAlign(currentBlock().align || "left"),
+      indent: Math.max(0, Number(currentBlock().indent || 0)),
+      bold: boldCount > 0,
+      italic: italicCount > 0,
+      underline: underlineCount > 0,
+      fontSize: effectiveFontSize(),
+    };
+  };
+
+  const flushLine = ({ preserveBlank = false } = {}) => {
+    const text = currentText.replace(/[ \t]+$/g, "");
+    if (text.trim().length > 0) {
+      lines.push({
+        text: text.trim(),
+        align: normalizeAlign(currentStyle.align),
+        indent: currentStyle.indent,
+        bold: currentStyle.bold,
+        italic: currentStyle.italic,
+        underline: currentStyle.underline,
+        fontSize: currentStyle.fontSize || defaultFontSize,
+      });
+    } else if (preserveBlank) {
+      lines.push({ blank: true });
+    }
+    currentText = "";
+    refreshStyle();
+  };
+
+  const appendText = (text) => {
+    if (!text) return;
+    const parts = text.split("\n");
+    parts.forEach((part, index) => {
+      if (part.length > 0) {
+        refreshStyle();
+        currentText += part;
+      }
+      if (index < parts.length - 1) {
+        flushLine({ preserveBlank: true });
+      }
+    });
+  };
+
+  const openBlock = (tagName, attrs) => {
+    if (hasVisibleText()) flushLine();
+    const parent = currentBlock();
+    const meta = parseBlockMeta(attrs);
+    const headingLevel = tagName.match(/^h([1-6])$/i)?.[1];
+    const headingSizeMap = { 1: 20, 2: 18, 3: 16, 4: 14, 5: 12, 6: 11 };
+    const headingSize = headingLevel
+      ? headingSizeMap[Number(headingLevel)] || 12
+      : null;
+    const block = {
+      align: meta.align || (tagName === "center" ? "center" : parent.align),
+      indent:
+        (parent.indent || 0) +
+        (meta.indent || 0) +
+        (tagName === "blockquote" ? 16 : 0) +
+        (tagName === "li" ? 10 : 0),
+      fontSize: meta.fontSize || headingSize || parent.fontSize || null,
+    };
+    blockStack.push(block);
+    if (headingLevel) boldCount += 1;
+    if (tagName === "li") appendText("• ");
+    refreshStyle();
+  };
+
+  const closeBlock = (tagName) => {
+    if (hasVisibleText()) flushLine();
+    if (tagName.match(/^h[1-6]$/i)) {
+      boldCount = Math.max(0, boldCount - 1);
+    }
+    if (blockStack.length > 1) blockStack.pop();
+    refreshStyle();
+  };
+
+  tokens.forEach((token) => {
+    if (token.startsWith("<")) {
+      const match = token.match(/^<\s*(\/?)\s*([a-z0-9]+)([^>]*)>/i);
+      if (!match) return;
+      const closing = Boolean(match[1]);
+      const tagName = match[2].toLowerCase();
+      const attrs = match[3] || "";
+      const selfClosing = /\/\s*>$/.test(token);
+
+      if (tagName === "br") {
+        flushLine({ preserveBlank: true });
+        return;
+      }
+
+      const isBlockTag =
+        tagName === "div" ||
+        tagName === "p" ||
+        tagName === "li" ||
+        tagName === "ul" ||
+        tagName === "ol" ||
+        tagName === "blockquote" ||
+        tagName === "center" ||
+        /^h[1-6]$/.test(tagName);
+
+      if (isBlockTag) {
+        if (closing || selfClosing) closeBlock(tagName);
+        else openBlock(tagName, attrs);
+        return;
+      }
+
+      if (!closing) {
+        if (tagName === "b" || tagName === "strong") boldCount += 1;
+        if (tagName === "i" || tagName === "em") italicCount += 1;
+        if (tagName === "u") underlineCount += 1;
+        if (tagName === "span" || tagName === "font") {
+          inlineFontStack.push(parseInlineFontSize(attrs));
+        }
+      } else {
+        if (tagName === "b" || tagName === "strong") {
+          boldCount = Math.max(0, boldCount - 1);
+        }
+        if (tagName === "i" || tagName === "em") {
+          italicCount = Math.max(0, italicCount - 1);
+        }
+        if (tagName === "u") {
+          underlineCount = Math.max(0, underlineCount - 1);
+        }
+        if ((tagName === "span" || tagName === "font") && inlineFontStack.length) {
+          inlineFontStack.pop();
+        }
+      }
+
+      refreshStyle();
+      return;
+    }
+
+    appendText(token);
+  });
+
+  if (hasVisibleText()) flushLine();
+
+  return lines;
+}
+
+function richTextToPlain(value) {
+  const lines = richTextToStyledLines(value, 10);
+  if (!lines.length) return null;
+  const text = lines
+    .map((line) => (line.blank ? "" : line.text))
+    .join("\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-
   return text || null;
+}
+
+function richTextFontName({ bold, italic }) {
+  if (bold && italic) return "Helvetica-BoldOblique";
+  if (bold) return "Helvetica-Bold";
+  if (italic) return "Helvetica-Oblique";
+  return "Helvetica";
+}
+
+function drawRichTextBlock(doc, value, x, y, width, options = {}) {
+  const defaultFontSize = options.defaultFontSize || 10;
+  const color = options.color || BRAND.mutedLight;
+  const lineGap = Number.isFinite(options.lineGap) ? options.lineGap : 2;
+  const lines = richTextToStyledLines(value, defaultFontSize);
+  if (!lines.length) return { height: 0 };
+
+  let cursorY = y;
+  lines.forEach((line) => {
+    if (line.blank) {
+      cursorY += Math.max(4, defaultFontSize * 0.66);
+      return;
+    }
+
+    const indent = clampNumber(Number(line.indent || 0), 0, Math.max(0, width - 12));
+    const drawW = Math.max(12, width - indent);
+    doc
+      .fillColor(color)
+      .font(richTextFontName(line))
+      .fontSize(clampNumber(Number(line.fontSize || defaultFontSize), 8, 24))
+      .text(line.text, x + indent, cursorY, {
+        width: drawW,
+        align: ["left", "center", "right", "justify"].includes(line.align)
+          ? line.align
+          : "left",
+        lineGap,
+        underline: Boolean(line.underline),
+      });
+    cursorY = doc.y;
+  });
+
+  return { height: Math.max(0, cursorY - y) };
 }
 
 function companyDisplayName(company) {
@@ -364,13 +675,12 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
   const rightX = x + leftW + 14;
   const rightW = w - leftW - 14;
 
-  const safeScope = richTextToPlain(scopeText) || "";
-  doc
-    .fillColor(BRAND.mutedLight)
-    .font("Helvetica")
-    .fontSize(10)
-    .text(safeScope, x, y, { width: leftW, lineGap: 3 });
-  const leftHeight = doc.heightOfString(safeScope, { width: leftW, lineGap: 3 });
+  const scopeLayout = drawRichTextBlock(doc, scopeText, x, y, leftW, {
+    defaultFontSize: 10,
+    color: BRAND.mutedLight,
+    lineGap: 2,
+  });
+  const leftHeight = scopeLayout.height;
 
   let rowY = y + 4;
   const summaryRows = totals.filter(([label]) => label !== "Total");
