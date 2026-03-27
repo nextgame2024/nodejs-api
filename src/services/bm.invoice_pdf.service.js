@@ -305,6 +305,8 @@ function drawDocumentIntro(
   const billedY = y + 2;
   const clientLines = [
     clean(client?.clientName),
+    clean(client?.ownerName),
+    clean(client?.abn) ? `Abn: ${clean(client?.abn)}` : null,
     clean(client?.email),
     clean(client?.address),
     clean(client?.phone),
