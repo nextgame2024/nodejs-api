@@ -20,6 +20,8 @@ const mapUserResponse = (u, token) => ({
   contacts: u.contacts ?? null,
   type: u.type ?? null,
   status: u.status ?? null,
+  companyId: u.companyId ?? null,
+  companyName: u.companyName ?? null,
 
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),
