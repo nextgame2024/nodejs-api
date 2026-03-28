@@ -385,8 +385,26 @@ function drawRichTextBlock(doc, value, x, y, width, options = {}) {
   const defaultFontSize = options.defaultFontSize || 10;
   const color = options.color || BRAND.mutedLight;
   const lineGap = Number.isFinite(options.lineGap) ? options.lineGap : 2;
+  const headingLabels = Array.isArray(options.headingLabels)
+    ? options.headingLabels
+    : [];
+  const stripBold = Boolean(options.stripBold);
   const lines = richTextToStyledLines(value, defaultFontSize);
   if (!lines.length) return { height: 0 };
+
+  const normalizedHeading = (value) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  const isHeadingLine = (text) => {
+    if (!headingLabels.length) return false;
+    const normalized = normalizedHeading(text);
+    return headingLabels.some((label) => {
+      const target = normalizedHeading(label);
+      return normalized === target || normalized.startsWith(`${target}:`);
+    });
+  };
 
   let cursorY = y;
   lines.forEach((line) => {
@@ -397,9 +415,12 @@ function drawRichTextBlock(doc, value, x, y, width, options = {}) {
 
     const indent = clampNumber(Number(line.indent || 0), 0, Math.max(0, width - 12));
     const drawW = Math.max(12, width - indent);
+    const heading = isHeadingLine(line.text);
+    const bold = heading ? true : stripBold ? false : Boolean(line.bold);
+    const fontName = richTextFontName({ bold, italic: line.italic });
     doc
       .fillColor(color)
-      .font(richTextFontName(line))
+      .font(fontName)
       .fontSize(clampNumber(Number(line.fontSize || defaultFontSize), 8, 24))
       .text(line.text, x + indent, cursorY, {
         width: drawW,
@@ -692,6 +713,8 @@ function drawScopeAndTotals(doc, { scopeText, totals }) {
     defaultFontSize: 10,
     color: BRAND.mutedLight,
     lineGap: 2,
+    headingLabels: ["Design Specification", "Terms"],
+    stripBold: true,
   });
   const leftHeight = scopeLayout.height;
 
