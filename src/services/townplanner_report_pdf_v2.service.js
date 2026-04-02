@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-03-22.64";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-02.65";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -2271,10 +2271,12 @@ export async function buildTownPlannerReportPdfV2(
       stateMappingPages > 0 ? overlayStart + overlayPages : null;
     const nonSaraStart =
       nonSaraPages > 0 ? overlayStart + overlayPages + stateMappingPages : null;
-    const lotSizeAndDimensions =
-      overlayStart + overlayPages + stateMappingPages + nonSaraPages;
-    const damsStart = damsPages > 0 ? lotSizeAndDimensions + 1 : null;
-    const glossary = lotSizeAndDimensions + 1 + damsPages;
+    const damsStart =
+      damsPages > 0
+        ? overlayStart + overlayPages + stateMappingPages + nonSaraPages
+        : null;
+    const glossary =
+      overlayStart + overlayPages + stateMappingPages + nonSaraPages + damsPages;
     const disclaimer = glossary + glossaryPages;
 
     return {
@@ -2285,7 +2287,6 @@ export async function buildTownPlannerReportPdfV2(
       overlayStart,
       stateMappingStart,
       nonSaraStart,
-      lotSizeAndDimensions,
       damsStart,
       glossary,
       disclaimer,
@@ -2357,6 +2358,7 @@ export async function buildTownPlannerReportPdfV2(
     return [
       { label: "Table of contents", page: pages.tableOfContents, level: 0 },
       { label: "Site Overview", page: pages.siteOverview, level: 0 },
+      { label: "Lot size and dimensions", page: pages.siteOverview, level: 1 },
       { label: "Zoning", page: pages.siteOverview, level: 1 },
       { label: "Neighbourhood plan", page: pages.siteOverview, level: 1 },
       { label: "Overlays", page: pages.siteOverview, level: 1 },
@@ -2395,11 +2397,6 @@ export async function buildTownPlannerReportPdfV2(
             })),
           ]
         : []),
-      {
-        label: "Lot size and dimensions",
-        page: pages.lotSizeAndDimensions,
-        level: 0,
-      },
       ...(damsPages > 0
         ? [
             {
@@ -2644,14 +2641,14 @@ export async function buildTownPlannerReportPdfV2(
       .text("Site overview", x, top);
 
     // Map should fill container (cover) to remove right whitespace
-    const mapY = top + 50;
-    const mapH = 270;
+    const mapY = top + 36;
+    const mapH = 200;
     drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
 
-    const tilesY = mapY + mapH + 16;
+    const tilesY = mapY + mapH + 12;
     const gap = 12;
     const colW = (w - gap) / 2;
-    const colH = 260;
+    const colH = 360;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
@@ -2689,16 +2686,68 @@ export async function buildTownPlannerReportPdfV2(
     const leftX = x;
     const rightX = x + colW + gap;
 
-    const leftTopH = 90;
-    const leftBottomH = colH - leftTopH - gap;
+    const lotCardH = 130;
+    const zoneCardH = 86;
+    const leftBottomH = colH - lotCardH - zoneCardH - gap * 2;
 
-    box(doc, leftX, tilesY, colW, leftTopH);
+    const dimsText = lotDimensions
+      ? `${formatLengthM(lotDimensions.longSideM)} × ${formatLengthM(lotDimensions.shortSideM)}`
+      : "N/A";
+    const lotLines = [
+      `Lot/Plan: ${lotPlanLine || "N/A"}`,
+      `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
+      `Estimated dimensions (approx. envelope): ${dimsText}`,
+      `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
+      `Coordinates: ${formatCoords(lat, lng)}`,
+    ];
+    const lotNoteText =
+      "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
+
+    box(doc, leftX, tilesY, colW, lotCardH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
-      .text("Zone and categories of assessment", leftX + 14, tilesY + 12);
-    boundedText(doc, "Zone", leftX + 14, tilesY + 34, colW - 28, 14, {
+      .text("Lot size and dimensions", leftX + 14, tilesY + 12);
+    const lotContentY = tilesY + 34;
+    const lotContentH = lotCardH - 34 - 34;
+    boundedText(
+      doc,
+      lotLines.join("\n"),
+      leftX + 14,
+      lotContentY,
+      colW - 28,
+      lotContentH,
+      {
+        font: "Helvetica",
+        fontSize: 9,
+        color: BRAND.muted,
+        ellipsis: true,
+      },
+    );
+    boundedText(
+      doc,
+      lotNoteText,
+      leftX + 14,
+      lotContentY + lotContentH + 4,
+      colW - 28,
+      30,
+      {
+        font: "Helvetica",
+        fontSize: 8,
+        color: BRAND.muted,
+        ellipsis: true,
+      },
+    );
+
+    const zoneY = tilesY + lotCardH + gap;
+    box(doc, leftX, zoneY, colW, zoneCardH);
+    doc
+      .fillColor(BRAND.teal2)
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .text("Zone and categories of assessment", leftX + 14, zoneY + 12);
+    boundedText(doc, "Zone", leftX + 14, zoneY + 30, colW - 28, 12, {
       font: "Helvetica",
       fontSize: 9,
       color: BRAND.muted,
@@ -2708,18 +2757,18 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       String(zoneDisplay),
       leftX + 14,
-      tilesY + 48,
+      zoneY + 44,
       colW - 28,
-      60,
+      zoneCardH - 52,
       {
         font: "Helvetica-Bold",
-        fontSize: 11,
+        fontSize: 10,
         color: BRAND.text,
         ellipsis: true,
       },
     );
 
-    const npY = tilesY + leftTopH + gap;
+    const npY = zoneY + zoneCardH + gap;
     box(doc, leftX, npY, colW, leftBottomH);
     doc
       .fillColor(BRAND.teal2)
@@ -2730,19 +2779,19 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       "Neighbourhood plan",
       leftX + 14,
-      npY + 34,
+      npY + 28,
       colW - 28,
-      14,
+      12,
       {
         font: "Helvetica",
-        fontSize: 9,
+        fontSize: 8.5,
         color: BRAND.muted,
         ellipsis: false,
       },
     );
-    boundedText(doc, String(np), leftX + 14, npY + 48, colW - 28, 22, {
+    boundedText(doc, String(np), leftX + 14, npY + 40, colW - 28, 18, {
       font: "Helvetica-Bold",
-      fontSize: 11,
+      fontSize: 10,
       color: BRAND.text,
       ellipsis: true,
     });
@@ -2750,12 +2799,12 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       "Table of assessment",
       leftX + 14,
-      npY + 76,
+      npY + 60,
       colW - 28,
-      14,
+      12,
       {
         font: "Helvetica",
-        fontSize: 9,
+        fontSize: 8.5,
         color: BRAND.muted,
         ellipsis: false,
       },
@@ -2765,7 +2814,7 @@ export async function buildTownPlannerReportPdfV2(
         .fillColor(BRAND.link)
         .font("Helvetica-Bold")
         .fontSize(9)
-        .text(String(npTableText), leftX + 14, npY + 90, {
+        .text(String(npTableText), leftX + 14, npY + 72, {
           width: colW - 28,
           underline: true,
         });
@@ -2774,28 +2823,27 @@ export async function buildTownPlannerReportPdfV2(
         doc,
         String(npTableText),
         leftX + 14,
-        npY + 90,
+        npY + 72,
         colW - 28,
-        40,
+        18,
         {
           font: "Helvetica-Bold",
           fontSize: 9,
           color: BRAND.text,
-          ellipsis: false,
+          ellipsis: true,
         },
       );
     }
     if (npTableUrl) {
-      // Make table text clickable
-      addExternalLink(doc, leftX + 14, npY + 90, colW - 28, 40, npTableUrl);
+      addExternalLink(doc, leftX + 14, npY + 72, colW - 28, 18, npTableUrl);
     }
-    boundedText(doc, "Precinct", leftX + 14, npY + 124, colW - 28, 14, {
+    boundedText(doc, "Precinct", leftX + 14, npY + 92, colW - 28, 12, {
       font: "Helvetica",
-      fontSize: 9,
+      fontSize: 8.5,
       color: BRAND.muted,
       ellipsis: false,
     });
-    boundedText(doc, String(precinct), leftX + 14, npY + 138, colW - 28, 20, {
+    boundedText(doc, String(precinct), leftX + 14, npY + 104, colW - 28, 16, {
       font: "Helvetica-Bold",
       fontSize: 10,
       color: BRAND.text,
@@ -3464,113 +3512,6 @@ export async function buildTownPlannerReportPdfV2(
       renderNonSaraMappingPage(item);
     }
   }
-
-  const renderDevelopmentControlsPage = () => {
-    doc.addPage();
-    {
-      header(doc, {
-        title: "Lot size and dimensions",
-        addressLabel,
-        schemeVersion,
-        logoBuffer,
-      });
-
-      const x = X(doc);
-      const w = contentW(doc);
-      const top = Y(doc) + 84;
-
-      doc
-        .fillColor(BRAND.text)
-        .font("Helvetica-Bold")
-        .fontSize(20)
-        .text("Lot size and dimensions", x, top);
-      boundedText(
-        doc,
-        "This section provides an indicative summary of lot size and dimensions for the selected property.",
-        x,
-        top + 26,
-        w,
-        18,
-        { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
-      );
-
-      const srcY = top + 60;
-      box(doc, x, srcY, w, 540);
-      doc
-        .fillColor(BRAND.teal2)
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text("Lot size and dimensions", x + 14, srcY + 12);
-
-      const lotMapBuffer = parcelRoadMap || siteContextMap || null;
-      const mapY = srcY + 34;
-      const mapH = 250;
-      drawCoverImageInRoundedBox(
-        doc,
-        lotMapBuffer,
-        x + 14,
-        mapY,
-        w - 28,
-        mapH,
-        10,
-      );
-      if (!lotMapBuffer) {
-        doc
-          .fillColor(BRAND.muted)
-          .font("Helvetica")
-          .fontSize(10)
-          .text("Map not available.", x + 14, mapY + mapH / 2 - 6, {
-            width: w - 28,
-            align: "center",
-          });
-      }
-
-      const dimsText = lotDimensions
-        ? `${formatLengthM(lotDimensions.longSideM)} × ${formatLengthM(lotDimensions.shortSideM)}`
-        : "N/A";
-
-      const lines = [
-        `Lot/Plan: ${lotPlanLine || "N/A"}`,
-        `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
-        `Estimated dimensions (approx. envelope): ${dimsText}`,
-        `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
-        `Coordinates: ${formatCoords(lat, lng)}`,
-      ];
-      if (Number.isFinite(reportedFrontageM) && reportedFrontageM > 0) {
-        lines.splice(
-          4,
-          0,
-          `Reported street frontage: ${formatLengthM(reportedFrontageM)}`,
-        );
-      }
-      const noteText =
-        "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
-
-      boundedText(
-        doc,
-        lines.join("\n"),
-        x + 14,
-        mapY + mapH + 14,
-        w - 28,
-        140,
-        {
-          font: "Helvetica",
-          fontSize: 9,
-          color: BRAND.muted,
-          ellipsis: true,
-        },
-      );
-      boundedText(doc, noteText, x + 14, mapY + mapH + 156, w - 28, 90, {
-        font: "Helvetica",
-        fontSize: 9,
-        color: BRAND.muted,
-        ellipsis: true,
-      });
-    }
-  };
-
-  // ========== NEXT PAGE: LOT SIZE & DIMENSIONS ==========
-  renderDevelopmentControlsPage();
 
   const formatDamsFieldLabel = (key) =>
     String(key || "")
