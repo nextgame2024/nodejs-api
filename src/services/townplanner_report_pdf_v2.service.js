@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-02.65";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.66";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -2641,14 +2641,15 @@ export async function buildTownPlannerReportPdfV2(
       .text("Site overview", x, top);
 
     // Map should fill container (cover) to remove right whitespace
-    const mapY = top + 36;
+    const mapY = top + 32;
     const mapH = 200;
     drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
 
     const tilesY = mapY + mapH + 12;
     const gap = 12;
-    const colW = (w - gap) / 2;
-    const colH = 360;
+    const leftW = (w - gap) * 0.58;
+    const rightW = (w - gap) * 0.42;
+    const colH = 380;
 
     const zoningText = planningSnapshot?.zoning || "Not mapped";
     const zoningCode = planningSnapshot?.zoningCode || "N/A";
@@ -2684,10 +2685,10 @@ export async function buildTownPlannerReportPdfV2(
     const npTableUrl = npRef?.sourceUrl || npSource?.sourceUrl || null;
 
     const leftX = x;
-    const rightX = x + colW + gap;
+    const rightX = x + leftW + gap;
 
-    const lotCardH = 130;
-    const zoneCardH = 86;
+    const lotCardH = 150;
+    const zoneCardH = 90;
     const leftBottomH = colH - lotCardH - zoneCardH - gap * 2;
 
     const dimsText = lotDimensions
@@ -2703,26 +2704,26 @@ export async function buildTownPlannerReportPdfV2(
     const lotNoteText =
       "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
 
-    box(doc, leftX, tilesY, colW, lotCardH);
+    box(doc, leftX, tilesY, leftW, lotCardH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Lot size and dimensions", leftX + 14, tilesY + 12);
     const lotContentY = tilesY + 34;
-    const lotContentH = lotCardH - 34 - 34;
+    const lotContentH = lotCardH - 34 - 40;
     boundedText(
       doc,
       lotLines.join("\n"),
       leftX + 14,
       lotContentY,
-      colW - 28,
+      leftW - 28,
       lotContentH,
       {
         font: "Helvetica",
         fontSize: 9,
         color: BRAND.muted,
-        ellipsis: true,
+        ellipsis: false,
       },
     );
     boundedText(
@@ -2730,24 +2731,24 @@ export async function buildTownPlannerReportPdfV2(
       lotNoteText,
       leftX + 14,
       lotContentY + lotContentH + 4,
-      colW - 28,
-      30,
+      leftW - 28,
+      36,
       {
         font: "Helvetica",
-        fontSize: 8,
+        fontSize: 8.5,
         color: BRAND.muted,
-        ellipsis: true,
+        ellipsis: false,
       },
     );
 
     const zoneY = tilesY + lotCardH + gap;
-    box(doc, leftX, zoneY, colW, zoneCardH);
+    box(doc, leftX, zoneY, leftW, zoneCardH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
       .fontSize(10)
       .text("Zone and categories of assessment", leftX + 14, zoneY + 12);
-    boundedText(doc, "Zone", leftX + 14, zoneY + 30, colW - 28, 12, {
+    boundedText(doc, "Zone", leftX + 14, zoneY + 30, leftW - 28, 16, {
       font: "Helvetica",
       fontSize: 9,
       color: BRAND.muted,
@@ -2758,7 +2759,7 @@ export async function buildTownPlannerReportPdfV2(
       String(zoneDisplay),
       leftX + 14,
       zoneY + 44,
-      colW - 28,
+      leftW - 28,
       zoneCardH - 52,
       {
         font: "Helvetica-Bold",
@@ -2769,7 +2770,7 @@ export async function buildTownPlannerReportPdfV2(
     );
 
     const npY = zoneY + zoneCardH + gap;
-    box(doc, leftX, npY, colW, leftBottomH);
+    box(doc, leftX, npY, leftW, leftBottomH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
@@ -2780,7 +2781,7 @@ export async function buildTownPlannerReportPdfV2(
       "Neighbourhood plan",
       leftX + 14,
       npY + 28,
-      colW - 28,
+      leftW - 28,
       12,
       {
         font: "Helvetica",
@@ -2789,7 +2790,7 @@ export async function buildTownPlannerReportPdfV2(
         ellipsis: false,
       },
     );
-    boundedText(doc, String(np), leftX + 14, npY + 40, colW - 28, 18, {
+    boundedText(doc, String(np), leftX + 14, npY + 40, leftW - 28, 18, {
       font: "Helvetica-Bold",
       fontSize: 10,
       color: BRAND.text,
@@ -2800,7 +2801,7 @@ export async function buildTownPlannerReportPdfV2(
       "Table of assessment",
       leftX + 14,
       npY + 60,
-      colW - 28,
+      leftW - 28,
       12,
       {
         font: "Helvetica",
@@ -2815,7 +2816,7 @@ export async function buildTownPlannerReportPdfV2(
         .font("Helvetica-Bold")
         .fontSize(9)
         .text(String(npTableText), leftX + 14, npY + 72, {
-          width: colW - 28,
+          width: leftW - 28,
           underline: true,
         });
     } else {
@@ -2824,7 +2825,7 @@ export async function buildTownPlannerReportPdfV2(
         String(npTableText),
         leftX + 14,
         npY + 72,
-        colW - 28,
+        leftW - 28,
         18,
         {
           font: "Helvetica-Bold",
@@ -2835,22 +2836,22 @@ export async function buildTownPlannerReportPdfV2(
       );
     }
     if (npTableUrl) {
-      addExternalLink(doc, leftX + 14, npY + 72, colW - 28, 18, npTableUrl);
+      addExternalLink(doc, leftX + 14, npY + 72, leftW - 28, 18, npTableUrl);
     }
-    boundedText(doc, "Precinct", leftX + 14, npY + 92, colW - 28, 12, {
+    boundedText(doc, "Precinct", leftX + 14, npY + 92, leftW - 28, 12, {
       font: "Helvetica",
       fontSize: 8.5,
       color: BRAND.muted,
       ellipsis: false,
     });
-    boundedText(doc, String(precinct), leftX + 14, npY + 104, colW - 28, 16, {
+    boundedText(doc, String(precinct), leftX + 14, npY + 104, leftW - 28, 16, {
       font: "Helvetica-Bold",
       fontSize: 10,
       color: BRAND.text,
       ellipsis: true,
     });
 
-    box(doc, rightX, tilesY, colW, colH);
+    box(doc, rightX, tilesY, rightW, colH);
     doc
       .fillColor(BRAND.teal2)
       .font("Helvetica-Bold")
@@ -2864,7 +2865,7 @@ export async function buildTownPlannerReportPdfV2(
       listLines.join("\n"),
       rightX + 14,
       tilesY + 34,
-      colW - 28,
+      rightW - 28,
       colH - 48,
       {
         font: "Helvetica",
