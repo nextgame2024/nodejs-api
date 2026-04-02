@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.66";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.67";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -2687,8 +2687,8 @@ export async function buildTownPlannerReportPdfV2(
     const leftX = x;
     const rightX = x + leftW + gap;
 
-    const lotCardH = 150;
-    const zoneCardH = 90;
+    const lotCardH = 172;
+    const zoneCardH = 76;
     const leftBottomH = colH - lotCardH - zoneCardH - gap * 2;
 
     const dimsText = lotDimensions
@@ -2702,7 +2702,7 @@ export async function buildTownPlannerReportPdfV2(
       `Coordinates: ${formatCoords(lat, lng)}`,
     ];
     const lotNoteText =
-      "Some values on this page are approximate and calculated from parcel geometry available in City Plan 2014 data. For legal or survey-verified dimensions, refer to official cadastral and title records.";
+      "Some values in this section are approximate and derived from parcel geometry in City Plan 2014 data. For legal or survey-confirmed dimensions, refer to official cadastral or title records.";
 
     box(doc, leftX, tilesY, leftW, lotCardH);
     doc
