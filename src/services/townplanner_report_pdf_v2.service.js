@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.78";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.79";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -2085,30 +2085,29 @@ export async function buildTownPlannerReportPdfV2(
     const mapPaddingPx = isWaterResources ? 120 : 66;
     const hasOverlayForMap = parcelFeature && (overlayFeature || waterDotLayer);
 
-    let mapBuffer =
-      hasOverlayForMap
-        ? await getParcelOverlayMapImageBufferV2({
-            apiKey,
-            center,
-            parcelGeoJson: parcelFeature,
-            overlayGeoJson: overlayFeature,
-            overlayLayers: waterOverlayLayers,
-            parcelColor: parcelStyle.color,
-            parcelFill: parcelStyle.fill,
-            parcelWeight: 4,
-            overlayColor: overlayStyle.outline,
-            overlayFill: overlayStyle.fill,
-            overlayWeight: 2,
-            zoom: mapZoom,
-            zoomNudge: mapZoomNudge,
-            fitToParcel: isWaterResources,
-            paddingPx: mapPaddingPx,
-            maptype: seqMapType,
-            size: "640x360",
-            scale: 2,
-            styles: seqMapStyles,
-          }).catch(() => null)
-        : null;
+    let mapBuffer = hasOverlayForMap
+      ? await getParcelOverlayMapImageBufferV2({
+          apiKey,
+          center,
+          parcelGeoJson: parcelFeature,
+          overlayGeoJson: overlayFeature,
+          overlayLayers: waterOverlayLayers,
+          parcelColor: parcelStyle.color,
+          parcelFill: parcelStyle.fill,
+          parcelWeight: 4,
+          overlayColor: overlayStyle.outline,
+          overlayFill: overlayStyle.fill,
+          overlayWeight: 2,
+          zoom: mapZoom,
+          zoomNudge: mapZoomNudge,
+          fitToParcel: isWaterResources,
+          paddingPx: mapPaddingPx,
+          maptype: seqMapType,
+          size: "640x360",
+          scale: 2,
+          styles: seqMapStyles,
+        }).catch(() => null)
+      : null;
 
     if (!mapBuffer && parcelFeature) {
       mapBuffer = await getParcelMapImageBufferV2({
