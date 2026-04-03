@@ -760,77 +760,6 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
   });
 }
 
-function buildDotGridOverlayGeoJson(
-  parcelGeometry,
-  centerPoint,
-  { maxDots = 600, minStep = 0.00025, maxStep = 0.001, stepDivisor = 55 } = {},
-) {
-  let minLng = null;
-  let minLat = null;
-  let maxLng = null;
-  let maxLat = null;
-
-  try {
-    const parcelFeature = featureFromGeometry(parcelGeometry);
-    const b = parcelFeature ? turf.bbox(parcelFeature) : null;
-    if (Array.isArray(b) && b.length === 4) {
-      [minLng, minLat, maxLng, maxLat] = b;
-      const width = Math.max(0.0001, maxLng - minLng);
-      const height = Math.max(0.0001, maxLat - minLat);
-      const padLng = Math.max(width * 4, 0.0032);
-      const padLat = Math.max(height * 4, 0.0024);
-      minLng -= padLng;
-      maxLng += padLng;
-      minLat -= padLat;
-      maxLat += padLat;
-    }
-  } catch {}
-
-  if (
-    !Number.isFinite(minLng) ||
-    !Number.isFinite(minLat) ||
-    !Number.isFinite(maxLng) ||
-    !Number.isFinite(maxLat)
-  ) {
-    const lat = Number(centerPoint?.lat);
-    const lng = Number(centerPoint?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    minLng = lng - 0.0055;
-    maxLng = lng + 0.0055;
-    minLat = lat - 0.0042;
-    maxLat = lat + 0.0042;
-  }
-
-  const width = maxLng - minLng;
-  const height = maxLat - minLat;
-  if (!(width > 0 && height > 0)) return null;
-
-  const span = width + height;
-  const step = Math.max(Math.min(span / stepDivisor, maxStep), minStep);
-  const dot = Math.max(step * 0.4, step * 0.18);
-  const limit = Math.max(60, Math.floor(Number(maxDots) || 600));
-
-  const lines = [];
-  let row = 0;
-  for (let y = minLat; y <= maxLat; y += step) {
-    const rowOffset = row % 2 ? step * 0.5 : 0;
-    for (let x = minLng + rowOffset; x <= maxLng; x += step) {
-      lines.push([
-        [x, y],
-        [x + dot, y],
-      ]);
-      if (lines.length >= limit) break;
-    }
-    if (lines.length >= limit) break;
-    row += 1;
-  }
-
-  if (!lines.length) return null;
-  return featureFromGeometry({
-    type: "MultiLineString",
-    coordinates: lines,
-  });
-}
 
 function lineCandidatesFromGeometry(geometry) {
   if (!geometry) return [];
@@ -2037,7 +1966,7 @@ export async function buildTownPlannerReportPdfV2(
     })();
     const waterLayerStyle =
       String(code || "") === waterResourcesCode
-        ? { outline: "0x5dade2ff", fill: "0x00000000" }
+        ? { outline: "0x5dade2ff", fill: "0xcfeeff70" }
         : null;
     const seqLayerStyle =
       String(code || "") === seqRegionalPlanCode && seqCategoryStyle
@@ -2051,39 +1980,10 @@ export async function buildTownPlannerReportPdfV2(
     const seqMapStyles = null;
     const seqMapType = "hybrid";
     const parcelStyle = { color: "0xff0000ff", fill: "0x00000000" };
-    const waterDotGeoJson = isWaterResources
-      ? buildDotGridOverlayGeoJson(parcelGeom, center, { maxDots: 600 })
-      : null;
-    const waterDotLayer = waterDotGeoJson
-      ? {
-          geoJson: waterDotGeoJson,
-          color: "0x5dade2ff",
-          fill: "0x00000000",
-          weight: 2,
-          maxLines: 220,
-          preserveLineOrder: true,
-          spreadLines: true,
-        }
-      : null;
-    const waterOverlayLayers = isWaterResources
-      ? [
-          ...(waterDotLayer ? [waterDotLayer] : []),
-          ...(overlayFeature
-            ? [
-                {
-                  geoJson: overlayFeature,
-                  color: overlayStyle.outline,
-                  fill: overlayStyle.fill,
-                  weight: 2,
-                },
-              ]
-            : []),
-        ].filter(Boolean)
-      : null;
     const mapZoom = isWaterResources ? 19 : 19;
     const mapZoomNudge = isWaterResources ? 0 : 2;
     const mapPaddingPx = isWaterResources ? 120 : 66;
-    const hasOverlayForMap = parcelFeature && (overlayFeature || waterDotLayer);
+    const hasOverlayForMap = parcelFeature && overlayFeature;
 
     let mapBuffer = hasOverlayForMap
       ? await getParcelOverlayMapImageBufferV2({
@@ -2091,7 +1991,6 @@ export async function buildTownPlannerReportPdfV2(
           center,
           parcelGeoJson: parcelFeature,
           overlayGeoJson: overlayFeature,
-          overlayLayers: waterOverlayLayers,
           parcelColor: parcelStyle.color,
           parcelFill: parcelStyle.fill,
           parcelWeight: 4,
