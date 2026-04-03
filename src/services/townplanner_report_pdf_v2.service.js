@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.69";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.70";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1844,32 +1844,26 @@ export async function buildTownPlannerReportPdfV2(
     )
       .toLowerCase()
       .trim();
-    const seqBgColor = (() => {
+    const seqCategoryStyle = (() => {
       if (!seqCategory) return null;
       if (
         seqCategory.includes("regional landscape") ||
         seqCategory.includes("rural production")
       ) {
-        return "0xf1f1f1";
+        return { outline: "0x9e9e9eff", fill: "0xf1f1f180" };
       }
-      if (seqCategory.includes("rural living")) return "0xfff2cc";
-      if (seqCategory.includes("urban footprint")) return "0xffe2e2";
+      if (seqCategory.includes("rural living"))
+        return { outline: "0xf4b400ff", fill: "0xfff2cc80" };
+      if (seqCategory.includes("urban footprint"))
+        return { outline: "0xe57373ff", fill: "0xffd6d680" };
       return null;
     })();
-    const seqMapStyles =
-      String(code || "") === seqRegionalPlanCode && seqBgColor
-        ? [
-            "feature:all|saturation:-20|lightness:10",
-            "feature:poi|visibility:off",
-            "feature:transit|visibility:off",
-            `feature:landscape|color:${seqBgColor}`,
-            "feature:water|color:0xdde7f2",
-          ]
+    const seqLayerStyle =
+      String(code || "") === seqRegionalPlanCode && seqCategoryStyle
+        ? seqCategoryStyle
         : null;
-    const seqMapType =
-      String(code || "") === seqRegionalPlanCode && seqBgColor
-        ? "roadmap"
-        : "hybrid";
+    const seqMapStyles = null;
+    const seqMapType = "hybrid";
 
     let mapBuffer =
       parcelFeature && overlayFeature
@@ -1881,8 +1875,8 @@ export async function buildTownPlannerReportPdfV2(
             parcelColor: "0xff0000ff",
             parcelFill: "0x00000000",
             parcelWeight: 4,
-            overlayColor: style.outline,
-            overlayFill: style.fill,
+            overlayColor: (seqLayerStyle || style).outline,
+            overlayFill: (seqLayerStyle || style).fill,
             overlayWeight: 2,
             zoom: 19,
             zoomNudge: 2,
