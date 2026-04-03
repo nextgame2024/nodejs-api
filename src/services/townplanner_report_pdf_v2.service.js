@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.77";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.78";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -754,6 +754,78 @@ function buildCriticalOverlayHatchGeoJson(parcelGeometry, centerPoint) {
     if (lines.length >= 900) break;
   }
 
+  return featureFromGeometry({
+    type: "MultiLineString",
+    coordinates: lines,
+  });
+}
+
+function buildDotGridOverlayGeoJson(
+  parcelGeometry,
+  centerPoint,
+  { maxDots = 600, minStep = 0.00025, maxStep = 0.001, stepDivisor = 55 } = {},
+) {
+  let minLng = null;
+  let minLat = null;
+  let maxLng = null;
+  let maxLat = null;
+
+  try {
+    const parcelFeature = featureFromGeometry(parcelGeometry);
+    const b = parcelFeature ? turf.bbox(parcelFeature) : null;
+    if (Array.isArray(b) && b.length === 4) {
+      [minLng, minLat, maxLng, maxLat] = b;
+      const width = Math.max(0.0001, maxLng - minLng);
+      const height = Math.max(0.0001, maxLat - minLat);
+      const padLng = Math.max(width * 4, 0.0032);
+      const padLat = Math.max(height * 4, 0.0024);
+      minLng -= padLng;
+      maxLng += padLng;
+      minLat -= padLat;
+      maxLat += padLat;
+    }
+  } catch {}
+
+  if (
+    !Number.isFinite(minLng) ||
+    !Number.isFinite(minLat) ||
+    !Number.isFinite(maxLng) ||
+    !Number.isFinite(maxLat)
+  ) {
+    const lat = Number(centerPoint?.lat);
+    const lng = Number(centerPoint?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    minLng = lng - 0.0055;
+    maxLng = lng + 0.0055;
+    minLat = lat - 0.0042;
+    maxLat = lat + 0.0042;
+  }
+
+  const width = maxLng - minLng;
+  const height = maxLat - minLat;
+  if (!(width > 0 && height > 0)) return null;
+
+  const span = width + height;
+  const step = Math.max(Math.min(span / stepDivisor, maxStep), minStep);
+  const dot = Math.max(step * 0.22, step * 0.12);
+  const limit = Math.max(60, Math.floor(Number(maxDots) || 600));
+
+  const lines = [];
+  let row = 0;
+  for (let y = minLat; y <= maxLat; y += step) {
+    const rowOffset = row % 2 ? step * 0.5 : 0;
+    for (let x = minLng + rowOffset; x <= maxLng; x += step) {
+      lines.push([
+        [x, y],
+        [x + dot, y],
+      ]);
+      if (lines.length >= limit) break;
+    }
+    if (lines.length >= limit) break;
+    row += 1;
+  }
+
+  if (!lines.length) return null;
   return featureFromGeometry({
     type: "MultiLineString",
     coordinates: lines,
@@ -1893,6 +1965,18 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
+  const damsAdjacencyCodes = new Set(
+    DAMS_STATE_TRANSPORT_LAYER_META.map((meta) => meta.code).filter((code) =>
+      String(code || "").includes("_25m_"),
+    ),
+  );
+  const hasDamsAdjacency = damsOverlayItems.some(
+    (item) =>
+      damsAdjacencyCodes.has(String(item?.code || "")) &&
+      Number(item?.areaIntersectM2 || 0) > 0,
+  );
+  const displayDamsTransportItems = hasDamsAdjacency ? damsTransportItems : [];
+
   const stateMappingItems = [];
   const seenStateMappingCodes = new Set();
   for (const rawItem of stateMappingConsiderations) {
@@ -1921,6 +2005,7 @@ export async function buildTownPlannerReportPdfV2(
       "state_mapping_sara_seq_regional_plan_land_use_categories";
     const waterResourcesCode =
       "state_mapping_sara_water_resource_planning_area_boundaries";
+    const isWaterResources = String(code || "") === waterResourcesCode;
     const isVegetationMapping =
       String(code || "") === VEGETATION_STATE_MAPPING_CODE;
     const seqCategoryRaw = pickProp(rawPropsForCode, [
@@ -1949,7 +2034,7 @@ export async function buildTownPlannerReportPdfV2(
     })();
     const waterLayerStyle =
       String(code || "") === waterResourcesCode
-        ? { outline: "0x5dade2ff", fill: "0xcfeeff70" }
+        ? { outline: "0x5dade2ff", fill: "0x00000000" }
         : null;
     const seqLayerStyle =
       String(code || "") === seqRegionalPlanCode && seqCategoryStyle
@@ -1963,24 +2048,58 @@ export async function buildTownPlannerReportPdfV2(
     const seqMapStyles = null;
     const seqMapType = "hybrid";
     const parcelStyle = { color: "0xff0000ff", fill: "0x00000000" };
+    const waterDotGeoJson = isWaterResources
+      ? buildDotGridOverlayGeoJson(parcelGeom, center, { maxDots: 600 })
+      : null;
+    const waterDotLayer = waterDotGeoJson
+      ? {
+          geoJson: waterDotGeoJson,
+          color: "0x5dade2cc",
+          fill: "0x00000000",
+          weight: 1,
+          maxLines: 160,
+          preserveLineOrder: true,
+          spreadLines: true,
+        }
+      : null;
+    const waterOverlayLayers = isWaterResources
+      ? [
+          ...(waterDotLayer ? [waterDotLayer] : []),
+          ...(overlayFeature
+            ? [
+                {
+                  geoJson: overlayFeature,
+                  color: overlayStyle.outline,
+                  fill: overlayStyle.fill,
+                  weight: 2,
+                },
+              ]
+            : []),
+        ].filter(Boolean)
+      : null;
+    const mapZoom = isWaterResources ? 21 : 19;
+    const mapZoomNudge = isWaterResources ? 3 : 2;
+    const mapPaddingPx = isWaterResources ? 56 : 66;
+    const hasOverlayForMap = parcelFeature && (overlayFeature || waterDotLayer);
 
     let mapBuffer =
-      parcelFeature && overlayFeature
+      hasOverlayForMap
         ? await getParcelOverlayMapImageBufferV2({
             apiKey,
             center,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
+            overlayLayers: waterOverlayLayers,
             parcelColor: parcelStyle.color,
             parcelFill: parcelStyle.fill,
             parcelWeight: 4,
             overlayColor: overlayStyle.outline,
             overlayFill: overlayStyle.fill,
             overlayWeight: 2,
-            zoom: 19,
-            zoomNudge: 2,
-            fitToParcel: false,
-            paddingPx: 66,
+            zoom: mapZoom,
+            zoomNudge: mapZoomNudge,
+            fitToParcel: isWaterResources,
+            paddingPx: mapPaddingPx,
             maptype: seqMapType,
             size: "640x360",
             scale: 2,
@@ -1996,7 +2115,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelColor: parcelStyle.color,
         parcelFill: parcelStyle.fill,
         parcelWeight: 4,
-        zoom: 20,
+        zoom: isWaterResources ? 21 : 20,
         maptype: seqMapType,
         size: "640x360",
         scale: 2,
@@ -2346,7 +2465,7 @@ export async function buildTownPlannerReportPdfV2(
   // Pagination plan
   const overlayPages = Math.max(1, displayOverlayItems.length);
   const stateMappingPages = stateMappingItems.length;
-  const damsPages = damsTransportItems.length;
+  const damsPages = displayDamsTransportItems.length;
   const glossaryMeasureDoc = new PDFDocument({
     size: PAGE.size,
     margin: PAGE.margin,
@@ -2546,7 +2665,7 @@ export async function buildTownPlannerReportPdfV2(
               page: pages.damsStart,
               level: 0,
             },
-            ...damsTransportItems.map((item, idx) => ({
+            ...displayDamsTransportItems.map((item, idx) => ({
               label: item.layerLabel || "State transport layer",
               page: (pages.damsStart || 0) + idx,
               level: 1,
@@ -3793,7 +3912,7 @@ export async function buildTownPlannerReportPdfV2(
   };
 
   if (damsPages > 0) {
-    for (const item of damsTransportItems) {
+    for (const item of displayDamsTransportItems) {
       renderDamsStateTransportPage(item);
     }
   }
