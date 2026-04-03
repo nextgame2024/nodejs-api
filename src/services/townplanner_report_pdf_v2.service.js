@@ -2741,7 +2741,8 @@ export async function buildTownPlannerReportPdfV2(
       `Lot/Plan: ${lotPlanLine || "N/A"}`,
       `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
       `Estimated dimensions (approx. envelope): ${dimsText}`,
-      `Perimeter (approx.): ${formatLengthM(lotPerimeterM)} | Coordinates: ${formatCoords(lat, lng)}`,
+      `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
+      `Coordinates: ${formatCoords(lat, lng)}`,
     ];
     const lotNoteText =
       "Some values in this section are approximate and derived from parcel geometry in City Plan 2014 data. For legal or survey-confirmed dimensions, refer to official cadastral or title records.";
@@ -2772,7 +2773,7 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       lotNoteText,
       leftX + 14,
-      lotContentY + lotContentH + 2,
+      lotContentY + lotContentH,
       leftW - 28,
       36,
       {
