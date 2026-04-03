@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.71";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.72";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1850,12 +1850,12 @@ export async function buildTownPlannerReportPdfV2(
         seqCategory.includes("regional landscape") ||
         seqCategory.includes("rural production")
       ) {
-        return { outline: "0x8d8d8dff", fill: "0xe0e0e0b8" };
+        return { outline: "0x8d8d8dff", fill: "0xe0e0e0a0" };
       }
       if (seqCategory.includes("rural living"))
-        return { outline: "0xf4a300ff", fill: "0xffe9a8bf" };
+        return { outline: "0xf4a300ff", fill: "0xffe9a8a0" };
       if (seqCategory.includes("urban footprint"))
-        return { outline: "0xe25a5aff", fill: "0xffb8b8bf" };
+        return { outline: "0xe25a5aff", fill: "0xffb8b8a0" };
       return null;
     })();
     const seqLayerStyle =
@@ -2684,8 +2684,8 @@ export async function buildTownPlannerReportPdfV2(
       .text("Site overview", x, top);
 
     // Map should fill container (cover) to remove right whitespace
-    const mapY = top + 32;
-    const mapH = 200;
+    const mapY = top + 28;
+    const mapH = 190;
     drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
 
     const tilesY = mapY + mapH + 12;
