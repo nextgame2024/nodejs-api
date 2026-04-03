@@ -1832,6 +1832,9 @@ export async function buildTownPlannerReportPdfV2(
 
     const seqRegionalPlanCode =
       "state_mapping_sara_seq_regional_plan_land_use_categories";
+    const waterResourcesCode =
+      "state_mapping_sara_water_resource_planning_area_boundaries";
+    const isWaterResources = String(code || "") === waterResourcesCode;
     const seqCategoryRaw = pickProp(rawPropsForCode, [
       "RLUC2023",
       "RLUC",
@@ -1858,12 +1861,20 @@ export async function buildTownPlannerReportPdfV2(
         return { outline: "0xe25a5aff", fill: "0xffb8b870" };
       return null;
     })();
+    const waterLayerStyle =
+      String(code || "") === waterResourcesCode
+        ? { outline: "0x5dade2ff", fill: "0xcfeeff70" }
+        : null;
     const seqLayerStyle =
       String(code || "") === seqRegionalPlanCode && seqCategoryStyle
         ? seqCategoryStyle
         : null;
+    const overlayStyle = waterLayerStyle || seqLayerStyle || style;
     const seqMapStyles = null;
     const seqMapType = "hybrid";
+    const parcelStyle = isWaterResources
+      ? { color: "0x81d4faff", fill: "0x81d4fa33" }
+      : { color: "0xff0000ff", fill: "0x00000000" };
 
     let mapBuffer =
       parcelFeature && overlayFeature
@@ -1872,11 +1883,11 @@ export async function buildTownPlannerReportPdfV2(
             center,
             parcelGeoJson: parcelFeature,
             overlayGeoJson: overlayFeature,
-            parcelColor: "0xff0000ff",
-            parcelFill: "0x00000000",
+            parcelColor: parcelStyle.color,
+            parcelFill: parcelStyle.fill,
             parcelWeight: 4,
-            overlayColor: (seqLayerStyle || style).outline,
-            overlayFill: (seqLayerStyle || style).fill,
+            overlayColor: overlayStyle.outline,
+            overlayFill: overlayStyle.fill,
             overlayWeight: 2,
             zoom: 19,
             zoomNudge: 2,
@@ -1894,8 +1905,8 @@ export async function buildTownPlannerReportPdfV2(
         apiKey,
         center,
         parcelGeoJson: parcelFeature,
-        parcelColor: "0xff0000ff",
-        parcelFill: "0x00000000",
+        parcelColor: parcelStyle.color,
+        parcelFill: parcelStyle.fill,
         parcelWeight: 4,
         zoom: 20,
         maptype: seqMapType,
