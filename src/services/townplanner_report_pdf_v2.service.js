@@ -111,6 +111,100 @@ function pickProp(props, keys = []) {
   }
   return null;
 }
+function collectPropText(props) {
+  if (!props || typeof props !== "object") return "";
+  const parts = [];
+  for (const value of Object.values(props)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" || typeof value === "number") {
+      const s = String(value).trim();
+      if (s) parts.push(s);
+    }
+  }
+  return parts.join(" ").trim();
+}
+function normalizeVegetationCategory(value) {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const match = raw.match(/category\s*([abcrx])\b/i);
+  if (match) return match[1].toUpperCase();
+  if (/^[abcrx]$/i.test(raw)) return raw.toUpperCase();
+  if (/^w$/i.test(raw)) return "WATER";
+  if (/^nr$/i.test(raw)) return "NON_REMNANT";
+  if (/non\s*-?\s*remnant/i.test(raw)) return "NON_REMNANT";
+  if (/water/i.test(raw)) return "WATER";
+  return null;
+}
+function detectVegetationStatus(rawProps, rawText) {
+  const combined = [
+    collectPropText(rawProps),
+    String(rawText || "").trim(),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (!combined) return null;
+  if (/non\s*-?\s*remnant/.test(combined)) return "non_remnant";
+  if (/\bwater\b/.test(combined)) return "water";
+  if (/endangered/.test(combined)) return "endangered";
+  if (/least\s+concern/.test(combined)) return "least_concern";
+  if (/of\s+concern/.test(combined)) return "of_concern";
+  if (/\bconcern\b/.test(combined)) return "of_concern";
+  return null;
+}
+function buildVegetationOverlayStyle(rawProps, rawItem) {
+  const rawCategory = pickProp(rawProps, [
+    "rvm_cat",
+    "RVM_CAT",
+    "CATEGORY",
+    "CLASS",
+  ]);
+  const rawText = [
+    rawItem?.detail,
+    rawItem?.name,
+    rawItem?.subsectionTitle,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const propsText = collectPropText(rawProps);
+  const category =
+    normalizeVegetationCategory(rawCategory) ||
+    normalizeVegetationCategory(rawText) ||
+    normalizeVegetationCategory(propsText);
+  const status = detectVegetationStatus(rawProps, rawText);
+
+  if (status === "non_remnant" || category === "NON_REMNANT") {
+    return { outline: "0x00000000", fill: "0x00000000" };
+  }
+  if (status === "water" || category === "WATER") {
+    return { outline: "0x81d4faff", fill: "0x81d4fa4d" };
+  }
+
+  if (category === "C") {
+    return { outline: "0x64b5f6ff", fill: "0x64b5f64d" };
+  }
+  if (category === "R") {
+    return { outline: "0xffeb3bff", fill: "0xffeb3b4d" };
+  }
+  if (category === "X") {
+    return { outline: "0xb0bec5ff", fill: "0xb0bec54d" };
+  }
+
+  if (category === "A" || category === "B" || !category) {
+    if (status === "endangered") {
+      return { outline: "0xf48fb1ff", fill: "0xf48fb14d" };
+    }
+    if (status === "of_concern") {
+      return { outline: "0xfdbcb4ff", fill: "0xfdbcb44d" };
+    }
+    if (status === "least_concern") {
+      return { outline: "0xa5d6a7ff", fill: "0xa5d6a74d" };
+    }
+  }
+
+  return null;
+}
 function featureFromGeometry(geometry, props = {}) {
   if (!geometry) return null;
   return { type: "Feature", properties: props, geometry };
@@ -1834,7 +1928,8 @@ export async function buildTownPlannerReportPdfV2(
       "state_mapping_sara_seq_regional_plan_land_use_categories";
     const waterResourcesCode =
       "state_mapping_sara_water_resource_planning_area_boundaries";
-    const isWaterResources = String(code || "") === waterResourcesCode;
+    const isVegetationMapping =
+      String(code || "") === VEGETATION_STATE_MAPPING_CODE;
     const seqCategoryRaw = pickProp(rawPropsForCode, [
       "RLUC2023",
       "RLUC",
@@ -1869,12 +1964,14 @@ export async function buildTownPlannerReportPdfV2(
       String(code || "") === seqRegionalPlanCode && seqCategoryStyle
         ? seqCategoryStyle
         : null;
-    const overlayStyle = waterLayerStyle || seqLayerStyle || style;
+    const vegetationLayerStyle = isVegetationMapping
+      ? buildVegetationOverlayStyle(rawPropsForCode, rawItem)
+      : null;
+    const overlayStyle =
+      vegetationLayerStyle || waterLayerStyle || seqLayerStyle || style;
     const seqMapStyles = null;
     const seqMapType = "hybrid";
-    const parcelStyle = isWaterResources
-      ? { color: "0x81d4faff", fill: "0x81d4fa33" }
-      : { color: "0xff0000ff", fill: "0x00000000" };
+    const parcelStyle = { color: "0xff0000ff", fill: "0x00000000" };
 
     let mapBuffer =
       parcelFeature && overlayFeature
