@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.76";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.77";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -181,7 +181,7 @@ function buildVegetationOverlayStyle(rawProps, rawItem) {
     return { outline: "0xffeb3bff", fill: "0xffeb3b4d" };
   }
   if (category === "X") {
-    return { outline: "0xb0bec5ff", fill: "0xb0bec54d" };
+    return { outline: "0x9e9e9eff", fill: "0x9e9e9e99" };
   }
 
   if (category === "A" || category === "B" || !category) {
@@ -1906,7 +1906,7 @@ export async function buildTownPlannerReportPdfV2(
       String(rawItem?.sectionTitle || "").trim() || "State mapping";
     const sectionKey = normalizeOverlayKey(sectionTitle);
     const style = sectionKey.includes("spp")
-      ? { outline: "0x29b6f6ff", fill: "0x29b6f652" }
+      ? { outline: "0x4fc3f7ff", fill: "0x4fc3f733" }
       : sectionKey.includes("other state")
         ? { outline: "0xf9a825ff", fill: "0xf9a8254d" }
         : { outline: "0xff8a65ff", fill: "0xff8a654d" };
