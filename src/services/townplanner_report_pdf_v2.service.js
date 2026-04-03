@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.67";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.69";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1824,6 +1824,53 @@ export async function buildTownPlannerReportPdfV2(
         ? { outline: "0xf9a825ff", fill: "0xf9a8254d" }
         : { outline: "0xff8a65ff", fill: "0xff8a654d" };
 
+    const rawPropsForCode =
+      rawStateMappingConsiderations &&
+      typeof rawStateMappingConsiderations === "object"
+        ? rawStateMappingConsiderations[code] || null
+        : null;
+
+    const seqRegionalPlanCode =
+      "state_mapping_sara_seq_regional_plan_land_use_categories";
+    const seqCategoryRaw = pickProp(rawPropsForCode, [
+      "RLUC2023",
+      "RLUC",
+      "CATEGORY",
+      "TYPE",
+      "CLASS",
+    ]);
+    const seqCategory = String(
+      seqCategoryRaw || rawItem?.detail || "",
+    )
+      .toLowerCase()
+      .trim();
+    const seqBgColor = (() => {
+      if (!seqCategory) return null;
+      if (
+        seqCategory.includes("regional landscape") ||
+        seqCategory.includes("rural production")
+      ) {
+        return "0xf1f1f1";
+      }
+      if (seqCategory.includes("rural living")) return "0xfff2cc";
+      if (seqCategory.includes("urban footprint")) return "0xffe2e2";
+      return null;
+    })();
+    const seqMapStyles =
+      String(code || "") === seqRegionalPlanCode && seqBgColor
+        ? [
+            "feature:all|saturation:-20|lightness:10",
+            "feature:poi|visibility:off",
+            "feature:transit|visibility:off",
+            `feature:landscape|color:${seqBgColor}`,
+            "feature:water|color:0xdde7f2",
+          ]
+        : null;
+    const seqMapType =
+      String(code || "") === seqRegionalPlanCode && seqBgColor
+        ? "roadmap"
+        : "hybrid";
+
     let mapBuffer =
       parcelFeature && overlayFeature
         ? await getParcelOverlayMapImageBufferV2({
@@ -1841,9 +1888,10 @@ export async function buildTownPlannerReportPdfV2(
             zoomNudge: 2,
             fitToParcel: false,
             paddingPx: 66,
-            maptype: "hybrid",
+            maptype: seqMapType,
             size: "640x360",
             scale: 2,
+            styles: seqMapStyles,
           }).catch(() => null)
         : null;
 
@@ -1856,17 +1904,12 @@ export async function buildTownPlannerReportPdfV2(
         parcelFill: "0x00000000",
         parcelWeight: 4,
         zoom: 20,
-        maptype: "hybrid",
+        maptype: seqMapType,
         size: "640x360",
         scale: 2,
+        styles: seqMapStyles,
       }).catch(() => null);
     }
-
-    const rawPropsForCode =
-      rawStateMappingConsiderations &&
-      typeof rawStateMappingConsiderations === "object"
-        ? rawStateMappingConsiderations[code] || null
-        : null;
 
     let detailText = String(rawItem?.detail || "").trim() || "Mapped area";
     let sourceText =
@@ -1879,7 +1922,9 @@ export async function buildTownPlannerReportPdfV2(
         "CATEGORY",
         "CLASS",
       ]);
-      const cat = String(rawCategory || "").trim().toUpperCase();
+      const cat = String(rawCategory || "")
+        .trim()
+        .toUpperCase();
       if (/^[ABCRX]$/.test(cat)) {
         detailText = `Category ${cat} on the regulated vegetation management map.`;
       } else if (cat) {
@@ -2276,7 +2321,11 @@ export async function buildTownPlannerReportPdfV2(
         ? overlayStart + overlayPages + stateMappingPages + nonSaraPages
         : null;
     const glossary =
-      overlayStart + overlayPages + stateMappingPages + nonSaraPages + damsPages;
+      overlayStart +
+      overlayPages +
+      stateMappingPages +
+      nonSaraPages +
+      damsPages;
     const disclaimer = glossary + glossaryPages;
 
     return {
@@ -2687,8 +2736,8 @@ export async function buildTownPlannerReportPdfV2(
     const leftX = x;
     const rightX = x + leftW + gap;
 
-    const lotCardH = 172;
-    const zoneCardH = 76;
+    const lotCardH = 162;
+    const zoneCardH = 72;
     const leftBottomH = colH - lotCardH - zoneCardH - gap * 2;
 
     const dimsText = lotDimensions
@@ -3072,11 +3121,11 @@ export async function buildTownPlannerReportPdfV2(
       });
   };
 
-  // ========== PAGES 5..: OVERLAY CONSTRAINS (1 per page) ==========
+  // ========== PAGES 5..: OVERLAY CONSTRAINTS (1 per page) ==========
   for (let p = 0; p < overlayPages; p += 1) {
     doc.addPage();
     header(doc, {
-      title: "Overlay constrains",
+      title: "Overlay constraints",
       addressLabel,
       schemeVersion,
       logoBuffer,
@@ -3090,7 +3139,7 @@ export async function buildTownPlannerReportPdfV2(
       .fillColor(BRAND.text)
       .font("Helvetica-Bold")
       .fontSize(20)
-      .text("Overlay constrains", x, top);
+      .text("Overlay constraints", x, top);
     boundedText(
       doc,
       "Overlay constraints returned by current spatial inputs.",
@@ -3126,7 +3175,7 @@ export async function buildTownPlannerReportPdfV2(
 
       const { base, detail } = splitOverlayName(item.name);
       const overlayTitle = String(
-        base || item.name || "Overlay constraint",
+        base || item.name || "Overlay constraints",
       ).trim();
       const subRaw = sanitizeOverlaySubcategory(detail || item.severity || "");
       const subBase = /^(mapped overlay|not mapped)$/i.test(subRaw || "")
@@ -3219,7 +3268,7 @@ export async function buildTownPlannerReportPdfV2(
         x,
         top + 26,
         w,
-        30,
+        32,
         { font: "Helvetica", fontSize: 10, color: BRAND.muted, ellipsis: true },
       );
       boundedText(
@@ -3228,7 +3277,7 @@ export async function buildTownPlannerReportPdfV2(
         x,
         top + 58,
         w,
-        24,
+        34,
         {
           font: "Helvetica-Oblique",
           fontSize: 9,
@@ -3238,8 +3287,8 @@ export async function buildTownPlannerReportPdfV2(
       );
     }
 
-    const blockTopY = showIntroText ? top + 84 : top + 42;
-    const blockH = showIntroText ? 508 : 550;
+    const blockTopY = showIntroText ? top + 100 : top + 42;
+    const blockH = showIntroText ? 492 : 550;
     box(doc, x, blockTopY, w, blockH);
 
     const sectionTitle = String(item?.sectionTitle || "State mapping");
