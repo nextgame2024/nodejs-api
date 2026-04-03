@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.75";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.76";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -137,10 +137,7 @@ function normalizeVegetationCategory(value) {
   return null;
 }
 function detectVegetationStatus(rawProps, rawText) {
-  const combined = [
-    collectPropText(rawProps),
-    String(rawText || "").trim(),
-  ]
+  const combined = [collectPropText(rawProps), String(rawText || "").trim()]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -160,11 +157,7 @@ function buildVegetationOverlayStyle(rawProps, rawItem) {
     "CATEGORY",
     "CLASS",
   ]);
-  const rawText = [
-    rawItem?.detail,
-    rawItem?.name,
-    rawItem?.subsectionTitle,
-  ]
+  const rawText = [rawItem?.detail, rawItem?.name, rawItem?.subsectionTitle]
     .filter(Boolean)
     .join(" ");
   const propsText = collectPropText(rawProps);
@@ -1937,9 +1930,7 @@ export async function buildTownPlannerReportPdfV2(
       "TYPE",
       "CLASS",
     ]);
-    const seqCategory = String(
-      seqCategoryRaw || rawItem?.detail || "",
-    )
+    const seqCategory = String(seqCategoryRaw || rawItem?.detail || "")
       .toLowerCase()
       .trim();
     const seqCategoryStyle = (() => {
