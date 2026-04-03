@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.70";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.71";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1850,12 +1850,12 @@ export async function buildTownPlannerReportPdfV2(
         seqCategory.includes("regional landscape") ||
         seqCategory.includes("rural production")
       ) {
-        return { outline: "0x9e9e9eff", fill: "0xf1f1f180" };
+        return { outline: "0x8d8d8dff", fill: "0xe0e0e0b8" };
       }
       if (seqCategory.includes("rural living"))
-        return { outline: "0xf4b400ff", fill: "0xfff2cc80" };
+        return { outline: "0xf4a300ff", fill: "0xffe9a8bf" };
       if (seqCategory.includes("urban footprint"))
-        return { outline: "0xe57373ff", fill: "0xffd6d680" };
+        return { outline: "0xe25a5aff", fill: "0xffb8b8bf" };
       return null;
     })();
     const seqLayerStyle =
