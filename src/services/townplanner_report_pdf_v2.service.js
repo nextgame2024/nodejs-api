@@ -807,7 +807,7 @@ function buildDotGridOverlayGeoJson(
 
   const span = width + height;
   const step = Math.max(Math.min(span / stepDivisor, maxStep), minStep);
-  const dot = Math.max(step * 0.22, step * 0.12);
+  const dot = Math.max(step * 0.4, step * 0.18);
   const limit = Math.max(60, Math.floor(Number(maxDots) || 600));
 
   const lines = [];
@@ -1965,17 +1965,20 @@ export async function buildTownPlannerReportPdfV2(
     });
   }
 
-  const damsAdjacencyCodes = new Set(
-    DAMS_STATE_TRANSPORT_LAYER_META.map((meta) => meta.code).filter((code) =>
-      String(code || "").includes("_25m_"),
-    ),
-  );
-  const hasDamsAdjacency = damsOverlayItems.some(
+  const stateControlledAdjacencyCode =
+    "dams_state_transport_25m_state_controlled_road";
+  const hasStateControlledAdjacency = damsOverlayItems.some(
     (item) =>
-      damsAdjacencyCodes.has(String(item?.code || "")) &&
+      String(item?.code || "") === stateControlledAdjacencyCode &&
       Number(item?.areaIntersectM2 || 0) > 0,
   );
-  const displayDamsTransportItems = hasDamsAdjacency ? damsTransportItems : [];
+  const displayDamsTransportItems = damsTransportItems.filter((item) => {
+    const code = String(item?.code || "");
+    if (code === "dams_state_transport_state_controlled_road") {
+      return hasStateControlledAdjacency;
+    }
+    return true;
+  });
 
   const stateMappingItems = [];
   const seenStateMappingCodes = new Set();
@@ -2054,10 +2057,10 @@ export async function buildTownPlannerReportPdfV2(
     const waterDotLayer = waterDotGeoJson
       ? {
           geoJson: waterDotGeoJson,
-          color: "0x5dade2cc",
+          color: "0x5dade2ff",
           fill: "0x00000000",
-          weight: 1,
-          maxLines: 160,
+          weight: 2,
+          maxLines: 220,
           preserveLineOrder: true,
           spreadLines: true,
         }
@@ -2077,9 +2080,9 @@ export async function buildTownPlannerReportPdfV2(
             : []),
         ].filter(Boolean)
       : null;
-    const mapZoom = isWaterResources ? 21 : 19;
-    const mapZoomNudge = isWaterResources ? 3 : 2;
-    const mapPaddingPx = isWaterResources ? 56 : 66;
+    const mapZoom = isWaterResources ? 19 : 19;
+    const mapZoomNudge = isWaterResources ? 0 : 2;
+    const mapPaddingPx = isWaterResources ? 120 : 66;
     const hasOverlayForMap = parcelFeature && (overlayFeature || waterDotLayer);
 
     let mapBuffer =
@@ -2115,7 +2118,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelColor: parcelStyle.color,
         parcelFill: parcelStyle.fill,
         parcelWeight: 4,
-        zoom: isWaterResources ? 21 : 20,
+        zoom: isWaterResources ? 19 : 20,
         maptype: seqMapType,
         size: "640x360",
         scale: 2,
