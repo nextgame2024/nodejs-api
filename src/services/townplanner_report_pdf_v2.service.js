@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.72";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.73";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1850,12 +1850,12 @@ export async function buildTownPlannerReportPdfV2(
         seqCategory.includes("regional landscape") ||
         seqCategory.includes("rural production")
       ) {
-        return { outline: "0x8d8d8dff", fill: "0xe0e0e0a0" };
+        return { outline: "0x8d8d8dff", fill: "0xe0e0e070" };
       }
       if (seqCategory.includes("rural living"))
-        return { outline: "0xf4a300ff", fill: "0xffe9a8a0" };
+        return { outline: "0xf4a300ff", fill: "0xffe9a870" };
       if (seqCategory.includes("urban footprint"))
-        return { outline: "0xe25a5aff", fill: "0xffb8b8a0" };
+        return { outline: "0xe25a5aff", fill: "0xffb8b870" };
       return null;
     })();
     const seqLayerStyle =
@@ -2685,7 +2685,7 @@ export async function buildTownPlannerReportPdfV2(
 
     // Map should fill container (cover) to remove right whitespace
     const mapY = top + 28;
-    const mapH = 190;
+    const mapH = 205;
     drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
 
     const tilesY = mapY + mapH + 12;
@@ -2741,8 +2741,7 @@ export async function buildTownPlannerReportPdfV2(
       `Lot/Plan: ${lotPlanLine || "N/A"}`,
       `Site area (approx.): ${formatAreaM2(lotAreaM2)}`,
       `Estimated dimensions (approx. envelope): ${dimsText}`,
-      `Perimeter (approx.): ${formatLengthM(lotPerimeterM)}`,
-      `Coordinates: ${formatCoords(lat, lng)}`,
+      `Perimeter (approx.): ${formatLengthM(lotPerimeterM)} | Coordinates: ${formatCoords(lat, lng)}`,
     ];
     const lotNoteText =
       "Some values in this section are approximate and derived from parcel geometry in City Plan 2014 data. For legal or survey-confirmed dimensions, refer to official cadastral or title records.";
@@ -2754,7 +2753,7 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(10)
       .text("Lot size and dimensions", leftX + 14, tilesY + 12);
     const lotContentY = tilesY + 34;
-    const lotContentH = lotCardH - 34 - 40;
+    const lotContentH = lotCardH - 34 - 32;
     boundedText(
       doc,
       lotLines.join("\n"),
@@ -2773,11 +2772,11 @@ export async function buildTownPlannerReportPdfV2(
       doc,
       lotNoteText,
       leftX + 14,
-      lotContentY + lotContentH + 4,
+      lotContentY + lotContentH + 2,
       leftW - 28,
       36,
       {
-        font: "Helvetica",
+        font: "Helvetica-Oblique",
         fontSize: 8.5,
         color: BRAND.muted,
         ellipsis: false,
