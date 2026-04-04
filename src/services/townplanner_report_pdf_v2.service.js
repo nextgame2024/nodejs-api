@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.83";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.84";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1646,6 +1646,7 @@ export async function buildTownPlannerReportPdfV2(
           : center;
     const overlayCenter = isDamsTransportOverlay ? null : mapCenter;
     const overlayMapType = isDamsTransportOverlay ? "roadmap" : "hybrid";
+    const overlayMapSize = isDamsTransportOverlay ? "640x402" : "640x428";
     const overlayFitToParcel = isDamsTransportOverlay
       ? false
       : !(isDwellingOverlay || isStreetscapeOverlay);
@@ -1737,7 +1738,7 @@ export async function buildTownPlannerReportPdfV2(
             fitToParcel: overlayFitToParcel,
             paddingPx: overlayRenderPadding,
             maptype: overlayMapType,
-            size: "640x360",
+            size: overlayMapSize,
             scale: 2,
             styles: overlayStyles,
           }).catch(() => null)
@@ -1770,7 +1771,7 @@ export async function buildTownPlannerReportPdfV2(
             ? overlayZoom
             : 19,
         maptype: "hybrid",
-        size: "640x360",
+        size: overlayMapSize,
         scale: 2,
       }).catch(() => null);
     }
@@ -2001,6 +2002,7 @@ export async function buildTownPlannerReportPdfV2(
       vegetationLayerStyle || waterLayerStyle || seqLayerStyle || style;
     const seqMapStyles = null;
     const seqMapType = "hybrid";
+    const seqMapSize = "640x394";
     const parcelStyle = { color: "0xff0000ff", fill: "0x00000000" };
     const mapZoom = isWaterResources ? 19 : 19;
     const mapZoomNudge = isWaterResources ? 0 : 2;
@@ -2024,7 +2026,7 @@ export async function buildTownPlannerReportPdfV2(
           fitToParcel: isWaterResources,
           paddingPx: mapPaddingPx,
           maptype: seqMapType,
-          size: "640x360",
+          size: seqMapSize,
           scale: 2,
           styles: seqMapStyles,
         }).catch(() => null)
@@ -2040,7 +2042,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelWeight: 4,
         zoom: isWaterResources ? 19 : 20,
         maptype: seqMapType,
-        size: "640x360",
+        size: seqMapSize,
         scale: 2,
         styles: seqMapStyles,
       }).catch(() => null);
@@ -2152,7 +2154,7 @@ export async function buildTownPlannerReportPdfV2(
             fitToParcel: false,
             paddingPx: 66,
             maptype: "hybrid",
-            size: "640x360",
+            size: "640x394",
             scale: 2,
           }).catch(() => null)
         : null;
@@ -2167,7 +2169,7 @@ export async function buildTownPlannerReportPdfV2(
         parcelWeight: 4,
         zoom: 20,
         maptype: "hybrid",
-        size: "640x360",
+        size: "640x394",
         scale: 2,
       }).catch(() => null);
     }
