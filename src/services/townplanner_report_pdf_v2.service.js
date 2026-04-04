@@ -1418,10 +1418,11 @@ export async function buildTownPlannerReportPdfV2(
     ? await getParcelMapImageBufferV2({
         apiKey,
         parcelGeoJson: parcelFeature,
-        zoom: 19,
+        zoom: 18,
         maptype: "roadmap",
         size: "640x272",
         scale: 2,
+        paddingPx: 140,
       }).catch(() => null)
     : null;
 
