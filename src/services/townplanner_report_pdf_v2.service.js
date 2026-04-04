@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.80";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.81";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -1127,8 +1127,17 @@ function computeIntersectionAreaM2(parcelGeom, overlayGeom) {
   }
 }
 
-/** Draw an image cropped-to-fill (cover) inside a rounded container. */
-function drawCoverImageInRoundedBox(doc, img, x, y, w, h, r = 14) {
+/** Draw an image inside a rounded container (cover or fit). */
+function drawCoverImageInRoundedBox(
+  doc,
+  img,
+  x,
+  y,
+  w,
+  h,
+  r = 14,
+  mode = "cover",
+) {
   box(doc, x, y, w, h, { fill: BRAND.light, stroke: BRAND.border, r });
   if (!img) return;
 
@@ -1137,7 +1146,11 @@ function drawCoverImageInRoundedBox(doc, img, x, y, w, h, r = 14) {
   rr(doc, x, y, w, h, r);
   doc.clip();
   try {
-    doc.image(img, x, y, { cover: [w, h] });
+    if (mode === "fit") {
+      doc.image(img, x, y, { fit: [w, h], align: "center", valign: "center" });
+    } else {
+      doc.image(img, x, y, { cover: [w, h] });
+    }
   } catch {
     // fallback: fit
     try {
@@ -1382,7 +1395,6 @@ export async function buildTownPlannerReportPdfV2(
   const siteContextMap = parcelFeature
     ? await getParcelMapImageBufferV2({
         apiKey,
-        center,
         parcelGeoJson: parcelFeature,
         zoom: 18,
         maptype: "hybrid",
@@ -1394,7 +1406,6 @@ export async function buildTownPlannerReportPdfV2(
   const parcelRoadMap = parcelFeature
     ? await getParcelMapImageBufferV2({
         apiKey,
-        center,
         parcelGeoJson: parcelFeature,
         zoom: 19,
         maptype: "roadmap",
@@ -2801,10 +2812,10 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(20)
       .text("Site overview", x, top);
 
-    // Map should fill container (cover) to remove right whitespace
+    // Keep parcel fully visible (fit) to avoid cropping on large lots
     const mapY = top + 28;
     const mapH = 205;
-    drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14);
+    drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14, "fit");
 
     const tilesY = mapY + mapH + 12;
     const gap = 12;
