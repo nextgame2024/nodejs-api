@@ -1414,6 +1414,17 @@ export async function buildTownPlannerReportPdfV2(
       }).catch(() => null)
     : null;
 
+  const siteOverviewMap = parcelFeature
+    ? await getParcelMapImageBufferV2({
+        apiKey,
+        parcelGeoJson: parcelFeature,
+        zoom: 19,
+        maptype: "roadmap",
+        size: "640x272",
+        scale: 2,
+      }).catch(() => null)
+    : null;
+
   if (parcelFeature && zoningFeature) {
     console.info("[townplanner_v2][zoning_map_debug] inputs", {
       center,
@@ -2812,10 +2823,18 @@ export async function buildTownPlannerReportPdfV2(
       .fontSize(20)
       .text("Site overview", x, top);
 
-    // Keep parcel fully visible (fit) to avoid cropping on large lots
+    // Use a map image that matches the container aspect ratio so we can cover-fill
     const mapY = top + 28;
     const mapH = 205;
-    drawCoverImageInRoundedBox(doc, parcelRoadMap, x, mapY, w, mapH, 14, "fit");
+    drawCoverImageInRoundedBox(
+      doc,
+      siteOverviewMap || parcelRoadMap,
+      x,
+      mapY,
+      w,
+      mapH,
+      14,
+    );
 
     const tilesY = mapY + mapH + 12;
     const gap = 12;
