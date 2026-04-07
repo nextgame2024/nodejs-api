@@ -51,19 +51,3 @@ export async function ensureTags(names = []) {
   }
   return ids;
 }
-
-export async function setArticleTags(articleId, names = []) {
-  const ids = await ensureTags(names);
-  await pool.query(`DELETE FROM article_tags WHERE article_id = $1`, [
-    articleId,
-  ]);
-  if (!ids.length) return;
-
-  // bulk insert
-  const values = ids.map((_, i) => `($1, $${i + 2})`).join(", ");
-  await pool.query(
-    `INSERT INTO article_tags (article_id, tag_id) VALUES ${values}
-     ON CONFLICT DO NOTHING`,
-    [articleId, ...ids]
-  );
-}
