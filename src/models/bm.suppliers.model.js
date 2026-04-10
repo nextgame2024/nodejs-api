@@ -391,32 +391,70 @@ const SUPPLIER_MATERIAL_SELECT = `
   sm.createdat AS "createdAt"
 `;
 
-export async function listSupplierMaterials(companyId, supplierId, { limit, offset }) {
+export async function listSupplierMaterials(
+  companyId,
+  supplierId,
+  { q, limit, offset }
+) {
+  const params = [companyId, supplierId];
+  let i = 3;
+  const where = [
+    `s.company_id = $1`,
+    `sm.supplier_id = $2`,
+    `m.company_id = $1`,
+  ];
+
+  if (q) {
+    where.push(
+      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`
+    );
+    params.push(`%${q}%`);
+    i++;
+  }
+
+  params.push(limit, offset);
+
   const { rows } = await pool.query(
     `
     SELECT ${SUPPLIER_MATERIAL_SELECT}
     FROM bm_supplier_materials sm
     JOIN bm_suppliers s ON s.supplier_id = sm.supplier_id
     JOIN bm_materials m ON m.material_id = sm.material_id
-    WHERE s.company_id = $1 AND sm.supplier_id = $2 AND m.company_id = $1
+    WHERE ${where.join(" AND ")}
     ORDER BY sm.createdat DESC
-    LIMIT $3 OFFSET $4
+    LIMIT $${i++} OFFSET $${i}
     `,
-    [companyId, supplierId, limit, offset]
+    params
   );
   return rows;
 }
 
-export async function countSupplierMaterials(companyId, supplierId) {
+export async function countSupplierMaterials(companyId, supplierId, { q } = {}) {
+  const params = [companyId, supplierId];
+  let i = 3;
+  const where = [
+    `s.company_id = $1`,
+    `sm.supplier_id = $2`,
+    `m.company_id = $1`,
+  ];
+
+  if (q) {
+    where.push(
+      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`
+    );
+    params.push(`%${q}%`);
+    i++;
+  }
+
   const { rows } = await pool.query(
     `
     SELECT COUNT(*)::int AS total
     FROM bm_supplier_materials sm
     JOIN bm_suppliers s ON s.supplier_id = sm.supplier_id
     JOIN bm_materials m ON m.material_id = sm.material_id
-    WHERE s.company_id = $1 AND sm.supplier_id = $2 AND m.company_id = $1
+    WHERE ${where.join(" AND ")}
     `,
-    [companyId, supplierId]
+    params
   );
   return rows[0]?.total ?? 0;
 }

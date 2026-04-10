@@ -62,7 +62,7 @@ export const deleteSupplierContact = (companyId, supplierId, contactId) =>
   model.deleteSupplierContact(companyId, supplierId, contactId);
 
 // Supplier ↔ materials
-export async function listSupplierMaterials(companyId, supplierId, { page, limit }) {
+export async function listSupplierMaterials(companyId, supplierId, { q, page, limit }) {
   const exists = await model.supplierExists(companyId, supplierId);
   if (!exists) return null;
   const safeLimit = clamp(Number(limit) || 20, 1, 100);
@@ -70,8 +70,12 @@ export async function listSupplierMaterials(companyId, supplierId, { page, limit
   const offset = (safePage - 1) * safeLimit;
 
   const [materials, total] = await Promise.all([
-    model.listSupplierMaterials(companyId, supplierId, { limit: safeLimit, offset }),
-    model.countSupplierMaterials(companyId, supplierId),
+    model.listSupplierMaterials(companyId, supplierId, {
+      q,
+      limit: safeLimit,
+      offset,
+    }),
+    model.countSupplierMaterials(companyId, supplierId, { q }),
   ]);
 
   return { materials, page: safePage, limit: safeLimit, total };

@@ -126,9 +126,11 @@ export const deleteSupplierContact = asyncHandler(async (req, res) => {
 export const listSupplierMaterials = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const { supplierId } = req.params;
+  const q = (req.query.q || "").toString().trim() || null;
   const { page = "1", limit = "20" } = req.query;
 
   const result = await service.listSupplierMaterials(companyId, supplierId, {
+    q,
     page: Number(page),
     limit: Number(limit),
   });
