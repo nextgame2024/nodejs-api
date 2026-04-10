@@ -77,8 +77,14 @@ export async function listSupplierMaterials(companyId, supplierId, { page, limit
   return { materials, page: safePage, limit: safeLimit, total };
 }
 
-export const addSupplierMaterial = (companyId, supplierId, payload) =>
-  model.addSupplierMaterial(companyId, supplierId, payload);
+export const addSupplierMaterial = async (companyId, supplierId, payload) => {
+  const row = await model.addSupplierMaterial(companyId, supplierId, payload);
+  if (row) return row;
+
+  // Retry once to tolerate rare stale-read timing when supplier/material
+  // was just created/updated immediately before linking.
+  return model.addSupplierMaterial(companyId, supplierId, payload);
+};
 
 export const updateSupplierMaterial = (
   companyId,
