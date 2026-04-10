@@ -25,7 +25,9 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
     params.push(status);
   }
   if (q) {
-    where.push(`(supplier_name ILIKE $${i} OR email ILIKE $${i})`);
+    where.push(
+      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
@@ -64,7 +66,7 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
       ) AS "hasProjects"
     FROM bm_suppliers
     WHERE ${where.join(" AND ")}
-    ORDER BY (status = 'archived') ASC, supplier_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, LOWER(supplier_name) ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
@@ -83,7 +85,9 @@ export async function countSuppliers(companyId, { q, status }) {
     params.push(status);
   }
   if (q) {
-    where.push(`(supplier_name ILIKE $${i} OR email ILIKE $${i})`);
+    where.push(
+      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i})`
+    );
     params.push(`%${q}%`);
     i++;
   }
