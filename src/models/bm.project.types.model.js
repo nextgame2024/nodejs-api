@@ -40,7 +40,10 @@ export async function listProjectTypes(companyId, { q, status, limit, offset }) 
       ) AS "hasProjects"
     FROM bm_project_types pt
     WHERE ${where.join(" AND ")}
-    ORDER BY (pt.status = 'archived') ASC, pt.createdat DESC
+    ORDER BY
+      (pt.status = 'archived') ASC,
+      LOWER(COALESCE(pt.name, '')) ASC,
+      pt.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params,
