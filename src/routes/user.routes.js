@@ -5,6 +5,7 @@ import {
   updateCurrentUser,
   listUsers,
   updateUserByAdmin,
+  removeUserByAdmin,
 } from "../controllers/user.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
 import { authOptional } from "../middlewares/authOptional.js";
@@ -19,6 +20,7 @@ router.get("/users", authRequired, listUsers);
 
 // Update any user (auth, company scoped)
 router.put("/users/:id", authRequired, updateUserByAdmin);
+router.delete("/users/:id", authRequired, removeUserByAdmin);
 
 // Current user (auth)
 router.get("/user", authRequired, getCurrentUser);

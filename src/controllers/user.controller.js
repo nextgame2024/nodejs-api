@@ -7,6 +7,9 @@ import {
   updateUserById,
   listUsersByCompany,
   countUsersByCompany,
+  userHasRelatedProcesses,
+  archiveUserById,
+  deleteUserById,
 } from "../models/user.model.js";
 import pool from "../config/db.js";
 
@@ -35,6 +38,7 @@ const mapUserResponse = (u, token) => ({
   contacts: u.contacts ?? null,
   type: u.type ?? null,
   status: u.status ?? null,
+  hasProcesses: Boolean(u.hasProcesses),
   companyId: u.companyId ?? null,
   companyName: u.companyName ?? null,
 
@@ -292,6 +296,44 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
       return res
         .status(409)
         .json({ error: "Email or username already in use" });
+    }
+    throw e;
+  }
+});
+
+/** DELETE /api/users/:id — delete/archive user in company (auth required) */
+export const removeUserByAdmin = asyncHandler(async (req, res) => {
+  const companyId = req.user.companyId;
+  const superAdmin = isSuperAdmin(req);
+  const userId = req.params.id;
+
+  const target = await findById(userId);
+  if (!target) return res.status(404).json({ error: "User not found" });
+
+  if (!superAdmin && target.companyId && target.companyId !== companyId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const hasProcesses = await userHasRelatedProcesses(
+    userId,
+    target.companyId ?? null
+  );
+  if (hasProcesses) {
+    const archived = await archiveUserById(userId);
+    if (!archived) return res.status(404).json({ error: "User not found" });
+    return res.json({ userId, action: "archived" });
+  }
+
+  try {
+    const deleted = await deleteUserById(userId);
+    if (!deleted) return res.status(404).json({ error: "User not found" });
+    return res.json({ userId, action: "deleted" });
+  } catch (e) {
+    // Fallback to archive when hidden DB relations block hard delete.
+    if (e?.code === "23503") {
+      const archived = await archiveUserById(userId);
+      if (!archived) return res.status(404).json({ error: "User not found" });
+      return res.json({ userId, action: "archived" });
     }
     throw e;
   }
