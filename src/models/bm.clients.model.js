@@ -38,10 +38,31 @@ export async function listClients(companyId, { q, status, limit, offset }) {
 
   const { rows } = await pool.query(
     `
-    SELECT ${CLIENT_SELECT}
+    SELECT
+      ${CLIENT_SELECT},
+      (
+        EXISTS (
+          SELECT 1
+          FROM bm_projects p
+          WHERE p.company_id = bm_clients.company_id
+            AND p.client_id = bm_clients.client_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_client_contacts cc
+          WHERE cc.company_id = bm_clients.company_id
+            AND cc.client_id = bm_clients.client_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM bm_documents d
+          WHERE d.company_id = bm_clients.company_id
+            AND d.client_id = bm_clients.client_id
+        )
+      ) AS "hasProjects"
     FROM bm_clients
     WHERE ${where.join(" AND ")}
-    ORDER BY client_name ASC NULLS LAST, createdat DESC
+    ORDER BY (status = 'archived') ASC, LOWER(client_name) ASC NULLS LAST, createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
     params
