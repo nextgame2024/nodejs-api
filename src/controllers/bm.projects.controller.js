@@ -329,7 +329,14 @@ export const createDocumentFromProject = asyncHandler(async (req, res) => {
     const project = await service.getProject(companyId, projectId);
     if (
       project &&
-      !["quote_approved", "invoice_process", "done", "cancelled", "archived"].includes(
+      ![
+        "quote_approved",
+        "invoice_process",
+        "done",
+        "cancelled",
+        "archived",
+        "deleted",
+      ].includes(
         project.status
       )
     ) {

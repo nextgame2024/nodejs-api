@@ -345,12 +345,7 @@ export const updateProject = (companyId, projectId, payload) =>
   model.updateProject(companyId, projectId, payload);
 
 export const removeProject = async (companyId, projectId) => {
-  const hasRelations = await model.projectHasRelations(companyId, projectId);
-  if (hasRelations) {
-    const ok = await model.archiveProject(companyId, projectId);
-    return { ok, action: "archived" };
-  }
-  const ok = await model.deleteProject(companyId, projectId);
+  const ok = await model.softDeleteProject(companyId, projectId);
   return { ok, action: "deleted" };
 };
 

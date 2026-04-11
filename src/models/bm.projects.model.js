@@ -89,7 +89,7 @@ export async function listProjects(
 ) {
   const params = [companyId];
   let i = 2;
-  const where = [`p.company_id = $1`];
+  const where = [`p.company_id = $1`, `p.status::text <> 'deleted'`];
 
   if (status) {
     where.push(`p.status = $${i++}::bm_project_status`);
@@ -191,7 +191,7 @@ export async function listProjects(
 export async function countProjects(companyId, { q, status, clientId }) {
   const params = [companyId];
   let i = 2;
-  const where = [`p.company_id = $1`];
+  const where = [`p.company_id = $1`, `p.status::text <> 'deleted'`];
 
   if (status) {
     where.push(`p.status = $${i++}::bm_project_status`);
@@ -381,7 +381,7 @@ export async function updateProject(companyId, projectId, payload) {
     const statusBeforeHold = statusRows[0].status_before_hold;
     const nextStatus = payload.status;
 
-    const lockedStatuses = new Set(["done", "cancelled", "archived"]);
+    const lockedStatuses = new Set(["done", "cancelled", "archived", "deleted"]);
     if (lockedStatuses.has(currentStatus) && nextStatus !== currentStatus) {
       const err = new Error(
         "Status cannot be changed once it is Done or Cancelled."
@@ -445,6 +445,7 @@ export async function updateProject(companyId, projectId, payload) {
         done: new Set(["done"]),
         cancelled: new Set(["cancelled"]),
         archived: new Set(["archived"]),
+        deleted: new Set(["deleted"]),
       };
 
       const allowed = allowedMap[currentStatus] || new Set([currentStatus]);
@@ -660,11 +661,11 @@ async function applyProjectTypeToProjectTx(
   );
 }
 
-export async function archiveProject(companyId, projectId) {
+export async function softDeleteProject(companyId, projectId) {
   const res = await pool.query(
     `
     UPDATE bm_projects
-    SET status = 'archived', updatedat = NOW()
+    SET status = 'deleted', updatedat = NOW()
     WHERE company_id = $1 AND project_id = $2
     `,
     [companyId, projectId]
