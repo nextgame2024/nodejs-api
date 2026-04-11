@@ -163,7 +163,7 @@ export async function listProjects(
       LIMIT 1
     ) inv ON true
     WHERE ${where.join(" AND ")}
-    ORDER BY (p.status = 'archived') ASC, p.createdat DESC
+    ORDER BY (p.status = 'archived') ASC, LOWER(p.project_name) ASC NULLS LAST, p.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `;
 
