@@ -271,3 +271,12 @@ export async function updateSchedule(companyId, scheduleId, payload) {
     mapScheduleWriteError(error);
   }
 }
+
+export async function deleteSchedule(companyId, scheduleId) {
+  const existing = await model.getSchedule(companyId, scheduleId);
+  if (!existing) {
+    return null;
+  }
+
+  return model.deleteSchedule(companyId, scheduleId);
+}

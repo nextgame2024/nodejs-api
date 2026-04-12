@@ -200,3 +200,17 @@ export async function updateSchedule(companyId, scheduleId, payload) {
 
   return getSchedule(companyId, rows[0].scheduleId);
 }
+
+export async function deleteSchedule(companyId, scheduleId) {
+  const { rows } = await pool.query(
+    `
+    DELETE FROM bm_schedule
+    WHERE company_id = $1
+      AND schedule_id = $2
+    RETURNING schedule_id AS "scheduleId"
+    `,
+    [companyId, scheduleId],
+  );
+
+  return rows[0] ?? null;
+}
