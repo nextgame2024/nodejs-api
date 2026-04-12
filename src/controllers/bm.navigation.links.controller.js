@@ -15,6 +15,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Clients",
     "Projects",
     "Project types",
+    "Scheduling",
     "Users",
     "Company",
     "Navigation links",
