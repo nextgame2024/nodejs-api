@@ -9,7 +9,7 @@ const SCHEDULE_SELECT = `
   s.scheduled_item_id AS "scheduledItemId",
   COALESCE(p.project_name, s.scheduled_item_label) AS "scheduledItemLabel",
   COALESCE(c.client_name, s.scheduled_item_secondary_label) AS "scheduledItemSecondaryLabel",
-  s.schedule_date AS "date",
+  TO_CHAR(s.schedule_date, 'YYYY-MM-DD') AS "date",
   TO_CHAR(s.start_time, 'HH24:MI') AS "startTime",
   TO_CHAR(s.end_time, 'HH24:MI') AS "endTime",
   s.description,
@@ -17,7 +17,7 @@ const SCHEDULE_SELECT = `
   s.updatedat AS "updatedAt"
 `;
 
-export async function listSchedules(companyId, { start, end }) {
+export async function listSchedules(companyId, { start, end, projectId }) {
   const { rows } = await pool.query(
     `
     SELECT ${SCHEDULE_SELECT}
@@ -30,9 +30,10 @@ export async function listSchedules(companyId, { start, end }) {
      AND c.client_id = p.client_id
     WHERE s.company_id = $1
       AND s.schedule_date BETWEEN $2 AND $3
+      AND ($4::uuid IS NULL OR s.project_id = $4)
     ORDER BY s.schedule_date ASC, s.start_time ASC, s.createdat ASC
     `,
-    [companyId, start, end],
+    [companyId, start, end, projectId ?? null],
   );
 
   return rows;

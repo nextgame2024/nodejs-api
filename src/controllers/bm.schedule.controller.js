@@ -3,11 +3,12 @@ import * as service from "../services/bm.schedule.service.js";
 
 export const listSchedules = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
-  const { start, end } = req.query;
+  const { start, end, project_id: projectId } = req.query;
 
   const schedules = await service.listSchedules(companyId, {
     start,
     end,
+    projectId,
   });
 
   res.json({ schedules });

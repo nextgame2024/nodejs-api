@@ -151,6 +151,20 @@ function normalizeRangeDate(value, fieldName) {
   return date;
 }
 
+async function normalizeOptionalProjectId(companyId, value) {
+  const projectId = normalizeText(value);
+  if (!projectId) {
+    return null;
+  }
+
+  const project = await projectsModel.getProject(companyId, projectId);
+  if (!project) {
+    throw httpError("Scheduled project not found", 404);
+  }
+
+  return project.projectId;
+}
+
 function isExclusionViolation(error) {
   return error?.code === "23P01";
 }
@@ -163,15 +177,20 @@ function mapScheduleWriteError(error) {
   throw error;
 }
 
-export async function listSchedules(companyId, { start, end }) {
+export async function listSchedules(companyId, { start, end, projectId }) {
   const startDate = normalizeRangeDate(start, "start");
   const endDate = normalizeRangeDate(end, "end");
+  const safeProjectId = await normalizeOptionalProjectId(companyId, projectId);
 
   if (startDate > endDate) {
     throw httpError("start cannot be after end", 400);
   }
 
-  return model.listSchedules(companyId, { start: startDate, end: endDate });
+  return model.listSchedules(companyId, {
+    start: startDate,
+    end: endDate,
+    projectId: safeProjectId,
+  });
 }
 
 export async function listScheduleItems(companyId, { q, type, limit }) {
