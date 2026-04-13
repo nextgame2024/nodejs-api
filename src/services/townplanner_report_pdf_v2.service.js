@@ -6,7 +6,7 @@ import {
   getParcelOverlayMapImageBufferV2,
 } from "./googleStaticMaps_v2.service.js";
 
-export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-03.84";
+export const PDF_ENGINE_VERSION = "TPR-PDFKIT-V3-2026-04-13.85";
 
 const VEGETATION_STATE_MAPPING_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -3481,7 +3481,12 @@ export async function buildTownPlannerReportPdfV2(
     });
 
     const nameLine = String(item?.name || "State mapping layer").trim();
-    const detailLine = String(item?.detail || "").trim();
+    const shouldHideDetailLine =
+      String(item?.code || "") ===
+      "state_mapping_sara_water_resource_planning_area_boundaries";
+    const detailLine = shouldHideDetailLine
+      ? ""
+      : String(item?.detail || "").trim();
     const normalizeLine = (v) =>
       String(v || "")
         .toLowerCase()
