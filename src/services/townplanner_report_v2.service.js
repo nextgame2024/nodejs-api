@@ -2,7 +2,10 @@
 import crypto from "crypto";
 import axios from "axios";
 
-import { fetchPlanningDataV2 } from "./planningData_v2.service.js";
+import {
+  fetchPlanningDataV2,
+  PLANNING_SNAPSHOT_VERSION,
+} from "./planningData_v2.service.js";
 import { putToS3 } from "./s3.js";
 import {
   buildTownPlannerReportPdfV2,
@@ -465,8 +468,14 @@ export async function generateTownPlannerReportV2({
 
   const snapshotHasDams = hasDamsTransportData(planningSnapshot);
   const snapshotHasStateMapping = hasStateMappingData(planningSnapshot);
+  const snapshotVersion = String(planningSnapshot?.planningDataVersion || "").trim();
   const shouldRefreshSnapshot =
-    hasUsableSnapshot && (!snapshotHasDams || !snapshotHasStateMapping);
+    hasUsableSnapshot &&
+    (
+      !snapshotHasDams ||
+      !snapshotHasStateMapping ||
+      snapshotVersion !== PLANNING_SNAPSHOT_VERSION
+    );
 
   let planning = null;
   if (hasUsableSnapshot && !shouldRefreshSnapshot) {
@@ -483,6 +492,8 @@ export async function generateTownPlannerReportV2({
           addressLabel,
           snapshotHasDams,
           snapshotHasStateMapping,
+          snapshotVersion,
+          planningSnapshotVersion: PLANNING_SNAPSHOT_VERSION,
         }
       );
     }

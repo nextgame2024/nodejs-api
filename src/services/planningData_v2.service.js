@@ -10,6 +10,8 @@
 
 import pool from "../config/db.js";
 
+export const PLANNING_SNAPSHOT_VERSION = "TPR-PLANNING-V2-2026-04-13.1";
+
 const _tableExistsCache = new Map();
 const VEGETATION_LAYER_CODE =
   "state_mapping_sara_regulated_vegetation_management_map";
@@ -140,6 +142,22 @@ const STATE_MAPPING_CONSIDERATION_LAYERS = [
     source: "Queensland Regional Planning Interests (RPI layer 5)",
     contextDistanceMeters: 1200,
     clipDistanceMeters: 1200,
+  },
+];
+
+const ACID_SULFATE_OVERLAY_LAYERS = [
+  {
+    table: "bcc_potential_actual_acid_sulfate_soils",
+    detail: "Potential and actual acid sulfate soils",
+  },
+  {
+    table: "bcc_potential_actual_acid_sulfate_soils_land_at_or_below_5m_ahd",
+    detail: "Land at or below 5m AHD",
+  },
+  {
+    table:
+      "bcc_potential_actual_acid_sulfate_soils_land_above_5m_ahd_and_below_20m_ahd",
+    detail: "Land above 5m AHD and below 20m AHD",
   },
 ];
 
@@ -914,6 +932,12 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     )
   );
 
+  const acidSulfatePromises = ACID_SULFATE_OVERLAY_LAYERS.map((layer) =>
+    parcelGeom
+      ? queryIntersects(layer.table, parcelGeom)
+      : queryOne(layer.table, focusLng, focusLat)
+  );
+
   const stateMappingPromises = STATE_MAPPING_CONSIDERATION_LAYERS.map((layer) =>
     queryStateMappingLayer({
       table: layer.table,
@@ -948,7 +972,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     criticalInfrastructureMovementAssets,
     roadHierarchy,
     streetscapeHierarchy,
-    ...stateTransportHitsAndStateMappingHits
+    ...acidSulfateHitsAndStateTransportAndStateMappingHits
   ] = await Promise.all([
     queryOne("bcc_zoning", focusLng, focusLat, {
       preferLargestArea: true,
@@ -1000,16 +1024,21 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
       parcelGeom,
       LINE_OVERLAY_DISTANCE_M
     ),
+    ...acidSulfatePromises,
     ...stateTransportPromises,
     ...stateMappingPromises,
   ]);
 
-  const stateTransportHits = stateTransportHitsAndStateMappingHits.slice(
+  const acidSulfateHits = acidSulfateHitsAndStateTransportAndStateMappingHits.slice(
     0,
-    DAMS_STATE_TRANSPORT_LAYERS.length
+    ACID_SULFATE_OVERLAY_LAYERS.length
   );
-  const stateMappingHits = stateTransportHitsAndStateMappingHits.slice(
-    DAMS_STATE_TRANSPORT_LAYERS.length
+  const stateTransportHits = acidSulfateHitsAndStateTransportAndStateMappingHits.slice(
+    ACID_SULFATE_OVERLAY_LAYERS.length,
+    ACID_SULFATE_OVERLAY_LAYERS.length + DAMS_STATE_TRANSPORT_LAYERS.length
+  );
+  const stateMappingHits = acidSulfateHitsAndStateTransportAndStateMappingHits.slice(
+    ACID_SULFATE_OVERLAY_LAYERS.length + DAMS_STATE_TRANSPORT_LAYERS.length
   );
 
   if (bicycleNetwork?.properties) {
@@ -1335,6 +1364,28 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     severity: "mapped overlay",
   });
 
+  const acidSulfateLayerHit = ACID_SULFATE_OVERLAY_LAYERS.map((layer, idx) => ({
+    ...layer,
+    hit: acidSulfateHits?.[idx] || null,
+  })).find((item) => item?.hit?.properties);
+  const acidSulfateDetail = overlayDetail(
+    acidSulfateLayerHit?.hit?.properties,
+    overlayDetailKeys,
+    acidSulfateLayerHit?.detail || null
+  );
+  pushOverlay(
+    acidSulfateLayerHit?.hit?.properties,
+    acidSulfateLayerHit?.hit?.geometry,
+    {
+      name: overlayName(
+        "Potential and actual acid sulfate soils overlay",
+        acidSulfateDetail
+      ),
+      code: "overlay_potential_actual_acid_sulfate_soils",
+      severity: acidSulfateDetail || "mapped overlay",
+    }
+  );
+
   const pansDetail = overlayDetail(
     airportPansOps?.properties,
     overlayDetailKeys,
@@ -1462,6 +1513,7 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
   const rawLgipNetworkKey = lgipNetworkKey?.properties || null;
 
   return {
+    planningDataVersion: PLANNING_SNAPSHOT_VERSION,
     // Geocode-like object for consistency (but values are already provided)
     geocode: {
       lat: safeLat,
@@ -1507,6 +1559,8 @@ export async function fetchPlanningDataV2({ lng, lat, lotPlan = null }) {
     rawAirportHeight: airportHeight?.properties || null,
     rawAirportOls: airportOls?.properties || null,
     rawAirportPansOps: airportPansOps?.properties || null,
+    rawPotentialActualAcidSulfateSoils:
+      acidSulfateLayerHit?.hit?.properties || null,
     rawLgipNetworkKey,
     rawBicycleNetwork: bicycleNetwork?.properties || null,
     rawCriticalInfrastructureMovementAssets:

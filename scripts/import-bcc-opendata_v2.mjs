@@ -109,6 +109,20 @@ const DATASETS = {
       "cp14-airport-environs-overlay-procedures-for-air-nav-services-aircraft-operation",
     table: "bcc_airport_pans_ops",
   },
+  potential_actual_acid_sulfate_soils: {
+    odsId: "cp14-potential-and-actual-acid-sulfate-soils",
+    table: "bcc_potential_actual_acid_sulfate_soils",
+  },
+  potential_actual_acid_sulfate_soils_land_at_or_below_5m_ahd: {
+    odsId: "cp14-potential-and-actual-acid-sulfate-soils-land-at-or-below-5m-ahd",
+    table: "bcc_potential_actual_acid_sulfate_soils_land_at_or_below_5m_ahd",
+  },
+  potential_actual_acid_sulfate_soils_land_above_5m_ahd_and_below_20m_ahd: {
+    odsId:
+      "cp14-potential-and-actual-acid-sulfate-soils-land-above-5m-ahd-and-below-20m-ahd",
+    table:
+      "bcc_potential_actual_acid_sulfate_soils_land_above_5m_ahd_and_below_20m_ahd",
+  },
 };
 
 function odsGeoJsonExportUrl(odsId) {
