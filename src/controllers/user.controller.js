@@ -119,6 +119,8 @@ export const registerUser = asyncHandler(async (req, res) => {
 
   // New optional fields (safe; do not break existing clients)
   const optional = {
+    image: payload.image ?? "",
+    bio: payload.bio ?? "",
     name: payload.name ?? null,
     address: payload.address ?? null,
     cel: payload.cel ?? null,
