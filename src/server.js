@@ -1,11 +1,13 @@
 import app from "./app.js";
 import { pingDb } from "./config/db.js";
+import { ensureStartupMigrations } from "./config/startupMigrations.js";
 
 const port = Number(process.env.PORT || 3300);
 
 (async () => {
   try {
     await pingDb();
+    await ensureStartupMigrations();
     console.log("✅ DB reachable");
   } catch (e) {
     console.error("❌ DB ping failed on startup:", e?.code || e?.message || e);

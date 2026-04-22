@@ -76,15 +76,17 @@ export async function createUser({
   cel = null,
   tel = null,
   contacts = null,
+  type = "employee",
+  status = "active",
 }) {
   const { rows } = await pool.query(
     `INSERT INTO users (
         id, company_id, email, username, password, image, bio,
-        name, address, cel, tel, contacts
+        name, address, cel, tel, contacts, type, status
      )
      VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11
+        $6, $7, $8, $9, $10, $11, $12, $13
      )
      RETURNING
        ${USER_SELECT}`,
@@ -100,6 +102,8 @@ export async function createUser({
       cel,
       tel,
       contacts,
+      type,
+      status,
     ],
   );
   return rows[0];

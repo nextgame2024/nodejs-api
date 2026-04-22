@@ -10,7 +10,7 @@
 
 import pool from "../config/db.js";
 
-export const PLANNING_SNAPSHOT_VERSION = "TPR-PLANNING-V2-2026-04-13.1";
+export const PLANNING_SNAPSHOT_VERSION = "TPR-PLANNING-V2-2026-04-13.2";
 
 const _tableExistsCache = new Map();
 const VEGETATION_LAYER_CODE =
@@ -151,12 +151,11 @@ const ACID_SULFATE_OVERLAY_LAYERS = [
     detail: "Potential and actual acid sulfate soils",
   },
   {
-    table: "bcc_potential_actual_acid_sulfate_soils_land_at_or_below_5m_ahd",
+    table: "bcc_potential_actual_acid_sulfate_soils_below_5m_ahd",
     detail: "Land at or below 5m AHD",
   },
   {
-    table:
-      "bcc_potential_actual_acid_sulfate_soils_land_above_5m_ahd_and_below_20m_ahd",
+    table: "bcc_potential_actual_acid_sulfate_soils_5m_to_20m_ahd",
     detail: "Land above 5m AHD and below 20m AHD",
   },
 ];

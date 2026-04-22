@@ -19,6 +19,8 @@ const DEFAULT_REGISTRATION_COMPANY_ID =
   process.env.REGISTRATION_COMPANY_ID ||
   "81c2f065-aceb-4043-add5-b11271d21fb3";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
+const USER_TYPES = new Set(["employee", "supplier", "client"]);
+const USER_STATUSES = new Set(["active", "archived"]);
 
 const isUniqueViolation = (e) =>
   e?.code === "23505" || e?.code === "ER_DUP_ENTRY"; // PG + legacy MySQL check
@@ -46,6 +48,14 @@ const mapUserResponse = (u, token) => ({
   updatedAt: toISO(u.updatedAt),
   token,
 });
+
+const normalizeOptionalEnum = (value, allowed) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  return allowed.has(normalized) ? normalized : null;
+};
 
 /** POST /api/users  — register (no auth) */
 export const registerUser = asyncHandler(async (req, res) => {
@@ -115,6 +125,23 @@ export const registerUser = asyncHandler(async (req, res) => {
     tel: payload.tel ?? null,
     contacts: payload.contacts ?? null, // expect JSON object/array or null
   };
+  let type = "employee";
+  if (payload.type !== undefined) {
+    const normalizedType = normalizeOptionalEnum(payload.type, USER_TYPES);
+    if (!normalizedType) {
+      return res.status(400).json({ error: "Invalid user type" });
+    }
+    type = normalizedType;
+  }
+
+  let status = "active";
+  if (payload.status !== undefined) {
+    const normalizedStatus = normalizeOptionalEnum(payload.status, USER_STATUSES);
+    if (!normalizedStatus) {
+      return res.status(400).json({ error: "Invalid user status" });
+    }
+    status = normalizedStatus;
+  }
 
   try {
     const user = await createUser({
@@ -122,6 +149,8 @@ export const registerUser = asyncHandler(async (req, res) => {
       email,
       passwordHash,
       companyId,
+      type,
+      status,
       ...optional,
     });
 
@@ -152,7 +181,14 @@ export const listUsers = asyncHandler(async (req, res) => {
 
   const q = (req.query.q || "").toString().trim();
   const status = (req.query.status || "").toString().trim() || null;
-  const type = (req.query.type || "").toString().trim() || null;
+  const rawType =
+    req.query.type === undefined
+      ? undefined
+      : req.query.type?.toString?.() ?? req.query.type;
+  const type = normalizeOptionalEnum(rawType, USER_TYPES);
+  if (rawType !== undefined && !type) {
+    return res.status(400).json({ error: "Invalid user type" });
+  }
 
   const [users, total] = await Promise.all([
     listUsersByCompany({
@@ -259,9 +295,19 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
     cel: payload.cel,
     tel: payload.tel,
     contacts: payload.contacts,
-    type: payload.type,
-    status: payload.status,
   };
+
+  if (payload.type !== undefined) {
+    const type = normalizeOptionalEnum(payload.type, USER_TYPES);
+    if (!type) return res.status(400).json({ error: "Invalid user type" });
+    next.type = type;
+  }
+
+  if (payload.status !== undefined) {
+    const status = normalizeOptionalEnum(payload.status, USER_STATUSES);
+    if (!status) return res.status(400).json({ error: "Invalid user status" });
+    next.status = status;
+  }
 
   if (superAdmin && (payload.companyId !== undefined || payload.company_id !== undefined)) {
     const requestedCompanyId = payload.companyId ?? payload.company_id ?? null;
