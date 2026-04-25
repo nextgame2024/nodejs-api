@@ -7,9 +7,9 @@ const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 const NAVIGATION_LABELS_BY_TYPE = {
   header: [
     "Home",
-    "Explore Business Manager",
     "Town planner",
     "Business manager",
+    "Explore Business Manager",
     "Settings",
   ],
   menu: [
@@ -59,7 +59,12 @@ const parseBoolean = (value) => {
 };
 
 const labelEquals = (a, b) =>
-  String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+  String(a || "")
+    .trim()
+    .toLowerCase() ===
+  String(b || "")
+    .trim()
+    .toLowerCase();
 
 const validateTypeAndLabel = ({ navigationType, navigationLabel }) => {
   if (!navigationType) throw badRequest("navigation_type is required");
@@ -70,7 +75,9 @@ const validateTypeAndLabel = ({ navigationType, navigationLabel }) => {
   if (!navigationLabel) throw badRequest("navigation_label is required");
 
   const allowedLabels = NAVIGATION_LABELS_BY_TYPE[navigationType] ?? [];
-  const allowed = allowedLabels.some((label) => labelEquals(label, navigationLabel));
+  const allowed = allowedLabels.some((label) =>
+    labelEquals(label, navigationLabel),
+  );
   if (!allowed) {
     throw badRequest(
       `navigation_label is invalid for navigation_type '${navigationType}'`,
@@ -227,7 +234,10 @@ export const getNavigationLink = asyncHandler(async (req, res) => {
   const companyId = isSuperAdmin(req) ? null : req.user.companyId;
   const { navigationLinkId } = req.params;
 
-  const navigationLink = await service.getNavigationLink(companyId, navigationLinkId);
+  const navigationLink = await service.getNavigationLink(
+    companyId,
+    navigationLinkId,
+  );
   if (!navigationLink) {
     return res.status(404).json({ error: "Navigation link not found" });
   }
@@ -254,7 +264,9 @@ export const createNavigationLink = asyncHandler(async (req, res) => {
 
 export const syncNavigationLabels = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const payload = normalizePayload(req.body?.navigationLinksSync || req.body || {});
+  const payload = normalizePayload(
+    req.body?.navigationLinksSync || req.body || {},
+  );
 
   const companyId = await resolveCompanyIdForCreate(req, payload);
   validateTypeAndLabels({
@@ -277,7 +289,10 @@ export const updateNavigationLink = asyncHandler(async (req, res) => {
   const { navigationLinkId } = req.params;
   const payload = normalizePayload(req.body?.navigationLink || req.body || {});
 
-  const current = await service.getNavigationLink(scopeCompanyId, navigationLinkId);
+  const current = await service.getNavigationLink(
+    scopeCompanyId,
+    navigationLinkId,
+  );
   if (!current) {
     return res.status(404).json({ error: "Navigation link not found" });
   }
