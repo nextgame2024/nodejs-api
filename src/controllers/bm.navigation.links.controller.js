@@ -7,6 +7,7 @@ const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 const NAVIGATION_LABELS_BY_TYPE = {
   header: [
     "Home",
+    "Explore Business Manager",
     "Town planner",
     "Business manager",
     "Settings",
