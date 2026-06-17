@@ -14,6 +14,8 @@ const NAVIGATION_LABELS_BY_TYPE = {
   ],
   menu: [
     "Clients",
+    "Sites",
+    "Pallets",
     "Projects",
     "Project types",
     "Scheduling",
