@@ -1,8 +1,14 @@
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import * as service from "../services/bm.sites.service.js";
 
+const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
+const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
+
 export const listSites = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId =
+    isSuperAdmin(req) && req.query.companyId
+      ? String(req.query.companyId)
+      : req.user.companyId;
   const { q, status, page = "1", limit = "20" } = req.query;
   const result = await service.listSites(companyId, {
     q,

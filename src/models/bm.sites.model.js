@@ -113,12 +113,26 @@ export async function getUserSite(companyId, userId) {
   await ensureSitesSchema();
   const { rows } = await pool.query(
     `
-    SELECT ${SITE_SELECT}
-    FROM bm_sites
-    WHERE company_id = $1
-      AND status = 'active'
-      AND (user_id = $2 OR user_id IS NULL)
-    ORDER BY (user_id = $2) DESC, createdat ASC
+    SELECT
+      s.site_id AS "siteId",
+      s.company_id AS "companyId",
+      s.user_id AS "userId",
+      s.site_name AS "siteName",
+      s.administrator,
+      s.address,
+      s.email,
+      s.mobile,
+      s.pallets_onsite AS "palletsOnsite",
+      s.status,
+      s.createdat AS "createdAt",
+      s.updatedat AS "updatedAt"
+    FROM users u
+    JOIN bm_sites s
+      ON s.site_id = u.site_id
+     AND s.company_id = u.company_id
+    WHERE u.company_id = $1
+      AND u.id = $2
+      AND s.status = 'active'
     LIMIT 1
     `,
     [companyId, userId],

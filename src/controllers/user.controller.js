@@ -41,6 +41,8 @@ const mapUserResponse = (u, token) => ({
   type: u.type ?? null,
   status: u.status ?? null,
   hasProcesses: Boolean(u.hasProcesses),
+  siteId: u.siteId ?? null,
+  siteName: u.siteName ?? null,
   companyId: u.companyId ?? null,
   companyName: u.companyName ?? null,
 
@@ -56,6 +58,34 @@ const normalizeOptionalEnum = (value, allowed) => {
   if (!normalized) return null;
   return allowed.has(normalized) ? normalized : null;
 };
+
+const normalizeOptionalUuid = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+async function assertSiteBelongsToCompany(companyId, siteId) {
+  if (!siteId) return null;
+  const { rows } = await pool.query(
+    `
+    SELECT site_id
+    FROM bm_sites
+    WHERE company_id = $1
+      AND site_id = $2
+      AND status = 'active'
+    LIMIT 1
+    `,
+    [companyId, siteId],
+  );
+  if (!rows[0]?.site_id) {
+    const err = new Error("Invalid siteId");
+    err.status = 400;
+    throw err;
+  }
+  return rows[0].site_id;
+}
 
 /** POST /api/users  — register (no auth) */
 export const registerUser = asyncHandler(async (req, res) => {
@@ -145,6 +175,11 @@ export const registerUser = asyncHandler(async (req, res) => {
     status = normalizedStatus;
   }
 
+  const siteId = await assertSiteBelongsToCompany(
+    companyId,
+    normalizeOptionalUuid(payload.siteId ?? payload.site_id),
+  );
+
   try {
     const user = await createUser({
       username,
@@ -153,6 +188,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       companyId,
       type,
       status,
+      siteId,
       ...optional,
     });
 
@@ -244,7 +280,15 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
     cel: payload.cel,
     tel: payload.tel,
     contacts: payload.contacts,
+    siteId: normalizeOptionalUuid(payload.siteId ?? payload.site_id),
   };
+
+  if (payload.siteId !== undefined || payload.site_id !== undefined) {
+    next.siteId = await assertSiteBelongsToCompany(
+      req.user.companyId,
+      normalizeOptionalUuid(payload.siteId ?? payload.site_id),
+    );
+  }
 
   // Security: do NOT allow changing type/status here
   if (payload.password) {
@@ -297,6 +341,7 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
     cel: payload.cel,
     tel: payload.tel,
     contacts: payload.contacts,
+    siteId: undefined,
   };
 
   if (payload.type !== undefined) {
@@ -329,6 +374,13 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
       return res.status(400).json({ error: "Invalid companyId" });
     }
     next.companyId = companyRows[0].company_id;
+  }
+
+  if (payload.siteId !== undefined || payload.site_id !== undefined) {
+    next.siteId = await assertSiteBelongsToCompany(
+      next.companyId ?? target.companyId ?? companyId,
+      normalizeOptionalUuid(payload.siteId ?? payload.site_id),
+    );
   }
 
   if (payload.password) {

@@ -1,4 +1,33 @@
 import pool from "../config/db.js";
+import { ensureSitesSchema } from "./bm.sites.model.js";
+
+let usersSiteSchemaReady = false;
+
+export async function ensureUsersSiteSchema() {
+  if (usersSiteSchemaReady) return;
+  await ensureSitesSchema();
+  await pool.query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS site_id uuid NULL;
+    CREATE INDEX IF NOT EXISTS idx_users_company_site
+      ON users (company_id, site_id);
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_users_site_id'
+      ) THEN
+        ALTER TABLE users
+          ADD CONSTRAINT fk_users_site_id
+          FOREIGN KEY (site_id)
+          REFERENCES bm_sites(site_id)
+          ON DELETE SET NULL;
+      END IF;
+    END $$;
+  `);
+  usersSiteSchemaReady = true;
+}
 
 // Centralized selection so all endpoints stay consistent
 const USER_SELECT = `
@@ -14,6 +43,14 @@ const USER_SELECT = `
   contacts,
   type,
   status,
+  site_id AS "siteId",
+  (
+    SELECT s.site_name
+    FROM bm_sites s
+    WHERE s.site_id = users.site_id
+      AND s.company_id = users.company_id
+    LIMIT 1
+  ) AS "siteName",
   company_id AS "companyId",
   (
     SELECT c.company_name
@@ -26,6 +63,7 @@ const USER_SELECT = `
 `;
 
 export async function findByEmail(email) {
+  await ensureUsersSiteSchema();
   const { rows } = await pool.query(
     `SELECT
        ${USER_SELECT},
@@ -39,6 +77,7 @@ export async function findByEmail(email) {
 }
 
 export async function findByUsername(username) {
+  await ensureUsersSiteSchema();
   const { rows } = await pool.query(
     `SELECT
        ${USER_SELECT},
@@ -52,6 +91,7 @@ export async function findByUsername(username) {
 }
 
 export async function findById(id) {
+  await ensureUsersSiteSchema();
   const { rows } = await pool.query(
     `SELECT
        ${USER_SELECT}
@@ -78,15 +118,17 @@ export async function createUser({
   contacts = null,
   type = "employee",
   status = "active",
+  siteId = null,
 }) {
+  await ensureUsersSiteSchema();
   const { rows } = await pool.query(
     `INSERT INTO users (
         id, company_id, email, username, password, image, bio,
-        name, address, cel, tel, contacts, type, status
+        name, address, cel, tel, contacts, type, status, site_id
      )
      VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11, $12, $13
+        $6, $7, $8, $9, $10, $11, $12, $13, $14
      )
      RETURNING
        ${USER_SELECT}`,
@@ -104,6 +146,7 @@ export async function createUser({
       contacts,
       type,
       status,
+      siteId,
     ],
   );
   return rows[0];
@@ -126,8 +169,10 @@ export async function updateUserById(
     companyId,
     type,
     status,
+    siteId,
   },
 ) {
+  await ensureUsersSiteSchema();
   const sets = [];
   const params = [];
   let i = 1;
@@ -185,6 +230,10 @@ export async function updateUserById(
     sets.push(`status = $${i++}`);
     params.push(status);
   }
+  if (siteId !== undefined) {
+    sets.push(`site_id = $${i++}`);
+    params.push(siteId);
+  }
 
   if (!sets.length) return findById(id);
 
@@ -211,6 +260,7 @@ export async function listUsersByCompany({
   limit,
   offset,
 }) {
+  await ensureUsersSiteSchema();
   const filters = [];
   const params = [];
   let i = 1;
@@ -227,6 +277,12 @@ export async function listUsersByCompany({
           FROM bm_company c
           WHERE c.company_id = users.company_id
             AND c.company_name ILIKE $${i}
+        ) OR EXISTS (
+          SELECT 1
+          FROM bm_sites s
+          WHERE s.site_id = users.site_id
+            AND s.company_id = users.company_id
+            AND s.site_name ILIKE $${i}
         ))`,
     );
     params.push(`%${q}%`);
@@ -307,6 +363,7 @@ export async function listUsersByCompany({
 
 /** Count users by company (for pagination) */
 export async function countUsersByCompany({ companyId, q, status, type }) {
+  await ensureUsersSiteSchema();
   const filters = [];
   const params = [];
   let i = 1;
@@ -323,6 +380,12 @@ export async function countUsersByCompany({ companyId, q, status, type }) {
           FROM bm_company c
           WHERE c.company_id = users.company_id
             AND c.company_name ILIKE $${i}
+        ) OR EXISTS (
+          SELECT 1
+          FROM bm_sites s
+          WHERE s.site_id = users.site_id
+            AND s.company_id = users.company_id
+            AND s.site_name ILIKE $${i}
         ))`,
     );
     params.push(`%${q}%`);
@@ -349,6 +412,7 @@ export async function countUsersByCompany({ companyId, q, status, type }) {
 }
 
 export async function userHasRelatedProcesses(userId, companyId = null) {
+  await ensureUsersSiteSchema();
   const params = [userId];
   let companyFilter = "";
   if (companyId) {
@@ -385,6 +449,7 @@ export async function userHasRelatedProcesses(userId, companyId = null) {
 }
 
 export async function archiveUserById(id) {
+  await ensureUsersSiteSchema();
   const { rowCount } = await pool.query(
     `UPDATE users
      SET status = 'archived', updatedat = NOW()
@@ -395,6 +460,7 @@ export async function archiveUserById(id) {
 }
 
 export async function deleteUserById(id) {
+  await ensureUsersSiteSchema();
   const { rowCount } = await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
   return rowCount > 0;
 }
