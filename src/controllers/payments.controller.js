@@ -9,6 +9,11 @@ import {
   markJobPaid,
   findArticleIdBySlug,
 } from "../models/render.model.js";
+import {
+  createAiToolkitPayment,
+  markAiToolkitPaymentAwaitingCheckout,
+  markAiToolkitPaymentPaidBySession,
+} from "../models/aiToolkitPayment.model.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
@@ -24,6 +29,9 @@ const s3 = new S3Client({
 const bucket = process.env.S3_BUCKET;
 
 const PRICE_AUD_CENTS = Number(process.env.PRICE_AUD_CENTS || 399);
+const AI_TOOLKIT_PRICE_AUD_CENTS = Number(
+  process.env.AI_TOOLKIT_PRICE_AUD_CENTS || 900
+);
 const CURRENCY = "aud";
 
 /** Body: { filename, contentType, articleSlug, guestEmail? } */
@@ -97,6 +105,55 @@ export const createRenderSession = async (req, res, next) => {
   }
 };
 
+export const createAiToolkitSession = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const userEmail = req.user?.email || undefined;
+    if (!userId) return res.status(401).json({ error: "Authorization required" });
+
+    const paymentId = randomUUID();
+    await createAiToolkitPayment({
+      id: paymentId,
+      userId,
+      amountCents: AI_TOOLKIT_PRICE_AUD_CENTS,
+      currency: CURRENCY,
+    });
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      customer_email: userEmail,
+      line_items: [
+        {
+          price_data: {
+            currency: CURRENCY,
+            unit_amount: AI_TOOLKIT_PRICE_AUD_CENTS,
+            product_data: { name: "Sophia AI Business Toolkit" },
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        product: "sophia-ai-business-toolkit",
+        paymentId,
+        userId,
+      },
+      success_url: `${process.env.CLIENT_URL}/ai-toolkit/member-dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/ai-toolkit/dashboard`,
+    });
+
+    await markAiToolkitPaymentAwaitingCheckout({
+      id: paymentId,
+      stripeSessionId: session.id,
+      stripeCustomerId: session.customer?.toString() || null,
+    });
+
+    return res.json({ paymentId, sessionUrl: session.url });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const stripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -116,8 +173,15 @@ export const stripeWebhook = async (req, res) => {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const jobId = session.metadata?.jobId;
+    const product = session.metadata?.product;
     try {
-      if (jobId) {
+      if (product === "sophia-ai-business-toolkit") {
+        await markAiToolkitPaymentPaidBySession({
+          stripeSessionId: session.id,
+          stripePaymentIntent: session.payment_intent?.toString() || null,
+          stripeCustomerId: session.customer?.toString() || null,
+        });
+      } else if (jobId) {
         await markJobPaid(jobId, session.payment_intent?.toString() || null);
         // on-demand worker will pick this up (status=paid)
       }

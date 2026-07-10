@@ -10,6 +10,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Town planner",
     "Business manager",
     "Explore Business Manager",
+    "Ai Toolkit",
     "Settings",
   ],
   menu: [
