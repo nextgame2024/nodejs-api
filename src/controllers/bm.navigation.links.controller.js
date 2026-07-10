@@ -11,6 +11,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Business manager",
     "Explore Business Manager",
     "Ai Toolkit",
+    "Dashboard",
     "Settings",
   ],
   menu: [

@@ -90,3 +90,76 @@ export async function markAiToolkitPaymentPaidBySession({
   return rows[0] || null;
 }
 
+export async function getAiToolkitPaymentBySession(stripeSessionId) {
+  await ensureAiToolkitPaymentSchema();
+
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM sophia_ai_toolkit_payments
+     WHERE stripe_session_id = $1
+     LIMIT 1`,
+    [stripeSessionId]
+  );
+
+  return rows[0] || null;
+}
+
+export async function userHasPaidAiToolkit(userId) {
+  await ensureAiToolkitPaymentSchema();
+
+  const { rows } = await pool.query(
+    `SELECT 1
+     FROM sophia_ai_toolkit_payments
+     WHERE user_id = $1
+       AND status = 'paid'
+     LIMIT 1`,
+    [userId]
+  );
+
+  return rows.length > 0;
+}
+
+export async function ensureAiToolkitDashboardNavigationLinkForUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT company_id
+     FROM users
+     WHERE id = $1
+     LIMIT 1`,
+    [userId]
+  );
+
+  const companyId = rows[0]?.company_id;
+  if (!companyId) return;
+
+  const existing = await pool.query(
+    `UPDATE bm_navigation_links
+     SET navigation_type = 'header',
+         active = true,
+         updatedat = NOW()
+     WHERE company_id = $1
+       AND lower(trim(navigation_label)) = lower(trim('Dashboard'))`,
+    [companyId]
+  );
+
+  if (existing.rowCount > 0) return;
+
+  await pool.query(
+    `INSERT INTO bm_navigation_links (
+       navigation_link_id,
+       company_id,
+       user_id,
+       navigation_type,
+       navigation_label,
+       active
+     )
+     VALUES (
+       gen_random_uuid(),
+       $1,
+       $2,
+       'header',
+       'Dashboard',
+       true
+     )`,
+    [companyId, userId]
+  );
+}

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import {
   createAiToolkitSession,
+  confirmAiToolkitSession,
+  getAiToolkitAccess,
   createRenderSession,
   stripeWebhook,
 } from "../controllers/payments.controller.js";
@@ -14,6 +16,12 @@ paymentsRouter.post(
   "/ai-toolkit/create-checkout-session",
   authRequired,
   createAiToolkitSession
+);
+paymentsRouter.get("/ai-toolkit/access", authRequired, getAiToolkitAccess);
+paymentsRouter.post(
+  "/ai-toolkit/confirm-session",
+  authRequired,
+  confirmAiToolkitSession
 );
 
 // Webhook needs RAW body (mounting helper here is optional;

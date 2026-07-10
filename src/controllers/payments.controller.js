@@ -13,6 +13,9 @@ import {
   createAiToolkitPayment,
   markAiToolkitPaymentAwaitingCheckout,
   markAiToolkitPaymentPaidBySession,
+  getAiToolkitPaymentBySession,
+  userHasPaidAiToolkit,
+  ensureAiToolkitDashboardNavigationLinkForUser,
 } from "../models/aiToolkitPayment.model.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -154,6 +157,52 @@ export const createAiToolkitSession = async (req, res, next) => {
   }
 };
 
+export const getAiToolkitAccess = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Authorization required" });
+
+    const hasAccess = await userHasPaidAiToolkit(userId);
+    return res.json({ hasAccess });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const confirmAiToolkitSession = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const { sessionId } = req.body || {};
+    if (!userId) return res.status(401).json({ error: "Authorization required" });
+    if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
+
+    const payment = await getAiToolkitPaymentBySession(sessionId);
+    if (!payment || payment.user_id !== userId) {
+      return res.status(404).json({ error: "Payment session not found" });
+    }
+
+    if (payment.status === "paid") {
+      await ensureAiToolkitDashboardNavigationLinkForUser(userId);
+      return res.json({ hasAccess: true, status: "paid" });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status === "paid") {
+      await markAiToolkitPaymentPaidBySession({
+        stripeSessionId: session.id,
+        stripePaymentIntent: session.payment_intent?.toString() || null,
+        stripeCustomerId: session.customer?.toString() || null,
+      });
+      await ensureAiToolkitDashboardNavigationLinkForUser(userId);
+      return res.json({ hasAccess: true, status: "paid" });
+    }
+
+    return res.json({ hasAccess: false, status: session.payment_status });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const stripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -176,11 +225,14 @@ export const stripeWebhook = async (req, res) => {
     const product = session.metadata?.product;
     try {
       if (product === "sophia-ai-business-toolkit") {
-        await markAiToolkitPaymentPaidBySession({
+        const payment = await markAiToolkitPaymentPaidBySession({
           stripeSessionId: session.id,
           stripePaymentIntent: session.payment_intent?.toString() || null,
           stripeCustomerId: session.customer?.toString() || null,
         });
+        if (payment?.user_id) {
+          await ensureAiToolkitDashboardNavigationLinkForUser(payment.user_id);
+        }
       } else if (jobId) {
         await markJobPaid(jobId, session.payment_intent?.toString() || null);
         // on-demand worker will pick this up (status=paid)
