@@ -198,7 +198,7 @@ export async function ensureToolkitSeeded({ requireSeedData = false } = {}) {
   if (seedReady) return;
 
   const existingSeed = await pool.query(
-    "SELECT 1 FROM toolkit_metadata WHERE product_slug = 'sophia-ai-business-toolkit' LIMIT 1",
+    "SELECT 1 FROM toolkit_recipes LIMIT 1",
   );
   if (existingSeed.rowCount > 0) {
     seedReady = true;
