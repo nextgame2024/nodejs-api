@@ -114,6 +114,15 @@ export const createAiToolkitSession = async (req, res, next) => {
     const userEmail = req.user?.email || undefined;
     if (!userId) return res.status(401).json({ error: "Authorization required" });
 
+    const hasAccess = await userHasPaidAiToolkit(userId);
+    if (hasAccess) {
+      await ensureAiToolkitDashboardNavigationLinkForUser(userId);
+      return res.json({
+        hasAccess: true,
+        redirectUrl: `${process.env.CLIENT_URL}/manager/dashboard`,
+      });
+    }
+
     const paymentId = randomUUID();
     await createAiToolkitPayment({
       id: paymentId,
