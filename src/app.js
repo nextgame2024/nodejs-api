@@ -27,6 +27,7 @@ import bmNavigationLinksRoutes from "./routes/bm.navigation.links.routes.js";
 import bmScheduleRoutes from "./routes/bm.schedule.routes.js";
 import bmSitesRoutes from "./routes/bm.sites.routes.js";
 import bmPalletsRoutes from "./routes/bm.pallets.routes.js";
+import bmToolkitRoutes from "./routes/bm.toolkit.routes.js";
 import contactRoutes from "./routes/contact.routes.js";
 
 const app = express();
@@ -84,6 +85,7 @@ app.use("/api", bmNavigationLinksRoutes);
 app.use("/api", bmScheduleRoutes);
 app.use("/api", bmSitesRoutes);
 app.use("/api", bmPalletsRoutes);
+app.use("/api", bmToolkitRoutes);
 app.use("/api", contactRoutes);
 app.use("/api/townplanner/v2", townplannerV2Routes);
 
