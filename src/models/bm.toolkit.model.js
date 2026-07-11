@@ -6,9 +6,12 @@ let schemaReady = false;
 let seedReady = false;
 
 const seedCandidates = [
+  process.env.TOOLKIT_SEED_JSON_PATH
+    ? path.resolve(process.env.TOOLKIT_SEED_JSON_PATH)
+    : null,
   path.resolve(process.cwd(), "../frontend/src/app/ai-toolkit/sophia-ai-business-toolkit-v1.json"),
   path.resolve(process.cwd(), "frontend/src/app/ai-toolkit/sophia-ai-business-toolkit-v1.json"),
-];
+].filter(Boolean);
 
 async function readSeedData() {
   for (const filePath of seedCandidates) {
@@ -19,7 +22,7 @@ async function readSeedData() {
       // Try the next likely project cwd.
     }
   }
-  throw new Error("Sophia AI toolkit seed JSON was not found");
+  return null;
 }
 
 export async function ensureToolkitSchema() {
@@ -35,6 +38,17 @@ export async function ensureToolkitSchema() {
       price numeric(10, 2) NOT NULL DEFAULT 0,
       last_updated date,
       seeded_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS toolkit_courses (
+      slug text PRIMARY KEY,
+      title text NOT NULL,
+      course_type text NOT NULL,
+      level text NOT NULL,
+      description text,
+      active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
@@ -84,6 +98,8 @@ export async function ensureToolkitSchema() {
       rating numeric(3, 1) NOT NULL DEFAULT 0,
       is_popular boolean NOT NULL DEFAULT false,
       is_featured boolean NOT NULL DEFAULT false,
+      course_type text NOT NULL DEFAULT 'Toolkit',
+      level text NOT NULL DEFAULT 'easy',
       sort_order integer NOT NULL DEFAULT 0,
       active boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
@@ -153,6 +169,17 @@ export async function ensureToolkitSchema() {
       used_at timestamptz NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS toolkit_course_recipes (
+      course_slug text NOT NULL REFERENCES toolkit_courses(slug) ON DELETE CASCADE,
+      recipe_slug text NOT NULL REFERENCES toolkit_recipes(slug) ON DELETE CASCADE,
+      sort_order integer NOT NULL DEFAULT 0,
+      PRIMARY KEY (course_slug, recipe_slug)
+    );
+
+    ALTER TABLE toolkit_recipes
+      ADD COLUMN IF NOT EXISTS course_type text NOT NULL DEFAULT 'Toolkit',
+      ADD COLUMN IF NOT EXISTS level text NOT NULL DEFAULT 'easy';
+
     CREATE INDEX IF NOT EXISTS idx_toolkit_recipes_category
       ON toolkit_recipes(category_slug, sort_order);
     CREATE INDEX IF NOT EXISTS idx_toolkit_recipes_search
@@ -166,11 +193,28 @@ export async function ensureToolkitSchema() {
   schemaReady = true;
 }
 
-export async function ensureToolkitSeeded() {
+export async function ensureToolkitSeeded({ requireSeedData = false } = {}) {
   await ensureToolkitSchema();
   if (seedReady) return;
 
+  const existingSeed = await pool.query(
+    "SELECT 1 FROM toolkit_metadata WHERE product_slug = 'sophia-ai-business-toolkit' LIMIT 1",
+  );
+  if (existingSeed.rowCount > 0) {
+    seedReady = true;
+    return;
+  }
+
   const data = await readSeedData();
+  if (!data) {
+    if (requireSeedData) {
+      throw new Error(
+        "Sophia AI toolkit seed JSON was not found. Set TOOLKIT_SEED_JSON_PATH or run from the monorepo.",
+      );
+    }
+    seedReady = true;
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -195,6 +239,32 @@ export async function ensureToolkitSeeded() {
         data.metadata?.currency,
         data.metadata?.price,
         data.metadata?.lastUpdated || null,
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO toolkit_courses (
+         slug, title, course_type, level, description, active, updated_at
+       )
+       VALUES (
+         'sophia-ai-business-toolkit',
+         $1,
+         'Toolkit',
+         'easy',
+         $2,
+         true,
+         now()
+       )
+       ON CONFLICT (slug) DO UPDATE SET
+         title = EXCLUDED.title,
+         course_type = EXCLUDED.course_type,
+         level = EXCLUDED.level,
+         description = EXCLUDED.description,
+         active = true,
+         updated_at = now()`,
+      [
+        data.metadata?.productName || "Sophia AI Business Toolkit",
+        data.metadata?.description || null,
       ],
     );
 
@@ -256,9 +326,9 @@ export async function ensureToolkitSeeded() {
         `INSERT INTO toolkit_recipes (
            slug, source_id, title, category_slug, description, purpose, when_to_use,
            prompt, before_use, difficulty, time_saved_minutes, best_tool, rating,
-           is_popular, is_featured, sort_order, active, updated_at
+           is_popular, is_featured, course_type, level, sort_order, active, updated_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, true, now())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, 'Toolkit', 'easy', $16, true, now())
          ON CONFLICT (slug) DO UPDATE SET
            source_id = EXCLUDED.source_id,
            title = EXCLUDED.title,
@@ -274,6 +344,8 @@ export async function ensureToolkitSeeded() {
            rating = EXCLUDED.rating,
            is_popular = EXCLUDED.is_popular,
            is_featured = EXCLUDED.is_featured,
+           course_type = EXCLUDED.course_type,
+           level = EXCLUDED.level,
            sort_order = EXCLUDED.sort_order,
            active = true,
            updated_at = now()`,
@@ -295,6 +367,13 @@ export async function ensureToolkitSeeded() {
           Boolean(recipe.isFeatured),
           index,
         ],
+      );
+
+      await client.query(
+        `INSERT INTO toolkit_course_recipes (course_slug, recipe_slug, sort_order)
+         VALUES ('sophia-ai-business-toolkit', $1, $2)
+         ON CONFLICT (course_slug, recipe_slug) DO UPDATE SET sort_order = EXCLUDED.sort_order`,
+        [recipe.slug, index],
       );
 
       await client.query("DELETE FROM toolkit_recipe_tags WHERE recipe_slug = $1", [recipe.slug]);
@@ -391,6 +470,8 @@ const RECIPE_SELECT = `
   r.rating::float AS rating,
   r.is_popular AS "isPopular",
   r.is_featured AS "isFeatured",
+  r.course_type AS "courseType",
+  r.level,
   EXISTS (
     SELECT 1 FROM toolkit_favorites f
     WHERE f.user_id = $1 AND f.recipe_slug = r.slug
@@ -403,7 +484,7 @@ const RECIPE_SELECT = `
 `;
 
 export async function getDashboard(userId) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const [categories, quickActions, featured, popular, progress] = await Promise.all([
     listCategories(userId),
     listQuickActions(userId),
@@ -415,7 +496,7 @@ export async function getDashboard(userId) {
 }
 
 export async function listCategories() {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT
        c.slug,
@@ -433,7 +514,7 @@ export async function listCategories() {
 }
 
 export async function getCategory(userId, slug) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT slug, name, description, icon
      FROM toolkit_categories
@@ -447,7 +528,7 @@ export async function getCategory(userId, slug) {
 }
 
 export async function listRecipes(userId, filters = {}) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const params = [userId];
   const where = ["r.active = true"];
   let i = 2;
@@ -485,7 +566,8 @@ export async function listRecipes(userId, filters = {}) {
   const { rows: countRows } = await pool.query(
     `SELECT COUNT(*)::int AS total
      FROM toolkit_recipes r
-     WHERE ${where.join(" AND ")}`,
+     WHERE ${where.join(" AND ")}
+       AND $1::uuid IS NOT NULL`,
     countParams,
   );
 
@@ -493,7 +575,7 @@ export async function listRecipes(userId, filters = {}) {
 }
 
 export async function getRecipe(userId, slug) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT ${RECIPE_SELECT}
      FROM toolkit_recipes r
@@ -518,7 +600,7 @@ export async function getRecipe(userId, slug) {
 }
 
 export async function listQuickActions(userId) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT
        qa.label,
@@ -540,7 +622,7 @@ export async function listQuickActions(userId) {
 }
 
 export async function listTools() {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT slug, name, best_for AS "bestFor", difficulty, free_version AS "freeVersion", description
      FROM toolkit_tools
@@ -551,7 +633,7 @@ export async function listTools() {
 }
 
 export async function listWorkflows() {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT
        w.slug,
@@ -570,7 +652,7 @@ export async function listWorkflows() {
 }
 
 export async function getStartGuide() {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT title, heading, body, sort_order AS "sortOrder"
      FROM toolkit_start_guide_sections
@@ -581,7 +663,7 @@ export async function getStartGuide() {
 }
 
 export async function getProgress(userId) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `SELECT
        (SELECT COUNT(DISTINCT recipe_slug)::int FROM toolkit_recipe_usage WHERE user_id = $1) AS "recipesUsed",
@@ -599,7 +681,7 @@ export async function getProgress(userId) {
 }
 
 export async function addFavorite(userId, recipeSlug) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `INSERT INTO toolkit_favorites (user_id, recipe_slug)
      VALUES ($1, $2)
@@ -611,7 +693,7 @@ export async function addFavorite(userId, recipeSlug) {
 }
 
 export async function removeFavorite(userId, recipeSlug) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   await pool.query(
     `DELETE FROM toolkit_favorites WHERE user_id = $1 AND recipe_slug = $2`,
     [userId, recipeSlug],
@@ -620,7 +702,7 @@ export async function removeFavorite(userId, recipeSlug) {
 }
 
 export async function markRecipeUsed(userId, recipeSlug) {
-  await ensureToolkitSeeded();
+  await ensureToolkitSchema();
   const { rows } = await pool.query(
     `INSERT INTO toolkit_recipe_usage (user_id, recipe_slug)
      VALUES ($1, $2)
