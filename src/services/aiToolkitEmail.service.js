@@ -485,6 +485,22 @@ async function sendToolkitEmail(row) {
   });
 }
 
+export async function sendToolkitEmailPreview({
+  toEmail,
+  emailKey,
+  recipientName = "Jose",
+}) {
+  if (!toEmail) throw new Error("toEmail is required");
+  const definition = findEmailDefinition(emailKey);
+  if (!definition) throw new Error(`Unknown toolkit email key: ${emailKey}`);
+
+  await sendToolkitEmail({
+    email_key: emailKey,
+    recipient_email: toEmail,
+    recipient_name: recipientName,
+  });
+}
+
 export async function scheduleToolkitPurchaseEmails(paymentId) {
   const context = await getToolkitPaymentEmailContext(paymentId);
   if (!context?.email) {
