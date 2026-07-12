@@ -17,6 +17,10 @@ import {
   userHasPaidAiToolkit,
   ensureAiToolkitDashboardNavigationLinkForUser,
 } from "../models/aiToolkitPayment.model.js";
+import {
+  scheduleToolkitPurchaseEmails,
+  sendImmediateToolkitWelcomeEmail,
+} from "../services/aiToolkitEmail.service.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
@@ -100,6 +104,20 @@ async function sendGa4PurchaseEvent({ session, payment }) {
     }
   } catch (error) {
     console.error("GA4 purchase event error:", error?.message || error);
+  }
+}
+
+async function sendToolkitPurchaseEmailFollowUp(paymentId) {
+  if (!paymentId) return;
+
+  try {
+    await scheduleToolkitPurchaseEmails(paymentId);
+    await sendImmediateToolkitWelcomeEmail(paymentId);
+  } catch (error) {
+    console.error(
+      "Toolkit purchase email follow-up failed:",
+      error?.message || error
+    );
   }
 }
 
@@ -266,12 +284,13 @@ export const confirmAiToolkitSession = async (req, res, next) => {
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
     if (session.payment_status === "paid") {
-      await markAiToolkitPaymentPaidBySession({
+      const updatedPayment = await markAiToolkitPaymentPaidBySession({
         stripeSessionId: session.id,
         stripePaymentIntent: session.payment_intent?.toString() || null,
         stripeCustomerId: session.customer?.toString() || null,
       });
       await ensureAiToolkitDashboardNavigationLinkForUser(userId);
+      await sendToolkitPurchaseEmailFollowUp(updatedPayment?.id || payment.id);
       return res.json({ hasAccess: true, status: "paid" });
     }
 
@@ -311,6 +330,7 @@ export const stripeWebhook = async (req, res) => {
         if (payment?.user_id) {
           await ensureAiToolkitDashboardNavigationLinkForUser(payment.user_id);
         }
+        await sendToolkitPurchaseEmailFollowUp(payment?.id);
         await sendGa4PurchaseEvent({ session, payment });
       } else if (jobId) {
         await markJobPaid(jobId, session.payment_intent?.toString() || null);

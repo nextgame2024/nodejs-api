@@ -2,7 +2,7 @@ import pool from "../config/db.js";
 
 let schemaReady = false;
 
-async function ensureAiToolkitPaymentSchema() {
+export async function ensureAiToolkitPaymentSchema() {
   if (schemaReady) return;
 
   await pool.query(`
