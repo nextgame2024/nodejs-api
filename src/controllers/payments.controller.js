@@ -36,6 +36,72 @@ const AI_TOOLKIT_PRICE_AUD_CENTS = Number(
   process.env.AI_TOOLKIT_PRICE_AUD_CENTS || 900
 );
 const CURRENCY = "aud";
+const GA4_MEASUREMENT_ID =
+  process.env.GA4_MEASUREMENT_ID ||
+  process.env.GOOGLE_ANALYTICS_MEASUREMENT_ID ||
+  "G-2F1P9NXNYC";
+const GA4_API_SECRET = process.env.GA4_API_SECRET || "";
+
+async function sendGa4PurchaseEvent({ session, payment }) {
+  const gaClientId = session.metadata?.gaClientId;
+  const analyticsConsent = session.metadata?.analyticsConsent;
+
+  if (!GA4_API_SECRET || !GA4_MEASUREMENT_ID) return;
+  if (analyticsConsent !== "granted" || !gaClientId) return;
+
+  const value = Number(
+    session.amount_total || payment?.amount_cents || AI_TOOLKIT_PRICE_AUD_CENTS
+  ) / 100;
+  const currency = String(session.currency || payment?.currency || CURRENCY)
+    .toUpperCase();
+  const transactionId = session.payment_intent?.toString() || session.id;
+  const endpoint = `https://www.google-analytics.com/mp/collect?measurement_id=${encodeURIComponent(
+    GA4_MEASUREMENT_ID
+  )}&api_secret=${encodeURIComponent(GA4_API_SECRET)}`;
+
+  const payload = {
+    client_id: gaClientId,
+    user_id: payment?.user_id || session.metadata?.userId || undefined,
+    events: [
+      {
+        name: "purchase",
+        params: {
+          transaction_id: transactionId,
+          affiliation: "Stripe",
+          currency,
+          value,
+          payment_type: "stripe_checkout",
+          items: [
+            {
+              item_id: "sophia-ai-business-toolkit",
+              item_name: "Sophia AI Business Toolkit",
+              price: value,
+              quantity: 1,
+            },
+          ],
+        },
+      },
+    ],
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "GA4 purchase event failed:",
+        response.status,
+        await response.text()
+      );
+    }
+  } catch (error) {
+    console.error("GA4 purchase event error:", error?.message || error);
+  }
+}
 
 /** Body: { filename, contentType, articleSlug, guestEmail? } */
 export const createRenderSession = async (req, res, next) => {
@@ -112,6 +178,7 @@ export const createAiToolkitSession = async (req, res, next) => {
   try {
     const userId = req.user?.id;
     const userEmail = req.user?.email || undefined;
+    const { analyticsConsent, gaClientId } = req.body || {};
     if (!userId) return res.status(401).json({ error: "Authorization required" });
 
     const hasAccess = await userHasPaidAiToolkit(userId);
@@ -149,6 +216,8 @@ export const createAiToolkitSession = async (req, res, next) => {
         product: "sophia-ai-business-toolkit",
         paymentId,
         userId,
+        analyticsConsent: analyticsConsent === "granted" ? "granted" : "denied",
+        gaClientId: gaClientId ? String(gaClientId).slice(0, 100) : "",
       },
       success_url: `${process.env.CLIENT_URL}/ai-toolkit/member-dashboard?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/ai-toolkit/dashboard`,
@@ -242,6 +311,7 @@ export const stripeWebhook = async (req, res) => {
         if (payment?.user_id) {
           await ensureAiToolkitDashboardNavigationLinkForUser(payment.user_id);
         }
+        await sendGa4PurchaseEvent({ session, payment });
       } else if (jobId) {
         await markJobPaid(jobId, session.payment_intent?.toString() || null);
         // on-demand worker will pick this up (status=paid)
