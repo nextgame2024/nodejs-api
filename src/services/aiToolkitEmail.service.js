@@ -12,6 +12,7 @@ import {
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/company-logos/1776856137438-cjet9pj1u6u.png";
 const DEFAULT_FROM = "Sophia AI <hello@sophiaai.com.au>";
+const DEFAULT_INTERNAL_COPY = "hello@sophiaai.com.au";
 const PRODUCT_URL = "/manager/dashboard";
 
 const EMAILS = [
@@ -419,11 +420,15 @@ function buildEmailHtml({ definition, firstName }) {
 async function sendViaSES({ from, to, subject, html }) {
   const region = process.env.AWS_REGION || "ap-southeast-2";
   const client = new SESv2Client({ region });
+  const bcc = internalCopyRecipients({ to });
 
   await client.send(
     new SendEmailCommand({
       FromEmailAddress: from,
-      Destination: { ToAddresses: [to] },
+      Destination: {
+        ToAddresses: [to],
+        ...(bcc.length ? { BccAddresses: bcc } : {}),
+      },
       Content: {
         Simple: {
           Subject: { Data: subject, Charset: "UTF-8" },
@@ -444,7 +449,22 @@ async function sendViaSMTP({ from, to, subject, html }) {
       : undefined,
   });
 
-  await transport.sendMail({ from, to, subject, html });
+  const bcc = internalCopyRecipients({ to });
+  await transport.sendMail({ from, to, subject, html, bcc });
+}
+
+function internalCopyRecipients({ to }) {
+  const raw =
+    process.env.AI_TOOLKIT_EMAIL_BCC ||
+    process.env.AI_TOOLKIT_EMAIL_COPY_TO ||
+    DEFAULT_INTERNAL_COPY;
+  const recipient = String(to || "").trim().toLowerCase();
+
+  return String(raw || "")
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean)
+    .filter((email) => email.toLowerCase() !== recipient);
 }
 
 async function sendToolkitEmail(row) {
