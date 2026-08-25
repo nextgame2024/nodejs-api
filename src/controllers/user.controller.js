@@ -10,14 +10,19 @@ import {
   userHasRelatedProcesses,
   archiveUserById,
   deleteUserById,
+  unsubscribeUserFromEmails,
 } from "../models/user.model.js";
 import pool from "../config/db.js";
+import { markPendingToolkitEmailsUnsubscribedForUser } from "../models/aiToolkitEmailSchedule.model.js";
+import {
+  sendCommunityWelcomeEmail,
+  verifyEmailUnsubscribeToken,
+} from "../services/communityEmail.service.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
 const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
 const DEFAULT_REGISTRATION_COMPANY_ID =
-  process.env.REGISTRATION_COMPANY_ID ||
-  "81c2f065-aceb-4043-add5-b11271d21fb3";
+  process.env.REGISTRATION_COMPANY_ID || "81c2f065-aceb-4043-add5-b11271d21fb3";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 const USER_TYPES = new Set(["employee", "supplier", "client"]);
 const USER_STATUSES = new Set(["active", "archived"]);
@@ -40,6 +45,7 @@ const mapUserResponse = (u, token) => ({
   contacts: u.contacts ?? null,
   type: u.type ?? null,
   status: u.status ?? null,
+  emailSubscriptionStatus: u.emailSubscriptionStatus ?? "Y",
   hasProcesses: Boolean(u.hasProcesses),
   siteId: u.siteId ?? null,
   siteName: u.siteName ?? null,
@@ -168,7 +174,10 @@ export const registerUser = asyncHandler(async (req, res) => {
 
   let status = "active";
   if (payload.status !== undefined) {
-    const normalizedStatus = normalizeOptionalEnum(payload.status, USER_STATUSES);
+    const normalizedStatus = normalizeOptionalEnum(
+      payload.status,
+      USER_STATUSES,
+    );
     if (!normalizedStatus) {
       return res.status(400).json({ error: "Invalid user status" });
     }
@@ -198,6 +207,15 @@ export const registerUser = asyncHandler(async (req, res) => {
       username: user.username,
     });
 
+    try {
+      await sendCommunityWelcomeEmail(user);
+    } catch (emailError) {
+      console.error(
+        "Community welcome email failed:",
+        emailError?.message || emailError,
+      );
+    }
+
     return res.status(201).json({ user: mapUserResponse(user, token) });
   } catch (e) {
     if (isUniqueViolation(e)) {
@@ -207,6 +225,65 @@ export const registerUser = asyncHandler(async (req, res) => {
     }
     throw e;
   }
+});
+
+/** GET /api/emails/unsubscribe?token=... — public one-click opt-out */
+export const unsubscribeFromEmails = asyncHandler(async (req, res) => {
+  const token = String(req.query.token || "").trim();
+  if (!token) {
+    return res.status(400).type("html").send(`
+      <!doctype html>
+      <html><body style="font-family:Arial,sans-serif;padding:32px;">
+        <h1>Invalid unsubscribe link</h1>
+        <p>The unsubscribe link is missing a token.</p>
+      </body></html>
+    `);
+  }
+
+  let payload;
+  try {
+    payload = verifyEmailUnsubscribeToken(token);
+  } catch {
+    return res.status(400).type("html").send(`
+      <!doctype html>
+      <html><body style="font-family:Arial,sans-serif;padding:32px;">
+        <h1>Invalid unsubscribe link</h1>
+        <p>This unsubscribe link is invalid. Please contact hello@sophiaai.com.au if you need help.</p>
+      </body></html>
+    `);
+  }
+
+  const user = await unsubscribeUserFromEmails(payload.userId);
+  if (!user) {
+    return res.status(404).type("html").send(`
+      <!doctype html>
+      <html><body style="font-family:Arial,sans-serif;padding:32px;">
+        <h1>User not found</h1>
+        <p>We could not find an account for this unsubscribe link.</p>
+      </body></html>
+    `);
+  }
+  await markPendingToolkitEmailsUnsubscribedForUser(user.id);
+
+  return res.type("html").send(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Unsubscribed from Sophia AI emails</title>
+      </head>
+      <body style="margin:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <main style="max-width:620px;margin:0 auto;padding:48px 20px;">
+          <section style="background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;padding:30px;box-shadow:0 14px 35px rgba(15,23,42,.08);">
+            <p style="margin:0 0 8px;color:#4f46e5;font-weight:800;letter-spacing:.08em;text-transform:uppercase;font-size:12px;">Sophia AI</p>
+            <h1 style="margin:0 0 14px;font-size:30px;line-height:1.15;">You have been unsubscribed.</h1>
+            <p style="margin:0;color:#475569;font-size:16px;line-height:1.65;">We have updated your preferences for ${user.email}. You will no longer receive Sophia AI community or toolkit emails.</p>
+          </section>
+        </main>
+      </body>
+    </html>
+  `);
 });
 
 /** GET /api/users — list users in company (auth required) */
@@ -222,7 +299,7 @@ export const listUsers = asyncHandler(async (req, res) => {
   const rawType =
     req.query.type === undefined
       ? undefined
-      : req.query.type?.toString?.() ?? req.query.type;
+      : (req.query.type?.toString?.() ?? req.query.type);
   const type = normalizeOptionalEnum(rawType, USER_TYPES);
   if (rawType !== undefined && !type) {
     return res.status(400).json({ error: "Invalid user type" });
@@ -356,7 +433,10 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
     next.status = status;
   }
 
-  if (superAdmin && (payload.companyId !== undefined || payload.company_id !== undefined)) {
+  if (
+    superAdmin &&
+    (payload.companyId !== undefined || payload.company_id !== undefined)
+  ) {
     const requestedCompanyId = payload.companyId ?? payload.company_id ?? null;
     if (!requestedCompanyId) {
       return res
@@ -416,7 +496,7 @@ export const removeUserByAdmin = asyncHandler(async (req, res) => {
 
   const hasProcesses = await userHasRelatedProcesses(
     userId,
-    target.companyId ?? null
+    target.companyId ?? null,
   );
   if (hasProcesses) {
     const archived = await archiveUserById(userId);

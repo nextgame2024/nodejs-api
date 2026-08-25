@@ -8,9 +8,12 @@ export async function ensureUsersSiteSchema() {
   await ensureSitesSchema();
   await pool.query(`
     ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS site_id uuid NULL;
+      ADD COLUMN IF NOT EXISTS site_id uuid NULL,
+      ADD COLUMN IF NOT EXISTS email_subscription_status char(1) NOT NULL DEFAULT 'Y';
     CREATE INDEX IF NOT EXISTS idx_users_company_site
       ON users (company_id, site_id);
+    CREATE INDEX IF NOT EXISTS idx_users_email_subscription_status
+      ON users (email_subscription_status);
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -23,6 +26,15 @@ export async function ensureUsersSiteSchema() {
           FOREIGN KEY (site_id)
           REFERENCES bm_sites(site_id)
           ON DELETE SET NULL;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_users_email_subscription_status'
+      ) THEN
+        ALTER TABLE users
+          ADD CONSTRAINT chk_users_email_subscription_status
+          CHECK (email_subscription_status IN ('Y', 'N'));
       END IF;
     END $$;
   `);
@@ -43,6 +55,7 @@ const USER_SELECT = `
   contacts,
   type,
   status,
+  email_subscription_status AS "emailSubscriptionStatus",
   site_id AS "siteId",
   (
     SELECT s.site_name
@@ -169,6 +182,7 @@ export async function updateUserById(
     companyId,
     type,
     status,
+    emailSubscriptionStatus,
     siteId,
   },
 ) {
@@ -230,6 +244,10 @@ export async function updateUserById(
     sets.push(`status = $${i++}`);
     params.push(status);
   }
+  if (emailSubscriptionStatus !== undefined) {
+    sets.push(`email_subscription_status = $${i++}`);
+    params.push(emailSubscriptionStatus);
+  }
   if (siteId !== undefined) {
     sets.push(`site_id = $${i++}`);
     params.push(siteId);
@@ -249,6 +267,21 @@ export async function updateUserById(
     params,
   );
   return rows[0];
+}
+
+export async function unsubscribeUserFromEmails(userId) {
+  await ensureUsersSiteSchema();
+
+  const { rows } = await pool.query(
+    `UPDATE users
+     SET email_subscription_status = 'N',
+         updatedat = NOW()
+     WHERE id = $1
+     RETURNING ${USER_SELECT}`,
+    [userId],
+  );
+
+  return rows[0] || null;
 }
 
 /** List users by company (company‑scoped) */
@@ -461,6 +494,8 @@ export async function archiveUserById(id) {
 
 export async function deleteUserById(id) {
   await ensureUsersSiteSchema();
-  const { rowCount } = await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+  const { rowCount } = await pool.query(`DELETE FROM users WHERE id = $1`, [
+    id,
+  ]);
   return rowCount > 0;
 }

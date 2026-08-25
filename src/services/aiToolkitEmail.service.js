@@ -8,6 +8,7 @@ import {
   markToolkitEmailFailed,
   markToolkitEmailSent,
 } from "../models/aiToolkitEmailSchedule.model.js";
+import { unsubscribeUrlFor } from "./communityEmail.service.js";
 
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/company-logos/1776856137438-cjet9pj1u6u.png";
@@ -222,8 +223,7 @@ const EMAILS = [
     key: "day-30-feedback",
     dayOffset: 30,
     subject: "Can I ask you one question?",
-    previewText:
-      "Your feedback helps shape future Sophia AI toolkit recipes.",
+    previewText: "Your feedback helps shape future Sophia AI toolkit recipes.",
     ctaLabel: "Open Sophia AI",
     ctaPath: PRODUCT_URL,
     title: "Can I ask one question?",
@@ -246,8 +246,9 @@ function requireEnv(name) {
 }
 
 function clientUrl(path = PRODUCT_URL) {
-  const base = String(process.env.CLIENT_URL || "https://sophiaai.com.au")
-    .replace(/\/+$/, "");
+  const base = String(
+    process.env.CLIENT_URL || "https://sophiaai.com.au",
+  ).replace(/\/+$/, "");
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
@@ -349,7 +350,7 @@ function sectionHtml(section) {
     </div>`;
 }
 
-function buildEmailHtml({ definition, firstName }) {
+function buildEmailHtml({ definition, firstName, unsubscribeUrl }) {
   const previewText = escapeHtml(definition.previewText);
   const intro = (definition.intro || [])
     .map((line, index) => {
@@ -407,6 +408,9 @@ function buildEmailHtml({ definition, firstName }) {
               <td align="center" style="padding:22px 30px 30px;border-top:1px solid #e2e8f0;background:#fbfdff;">
                 <img src="${LOGO_URL}" width="124" alt="Sophia AI" style="display:block;width:124px;max-width:60%;height:auto;margin:0 auto 10px;">
                 <p style="margin:0;color:#64748b;font-size:12px;line-height:1.5;">You are receiving this because you purchased the Sophia AI Business Toolkit.</p>
+                <p style="margin:10px 0 0;color:#64748b;font-size:12px;line-height:1.5;">If you do not want to receive these emails, <a href="${escapeHtml(
+                  unsubscribeUrl,
+                )}" style="color:#4f46e5;text-decoration:underline;">unsubscribe here</a>.</p>
               </td>
             </tr>
           </table>
@@ -458,7 +462,9 @@ function internalCopyRecipients({ to }) {
     process.env.AI_TOOLKIT_EMAIL_BCC ||
     process.env.AI_TOOLKIT_EMAIL_COPY_TO ||
     DEFAULT_INTERNAL_COPY;
-  const recipient = String(to || "").trim().toLowerCase();
+  const recipient = String(to || "")
+    .trim()
+    .toLowerCase();
 
   return String(raw || "")
     .split(",")
@@ -469,7 +475,8 @@ function internalCopyRecipients({ to }) {
 
 async function sendToolkitEmail(row) {
   const definition = findEmailDefinition(row.email_key);
-  if (!definition) throw new Error(`Unknown toolkit email key: ${row.email_key}`);
+  if (!definition)
+    throw new Error(`Unknown toolkit email key: ${row.email_key}`);
 
   const provider = (process.env.EMAIL_PROVIDER || "ses").toLowerCase();
   const from = process.env.AI_TOOLKIT_EMAIL_FROM || DEFAULT_FROM;
@@ -478,7 +485,13 @@ async function sendToolkitEmail(row) {
     username: row.recipient_name,
     email: row.recipient_email,
   });
-  const html = buildEmailHtml({ definition, firstName });
+  const unsubscribeUrl = row.user_id
+    ? unsubscribeUrlFor({
+        id: row.user_id,
+        email: row.recipient_email,
+      })
+    : clientUrl("/");
+  const html = buildEmailHtml({ definition, firstName, unsubscribeUrl });
 
   if (provider === "log") {
     console.log("[toolkit-email][LOG] To:", row.recipient_email);
@@ -524,7 +537,7 @@ export async function sendToolkitEmailPreview({
 export async function scheduleToolkitPurchaseEmails(paymentId) {
   const context = await getToolkitPaymentEmailContext(paymentId);
   if (!context?.email) {
-    throw new Error(`Toolkit payment email context not found: ${paymentId}`);
+    return [];
   }
 
   const recipientName = firstNameFrom(context);

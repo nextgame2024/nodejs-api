@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { ensureAiToolkitPaymentSchema } from "./aiToolkitPayment.model.js";
+import { ensureUsersSiteSchema } from "./user.model.js";
 
 let schemaReady = false;
 
@@ -7,6 +8,7 @@ export async function ensureAiToolkitEmailScheduleSchema() {
   if (schemaReady) return;
 
   await ensureAiToolkitPaymentSchema();
+  await ensureUsersSiteSchema();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sophia_ai_toolkit_email_schedule (
@@ -51,11 +53,13 @@ export async function getToolkitPaymentEmailContext(paymentId) {
        p.paid_at AS "paidAt",
        u.email,
        u.name,
-       u.username
+       u.username,
+       u.email_subscription_status AS "emailSubscriptionStatus"
      FROM sophia_ai_toolkit_payments p
      JOIN users u ON u.id = p.user_id
      WHERE p.id = $1
        AND p.status = 'paid'
+       AND u.email_subscription_status = 'Y'
      LIMIT 1`,
     [paymentId],
   );
@@ -121,12 +125,14 @@ export async function claimDueToolkitEmails({ limit = 25 } = {}) {
 
   const { rows } = await pool.query(
     `WITH due AS (
-       SELECT id
-       FROM sophia_ai_toolkit_email_schedule
-       WHERE status IN ('pending', 'failed')
-         AND scheduled_for <= NOW()
-         AND attempts < 5
-       ORDER BY scheduled_for ASC, created_at ASC
+       SELECT s.id
+       FROM sophia_ai_toolkit_email_schedule s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.status IN ('pending', 'failed')
+         AND s.scheduled_for <= NOW()
+         AND s.attempts < 5
+         AND u.email_subscription_status = 'Y'
+       ORDER BY s.scheduled_for ASC, s.created_at ASC
        LIMIT $1
        FOR UPDATE SKIP LOCKED
      )
@@ -152,14 +158,16 @@ export async function claimToolkitEmailByPaymentAndKey({
 
   const { rows } = await pool.query(
     `WITH due AS (
-       SELECT id
-       FROM sophia_ai_toolkit_email_schedule
-       WHERE payment_id = $1
-         AND email_key = $2
-         AND status IN ('pending', 'failed')
-         AND scheduled_for <= NOW()
-         AND attempts < 5
-       ORDER BY scheduled_for ASC, created_at ASC
+       SELECT s.id
+       FROM sophia_ai_toolkit_email_schedule s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.payment_id = $1
+         AND s.email_key = $2
+         AND s.status IN ('pending', 'failed')
+         AND s.scheduled_for <= NOW()
+         AND s.attempts < 5
+         AND u.email_subscription_status = 'Y'
+       ORDER BY s.scheduled_for ASC, s.created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
      )
@@ -204,4 +212,19 @@ export async function markToolkitEmailFailed(id, errorMessage) {
      WHERE id = $1`,
     [id, String(errorMessage || "Email send failed").slice(0, 1000)],
   );
+}
+
+export async function markPendingToolkitEmailsUnsubscribedForUser(userId) {
+  await ensureAiToolkitEmailScheduleSchema();
+
+  const { rowCount } = await pool.query(
+    `UPDATE sophia_ai_toolkit_email_schedule
+     SET status = 'unsubscribed',
+         updated_at = NOW()
+     WHERE user_id = $1
+       AND status IN ('pending', 'failed')`,
+    [userId],
+  );
+
+  return rowCount;
 }
