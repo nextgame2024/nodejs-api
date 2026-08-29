@@ -15,6 +15,7 @@ export type RuntimeConfig = {
     apiKey?: string;
     realtimeModel: string;
     voice: string;
+    clientSecretTtlSeconds: number;
   };
   simli: {
     apiKey?: string;
@@ -50,8 +51,13 @@ export function runtimeConfig(): RuntimeConfig {
     openAi: {
       apiKey: emptyToUndefined(process.env.OPENAI_API_KEY),
       realtimeModel:
-        process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
-      voice: process.env.OPENAI_REALTIME_VOICE || "alloy",
+        process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini",
+      voice: process.env.OPENAI_REALTIME_VOICE || "marin",
+      clientSecretTtlSeconds: clampNumber(
+        Number(process.env.OPENAI_REALTIME_CLIENT_SECRET_TTL_SECONDS || 600),
+        10,
+        7200,
+      ),
     },
     simli: {
       apiKey: emptyToUndefined(process.env.SIMLI_API_KEY),
@@ -68,4 +74,9 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 function emptyToUndefined(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
