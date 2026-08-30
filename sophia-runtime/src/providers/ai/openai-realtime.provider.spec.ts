@@ -82,7 +82,7 @@ describe("OpenAIRealtimeProvider", () => {
       session: {
         type: "realtime",
         model: "gpt-realtime-2.1-mini",
-        audio: { output: { voice: "marin" } },
+        audio: { output: { format: "pcm16", voice: "marin" } },
         tools: [expect.objectContaining({ name: "getInventory" })],
       },
     });

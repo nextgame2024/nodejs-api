@@ -59,6 +59,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
             output_modalities: ["audio"],
             audio: {
               output: {
+                format: "pcm16",
                 voice: request.voice || config.openAi.voice,
               },
             },
