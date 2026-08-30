@@ -20,6 +20,9 @@ export type RuntimeConfig = {
   simli: {
     apiKey?: string;
     avatarId?: string;
+    maxSessionLengthSeconds: number;
+    maxIdleTimeSeconds: number;
+    transportMode: "livekit" | "p2p";
   };
 };
 
@@ -62,6 +65,18 @@ export function runtimeConfig(): RuntimeConfig {
     simli: {
       apiKey: emptyToUndefined(process.env.SIMLI_API_KEY),
       avatarId: emptyToUndefined(process.env.SIMLI_AVATAR_ID),
+      maxSessionLengthSeconds: clampNumber(
+        Number(process.env.SIMLI_MAX_SESSION_LENGTH_SECONDS || 600),
+        60,
+        3600,
+      ),
+      maxIdleTimeSeconds: clampNumber(
+        Number(process.env.SIMLI_MAX_IDLE_TIME_SECONDS || 180),
+        30,
+        600,
+      ),
+      transportMode:
+        process.env.SIMLI_TRANSPORT_MODE === "p2p" ? "p2p" : "livekit",
     },
   };
 }

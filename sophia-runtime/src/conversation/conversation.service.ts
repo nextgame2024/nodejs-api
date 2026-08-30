@@ -100,6 +100,8 @@ export class ConversationService {
       },
       avatar: {
         provider: avatarSession.provider,
+        sessionToken: avatarSession.sessionToken,
+        transportMode: avatarSession.transportMode,
         streamUrl: avatarSession.streamUrl,
         expiresAt: avatarSession.expiresAt,
       },

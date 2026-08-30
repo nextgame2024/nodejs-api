@@ -7,6 +7,8 @@ export type AvatarProviderSessionRequest = {
 export type AvatarProviderSession = {
   provider: string;
   avatarSessionId: string;
+  sessionToken?: string;
+  transportMode?: "livekit" | "p2p";
   streamUrl?: string;
   expiresAt?: string;
 };
