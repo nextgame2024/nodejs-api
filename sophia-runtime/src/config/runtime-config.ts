@@ -16,6 +16,9 @@ export type RuntimeConfig = {
     realtimeModel: string;
     voice: string;
     clientSecretTtlSeconds: number;
+    vadThreshold: number;
+    vadPrefixPaddingMs: number;
+    vadSilenceDurationMs: number;
   };
   simli: {
     apiKey?: string;
@@ -60,6 +63,21 @@ export function runtimeConfig(): RuntimeConfig {
         Number(process.env.OPENAI_REALTIME_CLIENT_SECRET_TTL_SECONDS || 600),
         10,
         7200,
+      ),
+      vadThreshold: clampNumber(
+        Number(process.env.OPENAI_REALTIME_VAD_THRESHOLD || 0.75),
+        0,
+        1,
+      ),
+      vadPrefixPaddingMs: clampNumber(
+        Number(process.env.OPENAI_REALTIME_VAD_PREFIX_PADDING_MS || 300),
+        0,
+        5000,
+      ),
+      vadSilenceDurationMs: clampNumber(
+        Number(process.env.OPENAI_REALTIME_VAD_SILENCE_DURATION_MS || 900),
+        100,
+        5000,
       ),
     },
     simli: {

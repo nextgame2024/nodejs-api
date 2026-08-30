@@ -35,6 +35,9 @@ describe("OpenAIRealtimeProvider", () => {
     process.env.OPENAI_API_KEY = "test-api-key";
     process.env.OPENAI_REALTIME_MODEL = "gpt-realtime-2.1-mini";
     process.env.OPENAI_REALTIME_VOICE = "marin";
+    process.env.OPENAI_REALTIME_VAD_THRESHOLD = "0.75";
+    process.env.OPENAI_REALTIME_VAD_PREFIX_PADDING_MS = "300";
+    process.env.OPENAI_REALTIME_VAD_SILENCE_DURATION_MS = "900";
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -83,6 +86,16 @@ describe("OpenAIRealtimeProvider", () => {
         type: "realtime",
         model: "gpt-realtime-2.1-mini",
         audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.75,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 900,
+              create_response: true,
+              interrupt_response: true,
+            },
+          },
           output: {
             format: { type: "audio/pcm", rate: 24_000 },
             voice: "marin",

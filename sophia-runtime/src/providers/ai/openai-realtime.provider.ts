@@ -58,6 +58,16 @@ export class OpenAIRealtimeProvider implements AIProvider {
             instructions: runtimeInstructions(),
             output_modalities: ["audio"],
             audio: {
+              input: {
+                turn_detection: {
+                  type: "server_vad",
+                  threshold: config.openAi.vadThreshold,
+                  prefix_padding_ms: config.openAi.vadPrefixPaddingMs,
+                  silence_duration_ms: config.openAi.vadSilenceDurationMs,
+                  create_response: true,
+                  interrupt_response: true,
+                },
+              },
               output: {
                 format: {
                   type: "audio/pcm",
@@ -125,6 +135,9 @@ function runtimeInstructions(): string {
   return [
     "You are Sophia, a concise and practical in-store retail assistant.",
     "Answer naturally by voice.",
+    "Only respond after the user makes a clear, intelligible request.",
+    "Treat silence, breathing, background noise, speaker feedback, partial words, and unintelligible audio as no input and do not respond.",
+    "Answer only the user's latest explicit request. If the request is unclear, ask one short clarifying question instead of guessing.",
     "If a user asks about stock, inventory, availability, or quantities, call getInventory instead of guessing.",
     "Never invent live business data.",
   ].join(" ");
