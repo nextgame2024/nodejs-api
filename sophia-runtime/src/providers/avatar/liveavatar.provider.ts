@@ -34,9 +34,9 @@ export class LiveAvatarProvider implements AvatarProvider {
       };
     }
 
-    const avatarId =
-      request.avatarId ||
-      (config.liveAvatar.sandbox ? LIVEAVATAR_SANDBOX_AVATAR_ID : undefined);
+    const avatarId = config.liveAvatar.sandbox
+      ? LIVEAVATAR_SANDBOX_AVATAR_ID
+      : request.avatarId || config.liveAvatar.avatarId;
     if (!avatarId) {
       throw new Error(
         "LIVEAVATAR_AVATAR_ID is required when sandbox mode is disabled.",

@@ -31,6 +31,7 @@ describe("LiveAvatarProvider", () => {
   it("creates a sandbox LITE session token", async () => {
     process.env.LIVEAVATAR_API_KEY = "test-liveavatar-key";
     process.env.LIVEAVATAR_SANDBOX = "true";
+    process.env.LIVEAVATAR_AVATAR_ID = "production-avatar-must-be-ignored";
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({

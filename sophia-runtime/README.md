@@ -54,9 +54,9 @@ LIVEAVATAR_SANDBOX=true
 LIVEAVATAR_MAX_SESSION_DURATION_SECONDS=60
 ```
 
-Sandbox mode uses LiveAvatar's public Wayne avatar and short test sessions. For
-production, also set `LIVEAVATAR_AVATAR_ID`, disable sandbox mode, and configure
-the longer session duration allowed by your plan.
+Sandbox mode always uses LiveAvatar's fixed public avatar and ignores
+`LIVEAVATAR_AVATAR_ID`. For production, set `LIVEAVATAR_AVATAR_ID`, disable
+sandbox mode, and configure the longer session duration allowed by your plan.
 
 ## Boundaries
 
