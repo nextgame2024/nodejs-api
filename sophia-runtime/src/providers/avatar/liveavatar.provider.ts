@@ -26,6 +26,7 @@ export class LiveAvatarProvider implements AvatarProvider {
     request: AvatarProviderSessionRequest,
   ): Promise<AvatarProviderSession> {
     const config = runtimeConfig();
+    const mode = request.mode || config.liveAvatar.mode;
 
     if (!config.liveAvatar.apiKey) {
       return {
@@ -42,7 +43,7 @@ export class LiveAvatarProvider implements AvatarProvider {
         "LIVEAVATAR_AVATAR_ID is required when sandbox mode is disabled.",
       );
     }
-    if (config.liveAvatar.mode === "FULL" && !config.liveAvatar.voiceId) {
+    if (mode === "FULL" && !config.liveAvatar.voiceId) {
       throw new Error(
         "LIVEAVATAR_VOICE_ID is required for LiveAvatar FULL mode.",
       );
@@ -61,11 +62,11 @@ export class LiveAvatarProvider implements AvatarProvider {
           "x-api-key": config.liveAvatar.apiKey,
         },
         body: JSON.stringify({
-          mode: config.liveAvatar.mode,
+          mode,
           avatar_id: avatarId,
           is_sandbox: config.liveAvatar.sandbox,
           max_session_duration: maxSessionDuration,
-          ...(config.liveAvatar.mode === "FULL"
+          ...(mode === "FULL"
             ? {
                 avatar_persona: {
                   voice_id: config.liveAvatar.voiceId,
@@ -103,6 +104,7 @@ export class LiveAvatarProvider implements AvatarProvider {
         payload.data?.session_id || `liveavatar-${randomUUID()}`,
       sessionToken,
       transportMode: "livekit",
+      mode,
     };
   }
 

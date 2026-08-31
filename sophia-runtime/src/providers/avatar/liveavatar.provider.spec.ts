@@ -26,10 +26,37 @@ describe("LiveAvatarProvider", () => {
     const provider = new LiveAvatarProvider();
     const session = await provider.createAvatarSession({
       customerId: "customer-1",
+      mode: "FULL",
     });
 
     expect(session.provider).toBe("liveavatar");
     expect(session.avatarSessionId).toContain("mock-liveavatar-");
+  });
+
+  it("creates LITE sessions without a voice persona", async () => {
+    process.env.LIVEAVATAR_API_KEY = "test-liveavatar-key";
+    process.env.LIVEAVATAR_SANDBOX = "true";
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          session_id: "liveavatar-lite-session",
+          session_token: "liveavatar-lite-token",
+        },
+      }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const provider = new LiveAvatarProvider();
+    const session = await provider.createAvatarSession({
+      customerId: "customer-1",
+      mode: "LITE",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.mode).toBe("LITE");
+    expect(body.avatar_persona).toBeUndefined();
+    expect(session.mode).toBe("LITE");
   });
 
   it("creates a sandbox FULL session token with a voice", async () => {

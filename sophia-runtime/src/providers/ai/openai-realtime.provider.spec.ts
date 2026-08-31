@@ -20,6 +20,7 @@ describe("OpenAIRealtimeProvider", () => {
       customerId: "customer-1",
       model: "test-model",
       voice: "test-voice",
+      outputModality: "audio",
       tools: [],
     });
 
@@ -56,6 +57,7 @@ describe("OpenAIRealtimeProvider", () => {
       customerId: "customer-1",
       model: "gpt-realtime-2.1-mini",
       voice: "marin",
+      outputModality: "audio",
       tools: [
         {
           name: "getInventory",
@@ -110,6 +112,33 @@ describe("OpenAIRealtimeProvider", () => {
       clientSecret: "ek_test",
       model: "gpt-realtime-2.1-mini",
       voice: "marin",
+      outputModality: "audio",
     });
+  });
+
+  it("creates text-only output sessions without OpenAI output audio", async () => {
+    process.env.OPENAI_API_KEY = "test-api-key";
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        value: "ek_text_test",
+        session: { id: "sess_text_test", model: "test-model" },
+      }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const provider = new OpenAIRealtimeProvider();
+    await provider.createSession({
+      customerId: "customer-1",
+      model: "test-model",
+      voice: "marin",
+      outputModality: "text",
+      tools: [],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.session.output_modalities).toEqual(["text"]);
+    expect(body.session.audio.input).toBeDefined();
+    expect(body.session.audio.output).toBeUndefined();
   });
 });

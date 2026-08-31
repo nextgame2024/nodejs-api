@@ -48,6 +48,14 @@ export class ConversationService {
 
     const storeId = dto.storeId || config.defaultStoreId;
     const avatarProviderName = dto.avatarProvider || config.avatarProvider;
+    const avatarMode =
+      avatarProviderName === "liveavatar"
+        ? dto.avatarMode || config.liveAvatar.mode
+        : undefined;
+    const outputModality =
+      avatarProviderName === "liveavatar" && avatarMode === "FULL"
+        ? "text"
+        : "audio";
     const toolDefinitions = this.tools.listDefinitions();
     const aiSession = await this.aiProvider.createSession({
       customerId,
@@ -55,6 +63,7 @@ export class ConversationService {
       storeId,
       model: config.openAi.realtimeModel,
       voice: config.openAi.voice,
+      outputModality,
       tools: toolDefinitions,
     });
     const { session: avatarSession, error: avatarError } =
@@ -65,6 +74,7 @@ export class ConversationService {
           avatarProviderName === "liveavatar"
             ? config.liveAvatar.avatarId
             : config.simli.avatarId,
+        mode: avatarMode,
       });
 
     const { rows } = await this.database.query<SessionRow>(
@@ -96,6 +106,8 @@ export class ConversationService {
         JSON.stringify({
           model: aiSession.model,
           voice: aiSession.voice,
+          outputModality: aiSession.outputModality,
+          ...(avatarMode ? { avatarMode } : {}),
           ...(avatarError ? { avatarError } : {}),
         }),
       ],
@@ -107,6 +119,7 @@ export class ConversationService {
         provider: aiSession.provider,
         model: aiSession.model,
         voice: aiSession.voice,
+        outputModality: aiSession.outputModality,
         clientSecret: aiSession.clientSecret,
         expiresAt: aiSession.expiresAt,
       },
@@ -114,6 +127,7 @@ export class ConversationService {
         provider: avatarSession?.provider || avatarProviderName,
         sessionToken: avatarSession?.sessionToken,
         transportMode: avatarSession?.transportMode,
+        mode: avatarSession?.mode || avatarMode,
         streamUrl: avatarSession?.streamUrl,
         expiresAt: avatarSession?.expiresAt,
         error: avatarError,

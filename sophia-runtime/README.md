@@ -45,9 +45,12 @@ npm run migrate
 
 Do not copy secrets into Angular. Browser clients should call this runtime API for short-lived session metadata only.
 
-LiveAvatar uses its separate real-time platform. In FULL mode OpenAI remains
-responsible for conversation and tools, while LiveAvatar synthesizes the final
-response transcript for avatar speech and lip-sync. For sandbox testing, configure:
+LiveAvatar uses its separate real-time platform. The session request can select
+`avatarMode: "LITE"` or `avatarMode: "FULL"`; `LIVEAVATAR_MODE` is only the
+server-side fallback when a mode is not supplied. LITE sends OpenAI's native
+24 kHz PCM output to LiveAvatar. FULL requests text-only OpenAI output and lets
+LiveAvatar synthesize the voice and lip-sync, avoiding duplicate output-audio
+charges. For sandbox testing, configure:
 
 ```bash
 LIVEAVATAR_API_KEY=your-liveavatar-key

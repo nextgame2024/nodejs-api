@@ -6,6 +6,7 @@ export type AIProviderSessionRequest = {
   storeId?: string;
   model: string;
   voice?: string;
+  outputModality: "audio" | "text";
   tools: RuntimeToolDefinition[];
 };
 
@@ -15,6 +16,7 @@ export type AIProviderSession = {
   clientSecret?: string;
   model: string;
   voice?: string;
+  outputModality: "audio" | "text";
   expiresAt?: string;
 };
 

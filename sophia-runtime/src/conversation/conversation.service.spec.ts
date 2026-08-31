@@ -43,6 +43,7 @@ describe("ConversationService", () => {
         provider: "test-ai",
         providerSessionId: "ai-session-1",
         model: "test-model",
+        outputModality: "audio",
       }),
       sendMessage: jest.fn(),
       registerTools: jest.fn(),
@@ -80,6 +81,7 @@ describe("ConversationService", () => {
         tools: expect.arrayContaining([
           expect.objectContaining({ name: "getInventory" }),
         ]),
+        outputModality: "audio",
       }),
     );
     expect(avatarProvider.createAvatarSession).toHaveBeenCalledWith(
@@ -121,6 +123,7 @@ describe("ConversationService", () => {
         provider: "openai-realtime",
         providerSessionId: "ai-session-1",
         model: "test-model",
+        outputModality: "audio",
       }),
       sendMessage: jest.fn(),
       registerTools: jest.fn(),
@@ -140,5 +143,75 @@ describe("ConversationService", () => {
 
     expect(avatarProviders.resolve).not.toHaveBeenCalled();
     expect(result.avatar).toMatchObject({ provider: "none" });
+  });
+
+  it("uses text-only OpenAI output for LiveAvatar FULL sessions", async () => {
+    const database = {
+      query: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            session_id: "22222222-2222-4222-8222-222222222222",
+            customer_id: "11111111-1111-4111-8111-111111111111",
+            device_id: null,
+            store_id: "demo-store",
+            status: "active",
+            ai_provider: "openai-realtime",
+            avatar_provider: "liveavatar",
+            provider_session_id: "ai-session-1",
+            avatar_session_id: "avatar-session-1",
+            started_at: new Date("2026-01-01T00:00:00.000Z"),
+            ended_at: null,
+          },
+        ],
+      }),
+    };
+    const tools = {
+      listDefinitions: jest.fn().mockReturnValue([]),
+    } as unknown as ToolRegistryService;
+    const aiProvider: AIProvider = {
+      createSession: jest.fn().mockResolvedValue({
+        provider: "openai-realtime",
+        providerSessionId: "ai-session-1",
+        model: "test-model",
+        outputModality: "text",
+      }),
+      sendMessage: jest.fn(),
+      registerTools: jest.fn(),
+      closeSession: jest.fn(),
+    };
+    const avatarProvider: AvatarProvider = {
+      providerName: "liveavatar",
+      createAvatarSession: jest.fn().mockResolvedValue({
+        provider: "liveavatar",
+        avatarSessionId: "avatar-session-1",
+        mode: "FULL",
+      }),
+      sendAudioChunk: jest.fn(),
+      getVideoStream: jest.fn(),
+      closeAvatarSession: jest.fn(),
+    };
+    const avatarProviders = {
+      resolve: jest.fn().mockReturnValue(avatarProvider),
+    } as unknown as AvatarProviderRegistry;
+    const service = new ConversationService(
+      database as never,
+      tools,
+      aiProvider,
+      avatarProviders,
+    );
+
+    const result = await service.createSession({
+      avatarProvider: "liveavatar",
+      avatarMode: "FULL",
+    });
+
+    expect(aiProvider.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ outputModality: "text" }),
+    );
+    expect(avatarProvider.createAvatarSession).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "FULL" }),
+    );
+    expect(result.ai.outputModality).toBe("text");
+    expect(result.avatar.mode).toBe("FULL");
   });
 });

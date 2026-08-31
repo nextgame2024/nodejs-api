@@ -36,6 +36,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
         providerSessionId: `mock-openai-${randomUUID()}`,
         model: request.model,
         voice: request.voice,
+        outputModality: request.outputModality,
       };
     }
 
@@ -56,7 +57,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
             type: "realtime",
             model: request.model,
             instructions: runtimeInstructions(),
-            output_modalities: ["audio"],
+            output_modalities: [request.outputModality],
             audio: {
               input: {
                 turn_detection: {
@@ -68,13 +69,17 @@ export class OpenAIRealtimeProvider implements AIProvider {
                   interrupt_response: true,
                 },
               },
-              output: {
-                format: {
-                  type: "audio/pcm",
-                  rate: 24_000,
-                },
-                voice: request.voice || config.openAi.voice,
-              },
+              ...(request.outputModality === "audio"
+                ? {
+                    output: {
+                      format: {
+                        type: "audio/pcm",
+                        rate: 24_000,
+                      },
+                      voice: request.voice || config.openAi.voice,
+                    },
+                  }
+                : {}),
             },
             tools: request.tools.map((tool) => ({
               type: "function",
@@ -108,6 +113,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
       clientSecret,
       model: payload.session?.model || request.model,
       voice: request.voice,
+      outputModality: request.outputModality,
       expiresAt: toIsoTimestamp(payload.expires_at || payload.client_secret?.expires_at),
     };
   }
