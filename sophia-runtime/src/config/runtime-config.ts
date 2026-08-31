@@ -1,4 +1,5 @@
 import "dotenv/config";
+import type { AvatarProviderSelection } from "../providers/avatar/avatar-provider.interface.js";
 
 export type RuntimeConfig = {
   port: number;
@@ -10,7 +11,7 @@ export type RuntimeConfig = {
   defaultCustomerId?: string;
   defaultStoreId?: string;
   aiProvider: "openai-realtime";
-  avatarProvider: "simli";
+  avatarProvider: AvatarProviderSelection;
   openAi: {
     apiKey?: string;
     realtimeModel: string;
@@ -26,6 +27,13 @@ export type RuntimeConfig = {
     maxSessionLengthSeconds: number;
     maxIdleTimeSeconds: number;
     transportMode: "livekit" | "p2p";
+  };
+  liveAvatar: {
+    apiKey?: string;
+    apiBaseUrl: string;
+    avatarId?: string;
+    sandbox: boolean;
+    maxSessionDurationSeconds: number;
   };
 };
 
@@ -53,7 +61,7 @@ export function runtimeConfig(): RuntimeConfig {
     defaultCustomerId: emptyToUndefined(process.env.SOPHIA_DEFAULT_CUSTOMER_ID),
     defaultStoreId: emptyToUndefined(process.env.SOPHIA_DEFAULT_STORE_ID),
     aiProvider: "openai-realtime",
-    avatarProvider: "simli",
+    avatarProvider: parseAvatarProvider(process.env.AVATAR_PROVIDER),
     openAi: {
       apiKey: emptyToUndefined(process.env.OPENAI_API_KEY),
       realtimeModel:
@@ -96,7 +104,26 @@ export function runtimeConfig(): RuntimeConfig {
       transportMode:
         process.env.SIMLI_TRANSPORT_MODE === "p2p" ? "p2p" : "livekit",
     },
+    liveAvatar: {
+      apiKey: emptyToUndefined(process.env.LIVEAVATAR_API_KEY),
+      apiBaseUrl:
+        process.env.LIVEAVATAR_API_BASE_URL || "https://api.liveavatar.com",
+      avatarId: emptyToUndefined(process.env.LIVEAVATAR_AVATAR_ID),
+      sandbox: parseBoolean(process.env.LIVEAVATAR_SANDBOX, true),
+      maxSessionDurationSeconds: clampNumber(
+        Number(process.env.LIVEAVATAR_MAX_SESSION_DURATION_SECONDS || 600),
+        60,
+        3600,
+      ),
+    },
   };
+}
+
+function parseAvatarProvider(
+  value: string | undefined,
+): AvatarProviderSelection {
+  if (value === "none" || value === "liveavatar") return value;
+  return "simli";
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {

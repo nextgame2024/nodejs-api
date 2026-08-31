@@ -7,8 +7,6 @@ import type {
   AvatarProviderSessionRequest,
 } from "./avatar-provider.interface.js";
 
-export const AVATAR_PROVIDER = Symbol("AVATAR_PROVIDER");
-
 type SimliTokenResponse = {
   session_token?: string;
   detail?: unknown;
@@ -16,6 +14,8 @@ type SimliTokenResponse = {
 
 @Injectable()
 export class SimliAvatarProvider implements AvatarProvider {
+  readonly providerName = "simli" as const;
+
   async createAvatarSession(
     request: AvatarProviderSessionRequest,
   ): Promise<AvatarProviderSession> {

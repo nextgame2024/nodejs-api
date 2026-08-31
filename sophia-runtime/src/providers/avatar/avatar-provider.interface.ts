@@ -1,3 +1,6 @@
+export type AvatarProviderName = "simli" | "liveavatar";
+export type AvatarProviderSelection = "none" | AvatarProviderName;
+
 export type AvatarProviderSessionRequest = {
   customerId: string;
   deviceId?: string;
@@ -14,6 +17,7 @@ export type AvatarProviderSession = {
 };
 
 export interface AvatarProvider {
+  readonly providerName: AvatarProviderName;
   createAvatarSession(
     request: AvatarProviderSessionRequest,
   ): Promise<AvatarProviderSession>;

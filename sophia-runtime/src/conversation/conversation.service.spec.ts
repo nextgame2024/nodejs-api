@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, jest } from "@jest/globals";
 import { ConversationService } from "./conversation.service.js";
 import type { AIProvider } from "../providers/ai/ai-provider.interface.js";
 import type { AvatarProvider } from "../providers/avatar/avatar-provider.interface.js";
+import { AvatarProviderRegistry } from "../providers/avatar/avatar-provider.registry.js";
 import { ToolRegistryService } from "../tools/tools.service.js";
 
 describe("ConversationService", () => {
@@ -23,7 +24,7 @@ describe("ConversationService", () => {
             store_id: "demo-store",
             status: "active",
             ai_provider: "test-ai",
-            avatar_provider: "test-avatar",
+            avatar_provider: "simli",
             provider_session_id: "ai-session-1",
             avatar_session_id: "avatar-session-1",
             started_at: new Date("2026-01-01T00:00:00.000Z"),
@@ -48,23 +49,30 @@ describe("ConversationService", () => {
       closeSession: jest.fn(),
     };
     const avatarProvider: AvatarProvider = {
+      providerName: "simli",
       createAvatarSession: jest.fn().mockResolvedValue({
-        provider: "test-avatar",
+        provider: "simli",
         avatarSessionId: "avatar-session-1",
       }),
       sendAudioChunk: jest.fn(),
       getVideoStream: jest.fn(),
       closeAvatarSession: jest.fn(),
     };
+    const avatarProviders = {
+      resolve: jest.fn().mockReturnValue(avatarProvider),
+    } as unknown as AvatarProviderRegistry;
 
     const service = new ConversationService(
       database as never,
       tools,
       aiProvider,
-      avatarProvider,
+      avatarProviders,
     );
 
-    const result = await service.createSession({ storeId: "demo-store" });
+    const result = await service.createSession({
+      storeId: "demo-store",
+      avatarProvider: "simli",
+    });
 
     expect(aiProvider.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -82,5 +90,55 @@ describe("ConversationService", () => {
     expect(result.session.sessionId).toBe(
       "22222222-2222-4222-8222-222222222222",
     );
+    expect(result.avatar.provider).toBe("simli");
+  });
+
+  it("creates an OpenAI-only session without resolving an avatar provider", async () => {
+    const database = {
+      query: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            session_id: "22222222-2222-4222-8222-222222222222",
+            customer_id: "11111111-1111-4111-8111-111111111111",
+            device_id: null,
+            store_id: "demo-store",
+            status: "active",
+            ai_provider: "openai-realtime",
+            avatar_provider: "none",
+            provider_session_id: "ai-session-1",
+            avatar_session_id: null,
+            started_at: new Date("2026-01-01T00:00:00.000Z"),
+            ended_at: null,
+          },
+        ],
+      }),
+    };
+    const tools = {
+      listDefinitions: jest.fn().mockReturnValue([]),
+    } as unknown as ToolRegistryService;
+    const aiProvider: AIProvider = {
+      createSession: jest.fn().mockResolvedValue({
+        provider: "openai-realtime",
+        providerSessionId: "ai-session-1",
+        model: "test-model",
+      }),
+      sendMessage: jest.fn(),
+      registerTools: jest.fn(),
+      closeSession: jest.fn(),
+    };
+    const avatarProviders = {
+      resolve: jest.fn(),
+    } as unknown as AvatarProviderRegistry;
+
+    const service = new ConversationService(
+      database as never,
+      tools,
+      aiProvider,
+      avatarProviders,
+    );
+    const result = await service.createSession({ avatarProvider: "none" });
+
+    expect(avatarProviders.resolve).not.toHaveBeenCalled();
+    expect(result.avatar).toMatchObject({ provider: "none" });
   });
 });

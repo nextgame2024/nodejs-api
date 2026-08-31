@@ -5,10 +5,12 @@ import {
   AI_PROVIDER,
 } from "../providers/ai/openai-realtime.provider.js";
 import type { AIProvider } from "../providers/ai/ai-provider.interface.js";
-import {
-  AVATAR_PROVIDER,
-} from "../providers/avatar/simli-avatar.provider.js";
-import type { AvatarProvider } from "../providers/avatar/avatar-provider.interface.js";
+import { AvatarProviderRegistry } from "../providers/avatar/avatar-provider.registry.js";
+import type {
+  AvatarProviderSession,
+  AvatarProviderSessionRequest,
+  AvatarProviderSelection,
+} from "../providers/avatar/avatar-provider.interface.js";
 import { ToolRegistryService } from "../tools/tools.service.js";
 import { CreateSessionDto } from "./dto/create-session.dto.js";
 import { ExecuteToolDto } from "./dto/execute-tool.dto.js";
@@ -33,7 +35,8 @@ export class ConversationService {
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(ToolRegistryService) private readonly tools: ToolRegistryService,
     @Inject(AI_PROVIDER) private readonly aiProvider: AIProvider,
-    @Inject(AVATAR_PROVIDER) private readonly avatarProvider: AvatarProvider,
+    @Inject(AvatarProviderRegistry)
+    private readonly avatarProviders: AvatarProviderRegistry,
   ) {}
 
   async createSession(dto: CreateSessionDto) {
@@ -44,6 +47,7 @@ export class ConversationService {
     }
 
     const storeId = dto.storeId || config.defaultStoreId;
+    const avatarProviderName = dto.avatarProvider || config.avatarProvider;
     const toolDefinitions = this.tools.listDefinitions();
     const aiSession = await this.aiProvider.createSession({
       customerId,
@@ -53,11 +57,15 @@ export class ConversationService {
       voice: config.openAi.voice,
       tools: toolDefinitions,
     });
-    const avatarSession = await this.avatarProvider.createAvatarSession({
-      customerId,
-      deviceId: dto.deviceId,
-      avatarId: config.simli.avatarId,
-    });
+    const { session: avatarSession, error: avatarError } =
+      await this.createAvatarSession(avatarProviderName, {
+        customerId,
+        deviceId: dto.deviceId,
+        avatarId:
+          avatarProviderName === "liveavatar"
+            ? config.liveAvatar.avatarId
+            : config.simli.avatarId,
+      });
 
     const { rows } = await this.database.query<SessionRow>(
       `
@@ -82,10 +90,14 @@ export class ConversationService {
         storeId ?? null,
         dto.createdByUserId ?? null,
         aiSession.provider,
-        avatarSession.provider,
+        avatarSession?.provider || avatarProviderName,
         aiSession.providerSessionId,
-        avatarSession.avatarSessionId,
-        JSON.stringify({ model: aiSession.model, voice: aiSession.voice }),
+        avatarSession?.avatarSessionId ?? null,
+        JSON.stringify({
+          model: aiSession.model,
+          voice: aiSession.voice,
+          ...(avatarError ? { avatarError } : {}),
+        }),
       ],
     );
 
@@ -99,11 +111,12 @@ export class ConversationService {
         expiresAt: aiSession.expiresAt,
       },
       avatar: {
-        provider: avatarSession.provider,
-        sessionToken: avatarSession.sessionToken,
-        transportMode: avatarSession.transportMode,
-        streamUrl: avatarSession.streamUrl,
-        expiresAt: avatarSession.expiresAt,
+        provider: avatarSession?.provider || avatarProviderName,
+        sessionToken: avatarSession?.sessionToken,
+        transportMode: avatarSession?.transportMode,
+        streamUrl: avatarSession?.streamUrl,
+        expiresAt: avatarSession?.expiresAt,
+        error: avatarError,
       },
       tools: toolDefinitions,
     };
@@ -134,9 +147,15 @@ export class ConversationService {
     const config = runtimeConfig();
     const current = await this.getSession(sessionId);
     await this.aiProvider.closeSession(current.session.providerSessionId ?? sessionId);
-    await this.avatarProvider.closeAvatarSession(
-      current.session.avatarSessionId ?? sessionId,
-    );
+    if (
+      current.session.avatarProvider !== "none" &&
+      current.session.avatarSessionId
+    ) {
+      const avatarProvider = this.avatarProviders.resolve(
+        current.session.avatarProvider as Exclude<AvatarProviderSelection, "none">,
+      );
+      await avatarProvider.closeAvatarSession(current.session.avatarSessionId);
+    }
 
     const { rows } = await this.database.query<SessionRow>(
       `
@@ -149,6 +168,26 @@ export class ConversationService {
     );
 
     return { session: normalizeSession(rows[0]) };
+  }
+
+  private async createAvatarSession(
+    providerName: AvatarProviderSelection,
+    request: AvatarProviderSessionRequest,
+  ): Promise<{ session: AvatarProviderSession | null; error?: string }> {
+    if (providerName === "none") return { session: null };
+
+    try {
+      const provider = this.avatarProviders.resolve(providerName);
+      return { session: await provider.createAvatarSession(request) };
+    } catch (error) {
+      return {
+        session: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : `${providerName} avatar session could not be created.`,
+      };
+    }
   }
 }
 

@@ -45,9 +45,20 @@ npm run migrate
 
 Do not copy secrets into Angular. Browser clients should call this runtime API for short-lived session metadata only.
 
+LiveAvatar uses its separate real-time platform and LITE mode so OpenAI remains
+responsible for conversation and tools. For sandbox testing, configure:
+
+```bash
+LIVEAVATAR_API_KEY=your-liveavatar-key
+LIVEAVATAR_SANDBOX=true
+```
+
+Sandbox mode uses LiveAvatar's public Wayne avatar and short test sessions. For
+production, also set `LIVEAVATAR_AVATAR_ID` and disable sandbox mode.
+
 ## Boundaries
 
 - Core modules depend on `AIProvider`, not OpenAI directly.
-- Core modules depend on `AvatarProvider`, not Simli directly.
+- Core modules resolve `AvatarProvider` implementations per session, not at application startup.
 - Live business data must flow through the `ToolRegistry`.
 - Existing website/Business Manager users can be referenced by external ID, but this runtime database does not use cross-database foreign keys to the existing `users` table.

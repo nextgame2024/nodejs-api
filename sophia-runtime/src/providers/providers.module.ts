@@ -4,23 +4,22 @@ import {
   OpenAIRealtimeProvider,
 } from "./ai/openai-realtime.provider.js";
 import {
-  AVATAR_PROVIDER,
   SimliAvatarProvider,
 } from "./avatar/simli-avatar.provider.js";
+import { LiveAvatarProvider } from "./avatar/liveavatar.provider.js";
+import { AvatarProviderRegistry } from "./avatar/avatar-provider.registry.js";
 
 @Module({
   providers: [
     OpenAIRealtimeProvider,
     SimliAvatarProvider,
+    LiveAvatarProvider,
+    AvatarProviderRegistry,
     {
       provide: AI_PROVIDER,
       useExisting: OpenAIRealtimeProvider,
     },
-    {
-      provide: AVATAR_PROVIDER,
-      useExisting: SimliAvatarProvider,
-    },
   ],
-  exports: [AI_PROVIDER, AVATAR_PROVIDER],
+  exports: [AI_PROVIDER, AvatarProviderRegistry],
 })
 export class ProvidersModule {}
