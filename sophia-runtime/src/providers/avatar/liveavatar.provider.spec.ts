@@ -63,6 +63,7 @@ describe("LiveAvatarProvider", () => {
       mode: "LITE",
       avatar_id: "dd73ea75-1218-4ef3-92ce-606d5f7fbc0a",
       is_sandbox: true,
+      max_session_duration: 60,
       video_settings: { quality: "high", encoding: "H264" },
     });
     expect(session).toMatchObject({

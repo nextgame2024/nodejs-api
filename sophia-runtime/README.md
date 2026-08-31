@@ -51,10 +51,12 @@ responsible for conversation and tools. For sandbox testing, configure:
 ```bash
 LIVEAVATAR_API_KEY=your-liveavatar-key
 LIVEAVATAR_SANDBOX=true
+LIVEAVATAR_MAX_SESSION_DURATION_SECONDS=60
 ```
 
 Sandbox mode uses LiveAvatar's public Wayne avatar and short test sessions. For
-production, also set `LIVEAVATAR_AVATAR_ID` and disable sandbox mode.
+production, also set `LIVEAVATAR_AVATAR_ID`, disable sandbox mode, and configure
+the longer session duration allowed by your plan.
 
 ## Boundaries
 

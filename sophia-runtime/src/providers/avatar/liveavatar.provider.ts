@@ -43,6 +43,10 @@ export class LiveAvatarProvider implements AvatarProvider {
       );
     }
 
+    const maxSessionDuration = config.liveAvatar.sandbox
+      ? Math.min(config.liveAvatar.maxSessionDurationSeconds, 60)
+      : config.liveAvatar.maxSessionDurationSeconds;
+
     const response = await fetch(
       `${config.liveAvatar.apiBaseUrl}/v1/sessions/token`,
       {
@@ -55,7 +59,7 @@ export class LiveAvatarProvider implements AvatarProvider {
           mode: "LITE",
           avatar_id: avatarId,
           is_sandbox: config.liveAvatar.sandbox,
-          max_session_duration: config.liveAvatar.maxSessionDurationSeconds,
+          max_session_duration: maxSessionDuration,
           video_settings: {
             quality: "high",
             encoding: "H264",
