@@ -32,6 +32,8 @@ export type RuntimeConfig = {
     apiKey?: string;
     apiBaseUrl: string;
     avatarId?: string;
+    voiceId?: string;
+    mode: "FULL" | "LITE";
     sandbox: boolean;
     maxSessionDurationSeconds: number;
   };
@@ -109,6 +111,8 @@ export function runtimeConfig(): RuntimeConfig {
       apiBaseUrl:
         process.env.LIVEAVATAR_API_BASE_URL || "https://api.liveavatar.com",
       avatarId: emptyToUndefined(process.env.LIVEAVATAR_AVATAR_ID),
+      voiceId: emptyToUndefined(process.env.LIVEAVATAR_VOICE_ID),
+      mode: process.env.LIVEAVATAR_MODE === "LITE" ? "LITE" : "FULL",
       sandbox: parseBoolean(process.env.LIVEAVATAR_SANDBOX, true),
       maxSessionDurationSeconds: clampNumber(
         Number(process.env.LIVEAVATAR_MAX_SESSION_DURATION_SECONDS || 600),

@@ -8,14 +8,18 @@ describe("LiveAvatarProvider", () => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     delete process.env.LIVEAVATAR_API_KEY;
     delete process.env.LIVEAVATAR_AVATAR_ID;
+    delete process.env.LIVEAVATAR_MODE;
     delete process.env.LIVEAVATAR_SANDBOX;
+    delete process.env.LIVEAVATAR_VOICE_ID;
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.LIVEAVATAR_API_KEY;
     delete process.env.LIVEAVATAR_AVATAR_ID;
+    delete process.env.LIVEAVATAR_MODE;
     delete process.env.LIVEAVATAR_SANDBOX;
+    delete process.env.LIVEAVATAR_VOICE_ID;
   });
 
   it("creates a provider-neutral mock session without credentials", async () => {
@@ -28,10 +32,12 @@ describe("LiveAvatarProvider", () => {
     expect(session.avatarSessionId).toContain("mock-liveavatar-");
   });
 
-  it("creates a sandbox LITE session token", async () => {
+  it("creates a sandbox FULL session token with a voice", async () => {
     process.env.LIVEAVATAR_API_KEY = "test-liveavatar-key";
+    process.env.LIVEAVATAR_MODE = "FULL";
     process.env.LIVEAVATAR_SANDBOX = "true";
     process.env.LIVEAVATAR_AVATAR_ID = "production-avatar-must-be-ignored";
+    process.env.LIVEAVATAR_VOICE_ID = "test-voice-id";
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -61,10 +67,11 @@ describe("LiveAvatarProvider", () => {
     expect(
       JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
     ).toMatchObject({
-      mode: "LITE",
+      mode: "FULL",
       avatar_id: "dd73ea75-1218-4ef3-92ce-606d5f7fbc0a",
       is_sandbox: true,
       max_session_duration: 60,
+      avatar_persona: { voice_id: "test-voice-id", language: "en" },
       video_settings: { quality: "high", encoding: "H264" },
     });
     expect(session).toMatchObject({
@@ -73,5 +80,18 @@ describe("LiveAvatarProvider", () => {
       sessionToken: "liveavatar-session-token",
       transportMode: "livekit",
     });
+  });
+
+  it("rejects FULL mode without a voice ID", async () => {
+    process.env.LIVEAVATAR_API_KEY = "test-liveavatar-key";
+    process.env.LIVEAVATAR_MODE = "FULL";
+
+    const provider = new LiveAvatarProvider();
+
+    await expect(
+      provider.createAvatarSession({ customerId: "customer-1" }),
+    ).rejects.toThrow(
+      "LIVEAVATAR_VOICE_ID is required for LiveAvatar FULL mode.",
+    );
   });
 });

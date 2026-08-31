@@ -45,11 +45,14 @@ npm run migrate
 
 Do not copy secrets into Angular. Browser clients should call this runtime API for short-lived session metadata only.
 
-LiveAvatar uses its separate real-time platform and LITE mode so OpenAI remains
-responsible for conversation and tools. For sandbox testing, configure:
+LiveAvatar uses its separate real-time platform. In FULL mode OpenAI remains
+responsible for conversation and tools, while LiveAvatar synthesizes the final
+response transcript for avatar speech and lip-sync. For sandbox testing, configure:
 
 ```bash
 LIVEAVATAR_API_KEY=your-liveavatar-key
+LIVEAVATAR_MODE=FULL
+LIVEAVATAR_VOICE_ID=your-liveavatar-voice-id
 LIVEAVATAR_SANDBOX=true
 LIVEAVATAR_MAX_SESSION_DURATION_SECONDS=60
 ```

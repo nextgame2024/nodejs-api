@@ -42,6 +42,11 @@ export class LiveAvatarProvider implements AvatarProvider {
         "LIVEAVATAR_AVATAR_ID is required when sandbox mode is disabled.",
       );
     }
+    if (config.liveAvatar.mode === "FULL" && !config.liveAvatar.voiceId) {
+      throw new Error(
+        "LIVEAVATAR_VOICE_ID is required for LiveAvatar FULL mode.",
+      );
+    }
 
     const maxSessionDuration = config.liveAvatar.sandbox
       ? Math.min(config.liveAvatar.maxSessionDurationSeconds, 60)
@@ -56,10 +61,18 @@ export class LiveAvatarProvider implements AvatarProvider {
           "x-api-key": config.liveAvatar.apiKey,
         },
         body: JSON.stringify({
-          mode: "LITE",
+          mode: config.liveAvatar.mode,
           avatar_id: avatarId,
           is_sandbox: config.liveAvatar.sandbox,
           max_session_duration: maxSessionDuration,
+          ...(config.liveAvatar.mode === "FULL"
+            ? {
+                avatar_persona: {
+                  voice_id: config.liveAvatar.voiceId,
+                  language: "en",
+                },
+              }
+            : {}),
           video_settings: {
             quality: "high",
             encoding: "H264",
