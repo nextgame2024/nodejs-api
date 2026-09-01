@@ -4,6 +4,10 @@ import type { AvatarSessionMode } from "../../providers/avatar/avatar-provider.i
 
 export class CreateSessionDto {
   @IsOptional()
+  @IsIn(["openai-realtime", "tavus-full"])
+  aiProvider?: "openai-realtime" | "tavus-full";
+
+  @IsOptional()
   @IsUUID()
   customerId?: string;
 

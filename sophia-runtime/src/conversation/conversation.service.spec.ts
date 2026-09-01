@@ -4,6 +4,7 @@ import type { AIProvider } from "../providers/ai/ai-provider.interface.js";
 import type { AvatarProvider } from "../providers/avatar/avatar-provider.interface.js";
 import { AvatarProviderRegistry } from "../providers/avatar/avatar-provider.registry.js";
 import { ToolRegistryService } from "../tools/tools.service.js";
+import { TavusFullProvider } from "../providers/tavus/tavus-full.provider.js";
 
 describe("ConversationService", () => {
   beforeEach(() => {
@@ -68,6 +69,7 @@ describe("ConversationService", () => {
       tools,
       aiProvider,
       avatarProviders,
+      {} as TavusFullProvider,
     );
 
     const result = await service.createSession({
@@ -138,6 +140,7 @@ describe("ConversationService", () => {
       tools,
       aiProvider,
       avatarProviders,
+      {} as TavusFullProvider,
     );
     const result = await service.createSession({ avatarProvider: "none" });
 
@@ -198,6 +201,7 @@ describe("ConversationService", () => {
       tools,
       aiProvider,
       avatarProviders,
+      {} as TavusFullProvider,
     );
 
     const result = await service.createSession({
@@ -213,5 +217,75 @@ describe("ConversationService", () => {
     );
     expect(result.ai.outputModality).toBe("text");
     expect(result.avatar.mode).toBe("FULL");
+  });
+
+  it("creates Tavus Full sessions without creating an OpenAI session", async () => {
+    const database = {
+      query: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            session_id: "22222222-2222-4222-8222-222222222222",
+            customer_id: "11111111-1111-4111-8111-111111111111",
+            device_id: null,
+            store_id: "demo-store",
+            status: "active",
+            ai_provider: "tavus-full",
+            avatar_provider: "tavus",
+            provider_session_id: "tavus-conversation-1",
+            avatar_session_id: "tavus-conversation-1",
+            started_at: new Date("2026-01-01T00:00:00.000Z"),
+            ended_at: null,
+          },
+        ],
+      }),
+    };
+    const tools = {
+      listDefinitions: jest.fn().mockReturnValue([]),
+    } as unknown as ToolRegistryService;
+    const aiProvider: AIProvider = {
+      createSession: jest.fn(),
+      sendMessage: jest.fn(),
+      registerTools: jest.fn(),
+      closeSession: jest.fn(),
+    };
+    const avatarProviders = {
+      resolve: jest.fn(),
+    } as unknown as AvatarProviderRegistry;
+    const tavusProvider = {
+      createSession: jest.fn().mockResolvedValue({
+        provider: "tavus-full",
+        providerSessionId: "tavus-conversation-1",
+        model: "tavus-gpt-oss",
+        outputModality: "audio",
+        conversationUrl: "https://tavus.daily.co/conversation-1",
+        meetingToken: "meeting-token",
+      }),
+      closeSession: jest.fn(),
+    } as unknown as TavusFullProvider;
+    const service = new ConversationService(
+      database as never,
+      tools,
+      aiProvider,
+      avatarProviders,
+      tavusProvider,
+    );
+
+    const result = await service.createSession({
+      aiProvider: "tavus-full",
+      storeId: "demo-store",
+    });
+
+    expect(tavusProvider.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: "demo-store" }),
+    );
+    expect(aiProvider.createSession).not.toHaveBeenCalled();
+    expect(avatarProviders.resolve).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ai: { provider: "tavus-full", model: "tavus-gpt-oss" },
+      avatar: {
+        provider: "tavus",
+        streamUrl: "https://tavus.daily.co/conversation-1",
+      },
+    });
   });
 });

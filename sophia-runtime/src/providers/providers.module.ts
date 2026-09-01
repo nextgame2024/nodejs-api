@@ -8,6 +8,7 @@ import {
 } from "./avatar/simli-avatar.provider.js";
 import { LiveAvatarProvider } from "./avatar/liveavatar.provider.js";
 import { AvatarProviderRegistry } from "./avatar/avatar-provider.registry.js";
+import { TavusFullProvider } from "./tavus/tavus-full.provider.js";
 
 @Module({
   providers: [
@@ -15,11 +16,12 @@ import { AvatarProviderRegistry } from "./avatar/avatar-provider.registry.js";
     SimliAvatarProvider,
     LiveAvatarProvider,
     AvatarProviderRegistry,
+    TavusFullProvider,
     {
       provide: AI_PROVIDER,
       useExisting: OpenAIRealtimeProvider,
     },
   ],
-  exports: [AI_PROVIDER, AvatarProviderRegistry],
+  exports: [AI_PROVIDER, AvatarProviderRegistry, TavusFullProvider],
 })
 export class ProvidersModule {}

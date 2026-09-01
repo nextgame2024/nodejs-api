@@ -64,6 +64,29 @@ Sandbox mode always uses LiveAvatar's fixed public avatar and ignores
 `LIVEAVATAR_AVATAR_ID`. For production, set `LIVEAVATAR_AVATAR_ID`, disable
 sandbox mode, and configure the longer session duration allowed by your plan.
 
+## Tavus Full
+
+The `Tavus` kiosk experience uses Tavus's complete conversational pipeline and
+does not create an OpenAI Realtime session. Configure a Tavus Persona that uses
+the native `tavus-gpt-oss` LLM, then add these variables to the Sophia Runtime
+service:
+
+```bash
+TAVUS_API_KEY=your-tavus-api-key
+TAVUS_PERSONA_ID=your-native-tavus-persona-id
+TAVUS_REPLICA_ID=your-replica-id
+TAVUS_NATIVE_LLM_ONLY=true
+```
+
+`TAVUS_REPLICA_ID` is optional when the Persona already has a default replica.
+Do not set `TAVUS_NATIVE_LLM_ONLY=true` for a Persona whose LLM layer contains
+an OpenAI `base_url` or API key. The runtime refuses Tavus sessions unless this
+operator confirmation is enabled, and its Tavus code path never requests an
+OpenAI client secret.
+
+See [Tavus acceptance suite](./TAVUS_ACCEPTANCE_SUITE.md) before selecting Tavus
+as the production default.
+
 ## Boundaries
 
 - Core modules depend on `AIProvider`, not OpenAI directly.

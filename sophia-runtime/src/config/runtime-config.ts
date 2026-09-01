@@ -37,6 +37,13 @@ export type RuntimeConfig = {
     sandbox: boolean;
     maxSessionDurationSeconds: number;
   };
+  tavus: {
+    apiKey?: string;
+    apiBaseUrl: string;
+    personaId?: string;
+    replicaId?: string;
+    nativeLlmOnly: boolean;
+  };
 };
 
 export function runtimeConfig(): RuntimeConfig {
@@ -119,6 +126,13 @@ export function runtimeConfig(): RuntimeConfig {
         60,
         3600,
       ),
+    },
+    tavus: {
+      apiKey: emptyToUndefined(process.env.TAVUS_API_KEY),
+      apiBaseUrl: process.env.TAVUS_API_BASE_URL || "https://tavusapi.com",
+      personaId: emptyToUndefined(process.env.TAVUS_PERSONA_ID),
+      replicaId: emptyToUndefined(process.env.TAVUS_REPLICA_ID),
+      nativeLlmOnly: parseBoolean(process.env.TAVUS_NATIVE_LLM_ONLY, false),
     },
   };
 }

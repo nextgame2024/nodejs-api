@@ -11,6 +11,7 @@ import type {
   AvatarProviderSessionRequest,
   AvatarProviderSelection,
 } from "../providers/avatar/avatar-provider.interface.js";
+import { TavusFullProvider } from "../providers/tavus/tavus-full.provider.js";
 import { ToolRegistryService } from "../tools/tools.service.js";
 import { CreateSessionDto } from "./dto/create-session.dto.js";
 import { ExecuteToolDto } from "./dto/execute-tool.dto.js";
@@ -37,6 +38,8 @@ export class ConversationService {
     @Inject(AI_PROVIDER) private readonly aiProvider: AIProvider,
     @Inject(AvatarProviderRegistry)
     private readonly avatarProviders: AvatarProviderRegistry,
+    @Inject(TavusFullProvider)
+    private readonly tavusProvider: TavusFullProvider,
   ) {}
 
   async createSession(dto: CreateSessionDto) {
@@ -47,6 +50,10 @@ export class ConversationService {
     }
 
     const storeId = dto.storeId || config.defaultStoreId;
+    if (dto.aiProvider === "tavus-full") {
+      return this.createTavusSession(dto, customerId, storeId);
+    }
+
     const avatarProviderName = dto.avatarProvider || config.avatarProvider;
     const avatarMode =
       avatarProviderName === "liveavatar"
@@ -160,15 +167,27 @@ export class ConversationService {
   async closeSession(sessionId: string) {
     const config = runtimeConfig();
     const current = await this.getSession(sessionId);
-    await this.aiProvider.closeSession(current.session.providerSessionId ?? sessionId);
-    if (
-      current.session.avatarProvider !== "none" &&
-      current.session.avatarSessionId
-    ) {
-      const avatarProvider = this.avatarProviders.resolve(
-        current.session.avatarProvider as Exclude<AvatarProviderSelection, "none">,
+    if (current.session.aiProvider === "tavus-full") {
+      if (!current.session.providerSessionId) {
+        throw new Error("Tavus session is missing its conversation ID.");
+      }
+      await this.tavusProvider.closeSession(current.session.providerSessionId);
+    } else {
+      await this.aiProvider.closeSession(
+        current.session.providerSessionId ?? sessionId,
       );
-      await avatarProvider.closeAvatarSession(current.session.avatarSessionId);
+      if (
+        current.session.avatarProvider !== "none" &&
+        current.session.avatarSessionId
+      ) {
+        const avatarProvider = this.avatarProviders.resolve(
+          current.session.avatarProvider as Exclude<
+            AvatarProviderSelection,
+            "none"
+          >,
+        );
+        await avatarProvider.closeAvatarSession(current.session.avatarSessionId);
+      }
     }
 
     const { rows } = await this.database.query<SessionRow>(
@@ -182,6 +201,73 @@ export class ConversationService {
     );
 
     return { session: normalizeSession(rows[0]) };
+  }
+
+  private async createTavusSession(
+    dto: CreateSessionDto,
+    customerId: string,
+    storeId: string | undefined,
+  ) {
+    const config = runtimeConfig();
+    const tavusSession = await this.tavusProvider.createSession({
+      customerId,
+      deviceId: dto.deviceId,
+      storeId,
+    });
+    const toolDefinitions = this.tools.listDefinitions();
+    try {
+      const { rows } = await this.database.query<SessionRow>(
+        `
+        INSERT INTO ${config.schema}.sessions (
+          customer_id,
+          device_id,
+          store_id,
+          created_by_user_id,
+          ai_provider,
+          avatar_provider,
+          provider_session_id,
+          avatar_session_id,
+          status,
+          metadata
+        )
+        VALUES ($1, $2, $3, $4, 'tavus-full', 'tavus', $5, $5, 'active', $6::jsonb)
+        RETURNING *
+      `,
+        [
+          customerId,
+          dto.deviceId ?? null,
+          storeId ?? null,
+          dto.createdByUserId ?? null,
+          tavusSession.providerSessionId,
+          JSON.stringify({
+            model: tavusSession.model,
+            outputModality: tavusSession.outputModality,
+            billingPath: "tavus-only",
+            openAiSessionCreated: false,
+          }),
+        ],
+      );
+
+      return {
+        session: normalizeSession(rows[0]),
+        ai: {
+          provider: tavusSession.provider,
+          model: tavusSession.model,
+          outputModality: tavusSession.outputModality,
+        },
+        avatar: {
+          provider: "tavus",
+          sessionToken: tavusSession.meetingToken,
+          streamUrl: tavusSession.conversationUrl,
+        },
+        tools: toolDefinitions,
+      };
+    } catch (error) {
+      await this.tavusProvider
+        .closeSession(tavusSession.providerSessionId)
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   private async createAvatarSession(
