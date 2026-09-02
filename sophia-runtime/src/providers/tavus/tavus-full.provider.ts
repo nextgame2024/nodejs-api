@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { runtimeConfig } from "../../config/runtime-config.js";
+import { sophiaConversationInstructions } from "../../knowledge/sophia-profile.js";
 
 export type TavusFullSessionRequest = {
   customerId: string;
@@ -24,6 +25,8 @@ type TavusConversationResponse = {
 
 @Injectable()
 export class TavusFullProvider {
+  private internetSearchConfigured = false;
+
   async createSession(
     request: TavusFullSessionRequest,
   ): Promise<TavusFullSession> {
@@ -40,6 +43,9 @@ export class TavusFullProvider {
         "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus Persona uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
       );
     }
+    if (config.tavus.internetSearchEnabled) {
+      await this.ensureInternetSearchSkill(apiBaseUrl, apiKey, personaId);
+    }
 
     const response = await fetch(`${apiBaseUrl}/v2/conversations`, {
       method: "POST",
@@ -52,9 +58,9 @@ export class TavusFullProvider {
         ...(replicaId ? { replica_id: replicaId } : {}),
         conversation_name: `Sophia - ${request.storeId || request.customerId}`,
         conversational_context: [
-          "You are operating as Sophia for this session.",
+          sophiaConversationInstructions(),
           request.storeId ? `Store identifier: ${request.storeId}.` : "",
-          "Use only the native Tavus Full conversational pipeline.",
+          "Use only the native Tavus Full conversational pipeline. Use the attached internet search skill for questions about named businesses and current public information.",
         ]
           .filter(Boolean)
           .join(" "),
@@ -114,5 +120,33 @@ export class TavusFullProvider {
         `Tavus conversation end request failed: ${response.status} ${detail}`,
       );
     }
+  }
+
+  private async ensureInternetSearchSkill(
+    apiBaseUrl: string,
+    apiKey: string,
+    personaId: string,
+  ): Promise<void> {
+    if (this.internetSearchConfigured) return;
+
+    const response = await fetch(
+      `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/skills/internet_search`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: "{}",
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(
+        `Tavus internet search activation failed: ${response.status} ${detail}`,
+      );
+    }
+
+    this.internetSearchConfigured = true;
   }
 }

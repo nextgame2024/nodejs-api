@@ -15,6 +15,8 @@ export type RuntimeConfig = {
   openAi: {
     apiKey?: string;
     realtimeModel: string;
+    researchModel: string;
+    researchTimeoutMs: number;
     voice: string;
     clientSecretTtlSeconds: number;
     vadThreshold: number;
@@ -43,6 +45,7 @@ export type RuntimeConfig = {
     personaId?: string;
     replicaId?: string;
     nativeLlmOnly: boolean;
+    internetSearchEnabled: boolean;
   };
 };
 
@@ -75,6 +78,12 @@ export function runtimeConfig(): RuntimeConfig {
       apiKey: emptyToUndefined(process.env.OPENAI_API_KEY),
       realtimeModel:
         process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini",
+      researchModel: process.env.OPENAI_RESEARCH_MODEL || "gpt-5-mini",
+      researchTimeoutMs: clampNumber(
+        Number(process.env.OPENAI_RESEARCH_TIMEOUT_MS || 15000),
+        3000,
+        30000,
+      ),
       voice: process.env.OPENAI_REALTIME_VOICE || "marin",
       clientSecretTtlSeconds: clampNumber(
         Number(process.env.OPENAI_REALTIME_CLIENT_SECRET_TTL_SECONDS || 600),
@@ -133,6 +142,10 @@ export function runtimeConfig(): RuntimeConfig {
       personaId: emptyToUndefined(process.env.TAVUS_PERSONA_ID),
       replicaId: emptyToUndefined(process.env.TAVUS_REPLICA_ID),
       nativeLlmOnly: parseBoolean(process.env.TAVUS_NATIVE_LLM_ONLY, false),
+      internetSearchEnabled: parseBoolean(
+        process.env.TAVUS_INTERNET_SEARCH_ENABLED,
+        true,
+      ),
     },
   };
 }

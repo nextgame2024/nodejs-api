@@ -2,6 +2,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 import { getInventoryTool } from "./mock/get-inventory.tool.js";
+import { BusinessResearchService } from "./research/business-research.service.js";
+import { createResearchBusinessTool } from "./research/research-business.tool.js";
 import {
   ToolRegistry,
 } from "./tool-registry.js";
@@ -14,8 +16,13 @@ import type {
 export class ToolRegistryService {
   private readonly registry = new ToolRegistry();
 
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(BusinessResearchService)
+    private readonly businessResearch: BusinessResearchService,
+  ) {
     this.registry.register(getInventoryTool);
+    this.registry.register(createResearchBusinessTool(this.businessResearch));
   }
 
   listDefinitions(): RuntimeToolDefinition[] {

@@ -10,6 +10,7 @@ describe("TavusFullProvider", () => {
     process.env.TAVUS_PERSONA_ID = "persona-1";
     process.env.TAVUS_REPLICA_ID = "replica-1";
     process.env.TAVUS_NATIVE_LLM_ONLY = "true";
+    process.env.TAVUS_INTERNET_SEARCH_ENABLED = "true";
   });
 
   afterEach(() => {
@@ -18,17 +19,21 @@ describe("TavusFullProvider", () => {
     delete process.env.TAVUS_PERSONA_ID;
     delete process.env.TAVUS_REPLICA_ID;
     delete process.env.TAVUS_NATIVE_LLM_ONLY;
+    delete process.env.TAVUS_INTERNET_SEARCH_ENABLED;
   });
 
   it("creates an authenticated Tavus Full conversation", async () => {
-    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        conversation_id: "conversation-1",
-        conversation_url: "https://tavus.daily.co/conversation-1",
-        meeting_token: "meeting-token",
-      }),
-    } as Response);
+    const fetchMock = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({ ok: true } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          conversation_id: "conversation-1",
+          conversation_url: "https://tavus.daily.co/conversation-1",
+          meeting_token: "meeting-token",
+        }),
+      } as Response);
     global.fetch = fetchMock;
 
     const session = await new TavusFullProvider().createSession({
@@ -37,18 +42,26 @@ describe("TavusFullProvider", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
+      "https://tavusapi.com/v2/pals/persona-1/skills/internet_search",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
       "https://tavusapi.com/v2/conversations",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ "x-api-key": "tavus-key" }),
       }),
     );
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
       persona_id: "persona-1",
       replica_id: "replica-1",
       require_auth: true,
       max_participants: 2,
     });
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+        .conversational_context,
+    ).toContain("Sophia AI is a configurable, real-time digital assistant");
     expect(session).toMatchObject({
       provider: "tavus-full",
       providerSessionId: "conversation-1",

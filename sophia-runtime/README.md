@@ -76,6 +76,7 @@ TAVUS_API_KEY=your-tavus-api-key
 TAVUS_PERSONA_ID=your-native-tavus-persona-id
 TAVUS_REPLICA_ID=your-replica-id
 TAVUS_NATIVE_LLM_ONLY=true
+TAVUS_INTERNET_SEARCH_ENABLED=true
 ```
 
 `TAVUS_REPLICA_ID` is optional when the Persona already has a default replica.
@@ -83,6 +84,14 @@ Do not set `TAVUS_NATIVE_LLM_ONLY=true` for a Persona whose LLM layer contains
 an OpenAI `base_url` or API key. The runtime refuses Tavus sessions unless this
 operator confirmation is enabled, and its Tavus code path never requests an
 OpenAI client secret.
+
+The runtime injects the same approved Sophia product profile into OpenAI and
+Tavus conversations. OpenAI-based experiences use the `researchBusiness` tool,
+which calls OpenAI Responses web search only when business research is
+requested. Tavus Full attaches Tavus's native `internet_search` skill to the
+PAL and does not use OpenAI for research. Set
+`TAVUS_INTERNET_SEARCH_ENABLED=false` only when that behavior is intentionally
+disabled.
 
 See [Tavus acceptance suite](./TAVUS_ACCEPTANCE_SUITE.md) before selecting Tavus
 as the production default.

@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { runtimeConfig } from "../../config/runtime-config.js";
+import { sophiaConversationInstructions } from "../../knowledge/sophia-profile.js";
 import type {
   AIProvider,
   AIProviderMessage,
@@ -56,7 +57,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
           session: {
             type: "realtime",
             model: request.model,
-            instructions: runtimeInstructions(),
+            instructions: sophiaConversationInstructions(),
             output_modalities: [request.outputModality],
             audio: {
               input: {
@@ -135,18 +136,6 @@ export class OpenAIRealtimeProvider implements AIProvider {
   async closeSession(_sessionId: string): Promise<void> {
     return;
   }
-}
-
-function runtimeInstructions(): string {
-  return [
-    "You are Sophia, a concise and practical in-store retail assistant.",
-    "Answer naturally by voice.",
-    "Only respond after the user makes a clear, intelligible request.",
-    "Treat silence, breathing, background noise, speaker feedback, partial words, and unintelligible audio as no input and do not respond.",
-    "Answer only the user's latest explicit request. If the request is unclear, ask one short clarifying question instead of guessing.",
-    "If a user asks about stock, inventory, availability, or quantities, call getInventory instead of guessing.",
-    "Never invent live business data.",
-  ].join(" ");
 }
 
 function toIsoTimestamp(value: number | undefined): string | undefined {
