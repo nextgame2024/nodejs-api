@@ -64,12 +64,13 @@ describe("BusinessResearchService", () => {
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       model: "test-research-model",
-      tools: [{ type: "web_search", search_context_size: "low" }],
+      tools: [{ type: "web_search" }],
       input: "Business: Sushi Train\nLocation: Australia",
     });
     expect(result).toMatchObject({
       businessName: "Sushi Train",
       location: "Australia",
+      status: "completed",
       officialWebsite: "https://www.sushitrain.com.au/",
       sources: [
         {
@@ -80,11 +81,32 @@ describe("BusinessResearchService", () => {
     });
   });
 
-  it("requires server-side OpenAI credentials", async () => {
+  it("handles missing server-side OpenAI credentials without a 500", async () => {
     delete process.env.OPENAI_API_KEY;
 
     await expect(
       new BusinessResearchService().research({ businessName: "Example" }),
-    ).rejects.toThrow("OPENAI_API_KEY is required for business research");
+    ).resolves.toMatchObject({
+      businessName: "Example",
+      status: "unavailable",
+      sources: [],
+    });
+  });
+
+  it("returns an unavailable result instead of failing the conversation", async () => {
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ "x-request-id": "req_test" }),
+      text: async () => JSON.stringify({ error: { message: "rate limited" } }),
+    } as Response);
+
+    await expect(
+      new BusinessResearchService().research({ businessName: "Example" }),
+    ).resolves.toMatchObject({
+      businessName: "Example",
+      status: "unavailable",
+      sources: [],
+    });
   });
 });

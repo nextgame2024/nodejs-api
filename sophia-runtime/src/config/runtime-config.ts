@@ -78,11 +78,11 @@ export function runtimeConfig(): RuntimeConfig {
       apiKey: emptyToUndefined(process.env.OPENAI_API_KEY),
       realtimeModel:
         process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1-mini",
-      researchModel: process.env.OPENAI_RESEARCH_MODEL || "gpt-5-mini",
+      researchModel: process.env.OPENAI_RESEARCH_MODEL || "gpt-5.4-mini",
       researchTimeoutMs: clampNumber(
-        Number(process.env.OPENAI_RESEARCH_TIMEOUT_MS || 15000),
+        Number(process.env.OPENAI_RESEARCH_TIMEOUT_MS || 45000),
         3000,
-        30000,
+        60000,
       ),
       voice: process.env.OPENAI_REALTIME_VOICE || "marin",
       clientSecretTtlSeconds: clampNumber(

@@ -18,7 +18,7 @@ export function createResearchBusinessTool(
     definition: {
       name: "researchBusiness",
       description:
-        "Research current public information about a named business. Use this whenever a user asks about a specific business, company, venue, restaurant, or organisation. Prefer its official website and include a location when known.",
+        "Research current public information about a named business. Use this whenever a user asks about a specific business, company, venue, restaurant, or organisation. Prefer its official website and include a location when known. If the result status is unavailable, explain that current web research is temporarily unavailable and do not retry in the same turn.",
       parameters: {
         type: "object",
         additionalProperties: false,

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { runtimeConfig } from "../../config/runtime-config.js";
 
 export type BusinessResearchRequest = {
@@ -9,6 +9,7 @@ export type BusinessResearchRequest = {
 export type BusinessResearchResult = {
   businessName: string;
   location?: string;
+  status: "completed" | "unavailable";
   summary: string;
   officialWebsite?: string;
   sources: Array<{ title?: string; url: string }>;
@@ -16,6 +17,11 @@ export type BusinessResearchResult = {
 };
 
 type OpenAiResponse = {
+  status?: string;
+  error?: {
+    code?: string;
+    message?: string;
+  };
   output?: Array<{
     type?: string;
     action?: {
@@ -35,63 +41,103 @@ type OpenAiResponse = {
 
 @Injectable()
 export class BusinessResearchService {
+  private readonly logger = new Logger(BusinessResearchService.name);
+
   async research(
     request: BusinessResearchRequest,
   ): Promise<BusinessResearchResult> {
     const config = runtimeConfig();
     if (!config.openAi.apiKey) {
-      throw new Error("OPENAI_API_KEY is required for business research.");
-    }
-
-    const location = request.location?.trim() || undefined;
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${config.openAi.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.openAi.researchModel,
-        tools: [{ type: "web_search", search_context_size: "low" }],
-        tool_choice: "auto",
-        include: ["web_search_call.action.sources"],
-        max_output_tokens: 700,
-        instructions: [
-          "Research the named business using current public web information.",
-          "Use search results only to identify the business and its official website.",
-          "Base factual claims on the official website whenever one is available.",
-          "If multiple businesses match and the supplied location does not resolve the ambiguity, explain what clarification is needed.",
-          "Do not invent an official website, services, locations, prices, opening hours, or policies.",
-          "Return a concise spoken-ready answer and mention when information could not be confirmed.",
-        ].join(" "),
-        input: `Business: ${request.businessName}${location ? `\nLocation: ${location}` : ""}`,
-      }),
-      signal: AbortSignal.timeout(config.openAi.researchTimeoutMs),
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(
-        `OpenAI business research failed: ${response.status} ${detail}`,
+      this.logger.error(
+        "Business research is unavailable because OPENAI_API_KEY is not configured.",
+      );
+      return unavailableResult(
+        request,
+        request.location?.trim() || undefined,
       );
     }
 
-    const payload = (await response.json()) as OpenAiResponse;
-    const summary = extractOutputText(payload);
-    if (!summary) {
-      throw new Error("Business research returned no answer.");
-    }
+    const location = request.location?.trim() || undefined;
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.openAi.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: config.openAi.researchModel,
+          tools: [{ type: "web_search" }],
+          tool_choice: "auto",
+          include: ["web_search_call.action.sources"],
+          max_output_tokens: 700,
+          instructions: [
+            "Research the named business using current public web information.",
+            "Use search results only to identify the business and its official website.",
+            "Base factual claims on the official website whenever one is available.",
+            "If multiple businesses match and the supplied location does not resolve the ambiguity, explain what clarification is needed.",
+            "Do not invent an official website, services, locations, prices, opening hours, or policies.",
+            "Return a concise spoken-ready answer and mention when information could not be confirmed.",
+          ].join(" "),
+          input: `Business: ${request.businessName}${location ? `\nLocation: ${location}` : ""}`,
+        }),
+        signal: AbortSignal.timeout(config.openAi.researchTimeoutMs),
+      });
 
-    const sources = extractSources(payload);
-    return {
-      businessName: request.businessName,
-      ...(location ? { location } : {}),
-      summary,
-      officialWebsite: sources[0]?.url,
-      sources,
-      researchedAt: new Date().toISOString(),
-    };
+      if (!response.ok) {
+        const detail = await response.text();
+        this.logger.error(
+          `OpenAI business research failed: status=${response.status} model=${config.openAi.researchModel} requestId=${response.headers.get("x-request-id") || "unknown"} detail=${truncate(detail)}`,
+        );
+        return unavailableResult(request, location);
+      }
+
+      const payload = (await response.json()) as OpenAiResponse;
+      const summary = extractOutputText(payload);
+      if (!summary) {
+        this.logger.error(
+          `OpenAI business research returned no answer: status=${payload.status || "unknown"} model=${config.openAi.researchModel} requestId=${response.headers.get("x-request-id") || "unknown"} providerError=${truncate(payload.error?.message || payload.error?.code || "none")}`,
+        );
+        return unavailableResult(request, location);
+      }
+
+      const sources = extractSources(payload);
+      return {
+        businessName: request.businessName,
+        ...(location ? { location } : {}),
+        status: "completed",
+        summary,
+        officialWebsite: sources[0]?.url,
+        sources,
+        researchedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `OpenAI business research request failed: model=${config.openAi.researchModel} error=${truncate(message)}`,
+      );
+      return unavailableResult(request, location);
+    }
   }
+}
+
+function unavailableResult(
+  request: BusinessResearchRequest,
+  location?: string,
+): BusinessResearchResult {
+  return {
+    businessName: request.businessName,
+    ...(location ? { location } : {}),
+    status: "unavailable",
+    summary:
+      "I couldn't access current public website information right now. Please try again shortly.",
+    sources: [],
+    researchedAt: new Date().toISOString(),
+  };
+}
+
+function truncate(value: string, maxLength = 500): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
 }
 
 function extractOutputText(payload: OpenAiResponse): string {
