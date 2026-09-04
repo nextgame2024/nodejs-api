@@ -96,6 +96,42 @@ disabled.
 See [Tavus acceptance suite](./TAVUS_ACCEPTANCE_SUITE.md) before selecting Tavus
 as the production default.
 
+## Business Manager Real-Estate Demo
+
+The real-estate tools read company-scoped listings and agency guidance from the
+Business Manager API. Generate one random service token and configure the same
+value on both Render services. This token is accepted only by the real-estate
+routes; normal Business Manager user JWTs remain supported.
+
+Business Manager (`nodejs-api`) variables:
+
+```bash
+SOPHIA_RUNTIME_SERVICE_TOKEN=a-random-value-of-at-least-32-characters
+SOPHIA_RUNTIME_COMPANY_ID=81c2f065-aceb-4043-add5-b11271d21fb3
+```
+
+Sophia Runtime variables:
+
+```bash
+BUSINESS_MANAGER_API_URL=https://your-business-manager-service.onrender.com/api
+BUSINESS_MANAGER_API_TOKEN=the-same-random-service-token
+```
+
+The tracked schema is in `../scripts/sql/bm_real_estate_demo.sql`. Reset the
+fictional presentation data and future inspection slots with:
+
+```bash
+cd backend
+BM_DEMO_COMPANY_ID=81c2f065-aceb-4043-add5-b11271d21fb3 \
+  node scripts/seed-bm-real-estate-demo.mjs
+```
+
+OpenAI-based experiences receive all real-estate tools through the Realtime
+tool registry. Tavus automatically creates or updates the equivalent PAL tools,
+delivers calls through Daily app messages, and receives matching tool results.
+The OpenAI-backed public business research tool is intentionally excluded from
+Tavus, which uses its native internet-search skill instead.
+
 ## Boundaries
 
 - Core modules depend on `AIProvider`, not OpenAI directly.

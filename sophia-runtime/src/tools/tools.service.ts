@@ -4,6 +4,8 @@ import { DatabaseService } from "../database/database.service.js";
 import { getInventoryTool } from "./mock/get-inventory.tool.js";
 import { BusinessResearchService } from "./research/business-research.service.js";
 import { createResearchBusinessTool } from "./research/research-business.tool.js";
+import { BusinessManagerClient } from "./real-estate/business-manager.client.js";
+import { createRealEstateTools } from "./real-estate/real-estate.tools.js";
 import {
   ToolRegistry,
 } from "./tool-registry.js";
@@ -20,9 +22,12 @@ export class ToolRegistryService {
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(BusinessResearchService)
     private readonly businessResearch: BusinessResearchService,
+    @Inject(BusinessManagerClient)
+    private readonly businessManager: BusinessManagerClient,
   ) {
     this.registry.register(getInventoryTool);
     this.registry.register(createResearchBusinessTool(this.businessResearch));
+    for (const tool of createRealEstateTools(this.businessManager)) this.registry.register(tool);
   }
 
   listDefinitions(): RuntimeToolDefinition[] {

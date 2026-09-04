@@ -1,0 +1,38 @@
+import { describe, expect, it, jest } from "@jest/globals";
+import { BusinessManagerClient } from "./business-manager.client.js";
+import { createRealEstateTools } from "./real-estate.tools.js";
+
+describe("real-estate runtime tools", () => {
+  it("limits property results and passes filters to Business Manager", async () => {
+    const searchProperties = jest.fn<BusinessManagerClient["searchProperties"]>()
+      .mockResolvedValue({ properties: [] });
+    const client = { searchProperties } as unknown as BusinessManagerClient;
+    const tool = createRealEstateTools(client).find(({ definition }) =>
+      definition.name === "searchProperties");
+
+    await tool?.execute(
+      tool.inputSchema.parse({ listingType: "rent", minBedrooms: 3 }),
+      { customerId: "customer-1" },
+    );
+
+    expect(searchProperties).toHaveBeenCalledWith({
+      listingType: "rent",
+      minBedrooms: 3,
+      limit: 3,
+    });
+  });
+
+  it("requires explicit confirmation before booking", () => {
+    const client = {} as BusinessManagerClient;
+    const tool = createRealEstateTools(client).find(({ definition }) =>
+      definition.name === "bookInspection");
+
+    expect(() => tool?.inputSchema.parse({
+      propertyId: "10000000-0000-4000-8000-000000000001",
+      slotId: "20000000-0000-4000-8000-000000000001",
+      customerName: "Jordan Lee",
+      customerEmail: "jordan@example.com",
+      confirmed: false,
+    })).toThrow();
+  });
+});

@@ -209,12 +209,16 @@ export class ConversationService {
     storeId: string | undefined,
   ) {
     const config = runtimeConfig();
+    const toolDefinitions = this.tools.listDefinitions();
+    const tavusToolDefinitions = toolDefinitions.filter(
+      ({ name }) => name !== "researchBusiness",
+    );
     const tavusSession = await this.tavusProvider.createSession({
       customerId,
       deviceId: dto.deviceId,
       storeId,
+      tools: tavusToolDefinitions,
     });
-    const toolDefinitions = this.tools.listDefinitions();
     try {
       const { rows } = await this.database.query<SessionRow>(
         `
@@ -260,7 +264,7 @@ export class ConversationService {
           sessionToken: tavusSession.meetingToken,
           streamUrl: tavusSession.conversationUrl,
         },
-        tools: toolDefinitions,
+        tools: tavusToolDefinitions,
       };
     } catch (error) {
       await this.tavusProvider

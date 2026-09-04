@@ -47,6 +47,10 @@ export type RuntimeConfig = {
     nativeLlmOnly: boolean;
     internetSearchEnabled: boolean;
   };
+  businessManager: {
+    apiUrl: string;
+    apiToken?: string;
+  };
 };
 
 export function runtimeConfig(): RuntimeConfig {
@@ -146,6 +150,10 @@ export function runtimeConfig(): RuntimeConfig {
         process.env.TAVUS_INTERNET_SEARCH_ENABLED,
         true,
       ),
+    },
+    businessManager: {
+      apiUrl: (process.env.BUSINESS_MANAGER_API_URL || "http://localhost:3300/api").replace(/\/$/, ""),
+      apiToken: emptyToUndefined(process.env.BUSINESS_MANAGER_API_TOKEN),
     },
   };
 }
