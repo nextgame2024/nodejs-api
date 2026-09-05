@@ -25,10 +25,21 @@ export async function searchProperties(companyId, filters) {
     params.push(value);
     where.push(sql.replace("?", `$${params.length}`));
   };
+  const addLocation = (value) => {
+    params.push(`%${value}%`);
+    where.push(`(p.city ILIKE $${params.length} OR p.suburb ILIKE $${params.length})`);
+  };
   if (filters.listingType) add("p.listing_type = ?", filters.listingType);
   if (filters.propertyType) add("LOWER(p.property_type) = LOWER(?)", filters.propertyType);
-  if (filters.city) add("p.city ILIKE ?", `%${filters.city}%`);
-  if (filters.suburb) add("p.suburb ILIKE ?", `%${filters.suburb}%`);
+  if (filters.location) {
+    addLocation(filters.location);
+  } else if (filters.city && filters.suburb) {
+    add("p.city ILIKE ?", `%${filters.city}%`);
+    add("p.suburb ILIKE ?", `%${filters.suburb}%`);
+  } else {
+    const location = filters.city || filters.suburb;
+    if (location) addLocation(location);
+  }
   if (filters.minBedrooms != null) add("p.bedrooms >= ?", filters.minBedrooms);
   if (filters.maxPrice != null) add("p.price_amount <= ?", filters.maxPrice);
   params.push(filters.limit);

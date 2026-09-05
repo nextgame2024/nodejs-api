@@ -18,6 +18,7 @@ export function searchProperties(companyId, input = {}) {
   if (listingType && !["sale", "rent"].includes(listingType)) throw httpError("listingType must be sale or rent");
   return model.searchProperties(companyId, {
     listingType, propertyType: text(input.propertyType) || undefined,
+    location: city(input.location) || undefined,
     city: city(input.city) || undefined,
     suburb: text(input.suburb) || undefined,
     minBedrooms: integer(input.minBedrooms, 0, 20),
