@@ -28,15 +28,15 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       execute: ({ propertyId }) => client.getProperty(propertyId),
     },
     {
-      definition: { name: "getInspectionSlots", description: "Get available inspection times for a property over the next two weeks.", parameters: { type: "object", additionalProperties: false, properties: { propertyId: { type: "string" } }, required: ["propertyId"] } },
+      definition: { name: "getInspectionSlots", description: "Get available inspection times for a property over the next two weeks. Offer each startsAtLabel exactly as returned and retain its corresponding slotId and startsAt values for booking.", parameters: { type: "object", additionalProperties: false, properties: { propertyId: { type: "string" } }, required: ["propertyId"] } },
       inputSchema: z.object({ propertyId: z.string().uuid() }),
       execute: ({ propertyId }) => client.getInspectionSlots(propertyId, {}),
     },
     {
-      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. After success, state only the authoritative propertyAddress and startsAt returned by the tool.", parameters: { type: "object", additionalProperties: false, properties: {
-        propertyId: { type: "string" }, slotId: { type: "string" }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
-      }, required: ["propertyId", "slotId", "customerName", "customerEmail", "confirmed"] } },
-      inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
+      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. After success, speak the authoritative propertyAddress and startsAtLabel exactly as returned; never calculate or convert the time.", parameters: { type: "object", additionalProperties: false, properties: {
+        propertyId: { type: "string" }, slotId: { type: "string" }, confirmedStartsAt: { type: "string", description: "The selected slot's exact startsAt ISO timestamp." }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
+      }, required: ["propertyId", "slotId", "confirmedStartsAt", "customerName", "customerEmail", "confirmed"] } },
+      inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), confirmedStartsAt: z.string().datetime({ offset: true }), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
       execute: (input, context) => client.bookInspection({ ...input, idempotencyKey: `${context.sessionId || "session"}:${input.slotId}:${input.customerEmail.toLowerCase()}` }),
     },
     {

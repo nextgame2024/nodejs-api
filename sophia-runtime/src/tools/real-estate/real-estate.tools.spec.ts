@@ -80,4 +80,27 @@ describe("real-estate runtime tools", () => {
       confirmed: false,
     })).toThrow();
   });
+
+  it("passes the selected slot timestamp through when booking", async () => {
+    const bookInspection = jest.fn<BusinessManagerClient["bookInspection"]>()
+      .mockResolvedValue({ booking: { bookingId: "booking-1" } });
+    const client = { bookInspection } as unknown as BusinessManagerClient;
+    const tool = createRealEstateTools(client).find(({ definition }) =>
+      definition.name === "bookInspection");
+    const confirmedStartsAt = "2026-09-07T00:30:00.000Z";
+
+    await tool?.execute(tool.inputSchema.parse({
+      propertyId: "10000000-0000-4000-8000-000000000001",
+      slotId: "20000000-0000-4000-8000-000000000001",
+      confirmedStartsAt,
+      customerName: "Jordan Lee",
+      customerEmail: "jordan@example.com",
+      confirmed: true,
+    }), { customerId: "customer-1", sessionId: "session-1" });
+
+    expect(bookInspection).toHaveBeenCalledWith(expect.objectContaining({
+      confirmedStartsAt,
+      idempotencyKey: "session-1:20000000-0000-4000-8000-000000000001:jordan@example.com",
+    }));
+  });
 });

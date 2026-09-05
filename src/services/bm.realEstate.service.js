@@ -2,6 +2,7 @@ import * as model from "../models/bm.realEstate.model.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const inspectionTimeZone = process.env.BM_REAL_ESTATE_TIME_ZONE || "Australia/Brisbane";
 const text = (value) => String(value ?? "").trim();
 const city = (value) => text(value).replace(/,?\s+(city|qld|queensland)$/i, "").trim();
 const integer = (value, min, max) => {
@@ -29,24 +30,28 @@ export function searchProperties(companyId, input = {}) {
 
 export const getProperty = (companyId, propertyId) => model.getProperty(companyId, uuid(propertyId, "propertyId"));
 
-export function listInspectionSlots(companyId, propertyId, input = {}) {
+export async function listInspectionSlots(companyId, propertyId, input = {}) {
   const now = new Date();
   const from = input.from ? new Date(input.from) : now;
   const to = input.to ? new Date(input.to) : new Date(now.getTime() + 14 * 86400000);
   if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from >= to) throw httpError("Invalid inspection date range");
-  return model.listInspectionSlots(companyId, uuid(propertyId, "propertyId"), from.toISOString(), to.toISOString());
+  const slots = await model.listInspectionSlots(companyId, uuid(propertyId, "propertyId"), from.toISOString(), to.toISOString());
+  return slots.map(withInspectionTimeLabels);
 }
 
 export async function createInspectionBooking(companyId, input = {}) {
   const customerName = text(input.customerName);
   const customerEmail = text(input.customerEmail).toLowerCase();
+  const confirmedStartsAt = new Date(input.confirmedStartsAt);
   if (customerName.length < 2) throw httpError("customerName is required");
   if (!emailRe.test(customerEmail)) throw httpError("customerEmail must be valid");
+  if (!Number.isFinite(confirmedStartsAt.getTime())) throw httpError("confirmedStartsAt must be a valid inspection time");
   let result;
   try {
     result = await model.createInspectionBooking(companyId, {
       propertyId: uuid(input.propertyId, "propertyId"), slotId: uuid(input.slotId, "slotId"),
       customerName, customerEmail, customerPhone: text(input.customerPhone) || undefined,
+      confirmedStartsAt: confirmedStartsAt.toISOString(),
       idempotencyKey: text(input.idempotencyKey) || `${input.slotId}:${customerEmail}`,
     });
   } catch (error) {
@@ -55,8 +60,37 @@ export async function createInspectionBooking(companyId, input = {}) {
     }
     throw error;
   }
-  if (result.errorCode) throw httpError(result.errorCode === "SLOT_FULL" ? "The inspection is fully booked" : "Inspection slot not found", 409);
-  return result;
+  if (result.errorCode) {
+    const message = result.errorCode === "SLOT_FULL"
+      ? "The inspection is fully booked"
+      : result.errorCode === "SLOT_TIME_MISMATCH"
+        ? "The confirmed inspection time does not match the selected slot"
+        : "Inspection slot not found";
+    throw httpError(message, 409);
+  }
+  return withInspectionTimeLabels(result);
+}
+
+function withInspectionTimeLabels(value) {
+  const startsAt = new Date(value.startsAt);
+  const dateLabel = new Intl.DateTimeFormat("en-AU", {
+    timeZone: inspectionTimeZone,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(startsAt);
+  const timeLabel = new Intl.DateTimeFormat("en-AU", {
+    timeZone: inspectionTimeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(startsAt);
+  return {
+    ...value,
+    startsAtDateLabel: dateLabel,
+    startsAtTimeLabel: timeLabel,
+    startsAtLabel: `${dateLabel}, ${timeLabel}`,
+    timeZone: inspectionTimeZone,
+  };
 }
 
 export function searchKnowledge(companyId, input = {}) {

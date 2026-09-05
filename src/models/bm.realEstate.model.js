@@ -98,7 +98,7 @@ export async function createInspectionBooking(companyId, input) {
     }
 
     const slotResult = await client.query(
-      `SELECT s.capacity, s.status
+      `SELECT s.capacity, s.status, s.starts_at AS "startsAt"
        FROM bm_property_inspection_slots s
        JOIN bm_properties p ON p.property_id = s.property_id
        WHERE p.company_id = $1 AND p.property_id = $2 AND s.slot_id = $3
@@ -107,6 +107,9 @@ export async function createInspectionBooking(companyId, input) {
     );
     const slot = slotResult.rows[0];
     if (!slot || slot.status !== "open") return await rollbackResult(client, "SLOT_UNAVAILABLE");
+    if (new Date(slot.startsAt).getTime() !== new Date(input.confirmedStartsAt).getTime()) {
+      return await rollbackResult(client, "SLOT_TIME_MISMATCH");
+    }
     const count = await client.query(
       `SELECT COUNT(*)::int AS count FROM bm_property_inspection_bookings
        WHERE slot_id = $1 AND status = 'confirmed'`,
