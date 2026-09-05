@@ -88,12 +88,8 @@ export async function createInspectionBooking(companyId, input) {
   try {
     await client.query("BEGIN");
     const existing = await client.query(
-      `SELECT booking_id AS "bookingId", property_id AS "propertyId",
-         slot_id AS "slotId", customer_name AS "customerName",
-         customer_email AS "customerEmail", customer_phone AS "customerPhone",
-         status, createdat AS "createdAt"
-       FROM bm_property_inspection_bookings
-       WHERE company_id = $1 AND idempotency_key = $2`,
+      `${INSPECTION_BOOKING_SELECT}
+       WHERE b.company_id = $1 AND b.idempotency_key = $2`,
       [companyId, input.idempotencyKey],
     );
     if (existing.rows[0]) {
@@ -123,15 +119,17 @@ export async function createInspectionBooking(companyId, input) {
          company_id, property_id, slot_id, customer_name, customer_email,
          customer_phone, idempotency_key
        ) VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING booking_id AS "bookingId", property_id AS "propertyId",
-         slot_id AS "slotId", customer_name AS "customerName",
-         customer_email AS "customerEmail", customer_phone AS "customerPhone",
-         status, createdat AS "createdAt"`,
+       RETURNING booking_id AS "bookingId"`,
       [companyId, input.propertyId, input.slotId, input.customerName,
         input.customerEmail, input.customerPhone ?? null, input.idempotencyKey],
     );
+    const booking = await client.query(
+      `${INSPECTION_BOOKING_SELECT}
+       WHERE b.company_id = $1 AND b.booking_id = $2`,
+      [companyId, rows[0].bookingId],
+    );
     await client.query("COMMIT");
-    return rows[0];
+    return booking.rows[0];
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -139,6 +137,20 @@ export async function createInspectionBooking(companyId, input) {
     client.release();
   }
 }
+
+const INSPECTION_BOOKING_SELECT = `
+  SELECT b.booking_id AS "bookingId", b.property_id AS "propertyId",
+    b.slot_id AS "slotId", b.customer_name AS "customerName",
+    b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone",
+    b.status, b.createdat AS "createdAt",
+    s.starts_at AS "startsAt", s.ends_at AS "endsAt",
+    p.address AS "propertyAddress", p.suburb AS "propertySuburb",
+    p.city AS "propertyCity", p.state AS "propertyState",
+    p.postcode AS "propertyPostcode"
+  FROM bm_property_inspection_bookings b
+  JOIN bm_property_inspection_slots s ON s.slot_id = b.slot_id
+  JOIN bm_properties p ON p.property_id = b.property_id
+`;
 
 async function rollbackResult(client, code) {
   await client.query("ROLLBACK");

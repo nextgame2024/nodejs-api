@@ -33,7 +33,7 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       execute: ({ propertyId }) => client.getInspectionSlots(propertyId, {}),
     },
     {
-      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email.", parameters: { type: "object", additionalProperties: false, properties: {
+      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. After success, state only the authoritative propertyAddress and startsAt returned by the tool.", parameters: { type: "object", additionalProperties: false, properties: {
         propertyId: { type: "string" }, slotId: { type: "string" }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
       }, required: ["propertyId", "slotId", "customerName", "customerEmail", "confirmed"] } },
       inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
