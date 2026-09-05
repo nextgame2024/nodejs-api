@@ -117,8 +117,10 @@ BUSINESS_MANAGER_API_URL=https://your-business-manager-service.onrender.com/api
 BUSINESS_MANAGER_API_TOKEN=the-same-random-service-token
 ```
 
-The tracked schema is in `../scripts/sql/bm_real_estate_demo.sql`. Reset the
-fictional presentation data and future inspection slots with:
+The tracked schema starts in `../scripts/sql/bm_real_estate_demo.sql`. Apply
+`../scripts/sql/bm_real_estate_demo_city.sql` after it to add city-level search.
+Reset the fictional presentation data, agency guidance and future inspection
+slots with:
 
 ```bash
 cd backend

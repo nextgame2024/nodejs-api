@@ -3,6 +3,7 @@ import * as model from "../models/bm.realEstate.model.js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const text = (value) => String(value ?? "").trim();
+const city = (value) => text(value).replace(/,?\s+(city|qld|queensland)$/i, "").trim();
 const integer = (value, min, max) => {
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = Number(value);
@@ -17,6 +18,7 @@ export function searchProperties(companyId, input = {}) {
   if (listingType && !["sale", "rent"].includes(listingType)) throw httpError("listingType must be sale or rent");
   return model.searchProperties(companyId, {
     listingType, propertyType: text(input.propertyType) || undefined,
+    city: city(input.city) || undefined,
     suburb: text(input.suburb) || undefined,
     minBedrooms: integer(input.minBedrooms, 0, 20),
     maxPrice: integer(input.maxPrice, 1, 100_000_000),

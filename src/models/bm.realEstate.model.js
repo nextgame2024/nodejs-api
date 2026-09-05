@@ -3,7 +3,7 @@ import pool from "../config/db.js";
 const PROPERTY_SELECT = `
   p.property_id AS "propertyId", p.company_id AS "companyId",
   p.listing_type AS "listingType", p.property_type AS "propertyType",
-  p.status, p.title, p.address, p.suburb, p.state, p.postcode,
+  p.status, p.title, p.address, p.suburb, p.city, p.state, p.postcode,
   p.latitude::float8 AS latitude, p.longitude::float8 AS longitude,
   p.price_display AS "priceDisplay", p.price_amount::float8 AS "priceAmount",
   p.bedrooms, p.bathrooms, p.car_spaces AS "carSpaces",
@@ -27,6 +27,7 @@ export async function searchProperties(companyId, filters) {
   };
   if (filters.listingType) add("p.listing_type = ?", filters.listingType);
   if (filters.propertyType) add("LOWER(p.property_type) = LOWER(?)", filters.propertyType);
+  if (filters.city) add("p.city ILIKE ?", `%${filters.city}%`);
   if (filters.suburb) add("p.suburb ILIKE ?", `%${filters.suburb}%`);
   if (filters.minBedrooms != null) add("p.bedrooms >= ?", filters.minBedrooms);
   if (filters.maxPrice != null) add("p.price_amount <= ?", filters.maxPrice);

@@ -11,12 +11,14 @@ describe("real-estate runtime tools", () => {
       definition.name === "searchProperties");
 
     await tool?.execute(
-      tool.inputSchema.parse({ listingType: "rent", minBedrooms: 3 }),
+      tool.inputSchema.parse({ listingType: "rent", city: "Brisbane", suburb: "Bulimba", minBedrooms: 3 }),
       { customerId: "customer-1" },
     );
 
     expect(searchProperties).toHaveBeenCalledWith({
       listingType: "rent",
+      city: "Brisbane",
+      suburb: "Bulimba",
       minBedrooms: 3,
       limit: 3,
     });

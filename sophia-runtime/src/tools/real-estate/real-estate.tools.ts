@@ -7,13 +7,15 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
     {
       definition: {
         name: "searchProperties",
-        description: "Search the agency's current sale or rental properties. Return no more than three relevant options.",
+        description: "Search the agency's current sale or rental properties. Use city for a city such as Brisbane and suburb for a local suburb such as Bulimba. Return no more than three relevant options.",
         parameters: { type: "object", additionalProperties: false, properties: {
           listingType: { type: "string", enum: ["sale", "rent"] }, propertyType: { type: "string" },
-          suburb: { type: "string" }, minBedrooms: { type: "integer" }, maxPrice: { type: "integer" },
+          city: { type: "string", description: "City or municipality, for example Brisbane." },
+          suburb: { type: "string", description: "Local suburb, for example Bulimba or Newstead." },
+          minBedrooms: { type: "integer" }, maxPrice: { type: "integer" },
         } },
       },
-      inputSchema: z.object({ listingType: z.enum(["sale", "rent"]).optional(), propertyType: z.string().trim().min(2).max(80).optional(), suburb: z.string().trim().min(2).max(100).optional(), minBedrooms: z.number().int().min(0).max(20).optional(), maxPrice: z.number().int().positive().max(100_000_000).optional() }),
+      inputSchema: z.object({ listingType: z.enum(["sale", "rent"]).optional(), propertyType: z.string().trim().min(2).max(80).optional(), city: z.string().trim().min(2).max(100).optional(), suburb: z.string().trim().min(2).max(100).optional(), minBedrooms: z.number().int().min(0).max(20).optional(), maxPrice: z.number().int().positive().max(100_000_000).optional() }),
       execute: (input) => client.searchProperties({ ...input, limit: 3 }),
     },
     {

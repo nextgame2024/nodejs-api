@@ -28,7 +28,9 @@ const photoUrls = [
 
 const knowledge = [
   ["renting", "What information can an agent request in a rental application?", "In Queensland, rental applicants generally use the standard application form and may be asked for identity, financial capacity and suitability information. The agent should only request information allowed by current tenancy rules.", "https://www.rta.qld.gov.au/before-renting/applying-for-a-rental-property"],
-  ["renting", "What should I prepare before applying to rent?", "Prepare your contact and rental history, proof of identity, evidence that you can meet the rent, and suitable references. Exact requirements can vary, so check the application instructions for the property.", "https://www.rta.qld.gov.au/before-renting/applying-for-a-rental-property"],
+  ["renting", "What documents should I prepare to apply for a rental property in Brisbane?", "For a Brisbane rental application, be ready to complete Queensland's standard Rental Application Form 22. Prepare up to two identity documents, such as a driver licence, passport or birth certificate; up to two documents showing you can pay the rent, such as recent payslips, an employment contract, a Centrelink statement, or a bank balance statement without transaction details; and up to two documents showing suitability, such as rental references or rental history. Also have your contact details, current employment and income details, intended tenancy term, household occupants, vehicles and pets ready. The property's application instructions will confirm which permitted documents the agency requests.", "https://www.rta.qld.gov.au/before-renting/applying-for-a-rental-property/application-process"],
+  ["renting", "How many supporting documents can a Queensland rental agent request?", "A Queensland property manager or owner can request no more than two documents in each category: identity, financial ability to pay rent, and suitability for the tenancy. An applicant may voluntarily provide more, but the agency must not request or encourage extra documents.", "https://www.rta.qld.gov.au/before-renting/applying-for-a-rental-property/application-process"],
+  ["renting", "What financial documents can support a Brisbane rental application?", "Common evidence includes recent payslips, an employment contract, a Centrelink payment statement, proof of savings or assets, or a bank balance statement without transaction details. Self-employed, casual or freelance applicants can ask the agency which permitted alternatives suit their circumstances.", "https://www.rta.qld.gov.au/before-renting/applying-for-a-rental-property/application-process"],
   ["renting", "How much rental bond can be requested?", "Queensland bond limits and rules depend on the tenancy and weekly rent. Confirm the current amount with the agency and use the Residential Tenancies Authority process for lodging the bond.", "https://www.rta.qld.gov.au/starting-a-tenancy/rental-bond"],
   ["renting", "What happens at a rental property inspection?", "An inspection lets prospective tenants view the property and ask practical questions. Registration may be required, and attending an inspection does not guarantee approval of an application.", "https://www.rta.qld.gov.au/before-renting/choosing-a-rental-property"],
   ["selling", "What should an owner prepare before selling a property?", "An owner should speak with the appointed agent about the sales method, marketing, presentation, required disclosures, contract preparation and the proposed campaign timeline.", "https://www.qld.gov.au/law/housing-and-neighbours/buying-and-selling-a-property/selling-a-home"],
@@ -48,13 +50,13 @@ try {
   for (const [index, property] of properties.entries()) {
     const [propertyId, listingType, propertyType, title, address, suburb, postcode, latitude, longitude, priceDisplay, priceAmount, bedrooms, bathrooms, carSpaces, description, features] = property;
     await client.query(`INSERT INTO bm_properties (
-      property_id, company_id, listing_type, property_type, title, address, suburb, postcode,
+      property_id, company_id, listing_type, property_type, title, address, suburb, city, postcode,
       latitude, longitude, price_display, price_amount, bedrooms, bathrooms, car_spaces,
       description, features, agent_name, agent_email, agent_phone
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20)
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'Brisbane',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20)
     ON CONFLICT (property_id) DO UPDATE SET
       company_id=EXCLUDED.company_id, listing_type=EXCLUDED.listing_type, property_type=EXCLUDED.property_type,
-      title=EXCLUDED.title, address=EXCLUDED.address, suburb=EXCLUDED.suburb, postcode=EXCLUDED.postcode,
+      title=EXCLUDED.title, address=EXCLUDED.address, suburb=EXCLUDED.suburb, city=EXCLUDED.city, postcode=EXCLUDED.postcode,
       latitude=EXCLUDED.latitude, longitude=EXCLUDED.longitude, price_display=EXCLUDED.price_display,
       price_amount=EXCLUDED.price_amount, bedrooms=EXCLUDED.bedrooms, bathrooms=EXCLUDED.bathrooms,
       car_spaces=EXCLUDED.car_spaces, description=EXCLUDED.description, features=EXCLUDED.features,
