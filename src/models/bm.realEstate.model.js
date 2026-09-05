@@ -32,7 +32,9 @@ export async function searchProperties(companyId, filters) {
   if (filters.listingType) add("p.listing_type = ?", filters.listingType);
   if (filters.propertyType) add("LOWER(p.property_type) = LOWER(?)", filters.propertyType);
   if (filters.location) {
-    addLocation(filters.location);
+    for (const location of filters.location.split(",").map((value) => value.trim()).filter(Boolean)) {
+      addLocation(location);
+    }
   } else if (filters.city && filters.suburb) {
     add("p.city ILIKE ?", `%${filters.city}%`);
     add("p.suburb ILIKE ?", `%${filters.suburb}%`);

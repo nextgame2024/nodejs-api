@@ -43,6 +43,30 @@ describe("real-estate runtime tools", () => {
     });
   });
 
+  it("accepts null optional filters emitted by realtime providers", async () => {
+    const searchProperties = jest.fn<BusinessManagerClient["searchProperties"]>()
+      .mockResolvedValue({ properties: [] });
+    const client = { searchProperties } as unknown as BusinessManagerClient;
+    const tool = createRealEstateTools(client).find(({ definition }) =>
+      definition.name === "searchProperties");
+
+    await tool?.execute(
+      tool.inputSchema.parse({
+        listingType: "rent",
+        location: "Kangaroo Point, Brisbane",
+        propertyType: null,
+      }),
+      { customerId: "customer-1" },
+    );
+
+    expect(searchProperties).toHaveBeenCalledWith({
+      listingType: "rent",
+      location: "Kangaroo Point, Brisbane",
+      propertyType: undefined,
+      limit: 3,
+    });
+  });
+
   it("requires explicit confirmation before booking", () => {
     const client = {} as BusinessManagerClient;
     const tool = createRealEstateTools(client).find(({ definition }) =>
