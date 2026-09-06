@@ -61,6 +61,7 @@ export class LiveAvatarProvider implements AvatarProvider {
           "content-type": "application/json",
           "x-api-key": config.liveAvatar.apiKey,
         },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           mode,
           avatar_id: avatarId,

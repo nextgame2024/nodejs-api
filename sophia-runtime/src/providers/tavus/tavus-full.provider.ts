@@ -1,4 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { runtimeConfig } from "../../config/runtime-config.js";
 import { sophiaConversationInstructions } from "../../knowledge/sophia-profile.js";
 import type { RuntimeToolDefinition } from "../../tools/tool-registry.js";
@@ -27,59 +31,100 @@ type TavusConversationResponse = {
 
 @Injectable()
 export class TavusFullProvider {
+  private readonly logger = new Logger(TavusFullProvider.name);
   private internetSearchConfigured = false;
   private runtimeToolsConfigured = false;
 
   async createSession(
     request: TavusFullSessionRequest,
   ): Promise<TavusFullSession> {
+    const startedAt = Date.now();
     const config = runtimeConfig();
     const { apiKey, apiBaseUrl, personaId, replicaId } = config.tavus;
 
     if (!apiKey || !personaId) {
-      throw new Error(
+      throw new ServiceUnavailableException(
         "TAVUS_API_KEY and TAVUS_PERSONA_ID are required for Tavus Full sessions.",
       );
     }
     if (!config.tavus.nativeLlmOnly) {
-      throw new Error(
+      throw new ServiceUnavailableException(
         "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus Persona uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
       );
     }
+    const setupOperations: Array<{ name: string; promise: Promise<void> }> = [];
     if (config.tavus.internetSearchEnabled) {
-      await this.ensureInternetSearchSkill(apiBaseUrl, apiKey, personaId);
+      setupOperations.push({
+        name: "internet search",
+        promise: this.ensureInternetSearchSkill(apiBaseUrl, apiKey, personaId),
+      });
     }
     if (request.tools?.length) {
-      await this.ensureRuntimeTools(apiBaseUrl, apiKey, personaId, request.tools);
+      setupOperations.push({
+        name: "runtime tools",
+        promise: this.ensureRuntimeTools(
+          apiBaseUrl,
+          apiKey,
+          personaId,
+          request.tools,
+        ),
+      });
     }
 
-    const response = await fetch(`${apiBaseUrl}/v2/conversations`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        persona_id: personaId,
-        ...(replicaId ? { replica_id: replicaId } : {}),
-        conversation_name: `Sophia - ${request.storeId || request.customerId}`,
-        conversational_context: [
-          sophiaConversationInstructions(),
-          request.storeId ? `Store identifier: ${request.storeId}.` : "",
-          "Use only the native Tavus Full conversational pipeline. Use the attached internet search skill for questions about named businesses and current public information.",
-        ]
-          .filter(Boolean)
-          .join(" "),
-        require_auth: true,
-        max_participants: 2,
+    const setupPromise = Promise.all(
+      setupOperations.map(async ({ name, promise }) => {
+        const operationStartedAt = Date.now();
+        try {
+          await promise;
+          this.logger.log(
+            `Tavus ${name} setup completed in ${Date.now() - operationStartedAt}ms.`,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Tavus ${name} setup failed after ${Date.now() - operationStartedAt}ms; conversation creation will continue. ${errorMessage(error)}`,
+          );
+        }
       }),
-    });
+    );
+
+    let response: Response;
+    try {
+      [, response] = await Promise.all([
+        setupPromise,
+        fetch(`${apiBaseUrl}/v2/conversations`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": apiKey,
+          },
+          signal: AbortSignal.timeout(20_000),
+          body: JSON.stringify({
+            persona_id: personaId,
+            ...(replicaId ? { replica_id: replicaId } : {}),
+            conversation_name: `Sophia - ${request.storeId || request.customerId}`,
+            conversational_context: [
+              sophiaConversationInstructions(),
+              request.storeId ? `Store identifier: ${request.storeId}.` : "",
+              "Use only the native Tavus Full conversational pipeline. Use the attached internet search skill for questions about named businesses and current public information.",
+            ]
+              .filter(Boolean)
+              .join(" "),
+            require_auth: true,
+            max_participants: 2,
+          }),
+        }),
+      ]);
+    } catch (error) {
+      const message = `Tavus could not be reached: ${errorMessage(error)}`;
+      this.logger.error(message);
+      throw new ServiceUnavailableException(message);
+    }
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new Error(
-        `Tavus conversation request failed: ${response.status} ${detail}`,
-      );
+      const message = `Tavus conversation request failed (${response.status}): ${providerDetail(detail)}`;
+      this.logger.error(message);
+      throw new ServiceUnavailableException(message);
     }
 
     const payload = (await response.json()) as TavusConversationResponse;
@@ -91,10 +136,15 @@ export class TavusFullProvider {
       if (payload.conversation_id) {
         await this.closeSession(payload.conversation_id).catch(() => undefined);
       }
-      throw new Error(
-        "Tavus conversation response did not include its ID, URL, and private-room meeting token.",
-      );
+      const message =
+        "Tavus conversation response did not include its ID, URL, and private-room meeting token.";
+      this.logger.error(message);
+      throw new ServiceUnavailableException(message);
     }
+
+    this.logger.log(
+      `Tavus conversation ${payload.conversation_id} created in ${Date.now() - startedAt}ms.`,
+    );
 
     return {
       provider: "tavus-full",
@@ -117,6 +167,7 @@ export class TavusFullProvider {
       {
         method: "POST",
         headers: { "x-api-key": config.tavus.apiKey },
+        signal: AbortSignal.timeout(15_000),
       },
     );
 
@@ -143,6 +194,7 @@ export class TavusFullProvider {
           "content-type": "application/json",
           "x-api-key": apiKey,
         },
+        signal: AbortSignal.timeout(12_000),
         body: "{}",
       },
     );
@@ -166,6 +218,7 @@ export class TavusFullProvider {
 
     const existingResponse = await fetch(`${apiBaseUrl}/v2/tools?limit=100`, {
       headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(12_000),
     });
     if (!existingResponse.ok) {
       const detail = await existingResponse.text();
@@ -189,6 +242,7 @@ export class TavusFullProvider {
       const response = await fetch(`${apiBaseUrl}/v2/tools`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": apiKey },
+        signal: AbortSignal.timeout(12_000),
         body: JSON.stringify(this.tavusToolPayload(definition)),
       });
       const detail = await response.text();
@@ -202,7 +256,10 @@ export class TavusFullProvider {
 
     const attachedResponse = await fetch(
       `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/tools`,
-      { headers: { "x-api-key": apiKey } },
+      {
+        headers: { "x-api-key": apiKey },
+        signal: AbortSignal.timeout(12_000),
+      },
     );
     if (!attachedResponse.ok) {
       const detail = await attachedResponse.text();
@@ -224,6 +281,7 @@ export class TavusFullProvider {
         {
           method: "POST",
           headers: { "content-type": "application/json", "x-api-key": apiKey },
+          signal: AbortSignal.timeout(12_000),
           body: JSON.stringify({ tool_ids: missingIds }),
         },
       );
@@ -245,6 +303,7 @@ export class TavusFullProvider {
     const response = await fetch(`${apiBaseUrl}/v2/tools/${encodeURIComponent(toolId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json", "x-api-key": apiKey },
+      signal: AbortSignal.timeout(12_000),
       body: JSON.stringify(this.tavusToolPayload(definition)),
     });
     if (!response.ok) {
@@ -264,4 +323,15 @@ export class TavusFullProvider {
       delivery: { app_message: true },
     };
   }
+}
+
+function providerDetail(detail: string): string {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  return normalized ? normalized.slice(0, 600) : "No additional detail provided.";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Unknown Tavus error.";
 }

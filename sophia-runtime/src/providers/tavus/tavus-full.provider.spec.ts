@@ -70,6 +70,45 @@ describe("TavusFullProvider", () => {
     });
   });
 
+  it("continues conversation creation when optional persona setup fails", async () => {
+    const fetchMock = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => "Feature unavailable on this plan",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          conversation_id: "conversation-2",
+          conversation_url: "https://tavus.daily.co/conversation-2",
+          meeting_token: "meeting-token-2",
+        }),
+      } as Response);
+    global.fetch = fetchMock;
+
+    await expect(
+      new TavusFullProvider().createSession({ customerId: "customer-1" }),
+    ).resolves.toMatchObject({ providerSessionId: "conversation-2" });
+  });
+
+  it("returns the Tavus response detail when conversation creation fails", async () => {
+    const fetchMock = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({ ok: true } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => "Conversation limit reached",
+      } as Response);
+    global.fetch = fetchMock;
+
+    await expect(
+      new TavusFullProvider().createSession({ customerId: "customer-1" }),
+    ).rejects.toThrow("Conversation limit reached");
+  });
+
   it("ends the Tavus conversation when Sophia finishes", async () => {
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,

@@ -49,6 +49,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
           authorization: `Bearer ${config.openAi.apiKey}`,
           "content-type": "application/json",
         },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           expires_after: {
             anchor: "created_at",

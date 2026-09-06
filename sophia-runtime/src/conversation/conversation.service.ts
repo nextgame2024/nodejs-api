@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 import {
@@ -32,6 +32,8 @@ type SessionRow = {
 
 @Injectable()
 export class ConversationService {
+  private readonly logger = new Logger(ConversationService.name);
+
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(ToolRegistryService) private readonly tools: ToolRegistryService,
@@ -43,6 +45,7 @@ export class ConversationService {
   ) {}
 
   async createSession(dto: CreateSessionDto) {
+    const startedAt = Date.now();
     const config = runtimeConfig();
     const customerId = dto.customerId || config.defaultCustomerId;
     if (!customerId) {
@@ -64,17 +67,17 @@ export class ConversationService {
         ? "text"
         : "audio";
     const toolDefinitions = this.tools.listDefinitions();
-    const aiSession = await this.aiProvider.createSession({
-      customerId,
-      deviceId: dto.deviceId,
-      storeId,
-      model: config.openAi.realtimeModel,
-      voice: config.openAi.voice,
-      outputModality,
-      tools: toolDefinitions,
-    });
-    const { session: avatarSession, error: avatarError } =
-      await this.createAvatarSession(avatarProviderName, {
+    const [aiSession, avatarResult] = await Promise.all([
+      this.aiProvider.createSession({
+        customerId,
+        deviceId: dto.deviceId,
+        storeId,
+        model: config.openAi.realtimeModel,
+        voice: config.openAi.voice,
+        outputModality,
+        tools: toolDefinitions,
+      }),
+      this.createAvatarSession(avatarProviderName, {
         customerId,
         deviceId: dto.deviceId,
         avatarId:
@@ -82,7 +85,9 @@ export class ConversationService {
             ? config.liveAvatar.avatarId
             : config.simli.avatarId,
         mode: avatarMode,
-      });
+      }),
+    ]);
+    const { session: avatarSession, error: avatarError } = avatarResult;
 
     const { rows } = await this.database.query<SessionRow>(
       `
@@ -118,6 +123,10 @@ export class ConversationService {
           ...(avatarError ? { avatarError } : {}),
         }),
       ],
+    );
+
+    this.logger.log(
+      `Created ${aiSession.provider}/${avatarSession?.provider || avatarProviderName} session in ${Date.now() - startedAt}ms.`,
     );
 
     return {
