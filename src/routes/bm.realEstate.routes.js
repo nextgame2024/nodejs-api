@@ -7,5 +7,6 @@ router.get("/bm/real-estate/properties", businessManagerIntegrationAuth, control
 router.get("/bm/real-estate/properties/:propertyId", businessManagerIntegrationAuth, controller.getProperty);
 router.get("/bm/real-estate/properties/:propertyId/inspection-slots", businessManagerIntegrationAuth, controller.listInspectionSlots);
 router.post("/bm/real-estate/inspection-bookings", businessManagerIntegrationAuth, controller.createInspectionBooking);
+router.post("/bm/real-estate/inspection-bookings/:bookingId/email-confirmation", businessManagerIntegrationAuth, controller.sendInspectionConfirmation);
 router.get("/bm/real-estate/knowledge", businessManagerIntegrationAuth, controller.searchKnowledge);
 export default router;

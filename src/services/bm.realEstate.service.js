@@ -1,4 +1,5 @@
 import * as model from "../models/bm.realEstate.model.js";
+import { sendInspectionConfirmationEmail } from "./bm.inspectionEmail.service.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -71,6 +72,34 @@ export async function createInspectionBooking(companyId, input = {}) {
   return withInspectionTimeLabels(result);
 }
 
+export async function sendInspectionConfirmation(companyId, bookingId) {
+  const normalizedBookingId = uuid(bookingId, "bookingId");
+  const booking = await model.getInspectionBooking(companyId, normalizedBookingId);
+  if (!booking) throw httpError("Inspection booking not found", 404);
+
+  const labelledBooking = withInspectionTimeLabels(booking);
+  if (booking.confirmationEmailSentAt) {
+    return {
+      status: "already_sent",
+      sentAt: booking.confirmationEmailSentAt,
+    };
+  }
+
+  try {
+    await sendInspectionConfirmationEmail(labelledBooking);
+    await model.markInspectionConfirmationSent(companyId, normalizedBookingId);
+    return { status: "sent", sentAt: new Date().toISOString() };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Email delivery failed";
+    await model.markInspectionConfirmationFailed(
+      companyId,
+      normalizedBookingId,
+      message.slice(0, 500),
+    );
+    throw error;
+  }
+}
+
 function withInspectionTimeLabels(value) {
   const startsAt = new Date(value.startsAt);
   const dateLabel = new Intl.DateTimeFormat("en-AU", {
@@ -96,5 +125,15 @@ function withInspectionTimeLabels(value) {
 export function searchKnowledge(companyId, input = {}) {
   const query = text(input.q);
   if (query.length < 2) throw httpError("q must contain at least 2 characters");
-  return model.searchKnowledge(companyId, query, text(input.category) || undefined, integer(input.limit, 1, 5) ?? 3);
+  const category = knowledgeCategory(input.category);
+  return model.searchKnowledge(companyId, query, category, integer(input.limit, 1, 5) ?? 3);
+}
+
+function knowledgeCategory(value) {
+  const normalized = text(value).toLowerCase();
+  if (!normalized) return undefined;
+  if (["rent", "rental", "renting", "tenant", "tenancy", "application"].includes(normalized)) return "renting";
+  if (["sale", "sell", "selling", "seller", "vendor"].includes(normalized)) return "selling";
+  if (["inspection", "inspections", "viewing", "booking"].includes(normalized)) return "inspections";
+  return normalized;
 }

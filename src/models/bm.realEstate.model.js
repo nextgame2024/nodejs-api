@@ -141,11 +141,40 @@ export async function createInspectionBooking(companyId, input) {
   }
 }
 
+export async function getInspectionBooking(companyId, bookingId) {
+  const { rows } = await pool.query(
+    `${INSPECTION_BOOKING_SELECT}
+     WHERE b.company_id = $1 AND b.booking_id = $2`,
+    [companyId, bookingId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function markInspectionConfirmationSent(companyId, bookingId) {
+  await pool.query(
+    `UPDATE bm_property_inspection_bookings
+     SET confirmation_email_sent_at = now(), confirmation_email_error = NULL
+     WHERE company_id = $1 AND booking_id = $2`,
+    [companyId, bookingId],
+  );
+}
+
+export async function markInspectionConfirmationFailed(companyId, bookingId, message) {
+  await pool.query(
+    `UPDATE bm_property_inspection_bookings
+     SET confirmation_email_error = $3
+     WHERE company_id = $1 AND booking_id = $2`,
+    [companyId, bookingId, message],
+  );
+}
+
 const INSPECTION_BOOKING_SELECT = `
   SELECT b.booking_id AS "bookingId", b.property_id AS "propertyId",
     b.slot_id AS "slotId", b.customer_name AS "customerName",
     b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone",
     b.status, b.createdat AS "createdAt",
+    b.confirmation_email_sent_at AS "confirmationEmailSentAt",
+    b.confirmation_email_error AS "confirmationEmailError",
     s.starts_at AS "startsAt", s.ends_at AS "endsAt",
     p.address AS "propertyAddress", p.suburb AS "propertySuburb",
     p.city AS "propertyCity", p.state AS "propertyState",

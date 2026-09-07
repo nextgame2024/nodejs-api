@@ -33,15 +33,15 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       execute: ({ propertyId }) => client.getInspectionSlots(propertyId, {}),
     },
     {
-      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. After success, speak the authoritative propertyAddress and startsAtLabel exactly as returned; never calculate or convert the time.", parameters: { type: "object", additionalProperties: false, properties: {
+      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. After success, speak the authoritative propertyAddress, startsAtLabel, customerEmail and confirmation-email status exactly as returned; never calculate or convert the time.", parameters: { type: "object", additionalProperties: false, properties: {
         propertyId: { type: "string" }, slotId: { type: "string" }, confirmedStartsAt: { type: "string", description: "The selected slot's exact startsAt ISO timestamp." }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
       }, required: ["propertyId", "slotId", "confirmedStartsAt", "customerName", "customerEmail", "confirmed"] } },
       inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), confirmedStartsAt: z.string().datetime({ offset: true }), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
       execute: (input, context) => client.bookInspection({ ...input, idempotencyKey: `${context.sessionId || "session"}:${input.slotId}:${input.customerEmail.toLowerCase()}` }),
     },
     {
-      definition: { name: "searchAgencyKnowledge", description: "Search agency-approved rental and selling requirements. Use this before answering process or document questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string" } }, required: ["q"] } },
-      inputSchema: z.object({ q: z.string().trim().min(2).max(240), category: optional(z.string().trim().min(2).max(80)) }),
+      definition: { name: "searchAgencyKnowledge", description: "Search agency-approved rental and selling requirements. Use this before answering process or document questions. Choose renting for rent, rental, tenant or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
+      inputSchema: z.object({ q: z.string().trim().min(2).max(240), category: optional(z.enum(["renting", "selling", "inspections", "general"])) }),
       execute: (input) => client.searchKnowledge(input),
     },
   ];

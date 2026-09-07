@@ -9,4 +9,10 @@ export const getProperty = asyncHandler(async (req, res) => {
 });
 export const listInspectionSlots = asyncHandler(async (req, res) => res.json({ slots: await service.listInspectionSlots(req.user.companyId, req.params.propertyId, req.query) }));
 export const createInspectionBooking = asyncHandler(async (req, res) => res.status(201).json({ booking: await service.createInspectionBooking(req.user.companyId, req.body?.booking ?? req.body) }));
+export const sendInspectionConfirmation = asyncHandler(async (req, res) => res.json({
+  confirmationEmail: await service.sendInspectionConfirmation(
+    req.user.companyId,
+    req.params.bookingId,
+  ),
+}));
 export const searchKnowledge = asyncHandler(async (req, res) => res.json({ results: await service.searchKnowledge(req.user.companyId, req.query) }));

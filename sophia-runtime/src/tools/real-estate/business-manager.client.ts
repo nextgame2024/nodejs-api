@@ -15,11 +15,40 @@ export class BusinessManagerClient {
   searchKnowledge(input: Record<string, unknown>) {
     return this.get("/bm/real-estate/knowledge", input);
   }
-  bookInspection(input: Record<string, unknown>) {
-    return this.request("/bm/real-estate/inspection-bookings", {
+  async bookInspection(input: Record<string, unknown>) {
+    const created = await this.request("/bm/real-estate/inspection-bookings", {
       method: "POST",
       body: JSON.stringify({ booking: input }),
     });
+    const payload = asRecord(created);
+    const booking = asRecord(payload?.["booking"]);
+    const bookingId = booking?.["bookingId"];
+    if (typeof bookingId !== "string") return created;
+
+    try {
+      const emailResult = await this.request(
+        `/bm/real-estate/inspection-bookings/${encodeURIComponent(bookingId)}/email-confirmation`,
+        { method: "POST", body: "{}" },
+      );
+      return {
+        ...payload,
+        booking: {
+          ...booking,
+          confirmationEmail: asRecord(emailResult)?.["confirmationEmail"],
+        },
+      };
+    } catch (error) {
+      return {
+        ...payload,
+        booking: {
+          ...booking,
+          confirmationEmail: {
+            status: "failed",
+            message: error instanceof Error ? error.message : "Email delivery failed",
+          },
+        },
+      };
+    }
   }
 
   private get(path: string, query: Record<string, unknown> = {}) {
@@ -43,4 +72,10 @@ export class BusinessManagerClient {
     if (!response.ok) throw new Error(payload.error || `Business Manager request failed (${response.status}).`);
     return payload;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : null;
 }
