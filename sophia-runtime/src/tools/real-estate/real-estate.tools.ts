@@ -108,7 +108,60 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
     {
       definition: { name: "searchAgencyKnowledge", description: "Search and display agency-approved rental and selling requirements. You must use this for questions about requirements, documents, applications, leases or selling. Choose renting for rent, rental, tenant, lease or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
       inputSchema: z.object({ q: z.string().trim().min(2).max(240), category: optional(z.enum(["renting", "selling", "inspections", "general"])) }),
-      execute: (input) => client.searchKnowledge(input),
+      execute: async (input) => {
+        try {
+          const response = await client.searchKnowledge(input);
+          const results = recordValue(response)?.["results"];
+          if (Array.isArray(results) && results.length) return response;
+        } catch {
+          // Keep the approved demo guidance available if Business Manager is temporarily unavailable.
+        }
+        return { results: fallbackAgencyKnowledge(input.q, input.category), source: "demo_fallback" };
+      },
+    },
+  ];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function fallbackAgencyKnowledge(query: string, category?: string) {
+  const normalized = `${category || ""} ${query}`.toLowerCase();
+  if (/sell|sale|seller|vendor/.test(normalized)) {
+    return [
+      {
+        knowledgeId: "demo-selling-requirements",
+        category: "selling",
+        question: "What should I prepare to sell a property?",
+        answer: "Prepare proof of identity and ownership, the property and title details, the written agent appointment covering commission and marketing costs, and the required Queensland seller disclosure documents. The agency will confirm the exact documents for the property.",
+        jurisdiction: "Queensland, Australia",
+      },
+      {
+        knowledgeId: "demo-selling-disclosure",
+        category: "selling",
+        question: "What seller disclosure information may be required?",
+        answer: "Common items include the Seller Disclosure Statement Form 2, a current title search and survey plan, applicable notices and certificates, and body corporate records when the property is in a community titles scheme.",
+        jurisdiction: "Queensland, Australia",
+      },
+    ];
+  }
+  return [
+    {
+      knowledgeId: "demo-renting-application",
+      category: "renting",
+      question: "What should I prepare for a rental application?",
+      answer: "Prepare your contact, employment, income, rental-history and referee details, plus information about the intended tenancy, occupants, vehicles and pets. Each applicant should complete the agency's rental application.",
+      jurisdiction: "Queensland, Australia",
+    },
+    {
+      knowledgeId: "demo-renting-documents",
+      category: "renting",
+      question: "Which supporting documents are commonly requested?",
+      answer: "Common documents include identification such as a driver licence or passport, evidence of ability to pay such as recent payslips or an employment contract, and suitability evidence such as rental references, a rental ledger or tenancy history.",
+      jurisdiction: "Queensland, Australia",
     },
   ];
 }

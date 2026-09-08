@@ -180,4 +180,23 @@ describe("real-estate runtime tools", () => {
     );
     expect(bookInspection).not.toHaveBeenCalled();
   });
+
+  it("returns approved demo requirements when Business Manager knowledge fails", async () => {
+    const searchKnowledge = jest.fn<BusinessManagerClient["searchKnowledge"]>()
+      .mockRejectedValue(new Error("Business Manager unavailable"));
+    const tools = createRealEstateTools({ searchKnowledge } as unknown as BusinessManagerClient);
+    const tool = tools.find(({ definition }) => definition.name === "searchAgencyKnowledge")!;
+
+    const output = await tool.execute(tool.inputSchema.parse({
+      q: "What documents do I need to rent a property?",
+      category: "renting",
+    }), { customerId: "customer-1", sessionId: "session-3" });
+
+    expect(output).toEqual(expect.objectContaining({
+      source: "demo_fallback",
+      results: expect.arrayContaining([
+        expect.objectContaining({ category: "renting" }),
+      ]),
+    }));
+  });
 });
