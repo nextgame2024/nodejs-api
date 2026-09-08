@@ -31,7 +31,7 @@ export class BusinessManagerClient {
         {
           method: "POST",
           body: JSON.stringify({
-            customerEmail: booking["customerEmail"],
+            customerEmail: booking?.["customerEmail"],
             confirmed: true,
           }),
         },
