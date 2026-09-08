@@ -14,12 +14,14 @@ const booking = {
 const getInspectionBooking = jest.fn();
 const markInspectionConfirmationSent = jest.fn();
 const markInspectionConfirmationFailed = jest.fn();
+const searchKnowledge = jest.fn();
 const sendInspectionConfirmationEmail = jest.fn();
 
 jest.unstable_mockModule("../src/models/bm.realEstate.model.js", () => ({
   getInspectionBooking,
   markInspectionConfirmationSent,
   markInspectionConfirmationFailed,
+  searchKnowledge,
 }));
 jest.unstable_mockModule("../src/services/bm.inspectionEmail.service.js", () => ({
   sendInspectionConfirmationEmail,
@@ -68,5 +70,41 @@ describe("inspection confirmation resend", () => {
       customerEmail: "jlcm66@gmail.com",
       resent: true,
     }));
+  });
+});
+
+describe("agency knowledge search", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("infers rental guidance and falls back when the exact question has no match", async () => {
+    const rentalGuidance = [{
+      knowledgeId: "40000000-0000-4000-8000-000000000001",
+      category: "renting",
+      question: "What documents should I prepare?",
+      answer: "Prepare identity, income and rental history documents.",
+    }];
+    searchKnowledge.mockResolvedValueOnce([]).mockResolvedValueOnce(rentalGuidance);
+
+    await expect(service.searchKnowledge(
+      "10000000-0000-4000-8000-000000000001",
+      { q: "Show me the requirements to rent this property", category: "general" },
+    )).resolves.toEqual(rentalGuidance);
+
+    expect(searchKnowledge).toHaveBeenNthCalledWith(
+      1,
+      "10000000-0000-4000-8000-000000000001",
+      "Show me the requirements to rent this property",
+      "renting",
+      3,
+    );
+    expect(searchKnowledge).toHaveBeenNthCalledWith(
+      2,
+      "10000000-0000-4000-8000-000000000001",
+      "",
+      "renting",
+      3,
+    );
   });
 });

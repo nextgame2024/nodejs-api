@@ -106,7 +106,7 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       },
     },
     {
-      definition: { name: "searchAgencyKnowledge", description: "Search agency-approved rental and selling requirements. Use this before answering process or document questions. Choose renting for rent, rental, tenant or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
+      definition: { name: "searchAgencyKnowledge", description: "Search and display agency-approved rental and selling requirements. You must use this for questions about requirements, documents, applications, leases or selling. Choose renting for rent, rental, tenant, lease or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
       inputSchema: z.object({ q: z.string().trim().min(2).max(240), category: optional(z.enum(["renting", "selling", "inspections", "general"])) }),
       execute: (input) => client.searchKnowledge(input),
     },

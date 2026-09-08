@@ -131,11 +131,26 @@ function withInspectionTimeLabels(value) {
   };
 }
 
-export function searchKnowledge(companyId, input = {}) {
+export async function searchKnowledge(companyId, input = {}) {
   const query = text(input.q);
   if (query.length < 2) throw httpError("q must contain at least 2 characters");
-  const category = knowledgeCategory(input.category);
-  return model.searchKnowledge(companyId, query, category, integer(input.limit, 1, 5) ?? 3);
+  const requestedCategory = knowledgeCategory(input.category);
+  const inferredCategory = inferKnowledgeCategory(query);
+  const category = requestedCategory === "general"
+    ? inferredCategory || requestedCategory
+    : requestedCategory || inferredCategory;
+  const limit = integer(input.limit, 1, 5) ?? 3;
+  const matches = await model.searchKnowledge(companyId, query, category, limit);
+  if (matches.length || !category || category === "general") return matches;
+  return model.searchKnowledge(companyId, "", category, limit);
+}
+
+function inferKnowledgeCategory(value) {
+  const query = text(value).toLowerCase();
+  if (/\b(rent|rental|renting|tenant|tenancy|lease|application|bond)\b/.test(query)) return "renting";
+  if (/\b(sale|sell|selling|seller|vendor|appraisal|market)\b/.test(query)) return "selling";
+  if (/\b(inspection|inspect|viewing|booking)\b/.test(query)) return "inspections";
+  return undefined;
 }
 
 function knowledgeCategory(value) {
