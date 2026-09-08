@@ -41,6 +41,10 @@ describe("BusinessManagerClient", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toContain(
       "/inspection-bookings/30000000-0000-4000-8000-000000000001/email-confirmation",
     );
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      customerEmail: "jordan@example.com",
+      confirmed: true,
+    });
     expect(result.booking.confirmationEmail.status).toBe("sent");
   });
 
@@ -61,6 +65,29 @@ describe("BusinessManagerClient", () => {
 
     expect(result.booking.status).toBe("confirmed");
     expect(result.booking.confirmationEmail.status).toBe("failed");
+  });
+
+  it("resends a confirmation to the explicitly confirmed corrected email", async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      confirmationEmail: {
+        status: "sent",
+        customerEmail: "jlcm66@gmail.com",
+        resent: true,
+      },
+    }));
+    global.fetch = fetchMock;
+
+    await new BusinessManagerClient().resendInspectionConfirmation({
+      bookingId: "30000000-0000-4000-8000-000000000001",
+      customerEmail: "jlcm66@gmail.com",
+      confirmed: true,
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      customerEmail: "jlcm66@gmail.com",
+      confirmed: true,
+      forceResend: true,
+    });
   });
 });
 

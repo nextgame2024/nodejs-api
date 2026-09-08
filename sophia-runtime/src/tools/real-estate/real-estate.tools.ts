@@ -6,6 +6,9 @@ const optional = <T extends z.ZodTypeAny>(schema: T) =>
   schema.nullish().transform((value) => value ?? undefined);
 
 export function createRealEstateTools(client: BusinessManagerClient): RuntimeTool<any, unknown>[] {
+  const pendingReviews = new Map<string, { mode: "new" | "resend"; input: Record<string, unknown> }>();
+  const reviewKey = (sessionId?: string) => sessionId || "missing-session";
+
   return [
     {
       definition: {
@@ -28,16 +31,79 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       execute: ({ propertyId }) => client.getProperty(propertyId),
     },
     {
+      definition: { name: "showPropertyPhoto", description: "Open one selected property photo in the large on-screen viewer. Use photoNumber 1, 2 or 3 when the customer identifies a photo; default to 1.", parameters: { type: "object", additionalProperties: false, properties: { propertyId: { type: "string" }, photoNumber: { type: "integer", minimum: 1, maximum: 3 } }, required: ["propertyId"] } },
+      inputSchema: z.object({ propertyId: z.string().uuid(), photoNumber: optional(z.number().int().min(1).max(3)) }),
+      execute: async ({ propertyId, photoNumber }) => {
+        const result = await client.getProperty(propertyId) as Record<string, unknown>;
+        return { ...result, photoNumber: photoNumber ?? 1, display: "photo_viewer" };
+      },
+    },
+    {
+      definition: { name: "closePropertyView", description: "Close the on-screen property photo, property results, inspection times, booking or requirements view when the customer asks to close it or go back.", parameters: { type: "object", additionalProperties: false, properties: {} } },
+      inputSchema: z.object({}),
+      execute: async () => ({ closePropertyView: true }),
+    },
+    {
       definition: { name: "getInspectionSlots", description: "Get available inspection times for a property over the next two weeks. Offer each startsAtLabel exactly as returned and retain its corresponding slotId and startsAt values for booking.", parameters: { type: "object", additionalProperties: false, properties: { propertyId: { type: "string" } }, required: ["propertyId"] } },
       inputSchema: z.object({ propertyId: z.string().uuid() }),
       execute: ({ propertyId }) => client.getInspectionSlots(propertyId, {}),
+    },
+    {
+      definition: { name: "reviewInspectionBooking", description: "Display the customer's name, email, selected property and inspection time for review. This is mandatory before bookInspection. After displaying it, ask the customer to confirm that every detail, especially the email spelling, is correct.", parameters: { type: "object", additionalProperties: false, properties: {
+        propertyId: { type: "string" }, slotId: { type: "string" }, confirmedStartsAt: { type: "string" }, propertyAddress: { type: "string" }, startsAtLabel: { type: "string" }, customerName: { type: "string" }, customerEmail: { type: "string" },
+      }, required: ["propertyId", "slotId", "confirmedStartsAt", "propertyAddress", "startsAtLabel", "customerName", "customerEmail"] } },
+      inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), confirmedStartsAt: z.string().datetime({ offset: true }), propertyAddress: z.string().trim().min(3).max(240), startsAtLabel: z.string().trim().min(3).max(100), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254) }),
+      execute: async (input, context) => {
+        pendingReviews.set(reviewKey(context.sessionId), { mode: "new", input });
+        return { bookingReview: { ...input, mode: "new" } };
+      },
     },
     {
       definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. After success, speak the authoritative propertyAddress, startsAtLabel, customerEmail and confirmation-email status exactly as returned; never calculate or convert the time.", parameters: { type: "object", additionalProperties: false, properties: {
         propertyId: { type: "string" }, slotId: { type: "string" }, confirmedStartsAt: { type: "string", description: "The selected slot's exact startsAt ISO timestamp." }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
       }, required: ["propertyId", "slotId", "confirmedStartsAt", "customerName", "customerEmail", "confirmed"] } },
       inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), confirmedStartsAt: z.string().datetime({ offset: true }), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
-      execute: (input, context) => client.bookInspection({ ...input, idempotencyKey: `${context.sessionId || "session"}:${input.slotId}:${input.customerEmail.toLowerCase()}` }),
+      execute: async (input, context) => {
+        const key = reviewKey(context.sessionId);
+        const review = pendingReviews.get(key);
+        if (
+          review?.mode !== "new" ||
+          review.input["propertyId"] !== input.propertyId ||
+          review.input["slotId"] !== input.slotId ||
+          review.input["confirmedStartsAt"] !== input.confirmedStartsAt ||
+          review.input["customerName"] !== input.customerName ||
+          String(review.input["customerEmail"]).toLowerCase() !== input.customerEmail.toLowerCase()
+        ) {
+          throw new Error("Display and confirm the booking details before booking and sending email.");
+        }
+        pendingReviews.delete(key);
+        return client.bookInspection({ ...input, idempotencyKey: `${context.sessionId || "session"}:${input.slotId}:${input.customerEmail.toLowerCase()}` });
+      },
+    },
+    {
+      definition: { name: "reviewInspectionEmailResend", description: "Display an existing booking and a corrected recipient email for review before resending. After displaying it, ask the customer to confirm the corrected email spelling.", parameters: { type: "object", additionalProperties: false, properties: { bookingId: { type: "string" }, customerName: { type: "string" }, customerEmail: { type: "string" }, propertyAddress: { type: "string" }, startsAtLabel: { type: "string" } }, required: ["bookingId", "customerName", "customerEmail", "propertyAddress", "startsAtLabel"] } },
+      inputSchema: z.object({ bookingId: z.string().uuid(), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), propertyAddress: z.string().trim().min(3).max(240), startsAtLabel: z.string().trim().min(3).max(100) }),
+      execute: async (input, context) => {
+        pendingReviews.set(reviewKey(context.sessionId), { mode: "resend", input });
+        return { bookingReview: { ...input, mode: "resend" } };
+      },
+    },
+    {
+      definition: { name: "resendInspectionConfirmation", description: "Resend an inspection confirmation to a corrected email only after reviewInspectionEmailResend has displayed the details and the customer has explicitly confirmed them.", parameters: { type: "object", additionalProperties: false, properties: { bookingId: { type: "string" }, customerEmail: { type: "string" }, confirmed: { type: "boolean" } }, required: ["bookingId", "customerEmail", "confirmed"] } },
+      inputSchema: z.object({ bookingId: z.string().uuid(), customerEmail: z.string().email().max(254), confirmed: z.literal(true) }),
+      execute: async (input, context) => {
+        const key = reviewKey(context.sessionId);
+        const review = pendingReviews.get(key);
+        if (
+          review?.mode !== "resend" ||
+          review.input["bookingId"] !== input.bookingId ||
+          String(review.input["customerEmail"]).toLowerCase() !== input.customerEmail.toLowerCase()
+        ) {
+          throw new Error("Display and confirm the corrected email before resending.");
+        }
+        pendingReviews.delete(key);
+        return client.resendInspectionConfirmation(input);
+      },
     },
     {
       definition: { name: "searchAgencyKnowledge", description: "Search agency-approved rental and selling requirements. Use this before answering process or document questions. Choose renting for rent, rental, tenant or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },

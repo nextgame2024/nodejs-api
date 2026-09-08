@@ -72,23 +72,32 @@ export async function createInspectionBooking(companyId, input = {}) {
   return withInspectionTimeLabels(result);
 }
 
-export async function sendInspectionConfirmation(companyId, bookingId) {
+export async function sendInspectionConfirmation(companyId, bookingId, input = {}) {
   const normalizedBookingId = uuid(bookingId, "bookingId");
   const booking = await model.getInspectionBooking(companyId, normalizedBookingId);
   if (!booking) throw httpError("Inspection booking not found", 404);
 
-  const labelledBooking = withInspectionTimeLabels(booking);
-  if (booking.confirmationEmailSentAt) {
+  if (input.confirmed !== true) {
+    throw httpError("Customer confirmation is required before sending email");
+  }
+  const customerEmail = text(input.customerEmail || booking.customerEmail).toLowerCase();
+  if (!emailRe.test(customerEmail)) throw httpError("customerEmail must be valid");
+  const forceResend = input.forceResend === true;
+
+  if (booking.confirmationEmailSentAt && !forceResend) {
     return {
       status: "already_sent",
       sentAt: booking.confirmationEmailSentAt,
+      customerEmail: booking.customerEmail,
     };
   }
 
+  const labelledBooking = withInspectionTimeLabels({ ...booking, customerEmail });
+
   try {
     await sendInspectionConfirmationEmail(labelledBooking);
-    await model.markInspectionConfirmationSent(companyId, normalizedBookingId);
-    return { status: "sent", sentAt: new Date().toISOString() };
+    await model.markInspectionConfirmationSent(companyId, normalizedBookingId, customerEmail);
+    return { status: "sent", sentAt: new Date().toISOString(), customerEmail, resent: forceResend };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Email delivery failed";
     await model.markInspectionConfirmationFailed(

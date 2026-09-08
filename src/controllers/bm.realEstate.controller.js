@@ -13,6 +13,7 @@ export const sendInspectionConfirmation = asyncHandler(async (req, res) => res.j
   confirmationEmail: await service.sendInspectionConfirmation(
     req.user.companyId,
     req.params.bookingId,
+    req.body,
   ),
 }));
 export const searchKnowledge = asyncHandler(async (req, res) => res.json({ results: await service.searchKnowledge(req.user.companyId, req.query) }));

@@ -28,7 +28,13 @@ export class BusinessManagerClient {
     try {
       const emailResult = await this.request(
         `/bm/real-estate/inspection-bookings/${encodeURIComponent(bookingId)}/email-confirmation`,
-        { method: "POST", body: "{}" },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            customerEmail: booking["customerEmail"],
+            confirmed: true,
+          }),
+        },
       );
       return {
         ...payload,
@@ -49,6 +55,21 @@ export class BusinessManagerClient {
         },
       };
     }
+  }
+
+  resendInspectionConfirmation(input: Record<string, unknown>) {
+    const bookingId = String(input["bookingId"] || "");
+    return this.request(
+      `/bm/real-estate/inspection-bookings/${encodeURIComponent(bookingId)}/email-confirmation`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          customerEmail: input["customerEmail"],
+          confirmed: input["confirmed"],
+          forceResend: true,
+        }),
+      },
+    );
   }
 
   private get(path: string, query: Record<string, unknown> = {}) {

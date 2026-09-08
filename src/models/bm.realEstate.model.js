@@ -150,12 +150,12 @@ export async function getInspectionBooking(companyId, bookingId) {
   return rows[0] ?? null;
 }
 
-export async function markInspectionConfirmationSent(companyId, bookingId) {
+export async function markInspectionConfirmationSent(companyId, bookingId, customerEmail) {
   await pool.query(
     `UPDATE bm_property_inspection_bookings
-     SET confirmation_email_sent_at = now(), confirmation_email_error = NULL
+     SET customer_email = $3, confirmation_email_sent_at = now(), confirmation_email_error = NULL
      WHERE company_id = $1 AND booking_id = $2`,
-    [companyId, bookingId],
+    [companyId, bookingId, customerEmail],
   );
 }
 
