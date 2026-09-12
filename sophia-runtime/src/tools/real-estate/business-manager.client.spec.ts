@@ -20,12 +20,13 @@ describe("BusinessManagerClient", () => {
     restoreEnv("BUSINESS_MANAGER_API_TOKEN", originalBusinessManagerToken);
   });
 
-  it("sends a confirmation email after creating an inspection booking", async () => {
+  it("sends a confirmation email after creating a rental inspection booking", async () => {
     const fetchMock = jest.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({
         booking: {
           bookingId: "30000000-0000-4000-8000-000000000001",
           customerEmail: "jordan@example.com",
+          listingType: "rent",
         },
       }, 201))
       .mockResolvedValueOnce(jsonResponse({
@@ -46,6 +47,31 @@ describe("BusinessManagerClient", () => {
       confirmed: true,
     });
     expect(result.booking.confirmationEmail.status).toBe("sent");
+  });
+
+  it("returns immediately while a BUY property report is prepared", async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      booking: {
+        bookingId: "30000000-0000-4000-8000-000000000003",
+        customerEmail: "buyer@example.com",
+        listingType: "sale",
+        reportDelivery: {
+          reportStatus: "queued",
+          deliveryStatus: "waiting_report",
+        },
+      },
+    }, 201));
+    global.fetch = fetchMock;
+
+    const result = await new BusinessManagerClient().bookInspection({
+      customerEmail: "buyer@example.com",
+    }) as { booking: { confirmationEmail: { status: string; message: string } } };
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.booking.confirmationEmail.status).toBe("pending_report");
+    expect(result.booking.confirmationEmail.message).toContain(
+      "property report is being prepared",
+    );
   });
 
   it("keeps a confirmed booking when email delivery fails", async () => {

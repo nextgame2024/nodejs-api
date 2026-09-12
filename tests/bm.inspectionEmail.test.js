@@ -35,4 +35,27 @@ describe("inspection confirmation email", () => {
       "Wed, 9 Sept, 10:30 am",
     );
   });
+
+  it("reports the attached PDF in log-provider mode", async () => {
+    process.env.EMAIL_PROVIDER = "log";
+    const log = jest.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await sendInspectionConfirmationEmail({
+      bookingId: "30000000-0000-4000-8000-000000000001",
+      customerName: "Jordan Lee",
+      customerEmail: "jordan@example.com",
+      propertyAddress: "18 Jacaranda Street",
+      startsAtLabel: "Wed, 9 Sept, 10:30 am",
+    }, {
+      reportAttachment: {
+        filename: "town-planner-report.pdf",
+        content: Buffer.from("pdf"),
+      },
+    });
+
+    expect(log).toHaveBeenCalledWith(
+      "[inspection-email][LOG] Attachment:",
+      "town-planner-report.pdf",
+    );
+  });
 });

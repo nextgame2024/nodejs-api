@@ -26,6 +26,9 @@ import {
 } from "../src/services/gemini.js";
 import { ttsToBuffer } from "../src/services/polly.js";
 import { swapFaceOnVideoViaPod } from "../src/services/faceSwap.pod.js";
+import { ensureTownPlannerBookingWorkflowSchema } from "../src/config/startupMigrations.js";
+import { processPropertyReportCycle } from "../src/services/bm.propertyReportWorker.service.js";
+import { processInspectionEmailCycle } from "../src/services/bm.inspectionEmailWorker.service.js";
 
 /* =========================
    CONFIG (env-overridable)
@@ -43,6 +46,12 @@ const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 
 // worker loop cadence (ms)
 const LOOP_MS = Number(process.env.WORKER_LOOP_MS || 60_000);
+const PROPERTY_REPORT_LOOP_MS = Number(
+  process.env.PROPERTY_REPORT_WORKER_LOOP_MS || 30_000
+);
+const INSPECTION_EMAIL_LOOP_MS = Number(
+  process.env.INSPECTION_EMAIL_WORKER_LOOP_MS || 15_000
+);
 
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
 
@@ -85,19 +94,29 @@ function localClock() {
 }
 
 async function withLock(fn) {
-  const { rows } = await pool.query("SELECT pg_try_advisory_lock($1) AS ok", [
-    LOCK_ID,
-  ]);
-  if (!rows?.[0]?.ok) {
-    console.log(`[${nowIso()}] Lock busy; skipping cycle.`);
-    return;
-  }
-  console.log(`[${nowIso()}] Acquired lock(${LOCK_ID}).`);
+  const client = await pool.connect();
+  let acquired = false;
   try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock($1) AS ok",
+      [LOCK_ID]
+    );
+    acquired = !!rows?.[0]?.ok;
+    if (!acquired) {
+      console.log(`[${nowIso()}] Lock busy; skipping cycle.`);
+      return;
+    }
+    console.log(`[${nowIso()}] Acquired lock(${LOCK_ID}).`);
     await fn();
   } finally {
-    await pool.query("SELECT pg_advisory_unlock($1)", [LOCK_ID]);
-    console.log(`[${nowIso()}] Released lock(${LOCK_ID}).`);
+    try {
+      if (acquired) {
+        await client.query("SELECT pg_advisory_unlock($1)", [LOCK_ID]);
+        console.log(`[${nowIso()}] Released lock(${LOCK_ID}).`);
+      }
+    } finally {
+      client.release();
+    }
   }
 }
 
@@ -460,20 +479,73 @@ async function runCycle() {
   });
 }
 
+async function runPropertyReportLoop() {
+  for (;;) {
+    try {
+      const result = await processPropertyReportCycle();
+      if (result.status !== "idle" && result.status !== "lock_busy") {
+        console.log(`[${nowIso()}] [PROPERTY_REPORT]`, result);
+      }
+      if (result.status === "ready") continue;
+    } catch (error) {
+      console.error(
+        `[${nowIso()}] [PROPERTY_REPORT] Worker cycle failed:`,
+        error?.message || error
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, PROPERTY_REPORT_LOOP_MS));
+  }
+}
+
+async function runInspectionEmailLoop() {
+  for (;;) {
+    try {
+      const result = await processInspectionEmailCycle();
+      if (result.status !== "idle" && result.status !== "lock_busy") {
+        console.log(`[${nowIso()}] [INSPECTION_EMAIL]`, result);
+      }
+      if (result.status === "sent" || result.status === "fallback_sent") continue;
+    } catch (error) {
+      console.error(
+        `[${nowIso()}] [INSPECTION_EMAIL] Worker cycle failed:`,
+        error?.message || error
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, INSPECTION_EMAIL_LOOP_MS));
+  }
+}
+
 (async () => {
+  await ensureTownPlannerBookingWorkflowSchema();
   if (RUN_ONCE) {
     console.log(
       `[${nowIso()}] Running single cycle (--once${FORCE_ARTICLE ? " + --article-now" : ""}).`
     );
-    await runCycle();
+    await Promise.all([
+      runCycle(),
+      processPropertyReportCycle(),
+      processInspectionEmailCycle(),
+    ]);
     process.exit(0);
   } else {
     console.log(
       `[${nowIso()}] Background worker loop started (every ${LOOP_MS}ms) — articles at ${DAILY_ARTICLES_HOUR}:00, cleanup at ${CLEANUP_HOUR}:00 (${BRISBANE_TZ}).`
     );
-    for (;;) {
-      await runCycle();
-      await new Promise((r) => setTimeout(r, LOOP_MS));
-    }
+    console.log(
+      `[${nowIso()}] Property report loop started (idle poll every ${PROPERTY_REPORT_LOOP_MS}ms, concurrency 1).`
+    );
+    console.log(
+      `[${nowIso()}] Inspection email loop started (idle poll every ${INSPECTION_EMAIL_LOOP_MS}ms, concurrency 1).`
+    );
+    await Promise.all([
+      (async () => {
+        for (;;) {
+          await runCycle();
+          await new Promise((r) => setTimeout(r, LOOP_MS));
+        }
+      })(),
+      runPropertyReportLoop(),
+      runInspectionEmailLoop(),
+    ]);
   }
 })();

@@ -59,7 +59,7 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       },
     },
     {
-      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. After success, speak the authoritative propertyAddress, startsAtLabel, customerEmail and confirmation-email status exactly as returned; never calculate or convert the time.", parameters: { type: "object", additionalProperties: false, properties: {
+      definition: { name: "bookInspection", description: "Book a selected inspection only after the customer explicitly confirms the property, time, name and email. Copy confirmedStartsAt exactly from the selected slot's startsAt value. For a BUY property, pending_report means the booking is confirmed and the report is being prepared for the confirmation email; do not imply the email has already been sent. For RENT, use the returned email status. Always speak the authoritative propertyAddress, startsAtLabel and customerEmail exactly as returned.", parameters: { type: "object", additionalProperties: false, properties: {
         propertyId: { type: "string" }, slotId: { type: "string" }, confirmedStartsAt: { type: "string", description: "The selected slot's exact startsAt ISO timestamp." }, customerName: { type: "string" }, customerEmail: { type: "string" }, customerPhone: { type: "string" }, confirmed: { type: "boolean", description: "Must be true only after explicit customer confirmation." },
       }, required: ["propertyId", "slotId", "confirmedStartsAt", "customerName", "customerEmail", "confirmed"] } },
       inputSchema: z.object({ propertyId: z.string().uuid(), slotId: z.string().uuid(), confirmedStartsAt: z.string().datetime({ offset: true }), customerName: z.string().trim().min(2).max(120), customerEmail: z.string().email().max(254), customerPhone: optional(z.string().trim().max(40)), confirmed: z.literal(true) }),
@@ -89,7 +89,7 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       },
     },
     {
-      definition: { name: "resendInspectionConfirmation", description: "Resend an inspection confirmation to a corrected email only after reviewInspectionEmailResend has displayed the details and the customer has explicitly confirmed them.", parameters: { type: "object", additionalProperties: false, properties: { bookingId: { type: "string" }, customerEmail: { type: "string" }, confirmed: { type: "boolean" } }, required: ["bookingId", "customerEmail", "confirmed"] } },
+      definition: { name: "resendInspectionConfirmation", description: "Save a corrected inspection-confirmation email and resend only after reviewInspectionEmailResend has displayed the details and the customer has explicitly confirmed them. For BUY bookings, the response may be pending_report while the PDF is prepared or queued when the report is ready.", parameters: { type: "object", additionalProperties: false, properties: { bookingId: { type: "string" }, customerEmail: { type: "string" }, confirmed: { type: "boolean" } }, required: ["bookingId", "customerEmail", "confirmed"] } },
       inputSchema: z.object({ bookingId: z.string().uuid(), customerEmail: z.string().email().max(254), confirmed: z.literal(true) }),
       execute: async (input, context) => {
         const key = reviewKey(context.sessionId);

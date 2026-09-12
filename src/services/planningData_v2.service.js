@@ -9,8 +9,9 @@
 //   - overlay polygons (flood/noise/etc.)
 
 import pool from "../config/db.js";
+import { PLANNING_SNAPSHOT_VERSION } from "./townplannerReportVersions.js";
 
-export const PLANNING_SNAPSHOT_VERSION = "TPR-PLANNING-V2-2026-04-13.2";
+export { PLANNING_SNAPSHOT_VERSION };
 
 const _tableExistsCache = new Map();
 const VEGETATION_LAYER_CODE =

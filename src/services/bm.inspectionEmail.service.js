@@ -14,7 +14,7 @@ const escapeHtml = (value) => String(value ?? "")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#039;");
 
-function emailHtml(booking) {
+function emailHtml(booking, { reportAttached = false, reportPending = false } = {}) {
   const address = [
     booking.propertyAddress,
     booking.propertySuburb,
@@ -33,20 +33,34 @@ function emailHtml(booking) {
         <tr><td style="padding:8px 0;color:#64748b">Date and time</td><td style="padding:8px 0;font-weight:700">${escapeHtml(booking.startsAtLabel)}</td></tr>
         <tr><td style="padding:8px 0;color:#64748b">Reference</td><td style="padding:8px 0;font-weight:700">${escapeHtml(String(booking.bookingId).slice(0, 8).toUpperCase())}</td></tr>
       </table>
+      ${reportAttached ? "<p>Your Town Planner property report is attached to this email.</p>" : ""}
+      ${reportPending ? "<p>Your inspection remains confirmed. The property report could not be completed yet, and the agency can follow up separately.</p>" : ""}
       <p>Please arrive a few minutes early and contact the agency if your plans change.</p>
       <p style="color:#64748b;font-size:12px">This confirmation was sent by Sophia AI for the agency demonstration.</p>
     </div>`;
 }
 
-export async function sendInspectionConfirmationEmail(booking) {
+export async function sendInspectionConfirmationEmail(booking, options = {}) {
   const provider = (process.env.EMAIL_PROVIDER || "ses").toLowerCase();
   const subject = `Inspection confirmed: ${booking.propertyAddress}`;
-  const html = emailHtml(booking);
+  const attachment = options.reportAttachment || null;
+  const html = emailHtml(booking, {
+    reportAttached: !!attachment,
+    reportPending: options.reportPending === true,
+  });
+  const attachments = attachment ? [{
+    filename: attachment.filename,
+    content: attachment.content,
+    contentType: "application/pdf",
+  }] : [];
 
   if (provider === "log") {
     console.log("[inspection-email][LOG] To:", booking.customerEmail);
     console.log("[inspection-email][LOG] Subject:", subject);
     console.log("[inspection-email][LOG] Time:", booking.startsAtLabel);
+    if (attachment) {
+      console.log("[inspection-email][LOG] Attachment:", attachment.filename);
+    }
     return;
   }
 
@@ -64,6 +78,7 @@ export async function sendInspectionConfirmationEmail(booking) {
       to: booking.customerEmail,
       subject,
       html,
+      attachments,
     });
     return;
   }
@@ -71,8 +86,30 @@ export async function sendInspectionConfirmationEmail(booking) {
   const client = new SESv2Client({
     region: process.env.AWS_REGION || "ap-southeast-2",
   });
+  const fromEmail = requireEnv("SES_FROM_EMAIL");
+  if (attachment) {
+    const rawTransport = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: "unix",
+    });
+    const message = await rawTransport.sendMail({
+      from: fromEmail,
+      to: booking.customerEmail,
+      subject,
+      html,
+      attachments,
+    });
+    await client.send(new SendEmailCommand({
+      FromEmailAddress: fromEmail,
+      Destination: { ToAddresses: [booking.customerEmail] },
+      Content: { Raw: { Data: message.message } },
+    }));
+    return;
+  }
+
   await client.send(new SendEmailCommand({
-    FromEmailAddress: requireEnv("SES_FROM_EMAIL"),
+    FromEmailAddress: fromEmail,
     Destination: { ToAddresses: [booking.customerEmail] },
     Content: {
       Simple: {

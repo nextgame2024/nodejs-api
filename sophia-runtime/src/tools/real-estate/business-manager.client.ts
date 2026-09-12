@@ -25,6 +25,25 @@ export class BusinessManagerClient {
     const bookingId = booking?.["bookingId"];
     if (typeof bookingId !== "string") return created;
 
+    if (booking?.["listingType"] === "sale") {
+      const reportDelivery = asRecord(booking["reportDelivery"]);
+      const emailQueued = reportDelivery?.["deliveryStatus"] === "email_queued";
+      return {
+        ...payload,
+        booking: {
+          ...booking,
+          confirmationEmail: {
+            status: emailQueued ? "queued" : "pending_report",
+            customerEmail: booking["customerEmail"],
+            reportStatus: reportDelivery?.["reportStatus"] || "queued",
+            message: emailQueued
+              ? "The confirmation email and property report are queued for delivery."
+              : "The property report is being prepared and will be included with the confirmation email.",
+          },
+        },
+      };
+    }
+
     try {
       const emailResult = await this.request(
         `/bm/real-estate/inspection-bookings/${encodeURIComponent(bookingId)}/email-confirmation`,

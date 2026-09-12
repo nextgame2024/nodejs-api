@@ -14,6 +14,7 @@ const booking = {
 const getInspectionBooking = jest.fn();
 const markInspectionConfirmationSent = jest.fn();
 const markInspectionConfirmationFailed = jest.fn();
+const queueSaleInspectionConfirmation = jest.fn();
 const searchKnowledge = jest.fn();
 const sendInspectionConfirmationEmail = jest.fn();
 
@@ -21,6 +22,7 @@ jest.unstable_mockModule("../src/models/bm.realEstate.model.js", () => ({
   getInspectionBooking,
   markInspectionConfirmationSent,
   markInspectionConfirmationFailed,
+  queueSaleInspectionConfirmation,
   searchKnowledge,
 }));
 jest.unstable_mockModule("../src/services/bm.inspectionEmail.service.js", () => ({
@@ -35,6 +37,10 @@ describe("inspection confirmation resend", () => {
     getInspectionBooking.mockResolvedValue(booking);
     sendInspectionConfirmationEmail.mockResolvedValue(undefined);
     markInspectionConfirmationSent.mockResolvedValue(undefined);
+    queueSaleInspectionConfirmation.mockResolvedValue({
+      deliveryStatus: "waiting_report",
+      reportStatus: "queued",
+    });
   });
 
   it("requires customer confirmation before sending", async () => {
@@ -67,6 +73,63 @@ describe("inspection confirmation resend", () => {
     );
     expect(result).toEqual(expect.objectContaining({
       status: "sent",
+      customerEmail: "jlcm66@gmail.com",
+      resent: true,
+    }));
+  });
+
+  it("does not send a BUY confirmation before its property report is ready", async () => {
+    getInspectionBooking.mockResolvedValue({
+      ...booking,
+      listingType: "sale",
+      confirmationEmailSentAt: null,
+    });
+
+    const result = await service.sendInspectionConfirmation(
+      "10000000-0000-4000-8000-000000000001",
+      booking.bookingId,
+      { customerEmail: "jlcm66@gmail.com", confirmed: true },
+    );
+
+    expect(sendInspectionConfirmationEmail).not.toHaveBeenCalled();
+    expect(queueSaleInspectionConfirmation).toHaveBeenCalledWith(
+      "10000000-0000-4000-8000-000000000001",
+      booking.bookingId,
+      "jlcm66@gmail.com",
+      false,
+    );
+    expect(result).toEqual(expect.objectContaining({
+      status: "pending_report",
+      customerEmail: "jlcm66@gmail.com",
+    }));
+  });
+
+  it("requeues a corrected BUY recipient with the ready report", async () => {
+    getInspectionBooking.mockResolvedValue({ ...booking, listingType: "sale" });
+    queueSaleInspectionConfirmation.mockResolvedValue({
+      deliveryStatus: "email_queued",
+      reportStatus: "ready",
+    });
+
+    const result = await service.sendInspectionConfirmation(
+      "10000000-0000-4000-8000-000000000001",
+      booking.bookingId,
+      {
+        customerEmail: "jlcm66@gmail.com",
+        confirmed: true,
+        forceResend: true,
+      },
+    );
+
+    expect(sendInspectionConfirmationEmail).not.toHaveBeenCalled();
+    expect(queueSaleInspectionConfirmation).toHaveBeenCalledWith(
+      "10000000-0000-4000-8000-000000000001",
+      booking.bookingId,
+      "jlcm66@gmail.com",
+      true,
+    );
+    expect(result).toEqual(expect.objectContaining({
+      status: "queued",
       customerEmail: "jlcm66@gmail.com",
       resent: true,
     }));

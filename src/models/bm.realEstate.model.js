@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { enqueueSaleReportDelivery } from "./bm.propertyReportJobs.model.js";
 
 const PROPERTY_SELECT = `
   p.property_id AS "propertyId", p.company_id AS "companyId",
@@ -83,7 +84,7 @@ export async function listInspectionSlots(companyId, propertyId, from, to) {
   return rows;
 }
 
-export async function createInspectionBooking(companyId, input) {
+export async function createInspectionBooking(companyId, input, workflow = {}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -93,8 +94,13 @@ export async function createInspectionBooking(companyId, input) {
       [companyId, input.idempotencyKey],
     );
     if (existing.rows[0]) {
+      const result = await attachSaleReportDelivery(
+        client,
+        existing.rows[0],
+        workflow.reportVersion,
+      );
       await client.query("COMMIT");
-      return existing.rows[0];
+      return result;
     }
 
     const slotResult = await client.query(
@@ -131,8 +137,13 @@ export async function createInspectionBooking(companyId, input) {
        WHERE b.company_id = $1 AND b.booking_id = $2`,
       [companyId, rows[0].bookingId],
     );
+    const result = await attachSaleReportDelivery(
+      client,
+      booking.rows[0],
+      workflow.reportVersion,
+    );
     await client.query("COMMIT");
-    return booking.rows[0];
+    return result;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -168,21 +179,107 @@ export async function markInspectionConfirmationFailed(companyId, bookingId, mes
   );
 }
 
+export async function queueSaleInspectionConfirmation(
+  companyId,
+  bookingId,
+  customerEmail,
+  forceResend,
+) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT d.delivery_id, d.status, r.status AS report_status,
+         r.pdf_key, r.initial_attempts_exhausted_at
+       FROM bm_inspection_confirmation_deliveries d
+       JOIN bm_property_report_jobs r ON r.report_job_id = d.report_job_id
+       WHERE d.company_id = $1 AND d.booking_id = $2
+       FOR UPDATE OF d`,
+      [companyId, bookingId],
+    );
+    const delivery = current.rows[0];
+    if (!delivery) throw new Error("BUY inspection confirmation delivery not found");
+
+    await client.query(
+      `UPDATE bm_property_inspection_bookings
+       SET customer_email = $3,
+           confirmation_email_sent_at = CASE
+             WHEN $4 THEN NULL ELSE confirmation_email_sent_at
+           END,
+           confirmation_email_error = CASE
+             WHEN $4 THEN NULL ELSE confirmation_email_error
+           END
+       WHERE company_id = $1 AND booking_id = $2`,
+      [companyId, bookingId, customerEmail, forceResend],
+    );
+
+    if (forceResend) {
+      const reportReady = delivery.report_status === "ready" && delivery.pdf_key;
+      const reportExhausted = !!delivery.initial_attempts_exhausted_at && !reportReady;
+      const status = reportReady
+        ? "email_queued"
+        : reportExhausted
+          ? "fallback_queued"
+          : "waiting_report";
+      const updated = await client.query(
+        `UPDATE bm_inspection_confirmation_deliveries
+         SET status = $3, fallback_without_report = $4,
+             attempt_count = 0, next_attempt_at = now(), sent_at = NULL,
+             locked_at = NULL, lease_until = NULL, locked_by = NULL,
+             last_error = NULL, updated_at = now()
+         WHERE company_id = $1 AND booking_id = $2
+         RETURNING status`,
+        [companyId, bookingId, status, reportExhausted],
+      );
+      delivery.status = updated.rows[0].status;
+    }
+
+    await client.query("COMMIT");
+    return {
+      deliveryStatus: delivery.status,
+      reportStatus: delivery.report_status,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 const INSPECTION_BOOKING_SELECT = `
-  SELECT b.booking_id AS "bookingId", b.property_id AS "propertyId",
+  SELECT b.booking_id AS "bookingId", b.company_id AS "companyId",
+    b.property_id AS "propertyId",
     b.slot_id AS "slotId", b.customer_name AS "customerName",
     b.customer_email AS "customerEmail", b.customer_phone AS "customerPhone",
     b.status, b.createdat AS "createdAt",
     b.confirmation_email_sent_at AS "confirmationEmailSentAt",
     b.confirmation_email_error AS "confirmationEmailError",
     s.starts_at AS "startsAt", s.ends_at AS "endsAt",
+    p.listing_type AS "listingType",
     p.address AS "propertyAddress", p.suburb AS "propertySuburb",
     p.city AS "propertyCity", p.state AS "propertyState",
-    p.postcode AS "propertyPostcode"
+    p.postcode AS "propertyPostcode",
+    p.latitude::float8 AS "propertyLatitude",
+    p.longitude::float8 AS "propertyLongitude",
+    p.updatedat AS "propertyUpdatedAt"
   FROM bm_property_inspection_bookings b
   JOIN bm_property_inspection_slots s ON s.slot_id = b.slot_id
   JOIN bm_properties p ON p.property_id = b.property_id
 `;
+
+async function attachSaleReportDelivery(client, booking, reportVersion) {
+  if (booking.listingType !== "sale") return booking;
+  if (!reportVersion) throw new Error("Town Planner report version is required");
+
+  const reportDelivery = await enqueueSaleReportDelivery(client, {
+    companyId: booking.companyId,
+    bookingId: booking.bookingId,
+    property: booking,
+    reportVersion,
+  });
+  return { ...booking, reportDelivery };
+}
 
 async function rollbackResult(client, code) {
   await client.query("ROLLBACK");

@@ -1,5 +1,6 @@
 import * as model from "../models/bm.realEstate.model.js";
 import { sendInspectionConfirmationEmail } from "./bm.inspectionEmail.service.js";
+import { PROPERTY_REPORT_VERSION } from "./townplannerReportVersions.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,7 +55,7 @@ export async function createInspectionBooking(companyId, input = {}) {
       customerName, customerEmail, customerPhone: text(input.customerPhone) || undefined,
       confirmedStartsAt: confirmedStartsAt.toISOString(),
       idempotencyKey: text(input.idempotencyKey) || `${input.slotId}:${customerEmail}`,
-    });
+    }, { reportVersion: PROPERTY_REPORT_VERSION });
   } catch (error) {
     if (error?.code === "23505") {
       throw httpError("This customer is already booked for the selected inspection", 409);
@@ -83,6 +84,25 @@ export async function sendInspectionConfirmation(companyId, bookingId, input = {
   const customerEmail = text(input.customerEmail || booking.customerEmail).toLowerCase();
   if (!emailRe.test(customerEmail)) throw httpError("customerEmail must be valid");
   const forceResend = input.forceResend === true;
+
+  if (booking.listingType === "sale") {
+    const queued = await model.queueSaleInspectionConfirmation(
+      companyId,
+      normalizedBookingId,
+      customerEmail,
+      forceResend,
+    );
+    const readyForEmail = queued.deliveryStatus === "email_queued";
+    return {
+      status: readyForEmail ? "queued" : "pending_report",
+      customerEmail,
+      resent: forceResend,
+      reportStatus: queued.reportStatus,
+      message: readyForEmail
+        ? "The confirmation email and property report are queued for delivery."
+        : "The confirmation email will be sent when the property report is ready.",
+    };
+  }
 
   if (booking.confirmationEmailSentAt && !forceResend) {
     return {
