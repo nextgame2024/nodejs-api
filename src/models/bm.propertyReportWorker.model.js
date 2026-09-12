@@ -251,7 +251,7 @@ export async function claimNextDelivery({ workerId, leaseSeconds }) {
     }
     const claimed = await client.query(
       `UPDATE bm_inspection_confirmation_deliveries d
-       SET status = 'email_sending', attempt_count = attempt_count + 1,
+       SET status = 'email_sending', attempt_count = d.attempt_count + 1,
            locked_at = now(),
            lease_until = now() + make_interval(secs => $2),
            locked_by = $3, last_error = NULL, updated_at = now()
