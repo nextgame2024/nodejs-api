@@ -6,7 +6,7 @@ This workflow applies only to inspection bookings for properties listed for sale
 
 1. The booking API commits the inspection and an idempotent report job in one database transaction.
 2. Sophia confirms the booking immediately and does not wait for PDF generation.
-3. The existing `cron/weeklyGenerator.js` process generates or reuses one Town Planner PDF at a time.
+3. The API starts background report and email processors after it begins listening. The existing `cron/weeklyGenerator.js` worker starts the same processors. They generate or reuse one Town Planner PDF at a time across all processes.
 4. The email loop sends the booking confirmation with the PDF attached.
 5. After three initial report failures, the confirmation is sent without the PDF and the report is retried daily. A successful daily retry triggers a follow-up email with the report.
 
@@ -38,9 +38,11 @@ Keep the advisory lock IDs distinct. Increasing the number of worker instances d
 
 ## Deployment
 
-No additional paid worker is required. Deploy the API and the existing worker from the same source revision. Both initialize the queue tables on startup, and the worker continues to use `node cron/weeklyGenerator.js`.
+No additional paid worker is required. The API now consumes the queues itself, so BUY confirmations also work when only the API is running. Deploy the API and the existing worker from the same source revision. Both use `src/services/bm.inspectionWorkflow.service.js`, which initializes the queue schema and retries temporary initialization or processing failures. The worker continues to use `node cron/weeklyGenerator.js`; article-processing failures no longer terminate its inspection processors.
 
-The worker requires the same PostgreSQL, S3, Town Planner, mapping, and email configuration used by the existing services.
+Restart or redeploy the API to activate this change. Existing queued bookings are picked up automatically; customers do not need to book again. Report generation runs outside the booking request, and the report and email loops run independently. The existing database advisory locks coordinate API replicas and the dedicated worker.
+
+The API and worker require the same PostgreSQL, S3, Town Planner, mapping, and email configuration used by the existing services.
 
 ## Monitoring
 
@@ -74,4 +76,4 @@ WHERE status IN ('email_retry', 'failed')
 ORDER BY updated_at DESC;
 ```
 
-Worker log entries use the `[PROPERTY_REPORT]` and `[INSPECTION_EMAIL]` prefixes.
+Worker log entries use the `[PROPERTY_REPORT]` and `[INSPECTION_EMAIL]` prefixes. `[INSPECTION_WORKFLOW] Started` confirms that the API or worker started the queue consumers. A report stuck in `queued` with `attempt_count = 0`, together with a delivery in `waiting_report`, indicates that report processing has not started; check startup logs and database connectivity before investigating the email provider.

@@ -29,6 +29,7 @@ import { swapFaceOnVideoViaPod } from "../src/services/faceSwap.pod.js";
 import { ensureTownPlannerBookingWorkflowSchema } from "../src/config/startupMigrations.js";
 import { processPropertyReportCycle } from "../src/services/bm.propertyReportWorker.service.js";
 import { processInspectionEmailCycle } from "../src/services/bm.inspectionEmailWorker.service.js";
+import { startInspectionWorkflow } from "../src/services/bm.inspectionWorkflow.service.js";
 
 /* =========================
    CONFIG (env-overridable)
@@ -46,13 +47,6 @@ const CLEANUP_HOUR = Number(process.env.CRON_CLEANUP_HOUR || 3);
 
 // worker loop cadence (ms)
 const LOOP_MS = Number(process.env.WORKER_LOOP_MS || 60_000);
-const PROPERTY_REPORT_LOOP_MS = Number(
-  process.env.PROPERTY_REPORT_WORKER_LOOP_MS || 30_000
-);
-const INSPECTION_EMAIL_LOOP_MS = Number(
-  process.env.INSPECTION_EMAIL_WORKER_LOOP_MS || 15_000
-);
-
 const SYSTEM_AUTHOR_ID = process.env.SYSTEM_AUTHOR_ID; // required for article creation
 
 // Testing convenience: force an article run regardless of the hour
@@ -479,42 +473,6 @@ async function runCycle() {
   });
 }
 
-async function runPropertyReportLoop() {
-  for (;;) {
-    try {
-      const result = await processPropertyReportCycle();
-      if (result.status !== "idle" && result.status !== "lock_busy") {
-        console.log(`[${nowIso()}] [PROPERTY_REPORT]`, result);
-      }
-      if (result.status === "ready") continue;
-    } catch (error) {
-      console.error(
-        `[${nowIso()}] [PROPERTY_REPORT] Worker cycle failed:`,
-        error?.message || error
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, PROPERTY_REPORT_LOOP_MS));
-  }
-}
-
-async function runInspectionEmailLoop() {
-  for (;;) {
-    try {
-      const result = await processInspectionEmailCycle();
-      if (result.status !== "idle" && result.status !== "lock_busy") {
-        console.log(`[${nowIso()}] [INSPECTION_EMAIL]`, result);
-      }
-      if (result.status === "sent" || result.status === "fallback_sent") continue;
-    } catch (error) {
-      console.error(
-        `[${nowIso()}] [INSPECTION_EMAIL] Worker cycle failed:`,
-        error?.message || error
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, INSPECTION_EMAIL_LOOP_MS));
-  }
-}
-
 (async () => {
   await ensureTownPlannerBookingWorkflowSchema();
   if (RUN_ONCE) {
@@ -531,21 +489,19 @@ async function runInspectionEmailLoop() {
     console.log(
       `[${nowIso()}] Background worker loop started (every ${LOOP_MS}ms) — articles at ${DAILY_ARTICLES_HOUR}:00, cleanup at ${CLEANUP_HOUR}:00 (${BRISBANE_TZ}).`
     );
-    console.log(
-      `[${nowIso()}] Property report loop started (idle poll every ${PROPERTY_REPORT_LOOP_MS}ms, concurrency 1).`
-    );
-    console.log(
-      `[${nowIso()}] Inspection email loop started (idle poll every ${INSPECTION_EMAIL_LOOP_MS}ms, concurrency 1).`
-    );
+    const inspectionWorkflow = startInspectionWorkflow();
     await Promise.all([
       (async () => {
         for (;;) {
-          await runCycle();
+          try {
+            await runCycle();
+          } catch (error) {
+            console.error(`[${nowIso()}] [ARTICLES] Worker cycle failed:`, error?.message || error);
+          }
           await new Promise((r) => setTimeout(r, LOOP_MS));
         }
       })(),
-      runPropertyReportLoop(),
-      runInspectionEmailLoop(),
+      inspectionWorkflow.done,
     ]);
   }
 })();

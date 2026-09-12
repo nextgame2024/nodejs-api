@@ -1,0 +1,191 @@
+{
+  "document": {
+    "purpose": "Provide concise project context for future Sophia AI development conversations.",
+    "createdAt": "2026-09-13",
+    "timezone": "Australia/Brisbane",
+    "workspace": "/Users/josecorredor/jose/sophiaAi",
+    "note": "Verify the current Git diff and source code before assuming every historical item remains unchanged."
+  },
+  "project": {
+    "name": "Sophia AI",
+    "frontend": "Angular application in frontend/",
+    "backend": "Node.js API and worker in backend/",
+    "realtimeRuntime": "NestJS/TypeScript service in backend/sophia-runtime/",
+    "primaryDemoRoute": "/sophia",
+    "businessDomain": "Real-estate property search, property information, requirements, and inspection booking"
+  },
+  "avatarPlans": [
+    {
+      "commercialName": "Essential",
+      "implementation": "OpenAI",
+      "status": "enabled"
+    },
+    {
+      "commercialName": "Professional",
+      "implementation": "OpenAI plus HeyGen Full",
+      "status": "enabled",
+      "desktopStandbyAsset": "assets/avatars/PremiumBG.jpg",
+      "mobileStandbyAsset": "assets/avatars/ProffesionalBGMobile.jpg"
+    },
+    {
+      "commercialName": "Premium",
+      "implementation": "Tavus",
+      "status": "enabled",
+      "desktopStandbyAsset": "assets/avatars/ProffesionalBG.jpg",
+      "mobileStandbyAsset": "assets/avatars/PremiumBGMobile.jpg"
+    },
+    {
+      "implementation": "OpenAI plus SIMLI",
+      "status": "hidden",
+      "reason": "Avatar quality was not acceptable for the presentation."
+    }
+  ],
+  "frontendRequirements": {
+    "layout": "Sophia uses the full available width and height between the header and footer for all enabled plans.",
+    "mediaPositioning": "Preserve image/video aspect ratio, prioritize keeping the avatar head visible, and crop from the bottom when necessary.",
+    "propertyGallery": "Display three property photos, allow users to enlarge a photo in a centered modal, provide a close action, and close the photo modal when another workflow panel such as inspection times opens.",
+    "modalBackdrop": "Use a dark translucent backdrop while the enlarged-photo modal is open.",
+    "bookingConfirmation": "Show editable customer name and email before sending, update displayed details when they change, ask for confirmation, and allow corrected-address resends.",
+    "requirementsPanel": "When Sophia explains buying, selling, or rental requirements, also display those requirements on screen.",
+    "temporaryErrors": "Transient error messages should disappear after four seconds.",
+    "idleBehavior": "Do not end a session while Sophia or the user is speaking. When genuinely idle, prompt after 20 seconds and close after a further 5 seconds without a response."
+  },
+  "conversationBehavior": {
+    "requirements": "Sophia should provide common agency requirements directly for this demonstration. She should not add the phrase 'this is not legal advice' and should not claim she lacks the knowledge.",
+    "bookingTimes": "Spoken and displayed inspection times must use the same source value and Australia/Brisbane timezone formatting.",
+    "emailCorrection": "A user may correct an email before delivery or request a resend after delivery.",
+    "saleReportMessage": "After a BUY inspection is booked, Sophia should say: Your inspection is booked. I'm also preparing the property report and will include it with your confirmation email.",
+    "saleReportConstraint": "Sophia must not say the confirmation email was already sent while the property report is still queued or generating."
+  },
+  "townPlannerIntegration": {
+    "scope": "Generate and attach a Town Planner PDF only for BUY inspection bookings. Rental inspection confirmation remains unchanged.",
+    "criticalPath": "The inspection booking is committed first and never waits for PDF generation.",
+    "queueTechnology": "PostgreSQL tables act as the durable queue inside the existing backend and worker deployment.",
+    "workerDeployment": "Reuse backend/cron/weeklyGenerator.js; no additional paid worker service is required during development.",
+    "globalConcurrency": {
+      "reportGenerators": 1,
+      "emailSenders": 1,
+      "mechanism": "PostgreSQL advisory locks plus FOR UPDATE SKIP LOCKED row claims"
+    },
+    "reportCaching": {
+      "enabled": true,
+      "keyInputs": [
+        "companyId",
+        "propertyId",
+        "property update timestamp",
+        "report version",
+        "normalized report inputs"
+      ],
+      "goal": "Reuse a valid property-specific report rather than regenerate it for every buyer."
+    },
+    "idempotency": {
+      "report": "bm_property_report_jobs.cache_key is unique.",
+      "delivery": "bm_inspection_confirmation_deliveries.booking_id is unique.",
+      "emailSemantics": "Delivery is at-least-once; a provider success followed by a process crash before the database commit can cause a duplicate retry."
+    },
+    "reportRetryPolicy": {
+      "initialAttempts": 3,
+      "initialBaseDelaySeconds": 120,
+      "initialBackoff": "exponential",
+      "afterInitialFailure": "Send the booking confirmation without the PDF and retry report generation once per day.",
+      "dailyRetrySeconds": 86400,
+      "recoveryBehavior": "If a daily retry succeeds after the fallback email, send a follow-up email containing the report."
+    },
+    "emailRetryPolicy": {
+      "attempts": 3,
+      "baseDelaySeconds": 120,
+      "backoff": "exponential"
+    },
+    "leases": {
+      "reportSeconds": 900,
+      "emailSeconds": 300,
+      "recovery": "Expired running leases are returned to an eligible retry state."
+    },
+    "reportStates": [
+      "queued",
+      "retry",
+      "daily_retry",
+      "running",
+      "ready",
+      "failed"
+    ],
+    "deliveryStates": [
+      "waiting_report",
+      "email_queued",
+      "email_sending",
+      "email_retry",
+      "sent",
+      "fallback_queued",
+      "fallback_sent",
+      "failed"
+    ],
+    "storage": "Generated PDFs are stored in the existing S3 integration; the queue row stores pdf_key and pdf_url.",
+    "emailProviders": "The attachment path supports the existing log, SMTP, and Amazon SES configurations."
+  },
+  "townPlannerImplementation": {
+    "databaseSchema": "backend/src/config/startupMigrations.js",
+    "jobEnqueueModel": "backend/src/models/bm.propertyReportJobs.model.js",
+    "workerPersistence": "backend/src/models/bm.propertyReportWorker.model.js",
+    "reportWorker": "backend/src/services/bm.propertyReportWorker.service.js",
+    "emailWorker": "backend/src/services/bm.inspectionEmailWorker.service.js",
+    "emailService": "backend/src/services/bm.inspectionEmail.service.js",
+    "bookingModel": "backend/src/models/bm.realEstate.model.js",
+    "bookingService": "backend/src/services/bm.realEstate.service.js",
+    "reportVersions": "backend/src/services/townplannerReportVersions.js",
+    "workerEntryPoint": "backend/cron/weeklyGenerator.js",
+    "runtimeClient": "backend/sophia-runtime/src/tools/real-estate/business-manager.client.ts",
+    "runtimePrompt": "backend/sophia-runtime/src/knowledge/sophia-profile.ts",
+    "frontendBookingTypes": "frontend/src/app/sophia-runtime/types/sophia-runtime.types.ts",
+    "frontendBookingPanel": "frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.html",
+    "operationsGuide": "backend/docs/sophia-property-report-workflow.md"
+  },
+  "implementationPhases": [
+    {
+      "phase": 1,
+      "status": "complete",
+      "scope": "Database queue schema, report versioning, cache key, booking transaction integration, and BUY-only enqueue behavior."
+    },
+    {
+      "phase": 2,
+      "status": "complete",
+      "scope": "Report worker, global concurrency control, leases, cache reuse, three initial attempts, and daily recovery."
+    },
+    {
+      "phase": 3,
+      "status": "complete",
+      "scope": "Durable email delivery worker, PDF attachments, retries, and confirmation fallback without a report."
+    },
+    {
+      "phase": 4,
+      "status": "complete",
+      "scope": "Sophia runtime behavior, pending-report messaging, resend/corrected-email handling, and frontend pending status."
+    },
+    {
+      "phase": 5,
+      "status": "complete",
+      "scope": "Release audit, shared worker advisory-lock fix, configuration validation, daily-recovery follow-up email, builds, tests, and operational documentation."
+    }
+  ],
+  "verification": {
+    "completedAt": "2026-09-12",
+    "backend": "22 relevant tests passed across 6 suites.",
+    "sophiaRuntime": "38 tests passed across 10 suites; production TypeScript build passed.",
+    "frontend": "TypeScript check and Angular production build passed using Node.js 20.19.1.",
+    "syntax": "Changed worker JavaScript files passed node --check.",
+    "diff": "git diff --check passed in backend and frontend.",
+    "frontendBuildWarnings": [
+      "Initial bundle exceeds the configured budget.",
+      "HeyGen SDK includes a CommonJS dependency on events.",
+      "The build could not locate /assets/primeicons/primeicons.css."
+    ]
+  },
+  "remainingDeploymentValidation": [
+    "Deploy the backend API and existing worker from the same source revision so both use the new queue schema.",
+    "Run one real BUY booking against the deployed PostgreSQL, Town Planner, S3, and email integrations.",
+    "Confirm the booking API returns immediately while the PDF continues in the worker.",
+    "Confirm the generated PDF is attached to the correct recipient's email.",
+    "Exercise three report failures, fallback email delivery, and a later successful daily retry.",
+    "Monitor queue states and worker logs using backend/docs/sophia-property-report-workflow.md."
+  ],
+  "workingTreeCaution": "The backend and frontend may contain uncommitted user changes. Never revert unrelated changes; inspect git status and diffs before editing."
+}
