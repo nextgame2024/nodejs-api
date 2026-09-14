@@ -1,5 +1,6 @@
 import "dotenv/config";
 import pool from "../src/config/db.js";
+import { refreshDemoInspectionSlots } from "../src/models/bm.demoInspectionSlots.model.js";
 
 const companyId = process.env.BM_DEMO_COMPANY_ID;
 if (!companyId) throw new Error("BM_DEMO_COMPANY_ID is required.");
@@ -78,10 +79,6 @@ const knowledge = [
   ["inspections", "How do I book an inspection?", "Choose an available property and inspection time, then provide your name and email. Sophia will repeat the property and time for confirmation before creating the booking."],
 ];
 
-function inspectionSlotId(propertyIndex, slotIndex) {
-  return `20000000-0000-4000-8000-${String((propertyIndex + 1) * 10 + slotIndex + 1).padStart(12, "0")}`;
-}
-
 const client = await pool.connect();
 try {
   await client.query("BEGIN");
@@ -111,24 +108,7 @@ try {
       await client.query("INSERT INTO bm_property_media (property_id, media_url, alt_text, sort_order) VALUES ($1,$2,$3,$4)", [propertyId, url, `${title} photo ${sortOrder + 1}`, sortOrder]);
     }
 
-    await client.query(`DELETE FROM bm_property_inspection_slots s
-      WHERE s.property_id = $1 AND s.starts_at > now()
-        AND NOT EXISTS (
-          SELECT 1 FROM bm_property_inspection_bookings b WHERE b.slot_id = s.slot_id
-        )`, [propertyId]);
-    for (const [slotIndex, dayOffset] of [2, 4, 6].entries()) {
-      const startsAt = new Date();
-      startsAt.setDate(startsAt.getDate() + dayOffset + (index % 2));
-      startsAt.setHours(index % 2 ? 14 : 10, 30, 0, 0);
-      const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
-      await client.query(`INSERT INTO bm_property_inspection_slots
-        (slot_id, property_id, starts_at, ends_at, capacity)
-        VALUES ($1,$2,$3,$4,10)
-        ON CONFLICT (slot_id) DO UPDATE SET
-          property_id=EXCLUDED.property_id, starts_at=EXCLUDED.starts_at,
-          ends_at=EXCLUDED.ends_at, capacity=EXCLUDED.capacity, status='open'`,
-        [inspectionSlotId(index, slotIndex), propertyId, startsAt, endsAt]);
-    }
+    await refreshDemoInspectionSlots(client, companyId, propertyId);
   }
 
   await client.query("DELETE FROM bm_agency_knowledge WHERE company_id = $1", [companyId]);
@@ -140,7 +120,7 @@ try {
   }
 
   await client.query("COMMIT");
-  console.log(`Real-estate demo seeded: ${properties.length} properties, ${properties.length * 3} inspection slots, ${knowledge.length} knowledge entries.`);
+  console.log(`Real-estate demo seeded: ${properties.length} properties, rolling two-week inspection availability, ${knowledge.length} knowledge entries.`);
 } catch (error) {
   await client.query("ROLLBACK");
   console.error("Real-estate demo seed failed:", error);

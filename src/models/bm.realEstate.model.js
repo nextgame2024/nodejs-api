@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { isDemoPropertyId, refreshDemoInspectionSlots } from "./bm.demoInspectionSlots.model.js";
 import { enqueueSaleReportDelivery } from "./bm.propertyReportJobs.model.js";
 
 const PROPERTY_SELECT = `
@@ -66,6 +67,19 @@ export async function getProperty(companyId, propertyId) {
 }
 
 export async function listInspectionSlots(companyId, propertyId, from, to) {
+  if (isDemoPropertyId(propertyId)) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await refreshDemoInspectionSlots(client, companyId, propertyId);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   const { rows } = await pool.query(
     `SELECT s.slot_id AS "slotId", s.property_id AS "propertyId",
        s.starts_at AS "startsAt", s.ends_at AS "endsAt", s.capacity,

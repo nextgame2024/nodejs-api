@@ -77,3 +77,33 @@ ORDER BY updated_at DESC;
 ```
 
 Worker log entries use the `[PROPERTY_REPORT]` and `[INSPECTION_EMAIL]` prefixes. `[INSPECTION_WORKFLOW] Started` confirms that the API or worker started the queue consumers. A report stuck in `queued` with `attempt_count = 0`, together with a delivery in `waiting_report`, indicates that report processing has not started; check startup logs and database connectivity before investigating the email provider.
+
+## Demo inspection availability
+
+The original demo seed created only a few days of inspection slots. Once those
+expired, both buy and rent searches correctly returned no available times.
+
+Seeded demo properties now refresh a rolling two-week schedule when inspection
+availability is requested: Tuesday, Thursday and Saturday at 10:30 am or 2:30 pm
+Australia/Brisbane, with 30-minute inspections and capacity 10. This is restricted
+to the 40 fixed seed property IDs that still have the demo agent email and are
+available. Real agency listings retain their manually supplied schedules.
+
+Refreshes only insert missing future slots. Booked, full, closed and cancelled
+slots are never moved or reopened; property row locks prevent duplicate inserts
+from concurrent API requests. The seed script uses the same refresh logic.
+
+To replenish all demo listings immediately without reseeding properties or media:
+
+```sh
+node scripts/refresh-bm-demo-inspection-slots.mjs
+```
+
+Deploy the backend changes for automatic replenishment on later availability
+requests. No additional cron job is required.
+
+The PostgreSQL regression tests use temporary tables and roll back fixture data:
+
+```sh
+INSPECTION_SQL_TEST_DATABASE=1 NODE_OPTIONS=--experimental-vm-modules node --import dotenv/config node_modules/jest/bin/jest.js --runInBand tests/bm.demoInspectionSlots.test.js
+```
