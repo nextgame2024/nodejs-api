@@ -107,9 +107,9 @@ Acceptance: duplicate/racing requests, full slots, time mismatch, edited details
 unconfirmed requests, retries and recipient correction; consultation success and
 email delivery status communicated separately.
 
-## Phase 5 — Combined demo and release validation (validation passed; deployment pending)
+## Phase 5 — Combined demo and release validation (published; live checks passed)
 
-Validation and handoff: [Phase 5 release report](student-agency-phase5-release.md). Automated suites and the live consultation email rehearsal passed; the user confirmed inbox receipt. Live source retrieval and demo availability were checked. Public service deployment and the live avatar rehearsal remain pending.
+Validation and handoff: [Phase 5 release report](student-agency-phase5-release.md). Automated suites and the live consultation email rehearsal passed; the user confirmed inbox receipt. Backend, runtime and frontend releases are published and verified. The deployed consultation worker sent the additional demo confirmation after the pooled-connection lock fix. Live source retrieval and both property/consultation availability passed. A spoken avatar rehearsal remains the presenter acceptance step.
 
 - Regress buy/rent searches, inspections, purchase report/email and resends.
 - Test student Q&A, official verification, comparisons, cards, booking and email.

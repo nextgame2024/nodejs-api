@@ -2,14 +2,22 @@
 
 Validation date: 19 September 2026, Australia/Brisbane.
 
-Status: automated validation and an actual consultation email rehearsal passed.
-The user confirmed receipt in the inbox at `jlcm66@gmail.com`. Backend/runtime release `876b69f` has been published and verified live through the
-runtime: both property searches and inspection slots, official GS comparison and
-student consultation slots passed. Frontend release `83cadf2` is pushed; public
-asset activation is still being checked. A production-path demo booking exposed a
-pooled advisory-lock issue; the follow-up fix uses a transaction-scoped lock with
-an explicit transaction and a new lock key, avoiding old orphaned session locks.
-Final production delivery and live avatar rehearsal are still being checked.
+Status: backend, runtime and frontend published and verified live. Backend/runtime
+release `876b69f`, followed by pooled queue-lock correction `939af2a`; frontend
+release `83cadf2`. The public page serves `main-6KSKZKUN.js` and consultation bundle
+`chunk-DO6Y62GG.js`. Production runtime configuration has a configured Maps key
+and uses the `webrtc-track` audio bridge.
+
+The user confirmed inbox receipt of the isolated email rehearsal. The additional
+production-path booking `2ae313fa-bf71-4df1-a8c5-9198226b7073` was sent by the
+deployed worker on its first attempt at `2026-09-19T10:38:31.877Z`, with no delivery
+error. Its recipient is `jlcm66@gmail.com`; inbox receipt of this second email
+has not been separately confirmed. No further emails were sent during final checks.
+
+The deployed runtime passed rental/purchase searches and inspection availability,
+official GS comparison and student consultation availability. Automated provider
+and browser tests passed; a spoken live avatar rehearsal on all three plans remains
+a presenter acceptance check, not something the automated smoke test performs.
 
 ## Verified evidence
 
