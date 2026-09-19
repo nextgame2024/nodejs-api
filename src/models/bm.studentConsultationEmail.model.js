@@ -3,9 +3,16 @@ import {getBooking} from './bm.studentConsultation.model.js';
 export async function acquireLock() {
   const client=await pool.connect();
   try {
-    const {rows}=await client.query('SELECT pg_try_advisory_lock(74622034) AS acquired');
-    if(!rows[0].acquired){client.release();return null;}
-    return {release:async()=>{try{await client.query('SELECT pg_advisory_unlock(74622034)');}finally{client.release();}}};
+    // An explicit transaction pins a backend through transaction-mode poolers.
+    // Session locks can otherwise be acquired and released on different backends.
+    // Use a new key so old orphaned session locks cannot block the fixed worker.
+    await client.query('BEGIN');
+    const {rows}=await client.query('SELECT pg_try_advisory_xact_lock(74622035) AS acquired');
+    if(!rows[0].acquired){await client.query('ROLLBACK');client.release();return null;}
+    return {release:async()=>{
+      try{await client.query('COMMIT');client.release();}
+      catch(error){client.release(true);throw error;}
+    }};
   }catch(error){client.release(true);throw error;}
 }
 export async function claimEmail(workerId) {

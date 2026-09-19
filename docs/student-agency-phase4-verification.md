@@ -31,7 +31,8 @@ availability, review, booking and email. No real adviser meeting is represented.
 
 The API starts an independent consultation email worker on startup. The optional
 `cron/weeklyGenerator.js` worker also processes the queue; an independent PostgreSQL
-advisory lock prevents overlapping cycles across those processes. It does not depend
+transaction-scoped advisory lock prevents overlapping cycles across those processes
+(the Phase 5 correction pins the connection through pooled databases). It does not depend
 on `cron/aiToolkitEmailCron.js` or that cron's daily schedule.
 
 The worker polls every fifteen seconds, claims a delivery with a five-minute lease,

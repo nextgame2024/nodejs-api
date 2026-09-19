@@ -45,6 +45,11 @@ check('serializes competing bookings, atomically queues one email and handles du
  expect(Number((await pool.query('SELECT count(*) FROM bm_student_consultation_deliveries')).rows[0].count)).toBe(1);
  expect((await model.listSlots(company)).some(s=>s.slotId===slot.slotId)).toBe(false);
 });
+check('holds a transaction-scoped worker lock and releases it for the next cycle',async()=>{
+ const lock=await delivery.acquireLock();expect(lock).not.toBeNull();
+ try{expect(await delivery.acquireLock()).toBeNull();}finally{await lock.release();}
+ const next=await delivery.acquireLock();expect(next).not.toBeNull();await next.release();
+});
 check('claims a queue item once, protects its recipient, and records retry/logged accurately',async()=>{
  const claimed=await delivery.claimEmail('test-worker');expect(claimed.customerEmail).toBe(booking.customerEmail);
  expect(await delivery.claimEmail('other-worker')).toBeNull();

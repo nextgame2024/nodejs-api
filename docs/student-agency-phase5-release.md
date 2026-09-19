@@ -3,18 +3,20 @@
 Validation date: 19 September 2026, Australia/Brisbane.
 
 Status: automated validation and an actual consultation email rehearsal passed.
-The user confirmed receipt in the inbox at `jlcm66@gmail.com`. Application changes
-are still local. The public student consultation endpoint returned HTTP 404 during
-preflight; property routes returned the expected unauthenticated HTTP 401 and the
-public Sophia page returned HTTP 200. A live avatar rehearsal and deployment are
-not represented as completed.
+The user confirmed receipt in the inbox at `jlcm66@gmail.com`. Backend/runtime release `876b69f` has been published and verified live through the
+runtime: both property searches and inspection slots, official GS comparison and
+student consultation slots passed. Frontend release `83cadf2` is pushed; public
+asset activation is still being checked. A production-path demo booking exposed a
+pooled advisory-lock issue; the follow-up fix uses a transaction-scoped lock with
+an explicit transaction and a new lock key, avoiding old orphaned session locks.
+Final production delivery and live avatar rehearsal are still being checked.
 
 ## Verified evidence
 
 | Check | Result |
 |---|---|
 | Backend unit/regression suite | 60 tests passed; includes purchase report jobs, inspection email workers, rental confirmation, student sources and consultations |
-| PostgreSQL release suite | 10 tests passed; temporary-schema tests and EXPLAIN-only production query validation |
+| PostgreSQL release suite | 11 tests passed; temporary-schema tests and EXPLAIN-only production query validation |
 | Runtime suite | 50 tests passed; includes cross-domain review invalidation and independent sessions |
 | Browser suite | 14 tests passed; cards, late responses, edited email, consent and confirmation turns |
 | Real consultation email | One additional opt-in test passed; SES accepted, user confirmed inbox receipt |
@@ -34,7 +36,15 @@ Education work sources were fetched successfully and saved as fresh snapshots.
 The GS comparison returned `supported_comparison`. This does not establish that
 all migration requirements or all recent changes have been verified.
 
+Production-path demo booking: `2ae313fa-bf71-4df1-a8c5-9198226b7073`,
+recipient `jlcm66@gmail.com`, 21 September 2026 at 10:00 Brisbane time.
+
 Changes found during release review:
+
+- Worker advisory locks now use an explicit transaction and transaction-scoped
+  lock so transaction-mode connection pools cannot strand the lock on a different
+  database backend. A new key bypasses old session locks without terminating
+  database connections. SQL tests verify contention and release.
 
 - Consultation email supports both the app's existing `SES_FROM`/`SES_REGION`
   configuration and the newer `SES_FROM_EMAIL`/`AWS_REGION` names, with newer
