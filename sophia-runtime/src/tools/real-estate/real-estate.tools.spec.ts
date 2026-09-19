@@ -200,3 +200,18 @@ describe("real-estate runtime tools", () => {
     }));
   });
 });
+
+it("invalidates inspection review for the switching session without affecting another session",async()=>{
+  const bookInspection=jest.fn<BusinessManagerClient["bookInspection"]>().mockResolvedValue({});
+  const state:{clear?:(sessionId?:string)=>void}={};
+  const tools=createRealEstateTools({bookInspection} as unknown as BusinessManagerClient,state);
+  const review=tools.find(t=>t.definition.name==="reviewInspectionBooking")!;
+  const book=tools.find(t=>t.definition.name==="bookInspection")!;
+  const input={propertyId:"10000000-0000-4000-8000-000000000001",slotId:"20000000-0000-4000-8000-000000000001",confirmedStartsAt:"2026-09-20T00:30:00Z",propertyAddress:"Example property",startsAtLabel:"Example time",customerName:"Example",customerEmail:"example@example.com"};
+  await review.execute(input,{customerId:"demo",sessionId:"switching"});
+  await review.execute(input,{customerId:"demo",sessionId:"other"});
+  state.clear?.("switching");
+  await expect(book.execute({...input,confirmed:true},{customerId:"demo",sessionId:"switching"})).rejects.toThrow("Display and confirm");
+  await book.execute({...input,confirmed:true},{customerId:"demo",sessionId:"other"});
+  expect(bookInspection).toHaveBeenCalledTimes(1);
+});

@@ -5,9 +5,10 @@ import { BusinessManagerClient } from "./business-manager.client.js";
 const optional = <T extends z.ZodTypeAny>(schema: T) =>
   schema.nullish().transform((value) => value ?? undefined);
 
-export function createRealEstateTools(client: BusinessManagerClient): RuntimeTool<any, unknown>[] {
+export function createRealEstateTools(client: BusinessManagerClient, reviewState?: { clear?: (sessionId?: string) => void }): RuntimeTool<any, unknown>[] {
   const pendingReviews = new Map<string, { mode: "new" | "resend"; input: Record<string, unknown> }>();
   const reviewKey = (sessionId?: string) => sessionId || "missing-session";
+  if (reviewState) reviewState.clear = sessionId => { pendingReviews.delete(reviewKey(sessionId)); };
 
   return [
     {
@@ -106,7 +107,7 @@ export function createRealEstateTools(client: BusinessManagerClient): RuntimeToo
       },
     },
     {
-      definition: { name: "searchAgencyKnowledge", description: "Search and display agency-approved rental and selling requirements. You must use this for questions about requirements, documents, applications, leases or selling. Choose renting for rent, rental, tenant, lease or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
+      definition: { name: "searchAgencyKnowledge", description: "Search and display agency-approved rental and selling requirements. Use this only for real-estate requirements, property documents, rental applications, leases or selling. Never use this for student visas or migration; use searchStudentAgencyKnowledge. Choose renting for rent, rental, tenant, lease or application questions; choose selling for sale, seller or vendor questions.", parameters: { type: "object", additionalProperties: false, properties: { q: { type: "string" }, category: { type: "string", enum: ["renting", "selling", "inspections", "general"] } }, required: ["q"] } },
       inputSchema: z.object({ q: z.string().trim().min(2).max(240), category: optional(z.enum(["renting", "selling", "inspections", "general"])) }),
       execute: async (input) => {
         try {

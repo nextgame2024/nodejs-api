@@ -1,6 +1,8 @@
 import { expect, it, jest } from "@jest/globals";
 
 const startInspectionWorkflow = jest.fn();
+const startStudentConsultationWorkflow = jest.fn();
+jest.unstable_mockModule("../src/services/bm.studentConsultationWorker.service.js", () => ({ startStudentConsultationWorkflow }));
 const listen = jest.fn((_port, ready) => ready());
 jest.unstable_mockModule("../src/app.js", () => ({ default: { listen } }));
 jest.unstable_mockModule("../src/config/db.js", () => ({ pingDb: jest.fn().mockResolvedValue(undefined) }));
@@ -13,4 +15,5 @@ it("starts the inspection queue consumers when the API starts", async () => {
   await import("../src/server.js");
   expect(listen).toHaveBeenCalled();
   expect(startInspectionWorkflow).toHaveBeenCalledTimes(1);
+  expect(startStudentConsultationWorkflow).toHaveBeenCalledTimes(1);
 });

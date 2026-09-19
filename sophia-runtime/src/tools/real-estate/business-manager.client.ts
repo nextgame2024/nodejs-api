@@ -3,6 +3,12 @@ import { runtimeConfig } from "../../config/runtime-config.js";
 
 @Injectable()
 export class BusinessManagerClient {
+  getStudentConsultationSlots() { return this.get("/bm/student-agency/consultation-slots"); }
+  reviewStudentConsultation(input: Record<string, unknown>) { return this.request("/bm/student-agency/consultation-review", {method:"POST",body:JSON.stringify(input)}); }
+  bookStudentConsultation(input: Record<string, unknown>) { return this.request("/bm/student-agency/consultation-bookings", {method:"POST",body:JSON.stringify(input)}); }
+  getStudentConsultationBooking(bookingId: string) { return this.get(`/bm/student-agency/consultation-bookings/${encodeURIComponent(bookingId)}`); }
+  reviewStudentConsultationEmail(input: Record<string, unknown>) { return this.request(`/bm/student-agency/consultation-bookings/${encodeURIComponent(String(input["bookingId"]))}/review-email`, {method:"POST",body:JSON.stringify({customerEmail:input["customerEmail"]})}); }
+  resendStudentConsultationEmail(input: Record<string, unknown>) { return this.request(`/bm/student-agency/consultation-bookings/${encodeURIComponent(String(input["bookingId"]))}/email`, {method:"POST",body:JSON.stringify({customerEmail:input["customerEmail"],confirmed:input["confirmed"]})}); }
   searchProperties(input: Record<string, unknown>) {
     return this.get("/bm/real-estate/properties", input);
   }
@@ -11,6 +17,15 @@ export class BusinessManagerClient {
   }
   getInspectionSlots(propertyId: string, input: Record<string, unknown>) {
     return this.get(`/bm/real-estate/properties/${encodeURIComponent(propertyId)}/inspection-slots`, input);
+  }
+  compareStudentRules(input: Record<string, unknown>) {
+    return this.get("/bm/student-agency/compare", input);
+  }
+  verifyStudentRules(input: Record<string, unknown>) {
+    return this.get("/bm/student-agency/verify", input);
+  }
+  searchStudentAgencyKnowledge(input: Record<string, unknown>) {
+    return this.get("/bm/student-agency/knowledge", input);
   }
   searchKnowledge(input: Record<string, unknown>) {
     return this.get("/bm/real-estate/knowledge", input);

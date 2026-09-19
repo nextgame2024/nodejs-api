@@ -1,10 +1,13 @@
 import pool from "./db.js";
+import { ensureStudentConsultationSchema } from "./studentConsultationSchema.js";
 
 const BM_USER_TYPE_VALUES = ["employee", "supplier", "client"];
 
 export async function ensureStartupMigrations() {
   await ensureBmUserTypeValues();
   await ensureTownPlannerBookingWorkflowSchema();
+  await ensureStudentAgencyKnowledgeSchema();
+  await ensureStudentConsultationSchema();
 }
 
 export async function ensureTownPlannerBookingWorkflowSchema() {
@@ -79,4 +82,53 @@ async function ensureBmUserTypeValues() {
       throw error;
     }
   }
+}
+
+export async function ensureStudentAgencyKnowledgeSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bm_student_agency_knowledge (
+      knowledge_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id uuid NOT NULL REFERENCES bm_company(company_id) ON DELETE CASCADE,
+      topic text NOT NULL,
+      question text NOT NULL,
+      answer text NOT NULL,
+      previous_rule text,
+      current_rule text,
+      new_student_impact text,
+      current_student_impact text,
+      applicability jsonb NOT NULL DEFAULT '{}'::jsonb,
+      change_status text NOT NULL DEFAULT 'general'
+        CHECK (change_status IN ('general', 'announced', 'in_force', 'superseded')),
+      effective_from date,
+      effective_to date,
+      sources jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sources) = 'array'),
+      publication_status text NOT NULL DEFAULT 'draft'
+        CHECK (publication_status IN ('draft', 'approved', 'withdrawn')),
+      reviewed_by text,
+      verified_at timestamptz,
+      review_due_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CHECK (effective_to IS NULL OR effective_from IS NULL OR effective_to >= effective_from),
+      CHECK (publication_status <> 'approved' OR (
+        reviewed_by IS NOT NULL AND length(trim(reviewed_by)) > 0
+        AND verified_at IS NOT NULL AND review_due_at IS NOT NULL
+        AND review_due_at > verified_at AND jsonb_array_length(sources) > 0
+      ))
+    );
+    ALTER TABLE bm_student_agency_knowledge ADD COLUMN IF NOT EXISTS content_key text;
+    ALTER TABLE bm_student_agency_knowledge ADD COLUMN IF NOT EXISTS revision_hash text;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bm_student_knowledge_revision
+      ON bm_student_agency_knowledge(company_id, content_key, revision_hash);
+    CREATE TABLE IF NOT EXISTS bm_student_source_snapshots (
+      source_id text NOT NULL,
+      content_hash text NOT NULL,
+      snapshot jsonb NOT NULL,
+      first_fetched_at timestamptz NOT NULL DEFAULT now(),
+      last_checked_at timestamptz NOT NULL,
+      PRIMARY KEY(source_id, content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bm_student_knowledge_company
+      ON bm_student_agency_knowledge(company_id, publication_status, review_due_at);
+  `);
 }

@@ -28,6 +28,7 @@ import bmScheduleRoutes from "./routes/bm.schedule.routes.js";
 import bmSitesRoutes from "./routes/bm.sites.routes.js";
 import bmPalletsRoutes from "./routes/bm.pallets.routes.js";
 import bmToolkitRoutes from "./routes/bm.toolkit.routes.js";
+import bmStudentAgencyRoutes from "./routes/bm.studentAgency.routes.js";
 import bmRealEstateRoutes from "./routes/bm.realEstate.routes.js";
 import contactRoutes from "./routes/contact.routes.js";
 
@@ -88,6 +89,7 @@ app.use("/api", bmSitesRoutes);
 app.use("/api", bmPalletsRoutes);
 app.use("/api", bmToolkitRoutes);
 app.use("/api", bmRealEstateRoutes);
+app.use("/api", bmStudentAgencyRoutes);
 app.use("/api", contactRoutes);
 app.use("/api/townplanner/v2", townplannerV2Routes);
 

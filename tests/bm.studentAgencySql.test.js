@@ -1,0 +1,50 @@
+import { afterAll, beforeAll, expect, it, jest } from "@jest/globals";
+import pg from "pg";
+import crypto from "node:crypto";
+const enabled=process.env.INSPECTION_SQL_TEST_DATABASE === "1";
+const database=enabled ? new pg.Pool({connectionString:process.env.DATABASE_URL,
+  ssl:process.env.DB_SSL === "true" ? {rejectUnauthorized:true} : undefined,connectionTimeoutMillis:10000}) : null;
+let client;
+jest.unstable_mockModule("../src/config/db.js",()=>({default:{query:(...args)=>client.query(...args)}}));
+const {ensureStudentAgencyKnowledgeSchema}=await import("../src/config/startupMigrations.js");
+const {searchStudentKnowledge}=await import("../src/models/bm.studentAgency.model.js");
+const {saveSnapshot,getLatestSnapshot}=await import("../src/models/bm.studentSourceSnapshots.model.js");
+const {importStudentContent,validateStudentContent}=await import("../src/services/bm.studentContentImport.service.js");
+const company="90000000-0000-4000-8000-000000000001";
+beforeAll(async()=>{
+  if(!enabled)return;
+  client=await database.connect();
+  await client.query("BEGIN");
+  const schema=`student_test_${crypto.randomBytes(8).toString("hex")}`;
+  await client.query(`CREATE SCHEMA ${schema}`);
+  await client.query(`SET LOCAL search_path TO ${schema}, public`);
+  await client.query("CREATE TABLE bm_company(company_id uuid PRIMARY KEY)");
+  await client.query("INSERT INTO bm_company VALUES ($1)",[company]);
+  await ensureStudentAgencyKnowledgeSchema();
+  await ensureStudentAgencyKnowledgeSchema();
+});
+afterAll(async()=>{if(client){await client.query("ROLLBACK");client.release();}await database?.end();});
+const integration=enabled ? it : it.skip;
+integration("imports drafts, publishes reviewed revisions and isolates company and expiry",async()=>{
+  const now=Date.now();
+  const record={key:"gs",topic:"genuine_student",question:"What is Genuine Student?",answer:"Example reviewed fixture",sources:[{title:"Official source",url:"https://immi.homeaffairs.gov.au/test",excerpt:"Fixture source excerpt"}],verifiedAt:new Date(now-10000).toISOString(),reviewDueAt:new Date(now+3600000).toISOString()};
+  const records=validateStudentContent({records:[record]});
+  await importStudentContent(client,company,records);
+  expect(await searchStudentKnowledge(company,"What changed with Genuine Student?")).toHaveLength(0);
+  await importStudentContent(client,company,records,{approve:true,reviewer:"Test reviewer"});
+  expect(await searchStudentKnowledge(company,"What changed with Genuine Student?")).toHaveLength(1);
+  expect(await searchStudentKnowledge("90000000-0000-4000-8000-000000000002","Genuine Student")).toHaveLength(0);
+  const next=validateStudentContent({records:[{...record,answer:"Revised example fixture"}]});
+  await importStudentContent(client,company,next,{approve:true,reviewer:"Test reviewer"});
+  const active=await searchStudentKnowledge(company,"Genuine Student");
+  expect(active).toHaveLength(1);expect(active[0].answer).toBe("Revised example fixture");
+  expect((await client.query("SELECT count(*)::int AS count FROM bm_student_agency_knowledge")).rows[0].count).toBe(2);
+  await client.query("UPDATE bm_student_agency_knowledge SET verified_at=now()-interval '2 days', review_due_at=now()-interval '1 day'");
+  expect(await searchStudentKnowledge(company,"Genuine Student")).toHaveLength(0);
+});
+integration("retains different source revisions and returns the most recently checked",async()=>{
+  await saveSnapshot("fixture",{contentHash:"first",fetchedAt:"2026-09-18T00:00:00Z",text:"older"});
+  await saveSnapshot("fixture",{contentHash:"second",fetchedAt:"2026-09-19T00:00:00Z",text:"newer"});
+  expect((await getLatestSnapshot("fixture")).text).toBe("newer");
+  expect((await client.query("SELECT count(*)::int AS count FROM bm_student_source_snapshots")).rows[0].count).toBe(2);
+});

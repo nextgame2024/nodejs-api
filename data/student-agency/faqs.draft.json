@@ -1,0 +1,314 @@
+{
+  "status": "draft",
+  "note": "Source-linked preparation only. No agency approval, individual eligibility assessment or live verification is implied. A reviewer must verify each source, add excerpts and dates, and explicitly approve before publication. Agency identity, services and consultation fees remain unconfigured.",
+  "records": [
+    {
+      "key": "document-list",
+      "topic": "documents",
+      "question": "What documents should I prepare?",
+      "answer": "Use the official checklist for your passport country and provider, then check the document requests in ImmiAccount.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "enrolment",
+      "topic": "documents",
+      "question": "Do I need a Confirmation of Enrolment?",
+      "answer": "Generally, provide a CoE for intended courses when applying. Special categories have alternative evidence.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "english",
+      "topic": "english",
+      "question": "Do I need English language evidence?",
+      "answer": "English test evidence or a documented exemption may be required. Check the applicable tests, scores and exemptions before applying.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "finances",
+      "topic": "finances",
+      "question": "What financial evidence is needed?",
+      "answer": "Financial evidence covers travel, living, tuition and relevant dependant schooling costs. Verify current amounts separately.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "health-cover",
+      "topic": "health_cover",
+      "question": "Do I need OSHC?",
+      "answer": "OSHC generally covers you and accompanying dependants throughout your stay; some nationality-based exceptions apply.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "dependants",
+      "topic": "dependants",
+      "question": "What should I prepare for accompanying family?",
+      "answer": "Relationship evidence and applicable schooling, consent, financial and insurance documents may be needed.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "under-18",
+      "topic": "documents",
+      "question": "Are there extra requirements for students under 18?",
+      "answer": "Students under 18 need evidence of appropriate accommodation and welfare arrangements.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "identity",
+      "topic": "documents",
+      "question": "What identity evidence should I prepare?",
+      "answer": "Provide a passport copy and other specified identity documents where available.",
+      "sources": [
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "translations",
+      "topic": "documents",
+      "question": "Should my documents be translated?",
+      "answer": "Documents not in English need English translations as well as copies of the originals. Translator identification requirements depend on location.",
+      "sources": [
+        {
+          "title": "Home Affairs — Applying for a student visa",
+          "url": "https://immi.homeaffairs.gov.au/check-twice-submit-once/student-visa"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "complete-application",
+      "topic": "documents",
+      "question": "Can I leave important documents until later?",
+      "answer": "Prepare required evidence before lodging and follow Home Affairs submission guidance. Check your personalised ImmiAccount requests.",
+      "sources": [
+        {
+          "title": "Home Affairs — Applying for a student visa",
+          "url": "https://immi.homeaffairs.gov.au/check-twice-submit-once/student-visa"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "gs-purpose",
+      "topic": "genuine_student",
+      "question": "What is the Genuine Student requirement?",
+      "answer": "Applicants must demonstrate that studying is the primary reason for seeking a student visa, with evidence supporting their circumstances and study plans.",
+      "sources": [
+        {
+          "title": "Home Affairs — Genuine Student requirement",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "gs-change",
+      "topic": "genuine_student",
+      "question": "What changed from GTE to GS?",
+      "answer": "Applications lodged from 23 March 2024 are assessed under Genuine Student; applications lodged earlier are assessed under Genuine Temporary Entrant.",
+      "sources": [
+        {
+          "title": "Home Affairs — Genuine Student requirement",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null,
+      "previousRule": "Genuine Temporary Entrant applied to applications lodged before 23 March 2024.",
+      "currentRule": "Genuine Student applies to applications lodged on or after 23 March 2024.",
+      "effectiveFrom": "2024-03-23",
+      "changeStatus": "in_force",
+      "applicability": {
+        "basis": "application lodgement date",
+        "visa": "Student subclass 500"
+      }
+    },
+    {
+      "key": "gs-existing",
+      "topic": "genuine_student",
+      "question": "Does GS affect someone who already studies in Australia?",
+      "answer": "For a student making another application, the lodgement date matters. The form includes an additional question for some applicants with prior student visas or applying onshore from another visa.",
+      "sources": [
+        {
+          "title": "Home Affairs — Genuine Student requirement",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "gs-format",
+      "topic": "genuine_student",
+      "question": "Should I attach a separate GS statement?",
+      "answer": "Home Affairs prefers responses in the application form. Answers are in English, limited to 150 words each, with supporting evidence.",
+      "sources": [
+        {
+          "title": "Home Affairs — Genuine Student requirement",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "work-hours",
+      "topic": "work",
+      "question": "How much can an international student work?",
+      "answer": "The Department of Education describes a 48-hour fortnightly term-time limit, with research-student exceptions and different holiday arrangements. Check individual visa conditions before relying on this summary.",
+      "sources": [
+        {
+          "title": "Department of Education — International students at work",
+          "url": "https://www.education.gov.au/international-education/support-international-students/rights-international-students-work"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "work-protections",
+      "topic": "work",
+      "question": "Do international students have workplace protections?",
+      "answer": "International students have workplace protections, including minimum employment entitlements. The Fair Work Ombudsman can assist with workplace issues.",
+      "sources": [
+        {
+          "title": "Department of Education — International students at work",
+          "url": "https://www.education.gov.au/international-education/support-international-students/rights-international-students-work"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "study-changes",
+      "topic": "course_changes",
+      "question": "Could changing my course affect my visa?",
+      "answer": "Changes to study can affect a visa. Check the applicable requirements and notification process before making a change.",
+      "sources": [
+        {
+          "title": "Home Affairs — Changes in your situation",
+          "url": "https://immi.homeaffairs.gov.au/change-in-situation"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "personal-changes",
+      "topic": "course_changes",
+      "question": "Should I report a new passport or changed details?",
+      "answer": "Home Affairs asks visa holders to notify relevant changes, including passport, contact, family, work or study circumstances.",
+      "sources": [
+        {
+          "title": "Home Affairs — Changes in your situation",
+          "url": "https://immi.homeaffairs.gov.au/change-in-situation"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "qualified-adviser",
+      "topic": "advisers",
+      "question": "Who can give immigration assistance?",
+      "answer": "Use a registered migration agent, legal practitioner or an eligible exempt person. Confirm the adviser’s authority to provide immigration assistance.",
+      "sources": [
+        {
+          "title": "OMARA — Getting immigration assistance",
+          "url": "https://www.mara.gov.au/get-help-with-a-visa/helpers-not-registered"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "visa-duration",
+      "topic": "general",
+      "question": "Does every student receive the same visa duration?",
+      "answer": "Length of stay depends on the intended course and relevant insurance and welfare coverage. Check your granted expiry date and the applicable guidance.",
+      "sources": [
+        {
+          "title": "Home Affairs — Length of stay",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/length-of-stay"
+        }
+      ],
+      "draftPreparedAt": "2026-09-19",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    }
+  ]
+}

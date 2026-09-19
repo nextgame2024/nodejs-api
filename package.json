@@ -44,5 +44,9 @@
   },
   "overrides": {
     "@google/genai": "^1.1.0"
+  },
+  "scripts": {
+    "test:release": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand --testMatch \"<rootDir>/tests/bm.*.test.js\"",
+    "test:release:sql": "INSPECTION_SQL_TEST_DATABASE=1 NODE_OPTIONS=\"--experimental-vm-modules --import=dotenv/config\" jest --runInBand --testMatch \"<rootDir>/tests/bm.*Sql.test.js\" --testMatch \"<rootDir>/tests/bm.demoInspectionSlots.test.js\""
   }
 }

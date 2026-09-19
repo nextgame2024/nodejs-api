@@ -100,7 +100,7 @@ as the production default.
 
 The real-estate tools read company-scoped listings and agency guidance from the
 Business Manager API. Generate one random service token and configure the same
-value on both Render services. This token is accepted only by the real-estate
+value on both Render services. This token is accepted by the real-estate and student-agency integration
 routes; normal Business Manager user JWTs remain supported.
 
 Business Manager (`nodejs-api`) variables:
@@ -140,3 +140,16 @@ Tavus, which uses its native internet-search skill instead.
 - Core modules resolve `AvatarProvider` implementations per session, not at application startup.
 - Live business data must flow through the `ToolRegistry`.
 - Existing website/Business Manager users can be referenced by external ID, but this runtime database does not use cross-database foreign keys to the existing `users` table.
+
+## Student agency demo release
+
+Student knowledge, official verification, comparisons and consultations use the
+same company-scoped Business Manager connection. Deploy the backend before this
+runtime and the frontend. No additional runtime environment variables are needed.
+The backend consultation sender accepts `SES_FROM_EMAIL` (preferred) or the
+existing `SES_FROM`; region resolution is `AWS_REGION`, `SES_REGION`, then
+`ap-southeast-2`. SMTP uses the existing `SMTP_*` variables. `EMAIL_PROVIDER=log`
+is a preview only and cannot pass a live delivery acceptance check.
+
+See [Phase 5 release validation](../docs/student-agency-phase5-release.md) for
+repeatable tests, the demo script and deployment acceptance criteria.
