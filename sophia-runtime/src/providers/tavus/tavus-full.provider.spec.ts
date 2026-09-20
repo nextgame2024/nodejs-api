@@ -57,6 +57,7 @@ describe("TavusFullProvider", () => {
       replica_id: "replica-1",
       require_auth: true,
       max_participants: 2,
+      properties: { language: "multilingual" },
     });
     expect(
       JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
@@ -123,4 +124,10 @@ describe("TavusFullProvider", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+});
+
+it('avoids a second generated answer for presentation-only tools',()=>{
+ const provider=new TavusFullProvider() as any;
+ expect(provider.tavusToolPayload({name:'closeStudentView',parameters:{}})).toMatchObject({on_call:'silent',on_resolve:'add_to_context'});
+ expect(provider.tavusToolPayload({name:'compareStudentRules',parameters:{}})).toMatchObject({on_call:'silent',on_resolve:'generate_response'});
 });

@@ -109,6 +109,7 @@ export class TavusFullProvider {
             ]
               .filter(Boolean)
               .join(" "),
+            properties: { language: "multilingual" },
             require_auth: true,
             max_participants: 2,
           }),
@@ -318,8 +319,9 @@ export class TavusFullProvider {
       description: definition.description,
       parameters: definition.parameters,
       origin: "llm",
-      on_call: "generate_filler",
-      on_resolve: "generate_response",
+      on_call: "silent",
+      on_resolve: ["showPropertyPhoto", "closePropertyView", "closeStudentView"].includes(definition.name)
+        ? "add_to_context" : "generate_response",
       delivery: { app_message: true },
     };
   }
