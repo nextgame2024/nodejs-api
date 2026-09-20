@@ -26,10 +26,10 @@ export function createStudentAgencyTools(client: BusinessManagerClient): Runtime
       name: "verifyStudentRules",
       description: "Retrieve official Australian government page content for a student migration topic. Use for current/latest requirements, rule changes and missing reviewed knowledge. Choose the relevant topic; ask which topic for a broad changes question. Returned pages may be partial, cached or unavailable. Cite evidence and dates; do not assume a changed page means a changed rule or that all current students are exempt.",
       parameters: { type: "object", additionalProperties: false, properties: {
-        topic: { type: "string", enum: ["general", "duration", "documents", "genuine_student", "english", "finances", "health_cover", "work", "dependants", "course_changes", "advisers"] },
+        topic: { type: "string", enum: ["general", "duration", "documents", "genuine_student", "english", "finances", "health_cover", "work", "dependants", "processing_priorities", "course_changes", "advisers"] },
       }, required: ["topic"] },
     },
-    inputSchema: z.object({ topic: z.enum(["general", "duration", "documents", "genuine_student", "english", "finances", "health_cover", "work", "dependants", "course_changes", "advisers"]) }).strict(),
+    inputSchema: z.object({ topic: z.enum(["general", "duration", "documents", "genuine_student", "english", "finances", "health_cover", "work", "dependants", "processing_priorities", "course_changes", "advisers"]) }).strict(),
     execute: async input => {
       try { return await client.verifyStudentRules(input); }
       catch { return { domain: "student_migration", status: "verification_unavailable", sources: [], consultationBookingRequiresAvailabilityCheck: true,
@@ -40,11 +40,11 @@ export function createStudentAgencyTools(client: BusinessManagerClient): Runtime
       name: "compareStudentRules",
       description: "Show source-backed previous/current rules and impacts on new/current students. Clarify the topic and comparison period first. A missing comparison does not mean no change. An optional baselineDate restricts to changes effective on or after that date. Never infer an exemption for existing students.",
       parameters: {type:"object",additionalProperties:false,properties:{
-        topic:{type:"string",enum:["general","duration","documents","genuine_student","english","finances","health_cover","work","dependants","course_changes","advisers"]},
+        topic:{type:"string",enum:["general","duration","documents","genuine_student","english","finances","health_cover","work","dependants","processing_priorities","course_changes","advisers"]},
         baselineDate:{type:"string",description:"Optional start of the comparison period, YYYY-MM-DD."}
       },required:["topic"]},
     },
-    inputSchema:z.object({topic:z.enum(["general","duration","documents","genuine_student","english","finances","health_cover","work","dependants","course_changes","advisers"]),baselineDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict(),
+    inputSchema:z.object({topic:z.enum(["general","duration","documents","genuine_student","english","finances","health_cover","work","dependants","processing_priorities","course_changes","advisers"]),baselineDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict(),
     execute:async input=>{
       try{return await client.compareStudentRules(input);}
       catch{return {domain:"student_migration",comparisonStatus:"comparison_unavailable",studentView:{title:"What changed?",cards:[],notice:"The comparison could not be verified. Please try again or ask an agent to review it."},sources:[],consultationBookingRequiresAvailabilityCheck:true};}

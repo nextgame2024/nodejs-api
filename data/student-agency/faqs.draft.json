@@ -1,19 +1,19 @@
 {
   "status": "draft",
-  "note": "Source-linked preparation only. No agency approval, individual eligibility assessment or live verification is implied. A reviewer must verify each source, add excerpts and dates, and explicitly approve before publication. Agency identity, services and consultation fees remain unconfigured.",
+  "note": "Local draft updated against the supplied attachment and linked official pages on 20 September 2026. This is a checking date, not a universal commencement date. No agency approval or production publication is implied. Recheck sources and assign review dates before publishing.",
   "records": [
     {
       "key": "document-list",
       "topic": "documents",
       "question": "What documents should I prepare?",
-      "answer": "Use the official checklist for your passport country and provider, then check the document requests in ImmiAccount.",
+      "answer": "Use the personalised Home Affairs checklist for your passport country, provider and circumstances, then ImmiAccount requests. Typical evidence includes identity/passport, CoE, GS responses and supporting study/employment records, and applicable English, financial, OSHC, health and character evidence. Family applications may need relationship, birth, schooling and parental-consent or custody documents. This is not a universal mandatory list.",
       "sources": [
         {
           "title": "Home Affairs — Document Checklist Tool",
           "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
         }
       ],
-      "draftPreparedAt": "2026-09-19",
+      "draftPreparedAt": "2026-09-20",
       "verifiedAt": null,
       "reviewDueAt": null
     },
@@ -81,14 +81,14 @@
       "key": "dependants",
       "topic": "dependants",
       "question": "What should I prepare for accompanying family?",
-      "answer": "Relationship evidence and applicable schooling, consent, financial and insurance documents may be needed.",
+      "answer": "Eligible partners and dependent children may apply as secondary applicants. Check relationship and birth evidence, schooling, parental consent or custody, finances and OSHC for accompanying family. Eligibility depends on the family circumstances; inclusion is not automatic.",
       "sources": [
         {
           "title": "Home Affairs — Document Checklist Tool",
           "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
         }
       ],
-      "draftPreparedAt": "2026-09-19",
+      "draftPreparedAt": "2026-09-20",
       "verifiedAt": null,
       "reviewDueAt": null
     },
@@ -156,14 +156,14 @@
       "key": "gs-purpose",
       "topic": "genuine_student",
       "question": "What is the Genuine Student requirement?",
-      "answer": "Applicants must demonstrate that studying is the primary reason for seeking a student visa, with evidence supporting their circumstances and study plans.",
+      "answer": "Study must be the main purpose of the application. Explain your circumstances, course/provider choice and future benefit with supporting evidence. Possible future permanent residence intentions do not by themselves count against GS.",
       "sources": [
         {
           "title": "Home Affairs — Genuine Student requirement",
           "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
         }
       ],
-      "draftPreparedAt": "2026-09-19",
+      "draftPreparedAt": "2026-09-20",
       "verifiedAt": null,
       "reviewDueAt": null
     },
@@ -194,14 +194,14 @@
       "key": "gs-existing",
       "topic": "genuine_student",
       "question": "Does GS affect someone who already studies in Australia?",
-      "answer": "For a student making another application, the lodgement date matters. The form includes an additional question for some applicants with prior student visas or applying onshore from another visa.",
+      "answer": "GS applies to applications lodged from 23 March 2024. Holding a valid visa does not itself trigger a fresh GS application. A further application is assessed under the applicable current rules; previous Australian study, progress, provider changes and study gaps may matter.",
       "sources": [
         {
           "title": "Home Affairs — Genuine Student requirement",
           "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
         }
       ],
-      "draftPreparedAt": "2026-09-19",
+      "draftPreparedAt": "2026-09-20",
       "verifiedAt": null,
       "reviewDueAt": null
     },
@@ -224,14 +224,18 @@
       "key": "work-hours",
       "topic": "work",
       "question": "How much can an international student work?",
-      "answer": "The Department of Education describes a 48-hour fortnightly term-time limit, with research-student exceptions and different holiday arrangements. Check individual visa conditions before relying on this summary.",
+      "answer": "The general Subclass 500 limit remains 48 hours per fortnight while the course is in session. A fortnight starts Monday and lasts 14 days. Check VEVO and the exceptions; no general increase above 48 hours was established in this review. The date of this review is not a new work-rights commencement date.",
       "sources": [
         {
-          "title": "Department of Education — International students at work",
-          "url": "https://www.education.gov.au/international-education/support-international-students/rights-international-students-work"
+          "title": "Home Affairs — Visa conditions 8104 and 8105",
+          "url": "https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions/conditions-list?TermId=421ec3be-7b3c-40c5-adf0-3ccad08e0420&TermSetId=a76074c9-979d-4db3-adcc-34af89495da2&TermStoreId=1cafda66-8aac-4a45-95fa-3e03872913b6"
+        },
+        {
+          "title": "Home Affairs — Work restrictions and VEVO",
+          "url": "https://immi.homeaffairs.gov.au/visas/working-in-australia/work-rights-and-exploitation/work-restrictions"
         }
       ],
-      "draftPreparedAt": "2026-09-19",
+      "draftPreparedAt": "2026-09-20",
       "verifiedAt": null,
       "reviewDueAt": null
     },
@@ -309,6 +313,135 @@
       "draftPreparedAt": "2026-09-19",
       "verifiedAt": null,
       "reviewDueAt": null
+    },
+    {
+      "key": "work-research",
+      "topic": "work",
+      "question": "Are research students and compulsory placements exempt from the work cap?",
+      "answer": "Condition 8105 includes exceptions for a commenced research masters or doctorate and qualifying compulsory work registered as part of the course. A coursework masters does not give the primary student the research exception. Check the course and granted conditions.",
+      "sources": [
+        {
+          "title": "Home Affairs — Visa conditions 8104 and 8105",
+          "url": "https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions/conditions-list?TermId=421ec3be-7b3c-40c5-adf0-3ccad08e0420&TermSetId=a76074c9-979d-4db3-adcc-34af89495da2&TermStoreId=1cafda66-8aac-4a45-95fa-3e03872913b6"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "work-before-course",
+      "topic": "work",
+      "question": "Can I work before the course starts or during breaks?",
+      "answer": "Generally work cannot start before the course begins. There is a prior-visa work-permission exception. The primary student term-time cap does not apply during scheduled course breaks; verify whether the course is actually in session, including relevant exams or other study. Family members have different rules.",
+      "sources": [
+        {
+          "title": "Home Affairs — Visa conditions 8104 and 8105",
+          "url": "https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions/conditions-list?TermId=421ec3be-7b3c-40c5-adf0-3ccad08e0420&TermSetId=a76074c9-979d-4db3-adcc-34af89495da2&TermStoreId=1cafda66-8aac-4a45-95fa-3e03872913b6"
+        },
+        {
+          "title": "Home Affairs — Work restrictions and VEVO",
+          "url": "https://immi.homeaffairs.gov.au/visas/working-in-australia/work-rights-and-exploitation/work-restrictions"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "partner-work",
+      "topic": "work",
+      "question": "Can my spouse work more than 48 hours?",
+      "answer": "Secondary Student visa holders generally have a 48-hour fortnightly limit, including during course breaks. The masters/doctoral exception for family differs from the primary student research exception and can include coursework masters. Course commencement and prior-visa exceptions matter. Check condition 8104 and VEVO rather than assume identical rights for both partners.",
+      "sources": [
+        {
+          "title": "Home Affairs — Visa conditions 8104 and 8105",
+          "url": "https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions/conditions-list?TermId=421ec3be-7b3c-40c5-adf0-3ccad08e0420&TermSetId=a76074c9-979d-4db3-adcc-34af89495da2&TermStoreId=1cafda66-8aac-4a45-95fa-3e03872913b6"
+        },
+        {
+          "title": "Home Affairs — Work restrictions and VEVO",
+          "url": "https://immi.homeaffairs.gov.au/visas/working-in-australia/work-rights-and-exploitation/work-restrictions"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "family-subsequent",
+      "topic": "dependants",
+      "question": "Can my family join me later?",
+      "answer": "Check that your visa permits subsequent entrants and that family members were previously declared. Later family applications still need to meet their own requirements. If family circumstances changed after the original application, obtain case-specific guidance rather than assume the general declaration rule decides the outcome.",
+      "sources": [
+        {
+          "title": "Home Affairs — Bringing a partner or family",
+          "url": "https://immi.homeaffairs.gov.au/visas/bringing-someone/bringing-partner-or-family"
+        },
+        {
+          "title": "Home Affairs — Document Checklist Tool",
+          "url": "https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "gs-dependent",
+      "topic": "dependants",
+      "question": "Does my family need to satisfy GS?",
+      "answer": "Student visa applicants must meet GS or the GS dependent criterion as applicable. Family inclusion does not remove the dependent assessment.",
+      "sources": [
+        {
+          "title": "Home Affairs — Genuine Student requirement",
+          "url": "https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
+    },
+    {
+      "key": "offshore-priorities",
+      "topic": "processing_priorities",
+      "question": "What changed from MD111 to MD115?",
+      "answer": "For offshore Student visa processing, the Home Affairs page distinguishes MD111 before 14 November 2025 and MD115 from that date. MD115 has three priority levels rather than two. Priority concerns processing order, not approval, a visa cap or guaranteed completion time.",
+      "sources": [
+        {
+          "title": "Home Affairs — Student visa processing priorities",
+          "url": "https://immi.homeaffairs.gov.au/Visa-subsite/Pages/Processing-times/student-visa-processing-priorities.aspx"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null,
+      "previousRule": "MD111 processing framework before 14 November 2025: two priority levels.",
+      "currentRule": "MD115 for offshore applications lodged from 14 November 2025: three priority levels.",
+      "effectiveFrom": "2025-11-14",
+      "changeStatus": "in_force",
+      "newStudentImpact": "Check offshore lodgement date and the relevant provider/category priority.",
+      "currentStudentImpact": "An already-granted visa is not reassessed by a processing-priority change. Pending and further applications need their own lodgement context.",
+      "applicability": {
+        "visa": "Student subclass 500",
+        "location": "offshore application",
+        "basis": "application lodgement date"
+      }
+    },
+    {
+      "key": "family-priority",
+      "topic": "processing_priorities",
+      "question": "Does a child change subsequent-entrant processing priority?",
+      "answer": "Under the published MD115 categories, subsequent-entrant applications including a minor are Priority 1; those without a minor are Priority 2. This affects processing order only, not family eligibility or a promised decision date. The distinction is also listed under MD111, so it must not be described as newly introduced by MD115.",
+      "sources": [
+        {
+          "title": "Home Affairs — Student visa processing priorities",
+          "url": "https://immi.homeaffairs.gov.au/Visa-subsite/Pages/Processing-times/student-visa-processing-priorities.aspx"
+        }
+      ],
+      "draftPreparedAt": "2026-09-20",
+      "verifiedAt": null,
+      "reviewDueAt": null
     }
-  ]
+  ],
+  "attachmentReviewedOn": "2026-09-20"
 }
