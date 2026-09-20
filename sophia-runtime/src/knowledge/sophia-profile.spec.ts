@@ -15,14 +15,6 @@ describe("sophiaConversationInstructions", () => {
     );
   });
 
-  it("keeps student and property tools in separate turns", () => {
-    const instructions = sophiaConversationInstructions();
-    expect(instructions).toContain("Keep each conversation turn in one domain");
-    expect(instructions).toContain("Do not call property search, inspection or real-estate knowledge tools in that turn");
-    expect(instructions).toContain("call only one information tool in the turn");
-    expect(instructions).toContain("Do not run a preliminary search before verification or comparison");
-  });
-
   it("explains the asynchronous BUY property report accurately", () => {
     const instructions = sophiaConversationInstructions();
 

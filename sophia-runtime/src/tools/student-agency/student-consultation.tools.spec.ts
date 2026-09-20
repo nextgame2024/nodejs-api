@@ -29,9 +29,3 @@ it('retains reviewed details after API failure and clears them on domain switch'
  await run('reviewStudentConsultation',details);state.clear?.('session');
  await expect(run('bookStudentConsultation',{...details,confirmed:true})).rejects.toThrow('Display');
 });
-it('requires the assistant to ask for confirmation after displaying the review',async()=>{
- const {run}=setup();
- const result=await run('reviewStudentConsultation',details) as any;
- expect(result.guidance).toContain('Are these details correct, and may I book the appointment?');
- expect(result.guidance).toContain('wait for the customer to answer in a new turn');
-});

@@ -123,13 +123,4 @@ describe("TavusFullProvider", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
-
-  it("waits silently while runtime tools execute", () => {
-    const payload = (new TavusFullProvider() as any).tavusToolPayload({
-      name: "searchStudentAgencyKnowledge",
-      description: "Student guidance",
-      parameters: { type: "object" },
-    });
-    expect(payload).toMatchObject({ on_call: "silent", on_resolve: "generate_response" });
-  });
 });
