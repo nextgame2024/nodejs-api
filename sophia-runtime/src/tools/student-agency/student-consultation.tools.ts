@@ -32,7 +32,7 @@ export function createStudentConsultationTools(client:BusinessManagerClient,stat
     execute:async(input,context)=>{
       const id=session(context);const result=await client.reviewStudentConsultation(input) as {consultationReview:Record<string,any>};
       if(!result.consultationReview)throw new Error('Consultation review was unavailable');
-      save(id,'new',input);return result;
+      save(id,'new',input);return {...result,guidance:'Ask the customer to check the displayed name, email, appointment time and demo status, then say: Please confirm these details are correct before I book the appointment. Do not book until the customer answers in a new turn.'};
     },
   },{
     definition:{name:'bookStudentConsultation',description:'Book only after the displayed consultation details have been explicitly confirmed. Use the reviewed details exactly and confirmed true. Report demo status and authoritative returned time/email. Email queued/retry is not sent; logged means no email was delivered.',parameters:{type:'object',additionalProperties:false,properties:{...parameters,confirmed:{type:'boolean'}},required:[...required,'confirmed']}},

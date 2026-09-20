@@ -3,6 +3,21 @@ import { createStudentAgencyTools } from "./student-agency.tools.js";
 import type { BusinessManagerClient } from "../real-estate/business-manager.client.js";
 import { ToolRegistry } from "../tool-registry.js";
 import type { BusinessResearchService } from "../research/business-research.service.js";
+const toolNamed=(tools:ReturnType<typeof createStudentAgencyTools>,name:string)=>tools.find(tool=>tool.definition.name===name)!;
+
+it.each([
+  ["documents","Documents for a student visa"],
+  ["recent_changes","Recent student visa changes"],
+  ["new_applicant","Effect on a new applicant"],
+  ["current_student","Effect on a current student"],
+  ["work","Working while studying"],
+] as const)("returns a distinct reviewed panel for %s",async(intent,title)=>{
+  const tool=toolNamed(createStudentAgencyTools({} as BusinessManagerClient),"showStudentVisaDemoGuidance");
+  const result=await tool.execute({intent},{customerId:"demo"}) as any;
+  expect(result).toMatchObject({status:"reviewed",studentView:{title}});
+  expect(result.answer).toBeTruthy();
+  expect(result.studentView.cards.length).toBeGreaterThan(0);
+});
 
 it("routes student enquiries through the separate endpoint", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({ domain: "student_migration", results: [] });
@@ -14,7 +29,7 @@ it("routes student enquiries through the separate endpoint", async () => {
 });
 it("returns unavailable without inventing rules or using rental fallbacks", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockRejectedValue(new Error("offline"));
-  const tool = createStudentAgencyTools({searchStudentAgencyKnowledge: search} as unknown as BusinessManagerClient)[0]!;
+  const tool = toolNamed(createStudentAgencyTools({searchStudentAgencyKnowledge: search} as unknown as BusinessManagerClient),"searchStudentAgencyKnowledge");
   expect(await tool.execute({q: "visa requirements"}, {customerId: "demo"})).toMatchObject({status: "unavailable", results: [], consultationBookingRequiresAvailabilityCheck: true, liveVerified: false});
 });
 
@@ -22,7 +37,7 @@ it("automatically researches official sources when reviewed knowledge is empty",
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({domain:"student_migration",results:[]});
   const official = jest.fn().mockResolvedValue({domain:"student_migration",status:"official_evidence",sourceMode:"official_web_research",summary:"Official answer",sources:[{url:"https://immi.homeaffairs.gov.au/example"}]});
   const research = {researchOfficialStudentInformation:official} as unknown as BusinessResearchService;
-  const tool=createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,research)[0]!;
+  const tool=toolNamed(createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,research),"searchStudentAgencyKnowledge");
   expect(await tool.execute({q:"An uncovered question"},{customerId:"demo"})).toMatchObject({status:"official_evidence"});
   expect(official).toHaveBeenCalledWith("An uncovered question");
 });
@@ -30,7 +45,7 @@ it("automatically researches official sources when reviewed knowledge is empty",
 it("does not call web research when reviewed knowledge contains an answer", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({domain:"student_migration",results:[{answer:"Reviewed"}]});
   const official = jest.fn();
-  const tool=createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,{researchOfficialStudentInformation:official} as unknown as BusinessResearchService)[0]!;
+  const tool=toolNamed(createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,{researchOfficialStudentInformation:official} as unknown as BusinessResearchService),"searchStudentAgencyKnowledge");
   expect(await tool.execute({q:"A reviewed question"},{customerId:"demo"})).toMatchObject({results:[{answer:"Reviewed"}]});
   expect(official).not.toHaveBeenCalled();
 });
@@ -45,7 +60,7 @@ it("exposes official verification without allowing caller-supplied source URLs",
 });
 it("does not claim live evidence when the verification endpoint fails", async () => {
   const verify=jest.fn<BusinessManagerClient["verifyStudentRules"]>().mockRejectedValue(new Error("timeout"));
-  const tool=createStudentAgencyTools({verifyStudentRules:verify} as unknown as BusinessManagerClient)[1]!;
+  const tool=toolNamed(createStudentAgencyTools({verifyStudentRules:verify} as unknown as BusinessManagerClient),"verifyStudentRules");
   expect(await tool.execute({topic:"work"},{customerId:"demo"})).toMatchObject({status:"verification_unavailable",sources:[]});
 });
 

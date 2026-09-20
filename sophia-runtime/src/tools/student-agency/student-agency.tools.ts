@@ -3,8 +3,46 @@ import type { RuntimeTool } from "../tool-registry.js";
 import type { BusinessManagerClient } from "../real-estate/business-manager.client.js";
 import type { BusinessResearchService } from "../research/business-research.service.js";
 
+const reviewedAt = "2026-09-20T11:22:49.811Z";
+const source = (title:string,url:string) => ({title,url,checkedAt:reviewedAt,status:"reviewed"});
+const common = {kind:"guidance",evidenceStatus:"reviewed",verifiedAt:reviewedAt,previousRule:null,currentRule:null,
+  newStudentImpact:null,currentStudentImpact:null,effectiveFrom:null,effectiveTo:null,changeStatus:"general",applicability:[],limitations:[]};
+const demoGuidance = {
+  documents:{
+    answer:"The exact document list depends on your circumstances, so use the Home Affairs Document Checklist Tool. You will usually need your passport and identity documents, Confirmation of Enrolment, Genuine Student answers and evidence, plus any required English, financial, health-cover, academic, health, character and family documents.",
+    studentView:{title:"Documents for a student visa",notice:"Use the personalised Home Affairs checklist before lodging the application.",cards:[{...common,title:"Documents commonly required",summary:"Passport and identity documents; Confirmation of Enrolment; Genuine Student answers and supporting evidence; English-language and financial evidence when required; Overseas Student Health Cover; academic transcripts, qualifications and relevant employment history; and health or character documents when requested. Family applications may also need relationship, birth, schooling, consent or custody evidence.",sources:[source("Home Affairs — Document Checklist Tool","https://immi.homeaffairs.gov.au/visas/web-evidentiary-tool")]}]},
+  },
+  recent_changes:{
+    answer:"Two important recent changes are the Genuine Student requirement, which replaced GTE for applications lodged from 23 March 2024, and Ministerial Direction 115, which changed offshore processing priorities from 14 November 2025. Processing priority affects assessment order, not visa eligibility or approval.",
+    studentView:{title:"Recent student visa changes",notice:"These changes have different commencement dates and effects.",cards:[
+      {...common,kind:"comparison",title:"Genuine Student requirement",summary:"The Genuine Student requirement applies by application lodgement date.",previousRule:"Genuine Temporary Entrant requirement.",currentRule:"Genuine Student requirement. Study must be the primary reason for the visa; a future intention to seek permanent residence does not by itself count against the applicant.",newStudentImpact:"Applications lodged on or after 23 March 2024 use the Genuine Student requirement.",currentStudentImpact:"An already-granted visa is not automatically changed. A later application uses the rules applying when it is lodged.",effectiveFrom:"2024-03-23",changeStatus:"in_force",sources:[source("Home Affairs — Genuine Student requirement","https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement")]},
+      {...common,kind:"comparison",title:"Offshore processing priorities",summary:"Ministerial Direction 115 changed the processing framework for relevant offshore applications.",previousRule:"MD111 used two processing-priority levels.",currentRule:"MD115 uses three processing-priority levels. Priority affects processing order, not eligibility, approval or a guaranteed decision time.",newStudentImpact:"For offshore applications lodged on or after 14 November 2025, the provider and applicant category can affect processing priority.",currentStudentImpact:"An already-granted visa is not reassessed because the processing-priority framework changed.",effectiveFrom:"2025-11-14",changeStatus:"in_force",sources:[source("Home Affairs — Student visa processing priorities","https://immi.homeaffairs.gov.au/Visa-subsite/Pages/Processing-times/student-visa-processing-priorities.aspx")]},
+    ]},
+  },
+  new_applicant:{
+    answer:"For a new applicant, the rules in force when you lodge the application matter. You now prepare Genuine Student answers and evidence, and an offshore application may receive an MD115 processing priority based on the provider and applicant category; that priority is not an approval test.",
+    studentView:{title:"Effect on a new applicant",notice:"Application and lodgement dates determine which requirements apply.",cards:[{...common,title:"What a new applicant should do",summary:"Prepare Genuine Student answers and supporting evidence under the current requirement. If applying offshore, check the provider and applicant category used for MD115 processing priority. Processing priority changes assessment order only and does not decide eligibility or guarantee approval.",applicability:["Student visa applicants lodging under the current rules.","MD115 applies to relevant offshore applications lodged on or after 14 November 2025."],sources:[source("Home Affairs — Genuine Student requirement","https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500/genuine-student-requirement"),source("Home Affairs — Student visa processing priorities","https://immi.homeaffairs.gov.au/Visa-subsite/Pages/Processing-times/student-visa-processing-priorities.aspx")]}]},
+  },
+  current_student:{
+    answer:"These changes do not automatically alter an already-granted student visa. Keep following the conditions shown in your visa grant and VEVO; if you lodge another visa application, it will be assessed under the rules applying to that new application.",
+    studentView:{title:"Effect on a current student",notice:"An existing visa and a future application must be considered separately.",cards:[{...common,title:"Already studying in Australia",summary:"Continue following the conditions on the current visa grant and check VEVO. The GS and offshore priority changes do not automatically rewrite an already-granted visa. A later application is assessed under the rules in force when it is lodged, and an adviser should check individual circumstances.",sources:[source("Home Affairs — Check visa details and conditions","https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions")]}]},
+  },
+  work:{
+    answer:"Most primary Student visa holders can work up to 48 hours per fortnight while their course is in session. Research master's and doctoral students who have started their degree are exempt from that normal cap; check VEVO because scheduled breaks, compulsory course work and family members can be treated differently.",
+    studentView:{title:"Working while studying",notice:"Check the conditions on the individual visa in VEVO.",cards:[{...common,title:"Current student work limit",summary:"Most primary Student visa holders may work up to 48 hours per fortnight while the course is in session. A fortnight is 14 days starting on a Monday. Work generally cannot begin before the course starts, subject to the prior-visa exception. Registered compulsory course work is treated differently, and students who have started a master's degree by research or a doctoral degree are exempt from the normal cap.",applicability:["Primary Student visa holders while their course is in session.","Family-member conditions and scheduled course breaks can differ."],sources:[source("Home Affairs — Visa conditions 8104 and 8105","https://immi.homeaffairs.gov.au/visas/already-have-a-visa/check-visa-details-and-conditions/conditions-list")]}]},
+  },
+} as const;
+
 export function createStudentAgencyTools(client: BusinessManagerClient, research?: BusinessResearchService): RuntimeTool<any, unknown>[] {
   return [{
+    definition:{
+      name:"showStudentVisaDemoGuidance",
+      description:"Immediately display and answer one of the five reviewed student-visa demo topics without web research. Use this for documents, recent changes, effect on a new applicant, effect on a current student, or work while studying. Return the supplied answer once and do not call another student information tool for the same question.",
+      parameters:{type:"object",additionalProperties:false,properties:{intent:{type:"string",enum:["documents","recent_changes","new_applicant","current_student","work"]}},required:["intent"]},
+    },
+    inputSchema:z.object({intent:z.enum(["documents","recent_changes","new_applicant","current_student","work"])}).strict(),
+    execute:async input=>({domain:"student_migration",status:"reviewed",...demoGuidance[input.intent as keyof typeof demoGuidance]}),
+  },{
     definition: {
       name: "searchStudentAgencyKnowledge",
       description: "Look up reviewed Australian student migration information. When reviewed data has no answer, this automatically searches approved official Australian Government domains. If status is official_evidence, answer from summary and cite its sources. Only if status is unavailable should you say the information could not be confirmed. Separate from property knowledge. Use verifyStudentRules directly for current requirements or rule changes. Use getStudentConsultationSlots to check adviser availability.",

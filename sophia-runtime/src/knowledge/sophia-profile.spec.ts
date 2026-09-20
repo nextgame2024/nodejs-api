@@ -29,11 +29,11 @@ describe("sophiaConversationInstructions", () => {
     );
   });
 
-  it("answers the five student visa demo intents without a tool round trip", () => {
+  it("routes the five student visa demo intents through the fast display tool", () => {
     const instructions = sophiaConversationInstructions();
 
-    expect(instructions).toContain("Answer these immediately from the baseline");
-    expect(instructions).toContain("without calling a tool");
+    expect(instructions).toContain("call showStudentVisaDemoGuidance");
+    expect(instructions).toContain("without web research");
     expect(instructions).toContain("Genuine Student requirement replaced");
     expect(instructions).toContain("Ministerial Direction 115");
     expect(instructions).toContain("do not automatically alter an already-granted visa");

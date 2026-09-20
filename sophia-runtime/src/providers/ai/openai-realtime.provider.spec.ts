@@ -90,6 +90,7 @@ describe("OpenAIRealtimeProvider", () => {
         model: "gpt-realtime-2.1-mini",
         audio: {
           input: {
+            noise_reduction: { type: "far_field" },
             turn_detection: {
               type: "server_vad",
               threshold: 0.75,
@@ -108,7 +109,7 @@ describe("OpenAIRealtimeProvider", () => {
       },
     });
     expect(requestBody.session.instructions).toContain(
-      "Answer these immediately from the baseline",
+      "call showStudentVisaDemoGuidance",
     );
     expect(requestBody.session.instructions).toContain(
       "48 hours per fortnight",

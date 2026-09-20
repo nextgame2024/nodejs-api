@@ -66,7 +66,7 @@ describe("TavusFullProvider", () => {
     expect(
       JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
         .conversational_context,
-    ).toContain("Answer these immediately from the baseline");
+    ).toContain("call showStudentVisaDemoGuidance");
     expect(
       JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
         .conversational_context,

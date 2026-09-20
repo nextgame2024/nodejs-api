@@ -95,7 +95,7 @@ export function runtimeConfig(): RuntimeConfig {
         7200,
       ),
       vadThreshold: clampNumber(
-        Number(process.env.OPENAI_REALTIME_VAD_THRESHOLD || 0.75),
+        Number(process.env.OPENAI_REALTIME_VAD_THRESHOLD || 0.85),
         0,
         1,
       ),
