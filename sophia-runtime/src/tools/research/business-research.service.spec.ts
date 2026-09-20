@@ -109,4 +109,43 @@ describe("BusinessResearchService", () => {
       sources: [],
     });
   });
+
+  it("researches missing student information only on approved official domains", async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({ output: [{
+        type: "message", content: [{ type: "output_text", text: "The official rule is supported.", annotations: [
+          { type: "url_citation", title: "Home Affairs", url: "https://immi.homeaffairs.gov.au/example" },
+          { type: "url_citation", title: "Unofficial", url: "https://example.com/blog" },
+        ] }],
+      }] }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const result = await new BusinessResearchService()
+      .researchOfficialStudentInformation("What is the official rule?");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      tool_choice: "required",
+      tools: [{ type: "web_search", search_context_size: "medium", filters: { allowed_domains: expect.arrayContaining(["immi.homeaffairs.gov.au", "legislation.gov.au"]) } }],
+      input: "What is the official rule?",
+    });
+    expect(result).toMatchObject({
+      status: "official_research",
+      liveVerified: true,
+      sources: [{ url: "https://immi.homeaffairs.gov.au/example" }],
+      studentView: { cards: [{ evidenceStatus: "live", sources: [{ url: "https://immi.homeaffairs.gov.au/example", status: "live" }] }] },
+    });
+  });
+
+  it("does not return a student answer without an official citation", async () => {
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({ output: [{ type: "message", content: [{ type: "output_text", text: "Unsupported answer", annotations: [
+        { type: "url_citation", url: "https://example.com/blog" },
+      ] }] }] }),
+    } as Response);
+    await expect(new BusinessResearchService().researchOfficialStudentInformation("Unknown rule"))
+      .resolves.toMatchObject({ status: "unavailable", liveVerified: false, sources: [] });
+  });
 });

@@ -31,7 +31,7 @@ export class ToolRegistryService {
   ) {
     this.registry.register(getInventoryTool);
     for (const tool of createStudentConsultationTools(this.businessManager, this.consultationReviews)) this.registry.register(tool);
-    for (const tool of createStudentAgencyTools(this.businessManager)) this.registry.register(tool);
+    for (const tool of createStudentAgencyTools(this.businessManager, this.businessResearch)) this.registry.register(tool);
     this.registry.register(createResearchBusinessTool(this.businessResearch));
     for (const tool of createRealEstateTools(this.businessManager, this.inspectionReviews)) this.registry.register(tool);
   }

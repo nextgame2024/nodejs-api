@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { RuntimeTool } from "../tool-registry.js";
 import type { BusinessManagerClient } from "../real-estate/business-manager.client.js";
+import type { BusinessResearchService } from "../research/business-research.service.js";
 
-export function createStudentAgencyTools(client: BusinessManagerClient): RuntimeTool<any, unknown>[] {
+export function createStudentAgencyTools(client: BusinessManagerClient, research?: BusinessResearchService): RuntimeTool<any, unknown>[] {
   return [{
     definition: {
       name: "searchStudentAgencyKnowledge",
@@ -14,8 +15,11 @@ export function createStudentAgencyTools(client: BusinessManagerClient): Runtime
     inputSchema: z.object({ q: z.string().trim().min(2).max(500) }).strict(),
     execute: async input => {
       try {
-        return await client.searchStudentAgencyKnowledge(input);
+        const result = await client.searchStudentAgencyKnowledge(input) as { results?: unknown[] };
+        if (result.results?.length || !research) return result;
+        return await research.researchOfficialStudentInformation(input.q);
       } catch {
+        if (research) return await research.researchOfficialStudentInformation(input.q);
         return { domain: "student_migration", status: "unavailable", results: [], liveVerified: false,
           consultationBookingRequiresAvailabilityCheck: true,
           guidance: "Student information could not be verified. Explain this and request agent review; do not answer from memory or real-estate fallback content." };
@@ -31,8 +35,14 @@ export function createStudentAgencyTools(client: BusinessManagerClient): Runtime
     },
     inputSchema: z.object({ topic: z.enum(["general", "duration", "documents", "genuine_student", "english", "finances", "health_cover", "work", "dependants", "processing_priorities", "course_changes", "advisers"]) }).strict(),
     execute: async input => {
-      try { return await client.verifyStudentRules(input); }
-      catch { return { domain: "student_migration", status: "verification_unavailable", sources: [], consultationBookingRequiresAvailabilityCheck: true,
+      try {
+        const result = await client.verifyStudentRules(input) as { status?: string };
+        if (result.status !== "verification_unavailable" || !research) return result;
+        return await research.researchOfficialStudentInformation(`Current official Australian student information about ${input.topic.replaceAll("_", " ")}`);
+      }
+      catch {
+        if (research) return await research.researchOfficialStudentInformation(`Current official Australian student information about ${input.topic.replaceAll("_", " ")}`);
+        return { domain: "student_migration", status: "verification_unavailable", sources: [], consultationBookingRequiresAvailabilityCheck: true,
         guidance: "Official retrieval failed. Do not claim current verification or answer rules from memory. Offer dated reviewed information if available, otherwise agent review." }; }
     },
   }, {

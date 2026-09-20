@@ -2,6 +2,7 @@ import { jest } from "@jest/globals";
 import { createStudentAgencyTools } from "./student-agency.tools.js";
 import type { BusinessManagerClient } from "../real-estate/business-manager.client.js";
 import { ToolRegistry } from "../tool-registry.js";
+import type { BusinessResearchService } from "../research/business-research.service.js";
 
 it("routes student enquiries through the separate endpoint", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({ domain: "student_migration", results: [] });
@@ -15,6 +16,23 @@ it("returns unavailable without inventing rules or using rental fallbacks", asyn
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockRejectedValue(new Error("offline"));
   const tool = createStudentAgencyTools({searchStudentAgencyKnowledge: search} as unknown as BusinessManagerClient)[0]!;
   expect(await tool.execute({q: "visa requirements"}, {customerId: "demo"})).toMatchObject({status: "unavailable", results: [], consultationBookingRequiresAvailabilityCheck: true, liveVerified: false});
+});
+
+it("automatically researches official sources when reviewed knowledge is empty", async () => {
+  const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({domain:"student_migration",results:[]});
+  const official = jest.fn().mockResolvedValue({domain:"student_migration",status:"official_research",summary:"Official answer",sources:[{url:"https://immi.homeaffairs.gov.au/example"}]});
+  const research = {researchOfficialStudentInformation:official} as unknown as BusinessResearchService;
+  const tool=createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,research)[0]!;
+  expect(await tool.execute({q:"An uncovered question"},{customerId:"demo"})).toMatchObject({status:"official_research"});
+  expect(official).toHaveBeenCalledWith("An uncovered question");
+});
+
+it("does not call web research when reviewed knowledge contains an answer", async () => {
+  const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({domain:"student_migration",results:[{answer:"Reviewed"}]});
+  const official = jest.fn();
+  const tool=createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,{researchOfficialStudentInformation:official} as unknown as BusinessResearchService)[0]!;
+  expect(await tool.execute({q:"A reviewed question"},{customerId:"demo"})).toMatchObject({results:[{answer:"Reviewed"}]});
+  expect(official).not.toHaveBeenCalled();
 });
 
 it("exposes official verification without allowing caller-supplied source URLs", async () => {
