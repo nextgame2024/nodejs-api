@@ -20,10 +20,10 @@ it("returns unavailable without inventing rules or using rental fallbacks", asyn
 
 it("automatically researches official sources when reviewed knowledge is empty", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({domain:"student_migration",results:[]});
-  const official = jest.fn().mockResolvedValue({domain:"student_migration",status:"official_research",summary:"Official answer",sources:[{url:"https://immi.homeaffairs.gov.au/example"}]});
+  const official = jest.fn().mockResolvedValue({domain:"student_migration",status:"official_evidence",sourceMode:"official_web_research",summary:"Official answer",sources:[{url:"https://immi.homeaffairs.gov.au/example"}]});
   const research = {researchOfficialStudentInformation:official} as unknown as BusinessResearchService;
   const tool=createStudentAgencyTools({searchStudentAgencyKnowledge:search} as unknown as BusinessManagerClient,research)[0]!;
-  expect(await tool.execute({q:"An uncovered question"},{customerId:"demo"})).toMatchObject({status:"official_research"});
+  expect(await tool.execute({q:"An uncovered question"},{customerId:"demo"})).toMatchObject({status:"official_evidence"});
   expect(official).toHaveBeenCalledWith("An uncovered question");
 });
 

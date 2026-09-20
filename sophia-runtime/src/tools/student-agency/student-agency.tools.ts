@@ -7,7 +7,7 @@ export function createStudentAgencyTools(client: BusinessManagerClient, research
   return [{
     definition: {
       name: "searchStudentAgencyKnowledge",
-      description: "Look up reviewed Australian student migration information, including previous/current rules and impacts on new/existing students where documented. Separate from property knowledge. Use verifyStudentRules for current requirements or rule changes and when no reviewed answer is available. Use getStudentConsultationSlots to check adviser availability.",
+      description: "Look up reviewed Australian student migration information. When reviewed data has no answer, this automatically searches approved official Australian Government domains. If status is official_evidence, answer from summary and cite its sources. Only if status is unavailable should you say the information could not be confirmed. Separate from property knowledge. Use verifyStudentRules directly for current requirements or rule changes. Use getStudentConsultationSlots to check adviser availability.",
       parameters: { type: "object", additionalProperties: false, properties: {
         q: { type: "string", description: "The student migration question, retaining relevant dates and whether it concerns new or existing students." },
       }, required: ["q"] },

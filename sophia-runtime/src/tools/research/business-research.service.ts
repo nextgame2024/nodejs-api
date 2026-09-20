@@ -19,7 +19,8 @@ export type BusinessResearchResult = {
 export type OfficialStudentResearchResult = {
   domain: "student_migration";
   question: string;
-  status: "official_research" | "unavailable";
+  status: "official_evidence" | "unavailable";
+  sourceMode?: "official_web_research";
   summary: string;
   sources: Array<{ title?: string; url: string }>;
   researchedAt: string;
@@ -169,19 +170,20 @@ export class BusinessResearchService {
           model: config.openAi.researchModel,
           tools: [{
             type: "web_search",
-            search_context_size: "medium",
+            search_context_size: "low",
             filters: { allowed_domains: officialStudentDomains },
           }],
           tool_choice: "required",
           include: ["web_search_call.action.sources"],
-          max_output_tokens: 900,
+          max_output_tokens: 550,
           instructions: [
             "Answer this Australian student visa or international education question only from the allowed official Australian Government domains returned by web search.",
             "Search before answering. Prefer the Department of Home Affairs and the Federal Register of Legislation; use Education, Study Australia, or OMARA where directly relevant.",
             "State the applicable date, lodgement date, visa condition, location, course type, and exceptions when the sources establish them.",
             "Do not treat a page retrieval date as a rule commencement date. Do not infer eligibility, approval, exemptions, or the absence of a newer rule.",
             "If the official sources do not establish the requested fact, say that it could not be confirmed. Do not answer from model memory or non-government sources.",
-            "Keep the answer concise and suitable for speech.",
+            "Return plain text, not Markdown. Do not put URLs or source links in the answer because citations are displayed separately.",
+            "Keep the answer concise and suitable for speech: give the direct answer first and normally use no more than four short sentences.",
           ].join(" "),
           input: normalizedQuestion,
         }),
@@ -189,7 +191,7 @@ export class BusinessResearchService {
       });
       if (!response.ok) return unavailable();
       const payload = (await response.json()) as OpenAiResponse;
-      const summary = extractOutputText(payload);
+      const summary = plainTextSummary(extractOutputText(payload));
       const sources = extractSources(payload).filter(source =>
         isOfficialStudentResearchUrl(source.url),
       );
@@ -198,7 +200,8 @@ export class BusinessResearchService {
       return {
         domain: "student_migration",
         question: normalizedQuestion,
-        status: "official_research",
+        status: "official_evidence",
+        sourceMode: "official_web_research",
         summary,
         sources,
         researchedAt,
@@ -302,4 +305,16 @@ function isOfficialStudentResearchUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function plainTextSummary(value: string): string {
+  return value
+    .replace(/\[([^\]]+)]\(https?:\/\/[^)]+\)/g, "$1")
+    .replace(/<https?:\/\/[^>]+>/g, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\*\*|__|[*_`#]/g, "")
+    .replace(/^\s*[-+]\s+/gm, "")
+    .replace(/\s*\n+\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }

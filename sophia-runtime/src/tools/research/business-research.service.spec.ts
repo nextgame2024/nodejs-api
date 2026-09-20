@@ -127,15 +127,31 @@ describe("BusinessResearchService", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body).toMatchObject({
       tool_choice: "required",
-      tools: [{ type: "web_search", search_context_size: "medium", filters: { allowed_domains: expect.arrayContaining(["immi.homeaffairs.gov.au", "legislation.gov.au"]) } }],
+      tools: [{ type: "web_search", search_context_size: "low", filters: { allowed_domains: expect.arrayContaining(["immi.homeaffairs.gov.au", "legislation.gov.au"]) } }],
       input: "What is the official rule?",
     });
     expect(result).toMatchObject({
-      status: "official_research",
+      status: "official_evidence",
+      sourceMode: "official_web_research",
       liveVerified: true,
       sources: [{ url: "https://immi.homeaffairs.gov.au/example" }],
       studentView: { cards: [{ evidenceStatus: "live", sources: [{ url: "https://immi.homeaffairs.gov.au/example", status: "live" }] }] },
     });
+  });
+
+  it("removes web-search Markdown and inline URLs from the displayed summary", async () => {
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => ({ output: [{ type: "message", content: [{
+        type: "output_text",
+        text: "**Student visa** details are on [Home Affairs](https://immi.homeaffairs.gov.au/example?utm_source=openai).",
+        annotations: [{ type: "url_citation", title: "Home Affairs", url: "https://immi.homeaffairs.gov.au/example" }],
+      }] }] }),
+    } as Response);
+    const result = await new BusinessResearchService().researchOfficialStudentInformation("Visa details");
+    expect(result.summary).toBe("Student visa details are on Home Affairs.");
+    expect(JSON.stringify(result.studentView)).not.toContain("**");
+    expect(JSON.stringify(result.studentView)).not.toContain("utm_source");
   });
 
   it("does not return a student answer without an official citation", async () => {
