@@ -102,6 +102,76 @@ describe("TavusFullProvider", () => {
     ).resolves.toMatchObject({ providerSessionId: "conversation-2" });
   });
 
+  it("does not return a Premium session when required runtime tools cannot be configured", async () => {
+    process.env.TAVUS_INTERNET_SEARCH_ENABLED = "false";
+    const fetchMock = jest
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: async () => "tool service unavailable",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          conversation_id: "conversation-without-tools",
+          conversation_url: "https://tavus.daily.co/conversation-without-tools",
+          meeting_token: "meeting-token",
+        }),
+      } as Response);
+    global.fetch = fetchMock;
+
+    await expect(
+      new TavusFullProvider().createSession({
+        customerId: "customer-1",
+        tools: [{ name: "requiredTool", description: "Required", parameters: { type: "object" } }],
+      }),
+    ).rejects.toThrow("Tavus tool listing failed");
+  });
+
+  it("updates existing Tavus tools concurrently to reduce cold-start latency", async () => {
+    const definitions = Array.from({ length: 8 }, (_, index) => ({
+      name: `tool${index}`,
+      description: `Tool ${index}`,
+      parameters: { type: "object" },
+    }));
+    let activeUpdates = 0;
+    let peakUpdates = 0;
+    const fetchMock = jest.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/tools?limit=100")) {
+        return {
+          ok: true,
+          json: async () => ({ data: definitions.map((definition, index) => ({ name: definition.name, tool_id: `id${index}` })) }),
+        } as Response;
+      }
+      if (init?.method === "PATCH") {
+        activeUpdates++;
+        peakUpdates = Math.max(peakUpdates, activeUpdates);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeUpdates--;
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/v2/pals/persona-1/tools") && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({ data: definitions.map((_, index) => ({ tool_id: `id${index}` })) }),
+        } as Response;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    global.fetch = fetchMock;
+
+    await (new TavusFullProvider() as any).ensureRuntimeTools(
+      "https://tavusapi.com",
+      "tavus-key",
+      "persona-1",
+      definitions,
+    );
+
+    expect(peakUpdates).toBe(6);
+  });
+
   it("returns the Tavus response detail when conversation creation fails", async () => {
     const fetchMock = jest
       .fn<typeof fetch>()

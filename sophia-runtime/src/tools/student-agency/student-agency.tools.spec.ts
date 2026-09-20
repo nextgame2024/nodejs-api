@@ -19,6 +19,16 @@ it.each([
   expect(result.studentView.cards.length).toBeGreaterThan(0);
 });
 
+it("includes family and subsequent-entrant changes in the reviewed recent-changes answer",async()=>{
+  const tool=toolNamed(createStudentAgencyTools({} as BusinessManagerClient),"showStudentVisaDemoGuidance");
+  const result=await tool.execute({intent:"recent_changes"},{customerId:"demo"}) as any;
+  expect(result.answer).toContain("minor child is Priority 1");
+  expect(result.answer).toContain("without a minor child is Priority 2");
+  expect(result.studentView.cards).toEqual(expect.arrayContaining([
+    expect.objectContaining({title:"Applying with family and subsequent entrants",effectiveFrom:"2025-11-14"}),
+  ]));
+});
+
 it("routes student enquiries through the separate endpoint", async () => {
   const search = jest.fn<BusinessManagerClient["searchStudentAgencyKnowledge"]>().mockResolvedValue({ domain: "student_migration", results: [] });
   const registry = new ToolRegistry();

@@ -52,16 +52,18 @@ export class TavusFullProvider {
         "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus Persona uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
       );
     }
-    const setupOperations: Array<{ name: string; promise: Promise<void> }> = [];
+    const setupOperations: Array<{ name: string; required: boolean; promise: Promise<void> }> = [];
     if (config.tavus.internetSearchEnabled) {
       setupOperations.push({
         name: "internet search",
+        required: false,
         promise: this.ensureInternetSearchSkill(apiBaseUrl, apiKey, personaId),
       });
     }
     if (request.tools?.length) {
       setupOperations.push({
         name: "runtime tools",
+        required: true,
         promise: this.ensureRuntimeTools(
           apiBaseUrl,
           apiKey,
@@ -72,7 +74,7 @@ export class TavusFullProvider {
     }
 
     const setupPromise = Promise.all(
-      setupOperations.map(async ({ name, promise }) => {
+      setupOperations.map(async ({ name, required, promise }) => {
         const operationStartedAt = Date.now();
         try {
           await promise;
@@ -81,8 +83,9 @@ export class TavusFullProvider {
           );
         } catch (error) {
           this.logger.warn(
-            `Tavus ${name} setup failed after ${Date.now() - operationStartedAt}ms; conversation creation will continue. ${errorMessage(error)}`,
+            `Tavus ${name} setup failed after ${Date.now() - operationStartedAt}ms${required ? "." : "; conversation creation will continue."} ${errorMessage(error)}`,
           );
+          if (required) throw error;
         }
       }),
     );
@@ -230,14 +233,11 @@ export class TavusFullProvider {
       tools?: Array<{ tool_id?: string; name?: string }>;
     };
     const existingTools = existingPayload.data || existingPayload.tools || [];
-    const toolIds: string[] = [];
-
-    for (const definition of definitions) {
+    const toolIds = await mapConcurrently(definitions, 6, async (definition) => {
       const existing = existingTools.find((tool) => tool.name === definition.name);
       if (existing?.tool_id) {
         await this.updateTavusTool(apiBaseUrl, apiKey, existing.tool_id, definition);
-        toolIds.push(existing.tool_id);
-        continue;
+        return existing.tool_id;
       }
 
       const response = await fetch(`${apiBaseUrl}/v2/tools`, {
@@ -252,8 +252,8 @@ export class TavusFullProvider {
       }
       const created = JSON.parse(detail) as { tool_id?: string };
       if (!created.tool_id) throw new Error(`Tavus did not return a tool ID for ${definition.name}.`);
-      toolIds.push(created.tool_id);
-    }
+      return created.tool_id;
+    });
 
     const attachedResponse = await fetch(
       `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/tools`,
@@ -325,6 +325,26 @@ export class TavusFullProvider {
       delivery: { app_message: true },
     };
   }
+}
+
+async function mapConcurrently<T, R>(
+  values: T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++;
+        results[index] = await operation(values[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function providerDetail(detail: string): string {
