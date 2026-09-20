@@ -318,7 +318,7 @@ export class TavusFullProvider {
       description: definition.description,
       parameters: definition.parameters,
       origin: "llm",
-      on_call: "generate_filler",
+      on_call: "silent",
       on_resolve: "generate_response",
       delivery: { app_message: true },
     };
