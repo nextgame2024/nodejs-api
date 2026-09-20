@@ -49,36 +49,13 @@ export function genuineStudentComparison(sources) {
   };
 }
 export function evidenceStudentView(result) {
-  const comparisons = [genuineStudentComparison(result.sources), processingPriorityComparison(result.sources)].filter(Boolean);
-  const comparedUrls = new Set(comparisons.flatMap(card => card.sources.map(source => source.url)));
+  const comparison = genuineStudentComparison(result.sources);
   return {title: "Official student information", notice: "Official pages support the answer only where they address your question. Missing details still need verification.",
-    cards: [...comparisons, ...result.sources.filter(source => !comparedUrls.has(source.url)).map(source => ({
+    cards: comparison ? [comparison] : result.sources.map(source => ({
       kind: "evidence", title: source.title,
       summary: source.status === "fetched" ? "Official page retrieved for this topic. Sophia will explain the relevant supported information." : source.status === "cached" ? "A saved copy is available. The official page could not be checked live." : "This official page could not be checked. Its current requirements remain unverified.",
       evidenceStatus: source.status === "fetched" ? "live" : source.status === "cached" ? "cached" : "unavailable",
       verifiedAt: source.fetchedAt || null, sources: cardSources([source]), applicability: [],
       limitations: source.truncated ? ["The retrieved page is incomplete; missing details need verification."] : [],
-    }))]};
-}
-
-export function processingPriorityComparison(sources) {
-  const source = sources.find(s => s.sourceId === "processing_priorities" && ["fetched", "cached"].includes(s.status) && !s.truncated);
-  const evidence = text(source?.text).replace(/\s+/g, " ").toLowerCase();
-  // Require the date, scope and direction together; isolated mentions are not proof.
-  if (!evidence.includes("applications lodged by students outside australia") ||
-      !/for applications lodged before 14 november 2025, these priorities are outlined in ministerial direction 111/.test(evidence) ||
-      !/for applications lodged on or after 14 november 2025, these priorities are outlined in ministerial direction 115/.test(evidence) ||
-      !evidence.includes("it does not set the criteria to approve or refuse a student visa application")) return null;
-  return {
-    kind: "comparison", title: "Offshore processing: MD111 → MD115",
-    summary: "The offshore lodgement date determines the processing direction; priority does not decide eligibility or approval.",
-    previousRule: "MD111 applies to offshore applications lodged before 14 November 2025 within the scope described by this source.",
-    currentRule: "MD115 applies to offshore applications lodged on or after 14 November 2025.",
-    newStudentImpact: "Check the application lodgement date, offshore status and relevant priority category.",
-    currentStudentImpact: "This concerns application processing, not new conditions on an already-granted visa. Check pending or further applications separately.",
-    effectiveFrom: "2025-11-14", effectiveTo: null, changeStatus: "in_force",
-    applicability: ["Offshore Subclass 500 processing; not a visa cap or guaranteed decision time."],
-    evidenceStatus: source.status === "fetched" ? "live" : "cached", verifiedAt: source.fetchedAt,
-    sources: cardSources([source]), limitations: ["This is a bounded comparison, not a complete history of student visa changes."],
-  };
+    }))};
 }

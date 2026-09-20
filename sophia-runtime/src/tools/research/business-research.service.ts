@@ -16,28 +16,6 @@ export type BusinessResearchResult = {
   researchedAt: string;
 };
 
-export type OfficialStudentResearchResult = {
-  domain: "student_migration";
-  question: string;
-  status: "official_evidence" | "unavailable";
-  sourceMode?: "official_web_research";
-  summary: string;
-  sources: Array<{ title?: string; url: string }>;
-  researchedAt: string;
-  liveVerified: boolean;
-  guidance: string;
-  studentView?: Record<string, unknown>;
-};
-
-const officialStudentDomains = [
-  "immi.homeaffairs.gov.au",
-  "homeaffairs.gov.au",
-  "legislation.gov.au",
-  "education.gov.au",
-  "studyaustralia.gov.au",
-  "mara.gov.au",
-];
-
 type OpenAiResponse = {
   status?: string;
   error?: {
@@ -141,94 +119,6 @@ export class BusinessResearchService {
       return unavailableResult(request, location);
     }
   }
-
-  async researchOfficialStudentInformation(
-    question: string,
-  ): Promise<OfficialStudentResearchResult> {
-    const normalizedQuestion = question.trim();
-    const config = runtimeConfig();
-    const unavailable = (): OfficialStudentResearchResult => ({
-      domain: "student_migration",
-      question: normalizedQuestion,
-      status: "unavailable",
-      summary: "I couldn't confirm this from the approved official Australian sources.",
-      sources: [],
-      researchedAt: new Date().toISOString(),
-      liveVerified: false,
-      guidance: "Say that this information could not be confirmed from the approved official sources, then ask whether you can help with something else. Do not answer from memory.",
-    });
-    if (!config.openAi.apiKey) return unavailable();
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${config.openAi.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: config.openAi.researchModel,
-          tools: [{
-            type: "web_search",
-            search_context_size: "low",
-            filters: { allowed_domains: officialStudentDomains },
-          }],
-          tool_choice: "required",
-          include: ["web_search_call.action.sources"],
-          max_output_tokens: 550,
-          instructions: [
-            "Answer this Australian student visa or international education question only from the allowed official Australian Government domains returned by web search.",
-            "Search before answering. Prefer the Department of Home Affairs and the Federal Register of Legislation; use Education, Study Australia, or OMARA where directly relevant.",
-            "State the applicable date, lodgement date, visa condition, location, course type, and exceptions when the sources establish them.",
-            "Do not treat a page retrieval date as a rule commencement date. Do not infer eligibility, approval, exemptions, or the absence of a newer rule.",
-            "If the official sources do not establish the requested fact, say that it could not be confirmed. Do not answer from model memory or non-government sources.",
-            "Return plain text, not Markdown. Do not put URLs or source links in the answer because citations are displayed separately.",
-            "Keep the answer concise and suitable for speech: give the direct answer first and normally use no more than four short sentences.",
-          ].join(" "),
-          input: normalizedQuestion,
-        }),
-        signal: AbortSignal.timeout(config.openAi.researchTimeoutMs),
-      });
-      if (!response.ok) return unavailable();
-      const payload = (await response.json()) as OpenAiResponse;
-      const summary = plainTextSummary(extractOutputText(payload));
-      const sources = extractSources(payload).filter(source =>
-        isOfficialStudentResearchUrl(source.url),
-      );
-      if (!summary || !sources.length) return unavailable();
-      const researchedAt = new Date().toISOString();
-      return {
-        domain: "student_migration",
-        question: normalizedQuestion,
-        status: "official_evidence",
-        sourceMode: "official_web_research",
-        summary,
-        sources,
-        researchedAt,
-        liveVerified: true,
-        guidance: "Answer only from this summary and its official cited sources. State that the sources were checked at researchedAt; do not describe researchedAt as the rule's effective date.",
-        studentView: {
-          title: "Official student information",
-          notice: "This answer was researched from approved Australian Government domains. Source and checking dates are shown below.",
-          cards: [{
-            kind: "answer",
-            title: normalizedQuestion,
-            summary,
-            evidenceStatus: "live",
-            verifiedAt: researchedAt,
-            applicability: [],
-            sources: sources.map(source => ({ ...source, checkedAt: researchedAt, status: "live" })),
-            limitations: ["Official research is not an individual eligibility or visa outcome assessment."],
-          }],
-        },
-      };
-    } catch (error) {
-      this.logger.error(
-        `Official student research failed: ${truncate(error instanceof Error ? error.message : String(error))}`,
-      );
-      return unavailable();
-    }
-  }
 }
 
 function unavailableResult(
@@ -294,27 +184,4 @@ function isPublicHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isOfficialStudentResearchUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && officialStudentDomains.some(
-      domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
-    );
-  } catch {
-    return false;
-  }
-}
-
-function plainTextSummary(value: string): string {
-  return value
-    .replace(/\[([^\]]+)]\(https?:\/\/[^)]+\)/g, "$1")
-    .replace(/<https?:\/\/[^>]+>/g, "")
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/\*\*|__|[*_`#]/g, "")
-    .replace(/^\s*[-+]\s+/gm, "")
-    .replace(/\s*\n+\s*/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
 }

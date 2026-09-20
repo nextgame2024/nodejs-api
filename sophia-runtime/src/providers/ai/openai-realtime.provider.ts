@@ -62,7 +62,6 @@ export class OpenAIRealtimeProvider implements AIProvider {
             output_modalities: [request.outputModality],
             audio: {
               input: {
-                noise_reduction: { type: "far_field" },
                 turn_detection: {
                   type: "server_vad",
                   threshold: config.openAi.vadThreshold,

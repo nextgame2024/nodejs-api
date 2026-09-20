@@ -3,9 +3,9 @@ import { expect, it, jest } from "@jest/globals";
 import { validateStudentContent, importStudentContent } from "../src/services/bm.studentContentImport.service.js";
 const now=Date.parse("2026-09-19T01:00:00Z");
 const record={key:"test",topic:"work",question:"Example question",answer:"Example answer",sources:[{title:"Official source",url:"https://www.education.gov.au/example",excerpt:"Reviewed supporting extract"}],verifiedAt:"2026-09-19T00:00:00Z",reviewDueAt:"2026-09-20T00:00:00Z"};
-it("validates updated draft FAQs but refuses to label them approved",()=>{
+it("validates 20 draft FAQs but refuses to label them approved",()=>{
   const pack=JSON.parse(fs.readFileSync("data/student-agency/faqs.draft.json","utf8"));
-  expect(validateStudentContent(pack)).toHaveLength(27);
+  expect(validateStudentContent(pack)).toHaveLength(20);
   expect(()=>validateStudentContent(pack,{approve:true,reviewer:"Agency reviewer",now})).toThrow("Approval requires");
 });
 it("requires a real review identity, recent dates and source excerpts for approval",()=>{

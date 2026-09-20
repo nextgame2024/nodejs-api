@@ -1,6 +1,6 @@
 import { searchKnowledge } from "./bm.studentAgency.service.js";
 import { verifyStudentSources } from "./bm.studentVerification.service.js";
-import { genuineStudentComparison, processingPriorityComparison, reviewedStudentCard } from "./bm.studentCards.service.js";
+import { genuineStudentComparison, reviewedStudentCard } from "./bm.studentCards.service.js";
 
 export async function compareStudentRules(companyId, input = {}, { verify = verifyStudentSources, search = searchKnowledge } = {}) {
   const baselineDate = input.baselineDate;
@@ -11,11 +11,10 @@ export async function compareStudentRules(companyId, input = {}, { verify = veri
   const evidence = await verify({topic: input.topic});
   let reviewed = {results: []};
   try { reviewed = await search(companyId, {q: input.topic.replaceAll("_", " ")}); } catch { /* Live evidence can still support a comparison. */ }
-  const comparison = { genuine_student: genuineStudentComparison, processing_priorities: processingPriorityComparison }[input.topic];
-  const live = comparison?.(evidence.sources);
+  const live = genuineStudentComparison(evidence.sources);
   // When live GS content no longer supports the known transition, do not revive
   // it from an older reviewed record as if current. Other topics remain dated.
-  let cards = comparison ? (live ? [live] : []) : reviewed.results
+  let cards = input.topic === "genuine_student" ? (live ? [live] : []) : reviewed.results
     .filter(r => r.topic === input.topic && r.previousRule && r.currentRule).map(reviewedStudentCard);
   if (baselineDate) cards = cards.filter(c => c.effectiveFrom && String(c.effectiveFrom).slice(0,10) >= baselineDate);
   return {...evidence, baselineDate: baselineDate || null,
