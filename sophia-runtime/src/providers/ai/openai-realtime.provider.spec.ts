@@ -81,9 +81,10 @@ describe("OpenAIRealtimeProvider", () => {
         }),
       }),
     );
-    expect(
-      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
-    ).toMatchObject({
+    const requestBody = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body),
+    );
+    expect(requestBody).toMatchObject({
       session: {
         type: "realtime",
         model: "gpt-realtime-2.1-mini",
@@ -106,6 +107,12 @@ describe("OpenAIRealtimeProvider", () => {
         tools: [expect.objectContaining({ name: "getInventory" })],
       },
     });
+    expect(requestBody.session.instructions).toContain(
+      "Answer these immediately from the baseline",
+    );
+    expect(requestBody.session.instructions).toContain(
+      "48 hours per fortnight",
+    );
     expect(session).toMatchObject({
       provider: "openai-realtime",
       providerSessionId: "sess_test",

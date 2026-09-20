@@ -1,4 +1,7 @@
-import { sophiaConversationInstructions } from "./sophia-profile.js";
+import {
+  STUDENT_VISA_DEMO_BASELINE,
+  sophiaConversationInstructions,
+} from "./sophia-profile.js";
 
 describe("sophiaConversationInstructions", () => {
   it("answers agency requirement questions without generic advice disclaimers", () => {
@@ -24,5 +27,17 @@ describe("sophiaConversationInstructions", () => {
     expect(instructions).toContain(
       "Do not say that the email has already been sent",
     );
+  });
+
+  it("answers the five student visa demo intents without a tool round trip", () => {
+    const instructions = sophiaConversationInstructions();
+
+    expect(instructions).toContain("Answer these immediately from the baseline");
+    expect(instructions).toContain("without calling a tool");
+    expect(instructions).toContain("Genuine Student requirement replaced");
+    expect(instructions).toContain("Ministerial Direction 115");
+    expect(instructions).toContain("do not automatically alter an already-granted visa");
+    expect(instructions).toContain("48 hours per fortnight");
+    expect(instructions).toContain(STUDENT_VISA_DEMO_BASELINE);
   });
 });

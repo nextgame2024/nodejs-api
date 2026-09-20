@@ -63,6 +63,14 @@ describe("TavusFullProvider", () => {
       JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
         .conversational_context,
     ).toContain("Sophia AI is a configurable, real-time digital assistant");
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+        .conversational_context,
+    ).toContain("Answer these immediately from the baseline");
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+        .conversational_context,
+    ).toContain("48 hours per fortnight");
     expect(session).toMatchObject({
       provider: "tavus-full",
       providerSessionId: "conversation-1",
