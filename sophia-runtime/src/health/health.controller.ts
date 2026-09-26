@@ -8,6 +8,6 @@ export class HealthController {
   @Get()
   async healthz() {
     await this.database.ping();
-    return { ok: true };
+    return { ok: true, revision: process.env.RENDER_GIT_COMMIT?.slice(0, 12) ?? "local" };
   }
 }
