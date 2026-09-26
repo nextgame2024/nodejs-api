@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.39",
+    "version": "2.1.40",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,25 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-26-P6-A06B-EVIDENCE",
+      "taskId": "P6-A06",
+      "reason": "A real Stripe sandbox subscription lifecycle was completed against the deployed Sophia Runtime. The first authoritative reconciliation exposed that the shared subscription/invoice identity trigger accessed table-specific record fields in boolean expressions and failed on the other table. The transaction rolled back, migration 035 replaced the trigger with table-routed nested branches, and reconciliation then completed with one active subscription and one paid AUD invoice.",
+      "changes": [
+        "Mark P6-A06B complete with evidence from a provider-hosted AUD 1 monthly Checkout, the issued-intent-matched signed callback, sandbox customer binding, one active subscription, one paid invoice, hosted portal creation and authoritative reconciliation.",
+        "Add migration 035 to repair table-specific billing reference trigger routing while preserving immutable tenant/provider/reference identities and monotonic observation revisions.",
+        "Keep the Business Manager recent-MFA gate unchanged. The sandbox proof used a bounded operator invocation of the same lifecycle service because the current Business Manager identity contract still provides no mfaVerifiedAt evidence.",
+        "Keep live charge activation in P6-A06C. Sandbox success, available production credentials and deployed Admin UI do not authorize or enable live Checkout."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/035_billing_reference_trigger_routing.sql",
+        "sophia-runtime/src/database/billing-reference-trigger-routing-migration.spec.ts",
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "docs/sophia/p6-a06b-checkpoint.md"
+      ],
+      "approvedBy": "User instruction to complete the sandbox lifecycle and maintain the plan when runtime evidence identifies a necessary correction",
+      "recordedAt": "2026-09-26T18:40:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-26-P6-A06B",
       "taskId": "P6-A06",
@@ -5479,7 +5498,7 @@
         },
         {
           "id": "P6-A06B",
-          "status": "not_started",
+          "status": "complete_with_limits",
           "scope": "Configure Sophia-specific test-mode recurring Price mappings, metadata, webhook destination/signing secret and portal configuration using an approved Stripe account credential; run synthetic checkout/subscription/invoice/portal/reconciliation end-to-end evidence without live activation. Existing generic or one-time payment tests are supporting evidence but do not replace this subscription-lifecycle proof."
         },
         {

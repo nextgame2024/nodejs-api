@@ -10,6 +10,8 @@ describe("billing observation hardening migration", () => {
     expect(sql).toContain("protect_billing_reference_identity");
     expect(sql).toContain("external_subscription_ref <> OLD.external_subscription_ref");
     expect(sql).toContain("external_invoice_ref <> OLD.external_invoice_ref");
+    expect(sql).toContain("ELSIF TG_TABLE_NAME = 'billing_invoice_references' THEN");
+    expect(sql).not.toContain("TG_TABLE_NAME = 'billing_subscription_references'\n    AND NEW.external_subscription_ref");
   });
 
   it("permits only monotonic observation revisions and one final webhook transition", () => {
