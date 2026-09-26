@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import Stripe from "stripe";
 import { z } from "zod";
 import { runtimeConfig, type RuntimeConfig } from "../../config/runtime-config.js";
@@ -27,7 +27,6 @@ const eventSchema = z.object({
 });
 const uuid = z.string().uuid();
 
-@Injectable()
 export class StripeSandboxBillingProvider implements BillingProvider {
   private readonly config: RuntimeConfig["billing"];
   private readonly client: StripeClient | null;

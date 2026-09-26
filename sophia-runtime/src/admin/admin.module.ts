@@ -108,7 +108,8 @@ import { runtimeConfig } from "../config/runtime-config.js";
     UsageGuardrailService,
     BillingLifecycleService,
     DisabledBillingProvider,
-    StripeSandboxBillingProvider,
+    { provide: StripeSandboxBillingProvider,
+      useFactory: () => new StripeSandboxBillingProvider(runtimeConfig().billing) },
     { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeSandboxBillingProvider],
       useFactory: (disabled: DisabledBillingProvider, stripe: StripeSandboxBillingProvider) =>
         runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },

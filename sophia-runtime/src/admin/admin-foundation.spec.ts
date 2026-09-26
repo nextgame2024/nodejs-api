@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AdminAuditService } from "./authorization/admin-audit.service.js";
+import { AdminModule } from "./admin.module.js";
+import { StripeSandboxBillingProvider } from "./billing/stripe-sandbox-billing.provider.js";
 
 describe("Sophia Admin foundation", () => {
   beforeEach(() => {
@@ -42,5 +44,15 @@ describe("Sophia Admin foundation", () => {
       transcript: "[REDACTED]",
       nested: { credential: "[REDACTED]", safe: "visible" },
     }));
+  });
+
+  it("constructs the Stripe adapter through an explicit configuration factory", () => {
+    const providers = Reflect.getMetadata("providers", AdminModule) as unknown[];
+    expect(providers).not.toContain(StripeSandboxBillingProvider);
+    const registration = providers.find((provider) => provider && typeof provider === "object"
+      && (provider as { provide?: unknown }).provide === StripeSandboxBillingProvider) as
+      { useFactory?: () => StripeSandboxBillingProvider } | undefined;
+    expect(registration?.useFactory).toEqual(expect.any(Function));
+    expect(registration?.useFactory?.()).toBeInstanceOf(StripeSandboxBillingProvider);
   });
 });
