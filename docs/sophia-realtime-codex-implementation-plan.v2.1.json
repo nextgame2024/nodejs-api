@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.41",
+    "version": "2.1.42",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,26 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-27-P6-A06C2-ENVIRONMENT-CONTRACT",
+      "taskId": "P6-A06",
+      "reason": "Implementing dormant live mode proved two additional production boundaries: provider subscription/invoice references must be globally unique within an environment to prevent cross-tenant object attachment, and adding a required environment column needs an expand/deploy/contract sequence so the previous Runtime can continue processing sandbox webhooks during rollout.",
+      "changes": [
+        "Make Stripe mode explicit across key validation, Price livemode, webhook livemode, metadata, idempotency keys, customer bindings, Checkout intents, subscription references and invoice references.",
+        "Make external subscription and invoice references unique by provider and provider_environment, with immutable tenant ownership.",
+        "Use migration 036 to expand and backfill while retaining a sandbox compatibility default, deploy the environment-aware writer, then use migration 037 to remove the default.",
+        "Expose the bounded non-secret Render git revision in runtime health so operators can prove the new writer is live before running the contract migration."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/stripe-billing.provider.ts",
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "sophia-runtime/src/database/migrations/036_billing_provider_environment.sql",
+        "sophia-runtime/src/database/migrations/037_billing_provider_environment_contract.sql",
+        "docs/sophia/p6-a06c2-checkpoint.md"
+      ],
+      "approvedBy": "User instruction to evaluate and improve the reference plan when implementation evidence requires it",
+      "recordedAt": "2026-09-27T09:47:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-26-P6-A06C-GATES",
       "taskId": "P6-A06",
@@ -5527,12 +5547,12 @@
           "executionSlices": [
             {
               "id": "P6-A06C1",
-              "status": "blocked_on_runtime_login_secret",
+              "status": "complete",
               "scope": "Create a genuine non-owner Neon LOGIN role, grant it only the sophia_runtime_app capability role, replace the Render runtime URL and prove session_user cannot recover owner authority."
             },
             {
               "id": "P6-A06C2",
-              "status": "not_started",
+              "status": "complete",
               "scope": "Implement dormant Stripe live mode with environment-separated customer, Checkout, subscription, invoice and webhook state; keep live Checkout disabled by an independent activation flag."
             },
             {
