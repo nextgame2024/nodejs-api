@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.40",
+    "version": "2.1.41",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,25 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-26-P6-A06C-GATES",
+      "taskId": "P6-A06",
+      "reason": "Production-readiness inspection proved that the deployed database URL authenticates as neondb_owner and merely starts with SET ROLE sophia_runtime_app. The session_user therefore retains owner authority and can RESET ROLE, so this is not a genuine least-privilege runtime credential. Inspection also found subscription/invoice observations and lifecycle SQL still carry sandbox assumptions that must be separated before live evidence can coexist safely.",
+      "changes": [
+        "Split P6-A06C into four explicit gates: C1 genuine Neon non-owner login cutover, C2 dormant live-mode adapter and environment-separated persistence, C3 live-resource verification without Checkout, and C4 a separate real-charge activation decision.",
+        "Require a LOGIN role whose session_user is not the owner, has no BYPASSRLS or role-creation privileges, and may SET ROLE only to the existing NOLOGIN sophia_runtime_app capability role.",
+        "Keep live Checkout disabled by default even when live credentials and resources are configured. Portal, callback and reconciliation readiness must not imply charge authority.",
+        "Do not reuse sandbox customer, Checkout, subscription, invoice or webhook identities in live mode; persistence and uniqueness must include provider_environment throughout."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/010_least_privilege_runtime_role.sql",
+        "sophia-runtime/src/database/database.service.ts",
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "sophia-runtime/src/config/runtime-config.ts"
+      ],
+      "approvedBy": "User agreement to replace the owner-backed connection, add live-mode support, configure live resources and decide charge activation explicitly",
+      "recordedAt": "2026-09-26T18:55:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-26-P6-A06B-EVIDENCE",
       "taskId": "P6-A06",
@@ -5503,8 +5522,30 @@
         },
         {
           "id": "P6-A06C",
-          "status": "blocked_on_production_configuration",
-          "scope": "Add and verify an independently gated Stripe live-mode deployment using secret-manager injection, approved live recurring Price mappings, deployed HTTPS webhook/return URLs, recent-MFA operator access and explicit charge activation authority. Never infer live activation from credential availability."
+          "status": "in_progress",
+          "scope": "Add and verify an independently gated Stripe live-mode deployment without inferring charge authority from credential availability.",
+          "executionSlices": [
+            {
+              "id": "P6-A06C1",
+              "status": "blocked_on_runtime_login_secret",
+              "scope": "Create a genuine non-owner Neon LOGIN role, grant it only the sophia_runtime_app capability role, replace the Render runtime URL and prove session_user cannot recover owner authority."
+            },
+            {
+              "id": "P6-A06C2",
+              "status": "not_started",
+              "scope": "Implement dormant Stripe live mode with environment-separated customer, Checkout, subscription, invoice and webhook state; keep live Checkout disabled by an independent activation flag."
+            },
+            {
+              "id": "P6-A06C3",
+              "status": "blocked_on_live_resources",
+              "scope": "Configure secret-manager-injected live credentials, recurring Price mappings, portal configuration and signed webhook destination; verify readiness, signatures and read-only reconciliation without creating a Checkout or charge."
+            },
+            {
+              "id": "P6-A06C4",
+              "status": "decision_required",
+              "scope": "After commercial, tax, MFA and security gates pass, obtain explicit authority either to keep live Checkout disabled or to enable real charge-creating Checkout."
+            }
+          ]
         }
       ],
       "implementationSteps": [
