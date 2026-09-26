@@ -34,6 +34,8 @@ export class UsageBillingService {
 
   async commercial(tenantId: string) {
     const schema = runtimeConfig().schema;
+    const providerStatus = this.billing.status();
+    const activeEnvironment = providerStatus.availability === "disabled" ? null : providerStatus.availability;
     return this.database.tenantReadTransaction(tenantId, async (client) => {
       const assignment = await client.query<PlanRow>(
         `SELECT a.commercial_assignment_id, a.status AS assignment_status, a.effective_from, a.effective_to,
@@ -56,29 +58,29 @@ export class UsageBillingService {
           [tenantId, period.from, period.to])
         : { rows: [] };
       const subscriptions = await client.query(
-        `SELECT billing_subscription_reference_id, provider_key, external_subscription_ref, status,
+        `SELECT billing_subscription_reference_id, provider_key, provider_environment, external_subscription_ref, status,
                 current_period_start, current_period_end, observed_at, revision
          FROM ${schema}.billing_subscription_references WHERE customer_id=$1 ORDER BY observed_at DESC LIMIT 20`, [tenantId]);
       const invoices = await client.query(
-        `SELECT billing_invoice_reference_id, provider_key, external_invoice_ref, status, currency,
+        `SELECT billing_invoice_reference_id, provider_key, provider_environment, external_invoice_ref, status, currency,
                 amount_due_minor, amount_paid_minor, hosted_invoice_url, due_at, observed_at, revision
          FROM ${schema}.billing_invoice_references WHERE customer_id=$1 ORDER BY observed_at DESC LIMIT 50`, [tenantId]);
       const providerCustomers = await client.query<{ provider_key: string; provider_environment: string; observed_at: Date | string }>(
         `SELECT provider_key,provider_environment,observed_at FROM ${schema}.billing_provider_customers
          WHERE customer_id=$1 ORDER BY observed_at DESC`, [tenantId]);
       const webhookEvents = await client.query(
-        `SELECT external_event_ref,event_type,processing_status,processing_detail,occurred_at,processed_at
+        `SELECT provider_environment,external_event_ref,event_type,processing_status,processing_detail,occurred_at,processed_at
          FROM ${schema}.billing_webhook_events WHERE customer_id=$1 ORDER BY occurred_at DESC LIMIT 20`, [tenantId]);
       const checkoutIntents = await client.query(
         `SELECT request_id,commercial_plan_version_id,status,created_at,expires_at
          FROM ${schema}.billing_checkout_intents WHERE customer_id=$1
-           AND provider_key='stripe-sophia' AND provider_environment='sandbox'
+           AND provider_key='stripe-sophia' AND provider_environment=COALESCE($2,'__disabled__')
            AND (status IN ('allocating','outcome_unknown') OR (status='created' AND expires_at>now()))
-         ORDER BY created_at DESC LIMIT 1`, [tenantId]);
+         ORDER BY created_at DESC LIMIT 1`, [tenantId, activeEnvironment]);
       return {
         tenantId,
         generatedAt: new Date().toISOString(),
-        providerIntegration: this.billing.status(),
+        providerIntegration: providerStatus,
         assignment: plan ? publicPlan(plan) : null,
         preview: preview(plan, dimensions.rows, period),
         subscriptions: subscriptions.rows,

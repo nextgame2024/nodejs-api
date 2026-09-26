@@ -56,7 +56,7 @@ import { DisabledBillingProvider } from "./billing/disabled-billing.provider.js"
 import { UsageGuardrailService } from "./billing/usage-guardrail.service.js";
 import { BillingLifecycleService } from "./billing/billing-lifecycle.service.js";
 import { BillingWebhookController } from "./billing/billing-webhook.controller.js";
-import { StripeSandboxBillingProvider } from "./billing/stripe-sandbox-billing.provider.js";
+import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { runtimeConfig } from "../config/runtime-config.js";
 
 @Module({
@@ -108,11 +108,11 @@ import { runtimeConfig } from "../config/runtime-config.js";
     UsageGuardrailService,
     BillingLifecycleService,
     DisabledBillingProvider,
-    { provide: StripeSandboxBillingProvider,
-      useFactory: () => new StripeSandboxBillingProvider(runtimeConfig().billing) },
-    { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeSandboxBillingProvider],
-      useFactory: (disabled: DisabledBillingProvider, stripe: StripeSandboxBillingProvider) =>
-        runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
+    { provide: StripeBillingProvider,
+      useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },
+    { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeBillingProvider],
+      useFactory: (disabled: DisabledBillingProvider, stripe: StripeBillingProvider) =>
+        runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
     { provide: APP_INTERCEPTOR, useClass: AdminAuditInterceptor },
     { provide: KNOWLEDGE_OBJECT_STORAGE, useExisting: PrivateS3KnowledgeStorageService },
     { provide: KNOWLEDGE_MALWARE_SCANNER, useExisting: HttpMalwareScannerService },

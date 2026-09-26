@@ -27,7 +27,7 @@ const eventSchema = z.object({
 });
 const uuid = z.string().uuid();
 
-export class StripeSandboxBillingProvider implements BillingProvider {
+export class StripeBillingProvider implements BillingProvider {
   private readonly config: RuntimeConfig["billing"];
   private readonly client: StripeClient | null;
 
@@ -39,18 +39,24 @@ export class StripeSandboxBillingProvider implements BillingProvider {
 
   status(): BillingProviderStatus {
     const missing = this.missingConfiguration();
-    const available = this.config.provider === "stripe_sandbox" && missing.length === 0;
+    const environment = this.environment();
+    const available = environment !== null && missing.length === 0;
+    const checkoutEnabled = available && (environment === "sandbox" || this.config.liveCheckoutEnabled);
     return {
-      availability: available ? "sandbox" : "disabled",
+      availability: available ? environment : "disabled",
       providerKey: "stripe-sophia",
-      checkout: available,
+      checkout: checkoutEnabled,
       portal: available,
       signedWebhooks: available,
       reconciliation: available,
       missingConfiguration: missing,
-      detail: available
-        ? "Dedicated Stripe test-mode subscription adapter is configured. It cannot create live charges or alter platform plan assignments."
-        : "Stripe sandbox adapter is dormant until every dedicated Sophia test credential, recurring Price mapping and hosted return URL is configured.",
+      detail: !available
+        ? "Stripe billing is dormant until every Sophia credential, recurring Price mapping and hosted return URL is configured."
+        : environment === "sandbox"
+          ? "Stripe test-mode subscription billing is configured. It cannot create live charges or alter platform plan assignments."
+          : checkoutEnabled
+            ? "Stripe live-mode billing is configured and real charge-creating Checkout is explicitly enabled."
+            : "Stripe live-mode portal, signed webhook and reconciliation support is configured. Real charge-creating Checkout remains explicitly disabled.",
     };
   }
 
@@ -58,15 +64,20 @@ export class StripeSandboxBillingProvider implements BillingProvider {
 
   async createHostedCheckout(input: { tenantId: string; planVersionId: string; requestId: string; customerRef: string | null;
     commercial: { currency: string; interval: "month" | "year"; baseChargeMinor: string } }) {
+    const status = this.status();
+    if (!status.checkout) throw unavailable(status.availability === "live"
+      ? "Sophia Stripe live Checkout is disabled pending explicit charge activation."
+      : "Sophia Stripe Checkout is not fully configured.");
     const client = this.availableClient();
+    const environment = this.availableEnvironment();
     const price = this.config.stripePriceMappings[input.planVersionId];
-    if (!price) throw unavailable("The assigned Sophia plan has no approved Stripe sandbox Price mapping.");
+    if (!price) throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} Price mapping.`);
     const providerPrice = await client.prices.retrieve(price);
-    if (providerPrice.livemode || !providerPrice.active || providerPrice.type !== "recurring"
+    if (providerPrice.livemode !== (environment === "live") || !providerPrice.active || providerPrice.type !== "recurring"
       || providerPrice.currency.toUpperCase() !== input.commercial.currency
       || providerPrice.unit_amount === null || String(providerPrice.unit_amount) !== input.commercial.baseChargeMinor
       || providerPrice.recurring?.interval !== input.commercial.interval) {
-      throw unavailable("The Stripe sandbox Price does not exactly match the approved fixed recurring plan currency, amount and interval.");
+      throw unavailable(`The Stripe ${environment} Price does not exactly match the approved fixed recurring plan currency, amount and interval.`);
     }
     const session = await client.checkout.sessions.create({
       mode: "subscription",
@@ -75,19 +86,20 @@ export class StripeSandboxBillingProvider implements BillingProvider {
       ...(input.customerRef ? { customer: input.customerRef } : {}),
       line_items: [{ price, quantity: 1 }],
       success_url: this.config.checkoutSuccessUrl!, cancel_url: this.config.checkoutCancelUrl!,
-      metadata: metadata(input.tenantId, input.planVersionId),
-      subscription_data: { metadata: metadata(input.tenantId, input.planVersionId) },
-    }, { idempotencyKey: `sophia:checkout:${input.tenantId}:${input.planVersionId}:${input.requestId}` });
+      metadata: metadata(input.tenantId, input.planVersionId, environment),
+      subscription_data: { metadata: metadata(input.tenantId, input.planVersionId, environment) },
+    }, { idempotencyKey: `sophia:${environment}:checkout:${input.tenantId}:${input.planVersionId}:${input.requestId}` });
     return { url: hostedProviderUrl(session.url, "checkout.stripe.com"),
       expiresAt: session.expires_at ? secondsIso(session.expires_at) : null, externalCheckoutRef: session.id };
   }
 
   async createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string }) {
     const client = this.availableClient();
+    const environment = this.availableEnvironment();
     const session = await client.billingPortal.sessions.create({
       customer: input.customerRef, configuration: this.config.stripePortalConfigurationId,
       return_url: this.config.portalReturnUrl!,
-    }, { idempotencyKey: `sophia:portal:${input.tenantId}:${input.requestId}` });
+    }, { idempotencyKey: `sophia:${environment}:portal:${input.tenantId}:${input.requestId}` });
     return { url: hostedProviderUrl(session.url, "billing.stripe.com"), expiresAt: null };
   }
 
@@ -99,21 +111,27 @@ export class StripeSandboxBillingProvider implements BillingProvider {
     try { constructed = client.webhooks.constructEvent(Buffer.from(rawBody), signature, this.config.stripeWebhookSecret!); }
     catch { throw new UnauthorizedException("Stripe webhook signature verification failed."); }
     const event = eventSchema.parse(constructed);
-    if (event.livemode) throw new UnauthorizedException("Live Stripe events are rejected by the sandbox adapter.");
+    const environment = this.availableEnvironment();
+    if (event.livemode !== (environment === "live")) {
+      throw new UnauthorizedException(`Stripe ${event.livemode ? "live" : "sandbox"} events are rejected by the ${environment} adapter.`);
+    }
     const object = event.data.object;
     const metadataValue = record(object.metadata);
+    const metadataMatchesEnvironment = metadataValue?.sophiaNamespace === "subscription-v1"
+      && (metadataValue.sophiaEnvironment === environment
+        || (environment === "sandbox" && metadataValue.sophiaEnvironment === undefined));
     const occurredAt = secondsIso(event.created);
     const customerRef = reference(object.customer);
     const subscription = subscriptionObservation(event.type, object, occurredAt);
     const invoice = invoiceObservation(event.type, object, occurredAt);
     return {
-      providerKey: "stripe-sophia", environment: "sandbox", eventId: event.id, eventType: event.type,
+      providerKey: "stripe-sophia", environment, eventId: event.id, eventType: event.type,
       occurredAt, payloadDigest: createHash("sha256").update(rawBody).digest("hex"), customerRef,
       checkoutRef: event.type === "checkout.session.completed" ? reference(object.id) : null,
-      tenantHint: metadataValue?.sophiaNamespace === "subscription-v1" && uuid.safeParse(metadataValue.sophiaTenantId).success
-        ? String(metadataValue.sophiaTenantId) : null,
-      planVersionHint: metadataValue?.sophiaNamespace === "subscription-v1" && uuid.safeParse(metadataValue.sophiaPlanVersionId).success
-        ? String(metadataValue.sophiaPlanVersionId) : null,
+      tenantHint: metadataMatchesEnvironment && uuid.safeParse(metadataValue?.sophiaTenantId).success
+        ? String(metadataValue?.sophiaTenantId) : null,
+      planVersionHint: metadataMatchesEnvironment && uuid.safeParse(metadataValue?.sophiaPlanVersionId).success
+        ? String(metadataValue?.sophiaPlanVersionId) : null,
       subscription, invoice,
     };
   }
@@ -132,14 +150,26 @@ export class StripeSandboxBillingProvider implements BillingProvider {
   }
 
   private availableClient(): StripeClient {
-    if (this.status().availability !== "sandbox" || !this.client) throw unavailable("Sophia Stripe sandbox billing is not fully configured.");
+    if (this.status().availability === "disabled" || !this.client) throw unavailable("Sophia Stripe billing is not fully configured.");
     return this.client;
+  }
+
+  private availableEnvironment(): "sandbox" | "live" {
+    const availability = this.status().availability;
+    if (availability === "disabled") throw unavailable("Sophia Stripe billing is not fully configured.");
+    return availability;
+  }
+
+  private environment(): "sandbox" | "live" | null {
+    if (this.config.provider === "stripe_sandbox") return "sandbox";
+    if (this.config.provider === "stripe_live") return "live";
+    return null;
   }
 
   private missingConfiguration(): string[] {
     const missing: string[] = [];
-    if (this.config.provider !== "stripe_sandbox") missing.push("provider");
-    if (!this.config.stripeSecretKey) missing.push("testSecretKey");
+    if (!this.environment()) missing.push("provider");
+    if (!this.config.stripeSecretKey) missing.push("secretKey");
     if (!this.config.stripeWebhookSecret) missing.push("webhookSigningSecret");
     if (!this.config.stripePortalConfigurationId) missing.push("portalConfigurationId");
     if (!this.config.checkoutSuccessUrl) missing.push("checkoutSuccessUrl");
@@ -150,8 +180,9 @@ export class StripeSandboxBillingProvider implements BillingProvider {
   }
 }
 
-function metadata(tenantId: string, planVersionId: string) {
-  return { sophiaNamespace: "subscription-v1", sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId };
+function metadata(tenantId: string, planVersionId: string, environment: "sandbox" | "live") {
+  return { sophiaNamespace: "subscription-v1", sophiaEnvironment: environment,
+    sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId };
 }
 function unavailable(message: string) { return new ServiceUnavailableException(message); }
 function hostedProviderUrl(value: string | null, expectedHost: string): string {

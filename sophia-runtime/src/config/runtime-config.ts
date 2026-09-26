@@ -105,7 +105,8 @@ export type RuntimeConfig = {
     scanTimeoutMs: number;
   };
   billing: {
-    provider: "disabled" | "stripe_sandbox";
+    provider: "disabled" | "stripe_sandbox" | "stripe_live";
+    liveCheckoutEnabled: boolean;
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
     stripePortalConfigurationId?: string;
@@ -294,10 +295,24 @@ export function runtimeConfig(): RuntimeConfig {
 }
 
 function billingConfig(): RuntimeConfig["billing"] {
-  const provider = process.env.SOPHIA_BILLING_PROVIDER === "stripe_sandbox" ? "stripe_sandbox" : "disabled";
+  const requestedProvider = emptyToUndefined(process.env.SOPHIA_BILLING_PROVIDER);
+  if (requestedProvider && !["disabled", "stripe_sandbox", "stripe_live"].includes(requestedProvider)) {
+    throw new Error("SOPHIA_BILLING_PROVIDER must be disabled, stripe_sandbox, or stripe_live.");
+  }
+  const provider = (requestedProvider || "disabled") as RuntimeConfig["billing"]["provider"];
+  const liveCheckoutEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED, false);
   const stripeSecretKey = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY);
-  if (stripeSecretKey && !stripeSecretKey.startsWith("sk_test_")) {
-    throw new Error("SOPHIA_BILLING_STRIPE_SECRET_KEY must be a Stripe test-mode secret key.");
+  if (stripeSecretKey && !/^sk_(?:test|live)_/.test(stripeSecretKey)) {
+    throw new Error("SOPHIA_BILLING_STRIPE_SECRET_KEY must be a Stripe secret key.");
+  }
+  if (provider === "stripe_sandbox" && stripeSecretKey && !stripeSecretKey.startsWith("sk_test_")) {
+    throw new Error("Stripe sandbox mode requires a test-mode secret key.");
+  }
+  if (provider === "stripe_live" && stripeSecretKey && !stripeSecretKey.startsWith("sk_live_")) {
+    throw new Error("Stripe live mode requires a live-mode secret key.");
+  }
+  if (provider !== "stripe_live" && liveCheckoutEnabled) {
+    throw new Error("SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED may only be enabled with stripe_live.");
   }
   const stripeWebhookSecret = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET);
   if (stripeWebhookSecret && !stripeWebhookSecret.startsWith("whsec_")) {
@@ -309,6 +324,7 @@ function billingConfig(): RuntimeConfig["billing"] {
   }
   return {
     provider,
+    liveCheckoutEnabled,
     stripeSecretKey,
     stripeWebhookSecret,
     stripePortalConfigurationId,

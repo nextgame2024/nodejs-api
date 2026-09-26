@@ -25,6 +25,19 @@ describe("BillingLifecycleService", () => {
     expect(provider.createHostedCheckout).not.toHaveBeenCalled();
   });
 
+  it("refuses live Checkout before any database or provider I/O when charge activation is off", async () => {
+    const provider = providerMock();
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia", checkout: false,
+      portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
+    const query = jest.fn();
+    const service = lifecycle(provider, query);
+    await expect(service.checkout(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333", planVersionId,
+    })).rejects.toThrow("explicit real-charge activation");
+    expect(query).not.toHaveBeenCalled();
+    expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+  });
+
   it("reserves one tenant Checkout before provider I/O and attaches the returned session", async () => {
     const provider = providerMock();
     provider.createHostedCheckout = jest.fn(async () => ({ url: "https://checkout.stripe.com/c/pay/test",
@@ -81,6 +94,8 @@ describe("BillingLifecycleService", () => {
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
     expect(invoiceSql).toContain("WHERE EXCLUDED.observed_at>=billing_invoice_references.observed_at");
+    expect(invoiceSql).toContain("provider_environment");
+    expect(invoiceSql).toContain("ON CONFLICT (provider_key,provider_environment,external_invoice_ref)");
   });
 });
 
