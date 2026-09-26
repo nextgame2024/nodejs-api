@@ -24,7 +24,9 @@ function createModel(delivery) {
     acquireWorkerLock: jest.fn().mockResolvedValue({ release: jest.fn() }),
     recoverExpiredDeliveries: jest.fn().mockResolvedValue(0),
     claimNextDelivery: jest.fn().mockResolvedValue(delivery),
-    markDeliverySent: jest.fn().mockResolvedValue(undefined),
+    renewDeliveryLease: jest.fn().mockResolvedValue(true),
+    markDeliveryAccepted: jest.fn().mockResolvedValue({ status: "provider_accepted" }),
+    markDeliveryOutcomeUnknown: jest.fn().mockResolvedValue({ status: "outcome_unknown" }),
     markDeliveryFailed: jest.fn(),
   };
 }
@@ -33,6 +35,7 @@ const delivery = {
   deliveryId: "40000000-0000-4000-8000-000000000001",
   bookingId: "50000000-0000-4000-8000-000000000001",
   attemptCount: 1,
+  claimToken: "60000000-0000-4000-8000-000000000001",
   fallbackWithoutReport: false,
   customerName: "Jordan Lee",
   customerEmail: "jordan@example.com",
@@ -72,7 +75,7 @@ describe("inspection confirmation email worker", () => {
   it("loads and attaches a ready Town Planner report", async () => {
     const model = createModel(delivery);
     const loadReport = jest.fn().mockResolvedValue(Buffer.from("pdf"));
-    const sendEmail = jest.fn().mockResolvedValue(undefined);
+    const sendEmail = jest.fn().mockResolvedValue({ state: "accepted", provider: "ses", providerMessageId: "message-1" });
 
     const result = await processInspectionEmailCycle({
       model,
@@ -92,15 +95,19 @@ describe("inspection confirmation email worker", () => {
         reportPending: false,
       }),
     );
-    expect(model.markDeliverySent).toHaveBeenCalled();
-    expect(result.status).toBe("sent");
+    expect(model.markDeliveryAccepted).toHaveBeenCalledWith(expect.objectContaining({
+      claimToken: delivery.claimToken,
+      providerResult: { state: "accepted", provider: "ses", providerMessageId: "message-1" },
+    }));
+    expect(result.status).toBe("provider_accepted");
   });
 
   it("sends the booking without an attachment after PDF attempts are exhausted", async () => {
     const fallback = { ...delivery, fallbackWithoutReport: true, pdfKey: null };
     const model = createModel(fallback);
     const loadReport = jest.fn();
-    const sendEmail = jest.fn().mockResolvedValue(undefined);
+    model.markDeliveryAccepted.mockResolvedValue({ status: "fallback_previewed" });
+    const sendEmail = jest.fn().mockResolvedValue({ state: "preview", provider: "log" });
 
     const result = await processInspectionEmailCycle({
       model,
@@ -115,7 +122,23 @@ describe("inspection confirmation email worker", () => {
       reportAttachment: null,
       reportPending: true,
     });
-    expect(result.status).toBe("fallback_sent");
+    expect(result.status).toBe("fallback_previewed");
+  });
+
+  it("records any provider-submission failure as outcome unknown without automatic retry", async () => {
+    const model = createModel(delivery);
+    const result = await processInspectionEmailCycle({
+      model,
+      loadReport: jest.fn().mockResolvedValue(Buffer.from("pdf")),
+      sendEmail: jest.fn().mockRejectedValue(new Error("provider connection closed after submission")),
+      workerId: "worker-1",
+      config,
+    });
+    expect(result.status).toBe("outcome_unknown");
+    expect(model.markDeliveryOutcomeUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      claimToken: delivery.claimToken,
+    }));
+    expect(model.markDeliveryFailed).not.toHaveBeenCalled();
   });
 
   it("returns failed delivery to the retry policy", async () => {

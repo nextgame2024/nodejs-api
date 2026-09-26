@@ -1,7 +1,7 @@
 import { Controller, Get, Inject } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service.js";
 
-@Controller("healthz")
+@Controller("runtime/healthz")
 export class HealthController {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 

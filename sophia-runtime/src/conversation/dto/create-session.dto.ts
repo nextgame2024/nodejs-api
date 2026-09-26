@@ -4,6 +4,11 @@ import type { AvatarSessionMode } from "../../providers/avatar/avatar-provider.i
 
 export class CreateSessionDto {
   @IsOptional()
+  @IsIn(["essential", "professional", "premium"])
+  experience?: "essential" | "professional" | "premium";
+
+  /** @deprecated Accepted only as a compatibility hint; server policy resolves it. */
+  @IsOptional()
   @IsIn(["openai-realtime", "tavus-full"])
   aiProvider?: "openai-realtime" | "tavus-full";
 

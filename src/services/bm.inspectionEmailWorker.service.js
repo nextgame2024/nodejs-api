@@ -43,6 +43,20 @@ export async function processInspectionEmailCycle({
     });
     if (!delivery) return { status: "idle", recovered };
 
+    const heartbeatMs = Math.max(10_000, Math.floor(config.leaseSeconds * 1000 / 3));
+    const heartbeat = setInterval(() => {
+      model.renewDeliveryLease({
+        deliveryId: delivery.deliveryId,
+        workerId,
+        claimToken: delivery.claimToken,
+        leaseSeconds: config.leaseSeconds,
+      }).catch((error) => {
+        console.error("[INSPECTION_EMAIL] Lease renewal failed:", error?.message || error);
+      });
+    }, heartbeatMs);
+    heartbeat.unref?.();
+
+    let providerSubmissionStarted = false;
     try {
       const booking = withInspectionTimeLabel(delivery);
       let reportAttachment = null;
@@ -60,24 +74,40 @@ export async function processInspectionEmailCycle({
         };
       }
 
-      await sendEmail(booking, {
+      providerSubmissionStarted = true;
+      const providerResult = await sendEmail(booking, {
         reportAttachment,
         reportPending: delivery.fallbackWithoutReport,
       });
-      await model.markDeliverySent({
+      if (!providerResult || !["accepted", "preview"].includes(providerResult.state)) {
+        throw new Error("Email provider did not return a bounded acceptance result");
+      }
+      const recorded = await model.markDeliveryAccepted({
         deliveryId: delivery.deliveryId,
         workerId,
+        claimToken: delivery.claimToken,
+        providerResult,
       });
       return {
-        status: delivery.fallbackWithoutReport ? "fallback_sent" : "sent",
+        status: recorded.status,
         deliveryId: delivery.deliveryId,
         recovered,
       };
     } catch (error) {
       const message = String(error?.message || error || "Email delivery failed").slice(0, 2000);
+      if (providerSubmissionStarted) {
+        await model.markDeliveryOutcomeUnknown({
+          deliveryId: delivery.deliveryId,
+          workerId,
+          claimToken: delivery.claimToken,
+          errorMessage: message,
+        });
+        return { status: "outcome_unknown", deliveryId: delivery.deliveryId, error: message, recovered };
+      }
       const failure = await model.markDeliveryFailed({
         deliveryId: delivery.deliveryId,
         workerId,
+        claimToken: delivery.claimToken,
         errorMessage: message,
         maxAttempts: config.maxAttempts,
         retryDelaySeconds:
@@ -90,6 +120,8 @@ export async function processInspectionEmailCycle({
         error: message,
         recovered,
       };
+    } finally {
+      clearInterval(heartbeat);
     }
   } finally {
     await lock.release();

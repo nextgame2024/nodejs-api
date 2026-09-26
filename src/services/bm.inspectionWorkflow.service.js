@@ -60,7 +60,9 @@ export function startInspectionWorkflow({
     logger.log(`[INSPECTION_WORKFLOW] Started (report poll ${reportMs}ms, email poll ${emailMs}ms).`);
     await Promise.all([
       loop("PROPERTY_REPORT", reportCycle, reportMs, ["ready"]),
-      loop("INSPECTION_EMAIL", emailCycle, emailMs, ["sent", "fallback_sent"]),
+      loop("INSPECTION_EMAIL", emailCycle, emailMs, [
+        "provider_accepted", "fallback_provider_accepted", "previewed", "fallback_previewed",
+      ]),
     ]);
   })();
 

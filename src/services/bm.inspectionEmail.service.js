@@ -61,7 +61,7 @@ export async function sendInspectionConfirmationEmail(booking, options = {}) {
     if (attachment) {
       console.log("[inspection-email][LOG] Attachment:", attachment.filename);
     }
-    return;
+    return { state: "preview", provider: "log" };
   }
 
   if (provider === "smtp") {
@@ -73,14 +73,18 @@ export async function sendInspectionConfirmationEmail(booking, options = {}) {
         ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
         : undefined,
     });
-    await transport.sendMail({
+    const result = await transport.sendMail({
       from: requireEnv("SMTP_FROM_EMAIL"),
       to: booking.customerEmail,
       subject,
       html,
       attachments,
     });
-    return;
+    return {
+      state: "accepted",
+      provider: "smtp",
+      providerMessageId: result?.messageId ? String(result.messageId) : undefined,
+    };
   }
 
   const client = new SESv2Client({
@@ -100,15 +104,15 @@ export async function sendInspectionConfirmationEmail(booking, options = {}) {
       html,
       attachments,
     });
-    await client.send(new SendEmailCommand({
+    const result = await client.send(new SendEmailCommand({
       FromEmailAddress: fromEmail,
       Destination: { ToAddresses: [booking.customerEmail] },
       Content: { Raw: { Data: message.message } },
     }));
-    return;
+    return { state: "accepted", provider: "ses", providerMessageId: result?.MessageId };
   }
 
-  await client.send(new SendEmailCommand({
+  const result = await client.send(new SendEmailCommand({
     FromEmailAddress: fromEmail,
     Destination: { ToAddresses: [booking.customerEmail] },
     Content: {
@@ -118,4 +122,5 @@ export async function sendInspectionConfirmationEmail(booking, options = {}) {
       },
     },
   }));
+  return { state: "accepted", provider: "ses", providerMessageId: result?.MessageId };
 }

@@ -1,0 +1,1876 @@
+{
+  "schemaVersion": 1,
+  "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
+  "baselineStatus": "reported_not_verified",
+  "checkpoint": "P6-A06A",
+  "updatedAt": "2026-09-26T15:50:00+10:00",
+  "tasks": {
+    "P0-01": {
+      "status": "complete",
+      "evidence": [
+        "repository-audit.md",
+        "command-map.json"
+      ],
+      "limitations": [
+        "No CI configuration found",
+        "SQL test environment not used"
+      ]
+    },
+    "P0-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "real-estate-characterization.md",
+        "../../tests/fixtures/sophiaRealEstate.fixture.js",
+        "../../tests/sophia.realEstate.characterization.test.js"
+      ],
+      "limitations": [
+        "Live providers and browser E2E unrun",
+        "Live provider and browser E2E evidence remains outside P0; the former RE-06 hardcoded knowledge fallback was removed at P3-03"
+      ]
+    },
+    "P0-03": {
+      "status": "complete",
+      "evidence": [
+        "student-agency-quarantine-map.md",
+        "admin-scope-and-permissions.md"
+      ],
+      "limitations": [
+        "Student code/data disposition unresolved by design",
+        "Failure injection cases specified, not executed"
+      ]
+    },
+    "P0-04": {
+      "status": "complete",
+      "evidence": [
+        "architecture-decisions.md",
+        "../../scripts/check-sophia-boundaries.mjs",
+        "../../AGENTS.md",
+        "../../../frontend/AGENTS.md"
+      ],
+      "limitations": [
+        "Future v2 roots do not exist yet; P1 additionally scans five active entry-graph files"
+      ]
+    }
+  },
+  "p1Tasks": {
+    "P1-01": {
+      "status": "complete",
+      "evidence": [
+        "p1-checkpoint.md"
+      ],
+      "detail": "Student implementation and transport are excluded from the active runtime catalog, prompt and kiosk entry graph; legacy data/workers are preserved and have no outstanding delivery jobs."
+    },
+    "P1-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p1-checkpoint.md"
+      ],
+      "detail": "Fixed-tenant anonymous sessions use server-owned experience profiles and expiring session credentials. Legacy browser provider/customer/store/device fields cannot select authority or paid providers. Privileged Admin identity is outside this task."
+    },
+    "P1-03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "../../sophia-runtime/src/database/migrations/004_tool_call_lifecycle.sql"
+      ],
+      "detail": "Lifecycle, correlation, deduplication, redaction and interrupted/unknown state implemented; an operations reconciliation workspace remains later work."
+    },
+    "P1-04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "../../sophia-runtime/src/database/migrations/005_action_reviews.sql",
+        "p1-checkpoint.md"
+      ],
+      "detail": "Durable reviews, authenticated explicit UI confirmation, stable booking/resend command identity and receipts are implemented. A model confirmed flag or unrelated utterance cannot authorize a write. Live provider failure injection remains unrun."
+    },
+    "P1-05": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p1-checkpoint.md"
+      ],
+      "detail": "Admission/tool budgets, short session lifetime, redaction and restricted public catalog implemented. Production policy review remains a release gate."
+    },
+    "P1-06": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "../../package.json",
+        "../../Dockerfile",
+        "../../.node-version"
+      ],
+      "detail": "Node 22.23.2 tests and native dependency smoke passed; Docker image build and deployment verification are unrun."
+    }
+  },
+  "p2Tasks": {
+    "P2-01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-01-checkpoint.md",
+        "../../sophia-runtime/src/platform/contracts/v2/sophia-runtime-v2.contracts.ts",
+        "../../sophia-runtime/contracts/generated/sophia-runtime-v2.schema.json",
+        "../../../frontend/src/app/sophia-runtime/contracts/generated/sophia-runtime-v2.contracts.ts"
+      ],
+      "detail": "Strict provider-neutral schemas, deterministic cross-repository generated artifacts, digest drift checks and a bounded v1 compatibility translator are implemented. V2 activation remains intentionally deferred to P2-06; no CI configuration exists to invoke the drift command automatically."
+    },
+    "P2-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-02-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/006_versioned_configuration_profiles.sql",
+        "../../sophia-runtime/src/platform/configuration/publishable-profile.ts",
+        "../../sophia-runtime/src/platform/configuration/configuration-profile.service.ts",
+        "../../sophia-runtime/test/fixtures/current-experience-profiles.ts"
+      ],
+      "detail": "Additive immutable version tables and tenant-scoped validated publication are implemented without activating the v2 path. The stale ai_configs demo row is preserved but not published as current truth; verified current compositions are represented by validation fixtures pending P2-04 adapter manifests. Migration 006 was applied to the configured Neon database with explicit user authorization on 2026-09-23."
+    },
+    "P2-A01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-a01-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/007_admin_authorization_foundation.sql",
+        "../../sophia-runtime/src/admin/contracts/admin-contracts.ts",
+        "../../sophia-runtime/src/admin/permissions/admin-permissions.ts",
+        "../../sophia-runtime/src/admin/authorization/admin-auth.guard.ts",
+        "../../sophia-runtime/src/admin/identity/business-manager-identity.bridge.ts"
+      ],
+      "detail": "Business Manager identity is bridged without duplication; fixed permission templates, tenant membership resolution, direct API guards, MFA-required permissions and redacted audit hooks are implemented. Existing identity provides no MFA evidence and no membership is auto-seeded, so privileged/Admin access remains fail-closed pending authorised onboarding. Migration 007 was applied to the configured Neon database with explicit user authorization on 2026-09-23."
+    },
+    "P2-03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-03-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/008_scoped_connector_authority.sql",
+        "../../sophia-runtime/src/connectors/authority/connector-authority.service.ts",
+        "../../sophia-runtime/src/connectors/authority/scoped-connector-credential.service.ts",
+        "../../src/security/sophiaConnectorCredential.js",
+        "../../src/middlewares/bmIntegrationAuth.js"
+      ],
+      "detail": "Tenant/company connector authority, short-lived scoped credentials, Business Manager claim/binding/scope verification and transaction-local tenant context are implemented. The v1 demo remains on its explicitly bound legacy token. Migration 008 and its RLS catalog state were verified on Neon; migration 010 and the DatabaseService pool hook now enforce the non-BYPASSRLS sophia_runtime_app effective role."
+    },
+    "P2-A03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-a03-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/009_agent_authoring_and_releases.sql",
+        "../../sophia-runtime/src/database/migrations/010_least_privilege_runtime_role.sql",
+        "database-role-hardening.md",
+        "../../sophia-runtime/src/admin/agents/agent-authoring.contracts.ts",
+        "../../sophia-runtime/src/admin/agents/agent-authoring.service.ts",
+        "../../sophia-runtime/src/admin/agents/agent-authoring.controller.ts"
+      ],
+      "detail": "Tenant-scoped agent/instruction authoring, optimistic draft revisions, deterministic validation/diff, immutable aggregate releases, rollback and separate revocation are implemented. Release-backed sessions have a tenant-matched immutable database pin; the v1 demo remains outside that path until P2-06 activation. Migrations 009-010 were applied to Neon; constraints, immutable triggers and cross-tenant RLS enforcement under sophia_runtime_app were database-verified."
+    },
+    "P2-04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-04-checkpoint.md",
+        "p2-04a-checkpoint.md",
+        "../../sophia-runtime/src/providers/capability/provider-capability.registry.ts",
+        "../../sophia-runtime/src/providers/capability/provider-adapter.registrations.ts",
+        "../../sophia-runtime/src/providers/session/provider-session.registry.ts",
+        "../../sophia-runtime/src/providers/session/native-realtime-session.adapter.ts",
+        "../../sophia-runtime/src/providers/session/composite-realtime-session.adapter.ts"
+      ],
+      "detail": "Existing native/composite realtime, avatar, speech, reasoning and research implementations are registered behind provider-neutral manifests and shared lifecycle adapters. ConversationService has no vendor branch or concrete provider dependency; Essential/Professional/Premium characterization remains green. Published profile-driven selection remains P2-06 activation work."
+    },
+    "P2-A02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-a02-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/011_organisation_membership_lifecycle.sql",
+        "../../sophia-runtime/src/admin/organisations/organisation-lifecycle.contracts.ts",
+        "../../sophia-runtime/src/admin/organisations/organisation-lifecycle.service.ts",
+        "../../sophia-runtime/src/admin/organisations/organisation-lifecycle.controller.ts"
+      ],
+      "detail": "Revisioned organisation settings and admission lifecycle, fixed-role membership changes, dry-run hashed invitation issue/revoke/redeem, final-owner/self-change safeguards, per-request stale-authorisation revocation and transactional audit are implemented. Migration 011 is applied and verified on Neon under sophia_runtime_app. Initial owner onboarding remains an authorised operational step, and privileged actions remain fail-closed until Business Manager supplies verified MFA evidence."
+    },
+    "P2-05": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-05-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/012_provider_operations.sql",
+        "../../sophia-runtime/src/providers/provisioning/provider-catalog-provisioner.ts",
+        "../../sophia-runtime/src/providers/provisioning/provider-catalog-gate.ts",
+        "../../sophia-runtime/src/providers/session/provider-operations.service.ts",
+        "../../sophia-runtime/scripts/provider-operations.mts"
+      ],
+      "detail": "Remote Tavus catalog mutation is removed from session admission and isolated behind a versioned tenant-confirmed provisioning job. Durable allocation stages, partial-start compensation, bounded expiry, idempotent close, cleanup leases/reconciliation, kiosk heartbeat/disconnect and cross-source tool-event ownership/deduplication are implemented. Migration 012 is applied and RLS/deduplication are verified on Neon. Live catalog provisioning and deployment scheduler wiring remain explicit operational gates."
+    },
+    "P2-06": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p2-06-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/013_v2_canary_orchestration.sql",
+        "../../sophia-runtime/src/platform/orchestration/v2-bootstrap.service.ts",
+        "../../sophia-runtime/src/platform/orchestration/v2-session-plan.resolver.ts",
+        "../../sophia-runtime/src/platform/orchestration/v2-session.service.ts",
+        "../../sophia-runtime/src/platform/orchestration/v2-orchestration.controller.ts"
+      ],
+      "detail": "A fixed-tenant allowlisted v2 boundary now exchanges installation authentication for a one-time bootstrap grant, validates the immutable published profile/provider/binding/agent-release/tool-catalog composition before allocation, selects an existing lifecycle adapter from the plan, persists an immutable session snapshot and returns provider-neutral descriptors with one-time adapter-owned connection data. V1 queries are explicitly pinned to v1 rows. Migration 013 is applied and runtime-role RLS access is verified on Neon. Canary activation still requires an allowlisted tenant, a 32+ character installation key and published tenant configuration; none was activated during this task."
+    }
+  },
+  "p3Tasks": {
+    "P3-01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-01-checkpoint.md",
+        "../../sophia-runtime/src/capabilities-v2/contracts/business-capability.contracts.ts",
+        "../../sophia-runtime/src/capabilities-v2/ports/business-capability.ports.ts",
+        "../../sophia-runtime/src/capabilities-v2/extensions/capability-extension.registry.ts",
+        "../../sophia-runtime/src/capabilities-v2/connectors/connector-capability.manifest.ts",
+        "../../sophia-runtime/src/capabilities-v2/services/catalog-capability.service.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/real-estate-capability.extensions.ts"
+      ],
+      "detail": "Provider-independent Knowledge, Catalog, Availability, Booking, Delivery, WorkflowStatus and Handoff ports now use shared typed entities and binding-scoped opaque resource references. Strict registered extension schemas validate both input and output, with real-estate fields isolated in its compiled business pack. Connector manifests explicitly declare idempotency, reconciliation, cancellation and live-status support; unsafe commit operations cannot be enabled. These additive contracts are not yet wired into the active tool dispatcher, which is P3-02 work."
+    },
+    "P3-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/014_safe_tool_execution_pipeline.sql",
+        "../../sophia-runtime/src/tools/tools.service.ts",
+        "../../sophia-runtime/src/tools/tool-registry.ts",
+        "../../sophia-runtime/src/tools/tool-policy.ts",
+        "../../sophia-runtime/src/tools/action-review.store.ts"
+      ],
+      "detail": "All externally reachable v1/v2 tool executions now pass through one dispatcher that revalidates the session credential, derives tenant and v2 capability bindings server-side, validates schemas, consumes durable reviews for mutations, maps aliases to canonical command identity, bounds safe-read retries, prevents mutation retries after ambiguous outcomes, validates/minimises output and persists complete terminal audit state. V2 publishes the minimum session capability catalog and returns canonical ToolResult objects. Migration 014 is applied with RLS/FORCE RLS on tool_calls and action_reviews. Plan version 2.1.1 records evidence-driven corrections for untrusted public eventSource, unavailable per-task grant state and alias identity. A separately authenticated verified provider transport and server-issued task grants remain future opt-in narrowing work."
+    },
+    "P3-A01a": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-a01a-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/015_approved_knowledge_lifecycle.sql",
+        "../../sophia-runtime/src/admin/knowledge/knowledge.service.ts",
+        "../../sophia-runtime/src/admin/knowledge/knowledge.controller.ts",
+        "../../sophia-runtime/src/capabilities-v2/services/published-knowledge-capability.service.ts"
+      ],
+      "detail": "Managed text now has tenant-scoped source/revision, idempotent ingestion, approval, immutable publication snapshot, capability grant, PostgreSQL search, preview and retirement controls. Agent publication validates active published knowledge. Opaque connector references remain pending without an approved adapter. Migration 015 is applied and least-privilege RLS was verified on Neon. Plan version 2.1.2 splits unsafe file/UI work into P3-A01b because no approved private storage, malware scanner or isolated parser exists."
+    },
+    "P3-A01b1": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-a01b1-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.routes.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.guard.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.service.ts",
+        "../../../frontend/src/app/sophia-admin/knowledge/knowledge-admin.page.ts",
+        "../../sophia-runtime/src/admin/knowledge/knowledge.service.ts"
+      ],
+      "detail": "A protected lazy-loaded /sophia-admin/knowledge workspace now operates the safe managed-text lifecycle using server-resolved tenant context and named permissions. It discovers enabled tenant knowledge bindings, reviews revision content, approves/publishes, previews granted published snapshots and retires sources. File controls visibly fail closed. Plan version 2.1.3 isolates private storage/scanning/parser activation in P3-A01b2 because the legacy Express public-asset upload path is not an acceptable knowledge trust boundary."
+    },
+    "P3-A01b2a": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-a01b2a-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/016_private_knowledge_file_intake.sql",
+        "../../sophia-runtime/src/admin/knowledge/files/knowledge-file-intake.service.ts",
+        "../../sophia-runtime/src/admin/knowledge/files/private-s3-knowledge-storage.service.ts",
+        "../../sophia-runtime/src/admin/knowledge/files/http-malware-scanner.service.ts",
+        "../../sophia-runtime/src/admin/knowledge/files/isolated-text-parser.service.ts",
+        "../../sophia-runtime/scripts/knowledge-file-worker.mts",
+        "../../../frontend/src/app/sophia-admin/knowledge/knowledge-admin.page.ts"
+      ],
+      "detail": "Checksum-bound private .txt/.md intake, live storage/scanner readiness, durable RLS queueing, tenant-scoped leased workers, infected-file quarantine, isolated bounded UTF-8 parsing and readiness-controlled UI are implemented. Migration 016 is applied and RLS verified. File initiation remains disabled without a dedicated private bucket and authenticated scanner. Plan 2.1.4 records the tenant-worker correction and the audited AWS/Nest dependency updates."
+    },
+    "P3-03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-03-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/business-packs/real-estate/business-manager-real-estate.connector.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/business-manager-real-estate.schemas.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/business-manager.client.ts",
+        "../../src/routes/bm.realEstate.routes.js",
+        "../../src/services/bm.realEstate.service.js",
+        "../../src/models/bm.realEstate.model.js"
+      ],
+      "detail": "Shared knowledge/catalog/availability/booking/delivery/workflow ports now map through strict tenant-scoped Business Manager HTTP DTOs with cursor pagination, exact slot revalidation, durable review-command binding, authoritative status/reconciliation and no runtime BM table access. Missing property data remains absent and the hardcoded agency-knowledge fallback was removed. Deterministic RE fixtures pass, but no disposable Business Manager PostgreSQL environment was confirmed for SQL contention evidence. Plan 2.1.5 records the corrected context, commit-payload and optional-field contracts."
+    },
+    "P3-04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-04-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/business-packs/business-pack.registry.ts",
+        "../../sophia-runtime/src/business-packs/business-packs.module.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/real-estate.pack.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/real-estate.instructions.ts",
+        "../../sophia-runtime/src/compatibility/v1/real-estate-tools.adapter.ts",
+        "../../sophia-runtime/src/tools/tools.service.ts",
+        "../../scripts/check-sophia-boundaries.mjs"
+      ],
+      "detail": "Real estate is an allowlisted compiled optional pack with connector/capability/schema/renderer declarations, pack-owned workflow instructions and a bounded v1 compatibility adapter. Core starts without the pack, generic reviews contain no inspection union, v1/v2 expose separate legacy/canonical catalogs, and composite provider sessions require an exact provisioned catalog digest. Plan 2.1.6 records the missing PresentationPort and composition/catalog corrections. Angular still consumes legacy renderer shapes until the P4-01 facade extraction."
+    },
+    "P3-A02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-a02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/admin/tools-connectors/tool-connector-admin.controller.ts",
+        "../../sophia-runtime/src/admin/tools-connectors/tool-connector-admin.service.ts",
+        "../../sophia-runtime/src/database/migrations/017_admin_tool_connector_lifecycle.sql",
+        "../../sophia-runtime/src/business-packs/business-pack.registry.ts",
+        "../../sophia-runtime/src/platform/orchestration/v2-session-plan.resolver.ts",
+        "../../src/routes/bm.realEstate.routes.js"
+      ],
+      "detail": "Bounded Admin APIs now expose compiled tool/connector catalogs, synthetic-only policy tests, verified connector onboarding, health/reconnect/disconnect and draft capability binding operations without accepting arbitrary code/configuration or exposing secret references. Explicit connector-binding authority is rechecked during validation, admission and v2 tool dispatch, so disconnecting immediately denies new mutations while preserving safe reconciliation reads. Migration 017 is applied and its RLS, grants and non-BYPASSRLS runtime role were verified on Neon. Plan 2.1.7 records the previously missing binding/revocation semantics. Angular ADM-07/ADM-08 workspaces remain P4-A04; no live connector probe was invoked."
+    },
+    "P3-05": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-05-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../src/config/startupMigrations.js",
+        "../../src/models/bm.propertyReportWorker.model.js",
+        "../../src/services/bm.propertyReportWorker.service.js",
+        "../../src/services/bm.inspectionEmailWorker.service.js",
+        "../../src/services/bm.inspectionEmail.service.js",
+        "../../src/services/bm.realEstate.service.js",
+        "../../sophia-runtime/src/business-packs/real-estate/business-manager-real-estate.connector.ts",
+        "../../tests/bm.workflowHardening.test.js"
+      ],
+      "detail": "Business Manager remains the authoritative report/delivery queue owner. Per-claim fencing, email lease renewal, bounded pre-submit retry, outcome-unknown crash/submission handling and honest preview/provider-accepted/delivered milestones are implemented. Shared connector status retains milestone detail and instructions forbid presenting acceptance as delivery. The unscoped secondary report cache was removed while the tenant/version/input-keyed BM cache remains. The additive schema was applied to Neon, two legacy sent rows were conservatively relabelled provider_accepted, and live SQL claim validation passed. Plan 2.1.8 records these corrections. Verified recipient delivery remains unavailable without an authenticated provider receipt integration."
+    },
+    "P3-A03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p3-a03-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/admin/workflows/workflow-admin.controller.ts",
+        "../../sophia-runtime/src/admin/workflows/workflow-admin.service.ts",
+        "../../sophia-runtime/src/admin/escalations/escalation-admin.controller.ts",
+        "../../sophia-runtime/src/admin/escalations/escalation-admin.service.ts",
+        "../../sophia-runtime/src/database/migrations/018_workflow_and_escalation_control_plane.sql",
+        "../../sophia-runtime/src/business-packs/real-estate/real-estate.pack.ts",
+        "../../src/models/bm.propertyReportJobs.model.js"
+      ],
+      "detail": "Compiled schema-limited workflow templates, immutable tenant workflow/policy versions, owner-referenced runs, idempotent policy-gated retry commands and durable escalation case/assignment/status APIs are implemented. The internal operations inbox is supported; callback, notification and verified live transfer stay unavailable without an executable compiled adapter. Agent publication verifies published tenant references and new release manifests propagate the selected real-estate workflow version to the booking-specific Business Manager delivery record. Migration 018 and the additive owner pin were applied to Neon; forced RLS and cross-tenant denial passed under sophia_runtime_app. Plan 2.1.9 corrects the report-cache versus execution-pin distinction. Angular workspaces remain P4-A05."
+    }
+  },
+  "p4Tasks": {
+    "P4-01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-01-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-session.facade.ts",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-session.facade.spec.ts",
+        "../../../frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.ts",
+        "../../../frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.html"
+      ],
+      "detail": "The kiosk consumes a provider-neutral facade for lifecycle, interruption, normalized state/events, heartbeat, inactivity, media routing and tool transport; it imports no concrete provider/session client and startup/finish contain no vendor branch. Essential/Professional/Premium are stable IDs and existing property/booking presentation remains intact. Plan 2.1.10 corrects the unsafe assumption that Angular can call v2 bootstrap directly: the installation key stays server-side, bounded v1 remains behind the facade, and direct v2 activation requires a managed kiosk credential broker. Angular typecheck/build and 18 Sophia tests pass; live-provider browser E2E remains unrun."
+    },
+    "P4-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-runtime/services/browser-transport/sophia-browser-transport.registry.ts",
+        "../../../frontend/src/app/sophia-runtime/services/browser-transport/sophia-session-transport.adapters.ts",
+        "../../../frontend/src/app/sophia-runtime/services/browser-transport/sophia-presentation.adapters.ts",
+        "../../../frontend/src/app/sophia-runtime/services/browser-transport/sophia-media-owner.ts",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-session.facade.ts"
+      ],
+      "detail": "OpenAI WebRTC and Daily/Tavus conversation transports plus static, Simli and LiveAvatar presentation clients now sit behind exact versioned browser adapter registries. One media owner prevents simultaneous speech pipelines; interruption clears generation and queued presentation output; duplicate provider tool events share one execution; startup failure, expiry, close and route exit clear adapters, media and local credentials. The facade retains only sanitized session state. Plan 2.1.11 separates browser adapter composition from the existing v2 server lifecycle adapter key and keeps the current v1 mapping in one bounded translator. Typecheck, production build and 28 Sophia/Admin tests pass. Live-provider browser E2E and the brokered v2 browser composition remain unrun/deployment-gated."
+    },
+    "P4-A01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-a01-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.routes.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.modules.ts",
+        "../../../frontend/src/app/sophia-admin/shell/sophia-admin-shell.component.ts",
+        "../../../frontend/src/app/sophia-admin/overview/sophia-admin-overview.page.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.guard.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.service.ts"
+      ],
+      "detail": "A protected lazy-loaded Sophia Admin shell now presents all sixteen modules from one neutral registry, links only implemented and granted workspaces, keeps future modules explicitly disabled, and includes a real overview plus the delivered ADM-06 Knowledge workspace. Generic route permission guards, accessible loading/empty/error/forbidden states, shared table/pagination primitives, responsive navigation and logout/context-cache cleanup are implemented. Plan 2.1.12 corrects the tenant-switcher assumption: the current identity bridge authoritatively resolves one company/organisation, so the shell displays a read-only server context and never invents browser tenant authority. Typecheck, build, 34 frontend tests and 16 targeted backend authorization/organisation tests pass; multi-organisation switching remains unavailable pending a server context-selection contract."
+    },
+    "P4-03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-03-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-runtime/presentation/sophia-tool-presentation.types.ts",
+        "../../../frontend/src/app/sophia-runtime/presentation/sophia-tool-presentation.registry.ts",
+        "../../../frontend/src/app/sophia-runtime/presentation/sophia-presentation-host.component.ts",
+        "../../../frontend/src/app/sophia-runtime/presentation/packs/real-estate/real-estate-tool-presentation.renderer.ts",
+        "../../../frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.ts"
+      ],
+      "detail": "A typed, business-neutral presentation host and exact renderer registry now own item-list, detail, media, availability, review, status and source blocks. Property schemas, validated v1 translation, review/confirmation behavior and activity labels live only in the registered real-estate pack. Media is checked both by the renderer and host against exact HTTPS host registration; unregistered tool names and forged student results cannot select a renderer. All connector-returned future availability remains visible and provider acceptance is not mislabeled as delivery. Plan 2.1.13 records the v1 compatibility, media trust and browser-calendar corrections. Typecheck, production build, 40 Sophia/Admin tests, 119-file boundaries and 8 real-estate suites/38 tests pass; live-provider browser E2E and server-owned media policy expansion remain unrun."
+    },
+    "P4-A02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-a02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/organisations/organisations-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/users/users-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/permissions/permissions-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/sophia-admin.service.ts",
+        "../../sophia-runtime/src/admin/organisations/organisation-lifecycle.service.ts"
+      ],
+      "detail": "ADM-01, ADM-02 and ADM-10 now have protected lazy Angular workspaces backed by the real tenant-bound Admin APIs. Organisation settings use optimistic revisions; membership and invitation screens preserve self/final-owner/server permission safeguards; the permission matrix and membership grants are server-derived. Platform-only permissions are visibly separate and cannot be assigned by tenant roles. Plan 2.1.14 corrects the unsupported platform-list/switcher and browser-E2E assumptions and keeps privileged mutations fail-closed because the current Business Manager /user response supplies no recent MFA timestamp. Angular typecheck/build and 47 tests, Runtime typecheck and 51 suites/202 tests, 126-file boundaries and 8 real-estate suites/38 tests pass. Live MFA step-up, platform provisioning and authenticated browser E2E remain unavailable."
+    },
+    "P4-A03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-a03-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/agents/agents-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/agent-versions/agent-versions-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/instructions/instructions-admin.page.ts",
+        "../../sophia-runtime/src/admin/agents/agent-authoring.service.ts",
+        "../../sophia-runtime/src/admin/agents/agent-authoring.controller.ts"
+      ],
+      "detail": "ADM-03, ADM-04 and ADM-05 now have protected lazy Angular workspaces backed by tenant-scoped agent and instruction APIs. A permission-filtered authoring-dependencies endpoint supplies published immutable resources and safe provider capability/limitation summaries without credential references or raw settings. Agent drafts use selectors, server validation, diff and immutable release controls; instructions retain draft/approval separation and the fixed platform safety policy. The deterministic preview declares externalEffects=false and creates no metered/provider session. Plan 2.1.15 corrects the unsafe raw-UUID and unsupported live-sandbox assumptions. Angular typecheck/build and 52 tests, Runtime typecheck/build/contract check and 51 suites/204 tests, 132-file boundaries and 8 real-estate suites/38 tests pass. Authenticated browser E2E and a live metered evaluation sandbox remain unavailable."
+    },
+    "P4-A04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-a04-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/knowledge/knowledge-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/tools/tools-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/connectors/connectors-admin.page.ts",
+        "../../sophia-runtime/src/admin/tools-connectors/tool-connector-admin.controller.ts",
+        "../../sophia-runtime/src/admin/tools-connectors/tool-connector-admin.service.ts"
+      ],
+      "detail": "ADM-06, ADM-07 and ADM-08 now form a protected lazy Admin workspace set. Existing Knowledge lifecycle controls are retained and now have component evidence for fail-closed private intake and unpublished-preview isolation. Tools renders compiled schemas/policy, offers synthetic no-effects contract checks and edits bindings only on tenant draft business-profile versions selected from a new safe dependency endpoint. Connectors uses the authenticated tenant account, approved scopes, health, optimistic reconnect/disconnect and honest reconciliation states; the runtime-scoped credential never enters or leaves Angular. Plan 2.1.16 corrects the duplicate-Knowledge, raw-profile-ID, browser-secret and unsupported OAuth-expiry assumptions. Angular typecheck/build and 57 tests, Runtime typecheck/build/contract check and 51 suites/205 tests, 137-file boundaries and 8 real-estate suites/38 tests pass. Live connector E2E, private file readiness and future OAuth/tenant credential lifecycles remain unavailable."
+    },
+    "P4-A05": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-a05-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../../frontend/src/app/sophia-admin/workflows/workflows-admin.page.ts",
+        "../../../frontend/src/app/sophia-admin/escalations/escalations-admin.page.ts",
+        "../../sophia-runtime/src/admin/workflows/workflow-admin.service.ts",
+        "../../sophia-runtime/src/admin/escalations/escalation-admin.service.ts"
+      ],
+      "detail": "ADM-09 and ADM-11 now have protected lazy Angular workspaces backed by the versioned workflow and escalation APIs. Workflow configuration is derived from compiled constant-only schemas, versions publish immutably, run status remains authoritative-owner aggregate data, and unsupported retries expose reconciliation guidance instead of an action. Escalations permit only server-supported destinations, retain separate case/delivery/transfer states, expose event evidence and use optimistic assign/start/resolve transitions; assignment can no longer regress an in-progress case. Plan 2.1.17 corrects the generic-JSON, fabricated-step, always-retryable and external-handoff assumptions. Angular typecheck/build and 62 tests, Runtime typecheck/build/contract check and 51 suites/206 tests, 141-file boundaries and 8 real-estate suites/38 tests pass. Live owner status/retry and callback/notification/transfer E2E remain unavailable."
+    },
+    "P4-04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p4-04-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/tools/action-review.store.ts",
+        "../../sophia-runtime/src/conversation/conversation.controller.ts",
+        "../../sophia-runtime/src/conversation/conversation.service.ts",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-session.facade.ts",
+        "../../../frontend/src/app/sophia-runtime/presentation/packs/real-estate/real-estate-tool-presentation.renderer.ts",
+        "../../../frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.ts"
+      ],
+      "detail": "Durable reviews now expose session-and-tenant-scoped current lookup and explicit cancellation, bind every displayed booking field, and scrub personal payloads on cancel/close/disconnect/expiry without deleting committed business/workflow evidence. The kiosk clears UI, assistant text, forms and volatile credentials even when remote close fails; hard reload intentionally starts clean instead of persisting another visitor's bearer. Native Realtime tolerates denied microphone access and supports bounded typed user turns plus accessible assistant text. Plan 2.1.18 corrects the unsafe hard-refresh recovery and unverified universal-text assumptions. Angular typecheck/build and 65 tests, Runtime typecheck/build/contract check and 52 suites/208 tests, 141-file boundaries and 8 real-estate suites/38 tests pass. Live microphone-denial/provider E2E was not run, and Tavus/Daily typed input remains fail-closed pending P5's provider-neutral reasoning path."
+    }
+  },
+  "p5Tasks": {
+    "P5-01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p5-01-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/platform/orchestration/reasoning-pipeline.ts",
+        "../../sophia-runtime/src/platform/orchestration/reasoning-tool.executor.ts",
+        "../../sophia-runtime/src/providers/reasoning/reasoning-provider.interface.ts",
+        "../../sophia-runtime/src/providers/reasoning/openai-responses-reasoning.provider.ts",
+        "../../sophia-runtime/test/fixtures/reasoning-contract.fixture.ts",
+        "../../sophia-runtime/README.md"
+      ],
+      "detail": "A bounded provider-neutral streamed reasoning/tool loop now consumes canonical history, usage, cancellation and failure events and routes every tool through the existing credential-validating v2 dispatcher. The concrete OpenAI Responses adapter uses configured model aliases, stateless encrypted continuation, adapter-local provider-safe tool aliases and canonical event mapping without adding OpenAI types or branches to Core. Shared fixtures prove neutral text, real-estate catalog/review, schema failure, cancellation, usage and opaque-state isolation. Plan 2.1.19 records the dotted-name, optional-schema, stateless-continuation and browser-activation corrections. Runtime typecheck/build/contract check and 55 suites/216 tests, 146-file boundaries and 8 protected real-estate suites/38 tests pass. No live provider smoke test was run and the pipeline is not exposed through an unsafe public browser endpoint."
+    },
+    "P5-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p5-02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/providers/reasoning/anthropic-messages-reasoning.provider.ts",
+        "../../sophia-runtime/src/providers/reasoning/anthropic-messages-reasoning.provider.spec.ts",
+        "../../sophia-runtime/src/platform/orchestration/reasoning-pipeline.ts",
+        "../../sophia-runtime/src/providers/capability/provider-adapter.registrations.ts",
+        "../../sophia-runtime/README.md"
+      ],
+      "detail": "A genuine Anthropic Messages implementation now satisfies the same provider-neutral ReasoningProvider contract without Core, tool, business-pack or UI branches. It translates Claude SSE text/tool/usage/error semantics, preserves required thinking/signature/tool-use continuation blocks only inside the active adapter, sends immediate tool_result blocks with is_error for failed outcomes, disables parallel tool use and maps provider-safe names back to canonical IDs. The disabled-by-default registration fails closed without ANTHROPIC_API_KEY and is absent from published profiles. Shared tests cover neutral streaming, cache-aware usage, successful catalog-to-booking-review flow, failed tools, duplicate calls, overloads, missing credentials and opaque-state isolation. Plan 2.1.20 records that protocol statelessness is not proof of ZDR. Runtime typecheck/build/contract check and 56 suites/224 tests, 146-file boundaries and 8 protected real-estate suites/38 tests pass. No live Claude request or production retention/ZDR verification was performed."
+    },
+    "P5-03": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p5-03-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/providers/reasoning/google-gemini-interactions-reasoning.provider.ts",
+        "../../sophia-runtime/src/providers/reasoning/google-gemini-interactions-reasoning.provider.spec.ts",
+        "../../sophia-runtime/src/platform/orchestration/reasoning-pipeline.ts",
+        "../../sophia-runtime/src/providers/capability/provider-adapter.registrations.ts",
+        "../../sophia-runtime/README.md"
+      ],
+      "detail": "A genuine Gemini Interactions implementation now satisfies the same provider-neutral ReasoningProvider contract without Core, tool, business-pack or UI branches. It pins the post-May-2026 steps/SSE contract, uses store=false, translates text/function/usage/error semantics, preserves the full stateless model step history and encrypted thought signatures only inside the active adapter, maps exact call IDs and provider-safe aliases, marks failed function results with is_error, and serializes any provider-emitted parallel calls through the common secured pipeline. Unsupported JSON Schema keywords fail before network I/O instead of being silently ignored. The disabled-by-default gemini-reasoning-v1 registration fails closed without GEMINI_API_KEY and is absent from published profiles. Plan 2.1.21 records the step-history, schema-subset, parallel-call and data-retention corrections. Runtime typecheck/build/contract check and 57 suites/231 tests, 146-file boundaries and 8 protected real-estate suites/38 tests pass. No live Gemini request or deployment data-handling/ZDR verification was performed."
+    },
+    "P5-04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p5-04-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/providers/speech/speech-provider.interface.ts",
+        "../../sophia-runtime/src/providers/speech/openai-buffered-transcription.provider.ts",
+        "../../sophia-runtime/src/providers/speech/openai-speech-synthesis.provider.ts",
+        "../../sophia-runtime/src/platform/media/orchestrated-voice-pipeline.ts",
+        "../../sophia-runtime/src/platform/media/orchestrated-voice-pipeline.spec.ts",
+        "../../sophia-runtime/src/providers/speech/openai-speech.providers.spec.ts",
+        "../../sophia-runtime/README.md"
+      ],
+      "detail": "A configurable internal orchestrated-voice composition now connects real OpenAI bounded-turn transcription, provider-neutral reasoning/tools and streamed OpenAI PCM synthesis to exactly one AudioOutputSink. Exact 24 kHz mono PCM16 formats, bounded in-memory input/output, WAV wrapping, HTTP sample reassembly, turn epochs and sink flushing prevent incompatible connections and late interrupted audio. Contract tests run the same catalog.search -> booking.prepare secured workflow when only the reasoner changes between Claude and Gemini. Plan 2.1.22 records that file transcription is final-only rather than live partial streaming, audio traverses Sophia Runtime, already-heard audio cannot be retracted, AI-voice disclosure is required, and current browser-owned LiveAvatar/Simli implementations are not verified generic audio sinks. Runtime typecheck/build/contract check and 59 suites/239 tests, 148-file boundaries and 8 protected real-estate suites/38 tests pass. No live audio request, browser media transport, avatar injection or deployment data-control verification was performed."
+    },
+    "P5-05": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p5-05-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/providers/realtime/native-realtime-provider.interface.ts",
+        "../../sophia-runtime/src/providers/realtime/google-gemini-live.provider.ts",
+        "../../sophia-runtime/src/providers/realtime/google-gemini-live.provider.spec.ts",
+        "../../sophia-runtime/src/providers/session/gemini-live-session.adapter.ts",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-gemini-live-client.service.ts",
+        "../../../frontend/src/app/sophia-runtime/services/browser-transport/sophia-session-transport.adapters.ts",
+        "../../sophia-runtime/README.md"
+      ],
+      "detail": "A separate gemini-live-v1 NativeRealtimeProvider now mints one-use configuration-constrained ephemeral tokens for stable gemini-3.8-live without exposing GEMINI_API_KEY. An explicit v2 lifecycle adapter and Angular WebSocket/Web Audio adapter implement 16 kHz PCM input, 24 kHz PCM output, endpoint validation, all-part processing, output transcription, barge-in buffer clearing, tool aliasing/deduplication/cancellation and authenticated dispatcher execution. Every function is forced to BLOCKING so catalog and booking review ordering does not inherit the model's NON_BLOCKING default; voice remains unable to confirm review-gated commands. Plan 2.1.23 removes SessionResumptionConfig to avoid documented up-to-24-hour conversation-state retention and caps sessions at 540 seconds before the approximate ten-minute connection reset. Runtime typecheck/build/contract check and 60 suites/242 tests, frontend typecheck/build and 68 Sophia/Admin tests, 148-file boundaries and 8 protected real-estate suites/38 tests pass. No live token, audio, tool or interruption request was made, and the adapter remains absent from published profiles."
+    },
+    "P5-06": {
+      "status": "complete",
+      "evidence": [
+        "p5-06-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/test/portability/synthetic-capability-laboratory.fixture.ts",
+        "../../sophia-runtime/test/portability/synthetic-capability-laboratory.spec.ts",
+        "../../sophia-runtime/tsconfig.portability-core.json",
+        "../../sophia-runtime/src/capabilities-v2/contracts/business-capability.contracts.ts",
+        "../../sophia-runtime/src/business-packs/real-estate/business-manager-real-estate.connector.ts",
+        "../../scripts/check-sophia-boundaries.mjs"
+      ],
+      "detail": "A test-only synthetic capability laboratory now onboards two neutral tenants through configuration with independent knowledge/catalog/availability/booking grants, incompatible strict extension schemas, different wording, overlapping opaque IDs and a no-booking tenant. Assertions deny unknown fields, missing grants and cross-connector resource reuse, while one canonical read harness runs against both neutral ports and the compiled real-estate connector. Repository validation exposed and fixed a real cross-capability defect: ResourceRef now carries connectorBindingId while CapabilityContext retains the distinct capabilityBindingId, so catalog resources can safely flow to availability/booking on the same connector. Plan 2.1.24 records this correction. A dedicated provider- and real-estate-free Core typecheck, production typecheck/build/contracts, all 61 Runtime suites/247 tests, 149-file boundaries and 8 protected real-estate suites/38 tests pass. The neutral fixtures remain under test/ and are neither registered nor shipped."
+    }
+  },
+  "p6Tasks": {
+    "P6-01": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p6-01-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/admin/integration/admin-onboarding-readiness.service.ts",
+        "../../sophia-runtime/src/admin/integration/admin-onboarding-readiness.controller.ts",
+        "../../sophia-runtime/src/admin/integration/admin-onboarding-readiness.service.spec.ts",
+        "../../../frontend/src/app/sophia-admin/overview/sophia-admin-overview.page.ts",
+        "../../../frontend/src/app/sophia-admin/overview/sophia-admin-overview.page.html",
+        "../../../frontend/src/app/sophia-admin/overview/sophia-admin-overview.page.spec.ts"
+      ],
+      "detail": "A persisted, tenant-scoped integration gate now aggregates organisation access, foundational profiles, approved content, connector/capability binding health, workflow/escalation policy, active immutable releases, pinned v2 session evidence and audit evidence. Each step is masked by effective read permissions and activationReady is null without complete visibility. The integration audit also repaired an unreachable fixed-role grant: shared configuration readers now see escalation policy dependencies and Configuration Editor can author policy, while assignment/resolution remains Operations-only. The Admin overview explicitly separates the existing-authorised-tenant assembly journey from unavailable platform organisation provisioning and foundational-profile authoring; ADM-12 through ADM-16 remain planned. Plan 2.1.25 records the corrected boundary. Runtime typecheck and focused tests, frontend typecheck and all Sophia/Admin browser tests pass. No live provider, external business effect or shared-database synthetic write was performed; runtime evidence remains gated by the managed kiosk broker."
+    },
+    "P6-02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p6-02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/019_operational_accountability.sql",
+        "../../sophia-runtime/src/database/migrations/020_usage_ledger_hardening.sql",
+        "../../sophia-runtime/src/admin/operations/provider-usage-ledger.service.ts",
+        "../../sophia-runtime/src/admin/operations/operational-accountability.service.ts",
+        "../../sophia-runtime/src/admin/operations/operational-accountability.controller.ts",
+        "../../sophia-runtime/src/platform/orchestration/reasoning-pipeline.service.ts"
+      ],
+      "detail": "A tenant-isolated provider usage ledger now deduplicates stable source events, attributes provider/adapter and provider-independent dimensions, separates incomplete/estimated/measured evidence, supports optimistic forward reconciliation and keeps optional versioned provider-cost estimates distinct from customer charges. The Runtime role cannot update measured rows or delete ledger events. Reasoning orchestration records measured usage and records an incomplete event when final usage is missing. Permissioned operational APIs expose session/tool/workflow/queue state, bounded alert signals, honest retry capability and separate handoff request/acceptance/connection semantics. Plan 2.1.26 rejects generic session/tool replay and fabricated budget exhaustion; budgets remain unavailable until P6-A05. Migrations 019-020 were applied to Neon and rollback-only probes proved deduplication, FORCE RLS, cross-tenant denial, measured immutability and delete denial. No live provider, external effect or commercial operation was invoked."
+    },
+    "P6-A02": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p6-a02-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/021_evaluation_control_plane.sql",
+        "../../sophia-runtime/src/admin/evaluations/evaluation.service.ts",
+        "../../sophia-runtime/src/admin/evaluations/evaluation.controller.ts",
+        "../../sophia-runtime/src/admin/agents/agent-publication-checks.ts",
+        "../../../frontend/src/app/sophia-admin/evaluations/evaluations-admin.page.ts"
+      ],
+      "detail": "ADM-13 now provides tenant-scoped versioned deterministic datasets, bounded publication-check cases, draft/release targets, immutable pinned run results and explicit required-publication bindings. Agent validation and publication reuse the same production publication-check contract; a required suite must pass for the exact draft revision and evaluator version. Every run is labelled deterministic and database-enforced as externalEffects=false and meteredSessionCreated=false. Plan 2.1.27 keeps test-only portability fixtures out of production and leaves live/provider-judged evaluation unavailable until authority, data-policy and budget gates exist. Configuration Editor can read/edit/run suites while Release Publisher retains approval and requirement-binding authority. Migration 021 was applied to Neon; all four tables use FORCE RLS, rollback-only cross-tenant insertion was denied, and the Runtime role can insert but cannot update/delete run evidence. Runtime 68 suites/266 tests, frontend 72 Sophia/Admin tests and production build, 166-file boundaries, and 8 protected real-estate suites/38 tests pass."
+    },
+    "P6-A04": {
+      "status": "complete_with_limits",
+      "evidence": [
+        "p6-a04-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/022_audit_explorer_and_exports.sql",
+        "../../sophia-runtime/src/admin/authorization/admin-audit.service.ts",
+        "../../sophia-runtime/src/admin/authorization/admin-audit.interceptor.ts",
+        "../../sophia-runtime/src/admin/audit/audit-explorer.service.ts",
+        "../../../frontend/src/app/sophia-admin/audit-logs/audit-logs-admin.page.ts"
+      ],
+      "detail": "ADM-15 now exposes a tenant-scoped, recursively redacted audit explorer with actor/event/outcome/resource/correlation/date filters, stable cursor pagination and redacted detail. A global Admin interceptor records body-free allowed/failed request evidence while the guard records permission/MFA/cross-tenant denials and existing services retain domain events. Organisation Owner receives audit.export behind recent MFA; Read-only Auditor remains read-only. Bounded JSON export manifests pin filters and an as-of cutoff, cap at 5,000 rows, expire after 24 hours, render from the immutable ledger and return a SHA-256 digest. Plan 2.1.28 records that no approved retention duration/legal-hold policy or private export worker/store exists, so automatic deletion and hold automation remain explicitly unavailable. Migration 022 was applied to Neon; audit tables use FORCE RLS, Runtime event update/delete is revoked, cross-tenant insertion was denied, and rollback-only owner mutation proved the append-only trigger. Runtime 71 suites/271 tests, frontend 73 Sophia/Admin tests and production build, 174-file boundaries, and 8 protected real-estate suites/38 tests pass."
+    },
+    "P6-03": {
+      "status": "complete_with_limits",
+      "completedSlice": "P6-03B",
+      "evidence": [
+        "p6-03a-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/023_privacy_control_plane.sql",
+        "../../sophia-runtime/src/admin/privacy/privacy.service.ts",
+        "../../sophia-runtime/src/admin/privacy/privacy.controller.ts",
+        "../../sophia-runtime/src/admin/privacy/privacy-execution.service.ts",
+        "../../sophia-runtime/src/platform/orchestration/v2-session.service.ts",
+        "../../sophia-runtime/src/database/migrations/024_privacy_execution.sql",
+        "../../sophia-runtime/scripts/verify-privacy-control-plane.mts",
+        "../../sophia-runtime/scripts/verify-privacy-execution.mts",
+        "../../src/models/bm.realEstate.model.js",
+        "../../src/middlewares/bmIntegrationAuth.js"
+      ],
+      "detail": "P6-03 now provides the FORCE-RLS control plane plus authorised access/deletion execution, append-only target/event evidence, subject bindings and approved-policy retention runs. Runtime de-identifies session/tool/event/review/provider/escalation content while retaining schema-limited operational evidence. A dedicated exact-scope Business Manager owner API de-identifies command-linked booking/email/delivery fields without deleting the shared property report cache. Provider/backup targets remain blocked until approved not-stored or owner evidence exists; fallback remains disabled without equivalent data-policy proof. Retention uses only an approved recorded duration, excludes active holds and refuses unbound or cleanup-unsafe candidates. Migrations 023-024 are applied to Neon. A rollback-only Runtime-role proof completed a synthetic request only after every target had evidence, found no synthetic personal payload afterwards, and proved an active hold yielded heldCount=1 and processedCount=0. Plan 2.1.30 records the corrected property-report, immutable-evidence and retention boundaries."
+    },
+    "P6-A01": {
+      "status": "complete_with_limits",
+      "completedSlice": "P6-A01B",
+      "evidence": [
+        "p6-a01a-checkpoint.md",
+        "p6-a01b-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/025_conversation_operations.sql",
+        "../../sophia-runtime/src/database/migrations/026_conversation_exports.sql",
+        "../../sophia-runtime/src/admin/conversations/conversation-admin.service.ts",
+        "../../sophia-runtime/src/admin/conversations/conversation-admin.controller.ts",
+        "../../sophia-runtime/scripts/verify-conversation-operations.mts",
+        "../../../frontend/src/app/sophia-admin/conversations/conversations-admin.page.ts"
+      ],
+      "detail": "P6-A01 now delivers the tenant-scoped Angular Conversations workspace, filtered/stable metadata list, normalized session/event/tool/review/workflow/escalation timeline, separately MFA-protected retention-aware content reads, privacy-aware notes and expiring bounded exports. Export manifests store no sensitive document; access re-renders against current privacy state and produces an audited SHA-256 digest. Content creation/download requires both conversations.export and conversations.read_content. Full transcripts/raw audio remain unavailable and no playback control is shown. Migrations 025-026 are applied to Neon. Rollback-only least-privilege probes proved tenant isolation, metadata/content separation, credential redaction, content-export denial, digesting, no-copy schema and forced RLS. Plan 2.1.32 records the corrected render-on-access export boundary."
+    },
+    "P6-A03": {
+      "status": "complete_with_limits",
+      "completedSlice": "P6-A03B",
+      "evidence": [
+        "p6-a03a-checkpoint.md",
+        "p6-a03b-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/027_analytics_exports.sql",
+        "../../sophia-runtime/src/admin/analytics/analytics.service.ts",
+        "../../sophia-runtime/src/admin/analytics/analytics.controller.ts",
+        "../../sophia-runtime/src/business-packs/business-pack.contracts.ts",
+        "../../sophia-runtime/src/business-packs/business-pack.registry.ts",
+        "../../sophia-runtime/scripts/verify-analytics.mts",
+        "../../../frontend/src/app/sophia-admin/analytics/analytics-admin.page.ts"
+      ],
+      "detail": "P6-A03 delivers the protected Angular Analytics workspace, versioned provider-neutral core registry, bounded business-pack source-confirmed extensions and tenant/timezone-bounded canonical aggregation in a repeatable-read, read-only database snapshot. It exposes definitions, denominators, agent/release/channel/date filters, local-date series, freshness, usage coverage, unattributed evidence and provider estimates separated by currency/table version/status and explicitly not labelled charges, revenue or savings. Organisation Owner receives the distinct analytics.export grant; Operations Member and Read-only Auditor retain read-only access. Aggregate-only JSON snapshots are capped at 5,000 points/5 MiB, SHA-256 verified, expire after 24 hours and scrub their stored document while retaining immutable manifest evidence. Migration 027 is applied to Neon and a rollback-only sophia_runtime_app probe proved forced RLS, digest verification, expiry scrubbing and raw-tool-input exclusion. Plan 2.1.34 records why mutable lifecycle state requires a bounded stored aggregate snapshot instead of render-on-access. Materialized aggregates remain deferred pending scale evidence."
+    },
+    "P6-A05": {
+      "status": "complete_with_limits",
+      "completedSlice": "P6-A05B",
+      "evidence": [
+        "p6-a05a-checkpoint.md",
+        "p6-a05b-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/028_commercial_read_model.sql",
+        "../../sophia-runtime/src/database/migrations/029_commercial_plan_retirement.sql",
+        "../../sophia-runtime/src/database/migrations/030_tenant_usage_guardrails.sql",
+        "../../sophia-runtime/src/admin/billing/billing-provider.port.ts",
+        "../../sophia-runtime/src/admin/billing/disabled-billing.provider.ts",
+        "../../sophia-runtime/src/admin/billing/usage-billing.service.ts",
+        "../../sophia-runtime/src/admin/billing/usage-guardrail.service.ts",
+        "../../sophia-runtime/src/admin/billing/usage-billing.controller.ts",
+        "../../sophia-runtime/src/platform/admission/runtime-admission.service.ts",
+        "../../sophia-runtime/scripts/verify-commercial-read-model.mts",
+        "../../sophia-runtime/scripts/verify-usage-guardrails.mts",
+        "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
+      ],
+      "detail": "P6-A05 delivers ADM-16 as a protected tenant Usage/Billing workspace while keeping usage measurement, provider-cost estimates, commercial preview, tenant guardrails and actual charge execution semantically separate. P6-A05B adds optimistic audited downward-only guardrails, calendar-UTC single-currency estimate alerts and one atomic v1/v2 admission service. Effective session/rate limits are the minimum of platform hard caps, active commercial entitlements and tenant guardrails; known invalid entitlement state fails closed. Transaction advisory locks and short-lived durable reservations prevent concurrent count-then-act oversubscription and deduplicate provider replays. The immutable v2 maximumToolCalls remains a distinct total-per-session ceiling rather than a per-minute rate. Migration 030 is applied to Neon; a rollback-only sophia_runtime_app proof verified effective minimums, active non-enforcing estimate alerts, audited updates, concurrent-session denial, provider-event deduplication, session-total denial, cross-tenant hiding and forced RLS. Recent MFA remains server-enforced for changes; the present Business Manager identity supplies no MFA timestamp and therefore cannot save until an approved step-up flow exists. Plan 2.1.37 records the corrected concurrency, session-total and estimate-only alert boundaries. Live provider sandbox lifecycle, customer billing balance and charge execution remain P6-A06."
+    },
+    "P6-A06": {
+      "status": "in_progress",
+      "completedSlice": "P6-A06A",
+      "evidence": [
+        "p6-a06a-checkpoint.md",
+        "../sophia-realtime-codex-implementation-plan.v2.1.json",
+        "../../sophia-runtime/src/database/migrations/031_billing_sandbox_lifecycle.sql",
+        "../../sophia-runtime/src/database/migrations/032_billing_observation_hardening.sql",
+        "../../sophia-runtime/src/database/migrations/033_billing_checkout_intents.sql",
+        "../../sophia-runtime/src/database/migrations/034_billing_checkout_reservations.sql",
+        "../../sophia-runtime/src/admin/billing/stripe-sandbox-billing.provider.ts",
+        "../../sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "../../sophia-runtime/src/admin/billing/billing-webhook.controller.ts",
+        "../../sophia-runtime/scripts/verify-billing-sandbox-lifecycle.mts",
+        "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
+      ],
+      "detail": "P6-A06A delivers a concrete but dormant Stripe test-mode lifecycle without reusing the legacy Toolkit/video payment namespace. Sophia-specific configuration, exact active-plan checks, provider Price verification, hosted Checkout/portal URLs, pre-provider single-active Checkout reservations, idempotent ambiguous-outcome recovery, issued-Session callback binding, raw-body signature verification, payload-free callback evidence, customer routing, replay suppression, monotonic out-of-order-safe observations and authoritative bounded reconciliation are implemented. Hosted actions require billing.manage plus recent MFA. The first safe Checkout contract is deliberately limited to fixed recurring plans whose mapped test Price exactly matches approved currency/base amount/interval, with no usage-overage lines and tax marked not applicable; unsupported metering/tax designs fail closed. Migrations 031-034 are applied to Neon. A rollback-only sophia_runtime_app proof verified issued intent completion, mapping, routing, replay protection, stale-event rejection, immutable references, tenant isolation and forced RLS. Plan 2.1.39 records that Stripe credentials are account-scoped and need not be Sophia-exclusive, while Sophia-specific configuration/resources and verified recurring-subscription evidence remain mandatory. The operator reports prior test payments and available production credentials outside the repository, but the workspace contains no verifiable Sophia Checkout subscription/invoice/portal run and no live configuration. P6-A06B remains the sandbox subscription-lifecycle proof; P6-A06C is the independent live-mode configuration and activation gate."
+    }
+  },
+  "tests": [
+    {
+      "command": "npm run test:p0:boundaries",
+      "repository": "backend",
+      "result": "pass",
+      "detail": "5 active/new-product boundary files scanned"
+    },
+    {
+      "command": "npm run test:p0:real-estate",
+      "repository": "backend",
+      "result": "pass",
+      "detail": "7 suites, 28 tests"
+    },
+    {
+      "command": "npm run test:release",
+      "repository": "backend",
+      "result": "pass",
+      "detail": "15 suites and 60 tests passed; 4 suites and 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "13 suites, 50 tests; dummy unreachable DB URL and mocked providers"
+    },
+    {
+      "command": "npm run typecheck",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass"
+    },
+    {
+      "command": "npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Final P1 frontend state"
+    },
+    {
+      "command": "npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "14 tests in ChromeHeadless 153"
+    },
+    {
+      "command": "npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "7 suites, 30 tests after P1 receipt coverage"
+    },
+    {
+      "command": "npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "15 suites, 62 tests; 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "13 suites, 53 tests with mocked providers"
+    },
+    {
+      "command": "npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass"
+    },
+    {
+      "command": "npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "10 active-product tests in ChromeHeadless 153"
+    },
+    {
+      "command": "rollback-only schema transaction",
+      "repository": "configured PostgreSQL",
+      "result": "pass",
+      "detail": "Tool lifecycle and action-review constraints verified; synthetic rows rolled back"
+    },
+    {
+      "command": "npm run test:sophia (final rerun)",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "blocked",
+      "detail": "Multiple stale local Angular builders remained at Building; preceding 10-test run passed before the final confirmation-button/CSS edit"
+    },
+    {
+      "command": "legacy student delivery inventory",
+      "repository": "configured PostgreSQL",
+      "result": "pass",
+      "detail": "Read-only: 9 sent, 0 outstanding"
+    },
+    {
+      "command": "npm run test:p2:contracts",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Generated-artifact drift check plus 1 suite and 15 provider-neutral contract/compatibility tests"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "14 suites and 68 mocked tests at the P2-01 checkpoint"
+    },
+    {
+      "command": "npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "8 boundary files scanned; 7 real-estate suites and 30 tests passed"
+    },
+    {
+      "command": "npm run contracts:check && npx tsc -p tsconfig.app.json --noEmit && npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Generated contracts current; application typecheck passed; 10 tests passed in ChromeHeadless 153"
+    },
+    {
+      "command": "npm test -- --runTestsByPath src/platform/configuration/publishable-profile.spec.ts src/platform/configuration/configuration-profile.service.spec.ts src/database/versioned-configuration-migration.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "3 suites and 9 configuration, publication and additive-migration tests"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "17 suites and 77 tests at the P2-02 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "13 boundary files scanned; 7 real-estate suites/30 tests and 15 contract tests passed"
+    },
+    {
+      "command": "npm test -- --runTestsByPath src/admin/admin-foundation.spec.ts src/admin/authorization/admin-authorization.service.spec.ts src/admin/authorization/admin-auth.guard.spec.ts src/admin/identity/business-manager-identity.bridge.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "4 suites and 11 identity, tenant, permission, MFA and audit tests"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "21 suites and 88 tests at the P2-A01 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "26 boundary files scanned; 7 real-estate suites/30 tests and 15 contract tests passed"
+    },
+    {
+      "command": "local route smoke with dummy unreachable database",
+      "repository": "backend/sophia-runtime",
+      "result": "pass_with_expected_dependency_failure",
+      "detail": "/api/admin/v1/context returned 401 without auth; /api/runtime/healthz remained mapped and returned 500 because PostgreSQL was deliberately unreachable"
+    },
+    {
+      "command": "npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "24 suites and 93 tests at the P2-03 checkpoint"
+    },
+    {
+      "command": "npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "16 suites and 66 tests passed; 4 suites and 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npm run test:p0:boundaries and focused connector/real-estate tests",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "31 new-product files scanned; connector authority and real-estate confirmation tests passed"
+    },
+    {
+      "command": "npm test -- --runTestsByPath src/admin/agents/agent-authoring.service.spec.ts src/database/agent-authoring-migration.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "2 suites and 8 agent authoring, conflict, dependency, revocation and migration tests"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "26 suites and 101 tests; typecheck and build passed at the P2-A03 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "37 boundary files scanned; 7 real-estate suites/30 tests and 15 contract tests passed"
+    },
+    {
+      "command": "npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "16 suites and 66 tests passed; 4 suites and 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "Sophia migration runner with DATABASE_URL mapped to SOPHIA_RUNTIME_DATABASE_URL",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Applied pending migrations 006, 007, 008 and 009 transactionally; migration ledger now contains 001 through 009"
+    },
+    {
+      "command": "catalog verification and rollback-only immutable-trigger transaction",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass_with_deployment_limit",
+      "detail": "RLS/FORCE RLS flags, tenant foreign keys and three immutability triggers verified; no synthetic rows retained. Configured neondb_owner role has BYPASSRLS."
+    },
+    {
+      "command": "migration 010 plus DatabaseService rollback-only RLS verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Effective current_user was sophia_runtime_app with BYPASSRLS=false; cross-tenant read returned zero rows and cross-tenant insert was denied; no synthetic rows retained"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "27 suites and 108 tests; typecheck and build passed at the P2-04a checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "37 boundary files scanned; 7 real-estate suites/30 tests and 15 contract tests passed"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "28 suites and 112 tests; typecheck and build passed at the completed P2-04 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "37 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "30 suites and 123 tests; typecheck and build passed at the P2-A02 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "41 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "migration 011 plus DatabaseService rollback-only lifecycle verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Effective current_user was sophia_runtime_app with BYPASSRLS=false; membership RLS/FORCE RLS and fixed-role constraint were installed; invitation insert succeeded and was rolled back with zero rows retained"
+    },
+    {
+      "command": "local Nest dependency and route initialization with dummy unreachable database",
+      "repository": "backend/sophia-runtime",
+      "result": "pass_with_expected_sandbox_limit",
+      "detail": "AdminModule and all organisation/member/invitation/permission routes initialized; sandbox denied socket binding only after successful initialization"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "33 suites and 133 tests; typecheck and build passed at the P2-05 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "41 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit && npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Application typecheck and 10 ChromeHeadless Sophia tests passed after heartbeat/disconnect integration"
+    },
+    {
+      "command": "migration 012 plus DatabaseService rollback-only provider operations verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Effective current_user was sophia_runtime_app with BYPASSRLS=false; three operational tables had RLS/FORCE RLS; catalog/allocation/session writes and cross-source event uniqueness passed; no synthetic rows retained"
+    },
+    {
+      "command": "local Nest dependency and route initialization with dummy unreachable database",
+      "repository": "backend/sophia-runtime",
+      "result": "pass_with_expected_sandbox_limit",
+      "detail": "Provider operation dependencies plus heartbeat/disconnect routes initialized; sandbox denied socket binding only after successful initialization"
+    },
+    {
+      "command": "npm test && npm run typecheck && npm run contracts:check && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0 (compatible verification); Node 22 boundary/regression run separately",
+      "result": "pass",
+      "detail": "36 suites and 139 tests; typecheck, generated contract drift check and build passed at the P2-06 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "49 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit && npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Application typecheck and 10 ChromeHeadless Sophia tests passed with regenerated v2 contracts"
+    },
+    {
+      "command": "migration 013 plus rollback-only runtime-role verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Migration record present; runtime_bootstrap_grants has RLS/FORCE RLS; current_user was sophia_runtime_app with BYPASSRLS=false; tenant-scoped bootstrap insert/read passed and rolled back"
+    },
+    {
+      "command": "npm test -- --runInBand && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "38 suites and 146 tests; typecheck and build passed at the P3-01 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "60 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "npm test -- --runInBand && npm run typecheck && npm run build",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "39 suites and 156 tests; typecheck and build passed at the P3-02 checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "60 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-02"
+    },
+    {
+      "command": "migration 014 plus rollback-only runtime-role verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Migration record present; tool_calls and action_reviews have RLS/FORCE RLS; current_user was sophia_runtime_app with BYPASSRLS=false; canonical command uniqueness blocked alias duplication and all synthetic writes were rolled back"
+    },
+    {
+      "command": "npm run typecheck && npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "42 suites and 163 tests passed; typecheck and build passed at the P3-A01a checkpoint"
+    },
+    {
+      "command": "npm run test:p0:boundaries",
+      "repository": "backend",
+      "result": "pass",
+      "detail": "66 new-product source files scanned at P3-A01a"
+    },
+    {
+      "command": "migration 015 plus rollback-only runtime-role RLS verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Migration applied; sophia_runtime_app has BYPASSRLS=false and required table privileges; cross-tenant read returned zero rows and cross-tenant insert was denied; temporary tenant and writes were rolled back"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "66 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-A01a"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "42 suites and 165 tests passed at P3-A01b1"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit && npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "Sophia Admin route and templates compiled; existing initial bundle, Manrope CSS, LiveAvatar CommonJS and missing PrimeIcons stylesheet warnings remain"
+    },
+    {
+      "command": "Angular ChromeHeadless Sophia Admin focused suite",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "5 Admin authentication, routing and API-boundary tests passed"
+    },
+    {
+      "command": "npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "15 combined Sophia Runtime and Sophia Admin ChromeHeadless tests passed"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "72 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-A01b1"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "44 suites and 171 tests passed after private file pipeline and Nest 12.1.0 updates"
+    },
+    {
+      "command": "compiled IsolatedTextParserService worker-thread smoke",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Resource-limited compiled worker returned normalized text with bounded-utf8-v1"
+    },
+    {
+      "command": "npm audit --omit=dev",
+      "repository": "backend/sophia-runtime",
+      "result": "pass",
+      "detail": "0 production vulnerabilities after AWS SDK 3.1139.0 and aligned NestJS 12.1.0 updates"
+    },
+    {
+      "command": "migration 016 plus rollback-only runtime-role RLS verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "result": "pass",
+      "detail": "Migration applied; sophia_runtime_app has BYPASSRLS=false and required intake-table privileges; cross-tenant read returned zero rows and cross-tenant insert was denied; verification writes were rolled back"
+    },
+    {
+      "command": "npm run build && npm run test:sophia",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_build_warnings",
+      "detail": "Production build passed and 16 combined Sophia Runtime/Admin ChromeHeadless tests passed; existing bundle/font/CommonJS/PrimeIcons warnings remain"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "81 boundary files; 30 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-A01b2a"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "45 suites and 175 tests passed after the typed Business Manager connector and durable review contract corrections"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "84 boundary files; 32 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-03"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "46 suites and 182 tests passed after optional pack composition, catalog separation and provider digest gating"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "98 boundary files; 32 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-04"
+    },
+    {
+      "command": "npm run typecheck; npm run build && npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "48 suites and 192 tests passed after compiled Admin registries, connector lifecycle, explicit tenant/account binding authority and dispatch-time reconciliation-safe disconnect"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "102 boundary files; 32 protected real-estate tests; 15 contract tests; 16 release suites/66 tests passed with 12 SQL-gated tests skipped at P3-A02"
+    },
+    {
+      "command": "SOPHIA_RUNTIME_DATABASE_URL mapped from DATABASE_URL; npm --prefix sophia-runtime run migrate; read-only schema verification",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Migration 017 applied to configured Neon; connector lifecycle columns, forced RLS, runtime table grants and sophia_runtime_app non-superuser/non-BYPASSRLS attributes verified"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "48 suites and 193 tests passed after strict workflow status DTOs, milestone propagation and provider-acceptance instruction corrections"
+    },
+    {
+      "command": "npm run test:p0:real-estate && npm run test:release",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "8 protected real-estate suites/38 tests and 17 release suites/72 tests passed; 12 SQL-gated tests skipped in the ordinary release run"
+    },
+    {
+      "command": "npm run test:release:sql",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Configured Neon: 4 PostgreSQL suites and 11 tests passed; 1 separately gated live-provider test skipped. No email or report was generated."
+    },
+    {
+      "command": "ensureTownPlannerBookingWorkflowSchema; read-only queue schema/status verification",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Additive claim fencing and delivery-evidence columns applied to configured Neon; two existing sent rows normalized to provider_accepted"
+    },
+    {
+      "command": "npm run typecheck && npm run build && npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "51 suites and 198 tests passed after workflow-template, retry-command, escalation lifecycle and release-binding implementation"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate && npm run test:p2:contracts && npm run test:release",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "110 boundary files; 8 protected real-estate suites/38 tests; 15 contract tests; 17 release suites/72 tests passed with 12 SQL-gated tests skipped"
+    },
+    {
+      "command": "migration 018 plus rollback-only runtime-role RLS verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Migration applied; workflow/retry/escalation tables have forced RLS; sophia_runtime_app is non-superuser/non-BYPASSRLS; selected-tenant visibility and cross-tenant insert denial passed with verification writes rolled back"
+    },
+    {
+      "command": "ensureTownPlannerBookingWorkflowSchema; workflow-version pin column verification",
+      "repository": "configured Neon PostgreSQL 17 database",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Booking-specific confirmation deliveries now have the additive workflow_version_id UUID column; no email, report or live handoff was invoked"
+    },
+    {
+      "command": "npm run test:release:sql (repeated after one transient advisory-lock collision)",
+      "repository": "backend / configured Neon PostgreSQL 17 database",
+      "node": "20.15.0",
+      "result": "pass_after_transient_retry",
+      "detail": "First run had one unrelated student-consultation global advisory-lock acquisition return null; immediate rerun passed 4 suites and 11 tests with 1 separately gated live-provider test skipped"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia -- --no-progress; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "Angular typecheck passed; 18 Sophia/Admin tests passed in Chrome Headless; production build passed with existing bundle/font/CommonJS/missing PrimeIcons stylesheet warnings"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-02 final state: Angular typecheck passed; 28 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons stylesheet warnings"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build; lazy-chunk marker inspection",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-A01 final state: Angular typecheck passed; 34 Sophia/Admin tests passed in Chrome Headless 154; production build passed; Admin shell/overview/Knowledge markers were absent from the initial main chunk and present only in lazy chunks"
+    },
+    {
+      "command": "npm test -- --runTestsByPath src/admin/authorization/admin-auth.guard.spec.ts src/admin/authorization/admin-authorization.service.spec.ts src/admin/organisations/organisation-lifecycle.service.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "3 server authorization/organisation suites and 16 tests passed"
+    },
+    {
+      "command": "npm run test:p0:boundaries",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A01 boundary rerun passed with 119 new-product source files scanned"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build; production marker inspection",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-03 final state: Angular typecheck passed; 40 Sophia/Admin tests passed in Chrome Headless 154; production build passed; quarantined student markers were absent from production JavaScript and presentation media is host-policy checked"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-03 boundary rerun passed with 119 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-A02 final state: Angular typecheck passed; 47 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons warnings"
+    },
+    {
+      "command": "npm run typecheck; npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A02 final state: Runtime typecheck passed; all 51 suites and 202 tests passed. The targeted Admin authorization/lifecycle subset was also run separately: 3 suites and 20 tests passed"
+    },
+    {
+      "command": "npm run test:p0:boundaries && npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A02 boundary check passed with 126 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build; lazy-chunk marker inspection",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-A03 final state: Angular typecheck passed; 52 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons warnings; Agent, Agent versions and Instructions markers are confined to lazy chunks"
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A03 final state: Runtime typecheck, build and generated-contract drift check passed; all 51 suites and 204 tests passed"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A03 boundary check passed with 132 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build; lazy-chunk and secret-input inspection",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-A04 final state: Angular typecheck passed; 57 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons warnings; Tools and Connectors markers are confined to lazy chunks and no browser credential field exists"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A04 final state: Runtime typecheck, build and generated-contract drift check passed; all 51 suites and 205 tests passed. The focused Knowledge/Tools/Connectors run passed 2 suites and 13 tests"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A04 boundary check passed with 137 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build; lazy-chunk inspection",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-A05 final state: Angular typecheck passed; 62 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons warnings; Workflow and Escalation markers are confined to lazy chunks"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A05 final state: Runtime typecheck, build and generated-contract drift check passed; all 51 suites and 206 tests passed. The focused Workflow/Escalation run passed 2 suites and 5 tests"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-A05 boundary check passed with 141 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass_with_existing_warnings",
+      "detail": "P4-04 final state: Angular typecheck passed; 65 Sophia/Admin tests passed in Chrome Headless 154; production build passed with the existing bundle/font/CommonJS/missing PrimeIcons warnings"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-04 final state: Runtime typecheck, build and generated-contract drift check passed; all 52 suites and 208 tests passed"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P4-04 boundary check passed with 141 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-01 final state: Runtime typecheck, build and generated-contract drift check passed; all 55 suites and 216 tests passed. The final focused reasoning/dispatcher/registry run passed 5 suites and 31 tests"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-01 boundary check passed with 146 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-02 final state: Runtime typecheck, build and generated-contract drift check passed; all 56 suites and 224 tests passed. The focused cross-provider reasoning/dispatcher/registry run passed 6 suites and 39 tests"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-02 boundary check passed with 146 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npm run typecheck; npm run build; npm run contracts:check; npm test -- --runInBand",
+      "repository": "backend/sophia-runtime",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-03 final state: Runtime typecheck, build and generated-contract drift check passed; all 57 suites and 231 tests passed. The focused Gemini/registry run passed 2 suites and 14 tests; the focused cross-provider reasoning/executor/registry run passed 6 suites and 28 tests"
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P5-03 boundary check passed with 146 new-product source files; 8 protected real-estate suites and 38 tests passed"
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P5-06 final state: the provider- and real-estate-free portability Core typecheck, production typecheck/build/generated-contract drift check and all 61 suites/247 tests passed. The focused synthetic/capability/knowledge/real-estate connector run passed 4 suites/18 tests."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P5-06 boundary check passed with 149 new-product source files; 8 protected real-estate suites and 38 tests passed."
+    },
+    {
+      "command": "npm run typecheck; npm test -- --runTestsByPath src/admin/integration/admin-onboarding-readiness.service.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-01 intermediate state: Runtime typecheck passed and the focused readiness suite passed 1 suite/4 tests."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia",
+      "repository": "frontend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-01 final state: Angular typecheck and all 71 Sophia Runtime/Admin tests passed in Chrome Headless 154."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-01 final state: portability-Core and production typechecks, build, generated-contract drift check and all 62 suites/252 tests passed."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-01 boundary check passed with 153 new-product source files; 8 protected real-estate suites and 38 tests passed."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "22.23.2",
+      "result": "pass_with_existing_warnings",
+      "detail": "P6-01 final state: Angular typecheck and production build passed with existing bundle/font/CommonJS/missing PrimeIcons warnings."
+    },
+    {
+      "command": "rollback-only configured Neon readiness aggregate under sophia_runtime_app",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Exact P6-01 aggregate executed in BEGIN READ ONLY and was rolled back; effective role sophia_runtime_app reported BYPASSRLS=false. Existing tenant readiness was false. No synthetic records or external effects were created."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-02 final state: portability-Core and production typechecks, build, generated-contract drift check and all 66 suites/261 tests passed."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-02 boundary check passed with 159 new-product source files; 8 protected real-estate suites and 38 tests passed."
+    },
+    {
+      "command": "node --import tsx (load ../.env, map DATABASE_URL, import src/database/migrate.ts)",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Applied additive Neon migrations 019_operational_accountability.sql and 020_usage_ledger_hardening.sql using the configured owner connection."
+    },
+    {
+      "command": "rollback-only Neon usage RLS/deduplication/immutability probes under sophia_runtime_app",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Identical source replay inserted zero rows, cross-tenant insert was denied, FORCE RLS was enabled, measured update and Runtime delete were denied, and all synthetic rows were rolled back. Exact status/usage aggregate queries also passed read-only with budget status unavailable."
+    },
+    {
+      "command": "npm run typecheck; npm test -- --runTestsByPath src/admin/privacy/privacy.service.spec.ts src/conversation/conversation.service.spec.ts src/platform/orchestration/v2-session.service.spec.ts src/admin/admin-foundation.spec.ts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-03A intermediate state: Runtime typecheck and 4 focused suites/14 tests passed."
+    },
+    {
+      "command": "node --import tsx (load ../.env, map DATABASE_URL, import src/database/migrate.ts); scripts/verify-privacy-control-plane.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Applied additive migration 023 to Neon. A rollback-only Runtime-role probe verified all nine privacy tables use FORCE RLS, an in-tenant request insert succeeds, a cross-tenant insert fails, all existing session privacy flags remain off and database constraints reject enabling recording."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-03A final state: portability-Core and production typechecks, build, generated-contract drift check and all 73 suites/277 tests passed."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-03A boundary check passed with 178 new-product files; 8 protected real-estate suites and 38 tests passed."
+    },
+    {
+      "command": "node --import tsx (load ../.env, map DATABASE_URL, import src/database/migrate.ts); scripts/verify-privacy-execution.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Applied migration 024 to Neon. A rollback-only Runtime-role proof completed a synthetic deletion only after all six targets had evidence, removed every synthetic personal marker, verified an active legal hold produced heldCount=1 and processedCount=0, and confirmed all three execution-evidence tables use FORCE RLS."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-03B final state: portability-Core and production typechecks, build, generated-contract drift check and all 75 suites/282 tests passed."
+    },
+    {
+      "command": "npm run test:release; npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Business Manager release tests passed 19 suites/78 tests with 4 SQL-gated suites/12 tests skipped; boundary scan passed 180 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A01A backend state: portability-Core and production typechecks, build, generated-contract drift check and the final all-tests rerun passed 78 suites/288 tests. The sequential transaction-query correction also passed 5 focused suites/11 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-conversation-operations.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied additive migration 025 to Neon. A rollback-only Runtime-role probe proved tenant-separated lists, metadata withholding, separately authorized content with credential redaction, unavailable transcript/audio states and forced RLS on operator notes."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A01A boundary scan passed 185 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A01B final Runtime state: portability-Core and production typechecks, build, generated-contract drift check and all 79 suites/292 tests passed."
+    },
+    {
+      "command": "npm run test:sophia; npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "All 76 Sophia Runtime/Admin browser tests and the production Angular build passed. Existing size/font/CommonJS/missing stylesheet warnings remain non-blocking release concerns."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-conversation-operations.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied additive migration 026 to Neon. A rollback-only Runtime-role probe proved content-export denial without content permission, metadata withholding, content rendering, SHA-256 digest evidence, no stored document/content/payload column and forced RLS."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A01B boundary scan passed 187 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A03A production typecheck, build, generated-contract drift check and all 81 Runtime suites/296 tests passed."
+    },
+    {
+      "command": "node --import tsx scripts/verify-analytics.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "A rollback-only sophia_runtime_app Neon probe verified real-schema on-demand aggregation, invalid-timezone UTC fallback, canonical command outcome counting, separated provider estimates and customerCharge=false. No migration or retained record was created."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A03A boundary scan passed 192 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A03B final Runtime state passed portability-Core and production typechecks, build, generated-contract drift check and all 82 suites/299 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-analytics.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied additive migration 027 to Neon. A rollback-only sophia_runtime_app probe verified canonical aggregation, source-confirmed outcomes, aggregate export creation/access, SHA-256 digest, raw tool-input exclusion, irreversible expired-document scrubbing and forced RLS; all synthetic rows were rolled back."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Frontend TypeScript compilation, all 78 Sophia Runtime/Admin browser tests and the production Angular build passed. Existing bundle/font/CommonJS/missing PrimeIcons stylesheet warnings remain non-blocking release concerns."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A03B boundary scan passed 194 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A05A final Runtime state passed portability-Core and production typechecks, build, generated-contract drift check and all 86 suites/306 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-commercial-read-model.mts",
+      "repository": "backend/sophia-runtime",
+      "result": "pass",
+      "detail": "Applied additive migrations 028-029 to Neon. A rollback-only sophia_runtime_app proof verified exact no-charge preview arithmetic, calendar-UTC boundaries, disabled provider state, opaque reference visibility, Runtime mutation denial, SELECT-only grants, lifecycle-only plan retirement, immutable published pricing/content and FORCE RLS; all synthetic rows were rolled back."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Frontend TypeScript compilation, all 80 Sophia Runtime/Admin browser tests and the production Angular build passed. Existing bundle/font/CommonJS/missing PrimeIcons warnings remain non-blocking release concerns."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A05A boundary scan passed 202 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A05B final Runtime state passed portability-Core and production typechecks, build, generated-contract drift check and all 89 suites/316 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-usage-guardrails.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Applied additive migration 030 to Neon. A rollback-only sophia_runtime_app proof verified effective minimum limits, an active non-enforcing estimate alert, audited optimistic guardrail updates, serialized session admission, provider-event reservation deduplication, distinct v2 session-total denial, cross-tenant hiding and FORCE RLS; every synthetic row was rolled back."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P6-A05B frontend TypeScript compilation, all 80 Sophia Runtime/Admin browser tests and the production Angular build passed. Existing bundle/font/CommonJS/missing PrimeIcons warnings remain non-blocking release concerns."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A05B boundary scan passed 208 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A06A final Runtime state passed portability-Core and production typechecks, build, generated-contract drift check and all 95 suites/332 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-billing-sandbox-lifecycle.mts",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "Applied additive migrations 031-034 to Neon. A rollback-only sophia_runtime_app proof verified issued Checkout-intent completion, customer mapping, event replay suppression, customer routing, stale-invoice rejection, immutable provider reference identity, cross-tenant hiding and FORCE RLS; all synthetic rows were rolled back. No Stripe API call was made."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; npm run test:sophia; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "P6-A06A frontend TypeScript compilation, all 81 Sophia Runtime/Admin browser tests and the production Angular build passed. Existing bundle/font/CommonJS/missing PrimeIcons warnings remain non-blocking release concerns."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A06A boundary scan passed 214 new-product files; 8 protected real-estate suites/38 tests passed."
+    }
+  ],
+  "blockers": [
+    "No disposable PostgreSQL environment was confirmed for destructive or contention-oriented SQL failure injection; additive P1 migrations and a rollback-only constraint check were completed on the configured database with user authorization.",
+    "Live provider, email, payment, subscription and deployment checks were not run. P6-A06A also made no Stripe sandbox request because only an unrelated legacy test credential exists and no dedicated Sophia recurring Price, portal configuration or webhook destination is approved/configured.",
+    "No browser E2E/provider sandbox evidence was produced. The previously blocked Angular headless rerun passed at the P2-01 checkpoint.",
+    "No CI configuration exists, so schema drift enforcement is available as repository commands but is not yet automatically invoked by CI.",
+    "No Sophia Admin membership is auto-seeded; initial owner onboarding requires an authorised operational database step. The existing Business Manager identity surface provides no verified MFA timestamp, so privileged lifecycle operations remain fail-closed.",
+    "The current Business Manager identity and Sophia Admin authorization boundary resolves exactly one company-mapped organisation and one active membership. P4-A01 does not expose fake browser tenant switching; multi-organisation administration requires a separately designed server-authorised context-selection contract.",
+    "Migrations 006-014 are applied and runtime queries assume the non-BYPASSRLS sophia_runtime_app effective role. A separately authenticated least-privilege login credential would further reduce exposure of the owner session credential in production.",
+    "Scoped Business Manager binding allowlists are server-owned JSON configuration; an atomic distribution/rotation mechanism remains operational work.",
+    "No Tavus catalog was provisioned live; Premium now fails closed until the explicit versioned operation is approved and run. Provider cleanup reconciliation is implemented but still needs per-tenant deployment scheduler wiring.",
+    "The v2 path is implemented but remains disabled until a tenant is explicitly allowlisted, a 32+ character installation key is configured, and compatible published profile and active agent-release data exist. Existing v1 sessions remain intentionally isolated on their original path.",
+    "Direct Angular v2 bootstrap is prohibited because it would expose the installation key. P4-01 keeps server-authoritative v1 behind the facade; v2 browser activation requires an installation backend or managed kiosk credential broker that returns only a short-lived one-time bootstrap token.",
+    "The current v2 SessionDescriptor identifies a server lifecycle adapter, not a complete browser conversation/presentation composition. P4-02 uses distinct browser manifest keys and a bounded v1 translator; brokered v2 browser activation must add explicit browser adapter envelopes before the frontend switches paths.",
+    "Per-task catalog narrowing remains unavailable because no server-owned task-grant state exists; the dispatcher safely narrows to immutable session capability bindings. Public eventSource remains an untrusted compatibility hint until a separately authenticated provider transport is implemented.",
+    "P3-A01 file initiation remains deployment-disabled until a dedicated private bucket, authenticated malware scanner and tenant-scoped worker are configured and live clean/infected/mismatch/retry evidence passes. The storage/scanner/parser contracts and UI are implemented; existing public avatar/image upload flows remain explicitly unsuitable.",
+    "No live Business Manager connector identity probe was run. P3-A02 connector APIs use synthetic unit accounts; deployment onboarding/test/reconnect performs the approved read-only probe when explicitly invoked by an authorised administrator.",
+    "No authenticated email-provider delivery receipt/webhook integration exists. P3-05 records log preview and provider acceptance honestly but cannot claim verified recipient delivery; no live email or report generation was invoked.",
+    "No compiled executable callback, notification or verified live-transfer adapter exists. P3-A03 supports the durable internal operations inbox and keeps all external escalation channels unavailable.",
+    "Agent releases published before P3-A03 do not contain resolved workflow bindings. They remain compatible but must be validated and republished before future Business Manager deliveries receive a workflow-version pin.",
+    "The active v1 browser path still returns validated legacy tool outputs, so P4-03 contains translation in the registered real-estate renderer. Canonical v2 display-schema selection remains gated by the managed kiosk credential broker and browser composition contract.",
+    "Business Manager media output currently proves URL syntax but not connector-owned host trust. P4-03 allowlists the existing public S3 hostname and rejects everything else; new or tenant-configurable media origins require a server-owned connector/release media policy before registration.",
+    "The current Business Manager /user identity response has no verified MFA timestamp. P4-A02 privileged invitation, role, membership-status and organisation-suspension controls therefore remain fail-closed until an authenticated step-up flow supplies mfaVerifiedAt; server MFA enforcement was not weakened.",
+    "No platform-operator identity, organisation enumeration/provisioning API, context-exchange credential or authenticated multi-account browser E2E harness exists. P4-A02 exposes only the server-bound tenant workspace and explicitly keeps platform provisioning/support authority unavailable.",
+    "P4-A03 agent authoring selects only existing published tenant dependencies. Business/experience/provider-profile authoring remains with its owning control plane, and no approved live metered evaluation sandbox exists; the delivered preview is deterministic and has no external effects.",
+    "P4-A04 capability binding requires an existing draft business-profile version. The current connector uses a server-owned runtime-scoped credential, so OAuth expiry/re-consent and tenant credential rotation are unavailable until a future compiled connector explicitly implements those lifecycles; no browser secret entry is permitted.",
+    "P4-A05 exposes aggregate authoritative workflow status because no durable step graph exists. The current owner declares manual retry unsupported, and callback/notification/live-transfer channels remain unavailable until compiled executable adapters provide request and evidence semantics.",
+    "P4-04 provides verified typed fallback for native Realtime only. Tavus/Daily exposes no verified typed-user-input contract in the current repository, so that transport remains fail-closed for typed submission. P5-01 now supplies the server-side provider-neutral reasoning path, but browser activation still requires the managed kiosk credential broker and explicit browser composition recorded in P4.",
+    "No live OpenAI Responses request was run for P5-01. The adapter and common pipeline are contract-tested with mocked SSE; production readiness still requires an explicitly approved credentialed smoke test and configured published provider binding.",
+    "No live Claude Messages request was run for P5-02 and no Anthropic retention/ZDR arrangement was verified. The Claude registration remains absent from published profiles and fails closed without its server credential; production publication requires an approved data-handling assessment, current model-lifecycle review and an explicitly approved credentialed smoke test.",
+    "No live Gemini Interactions request was run for P5-03 and no deployment-account logging, retention or Vertex AI ZDR/DPA arrangement was verified. The Gemini registration remains absent from published profiles and fails closed without its server credential; production publication requires an approved data-handling assessment, current model-lifecycle review and an explicitly approved credentialed smoke test.",
+    "P5-04 is an internal bounded-turn composition, not an activated browser voice path. No authenticated kiosk media transport or direct AudioOutputSink is wired to a public route, no live OpenAI audio request was run, and the current LiveAvatar/Simli server methods do not provide verified audio injection. Production activation requires the managed kiosk broker, an approved provider/regional data-handling assessment, current endpoint-control verification, an AI-voice disclosure and an explicitly approved credentialed smoke test.",
+    "P5-05 Gemini Live uses preview ephemeral-token and Live API surfaces and remains absent from published profiles. No credentialed token mint, WebSocket, microphone, audio playback, provider tool call, barge-in or regional/data-control smoke test was run. The first adapter deliberately disables session resumption and caps sessions at 540 seconds; longer sessions require a reviewed constrained field-mask/reconnection design and explicit acceptance of the documented retention impact. The Angular transport is compiled but not reachable from the active v1 kiosk facade; v2 selection still requires the managed kiosk broker and descriptor/bootstrap translation recorded in P4.",
+    "P5-06 is offline portability evidence, not a deployed tenant or new vertical. Its neutral connectors and data exist only under sophia-runtime/test; no live provider, external connector or production onboarding was invoked.",
+    "P6-01 verifies the supported existing-authorised-tenant assembly path, not greenfield organisation onboarding. Platform provisioning/context exchange, foundational business/provider/experience profile authoring and the managed browser v2 credential broker remain unavailable. No synthetic records were written to the configured shared Neon database.",
+    "P6-02 has no approved customer billing balance or executable callback/notification/live-transfer adapter. Usage evidence is not billing; P6-A05B adds estimate-only provider-cost alerts that neither deny admission nor represent a charge or balance, and only the internal operations inbox is supported. Generic session and tool-call retry remains prohibited.",
+    "P6-A02 provides deterministic publication evidence only. Test-scoped portability fixtures are not shipped, and live/provider-judged evaluation remains unavailable until separate authority, approved data handling and budget gates exist.",
+    "P6-A04 has no approved audit retention duration, legal-hold automation, export worker or private export object store. Automatic deletion remains disabled; bounded exports are rendered on authorised access from an immutable as-of cutoff and expire after 24 hours.",
+    "P6-03 does not invent or approve any tenant retention duration or legal conclusion. Provider deletion and backup expiry remain evidence-gated; no live provider deletion or backup operation was run. The Business Manager privacy owner API is implemented and unit-tested but remains fail-closed in deployment until a connector credential explicitly includes bm:real-estate:privacy:write; the legacy broad service token is rejected. Retention runs are bounded on-demand operations, not a deployed scheduler, and unbound or provider-cleanup-unsafe sessions remain blocked.",
+    "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
+    "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
+    "P6-A05 does not invent or activate a production rate card, plan assignment, customer billing balance or tax conclusion. Tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
+    "P6-A06A implements the concrete dormant Stripe test-mode boundary and never falls back to the legacy Toolkit/video configuration or objects. The Stripe account credential may be shared when approved, but a Sophia-specific environment namespace, fixed recurring Price mapping, metadata, portal configuration and webhook destination/signing secret are not configured in this workspace, so verifiable Checkout subscription/invoice/portal/reconciliation evidence remains P6-A06B. Reported prior payment testing is not silently treated as this recurring-lifecycle proof. Plans with usage-overage lines or tax collection remain ineligible until an approved metering/tax design exists. Production credentials are reported available outside the repository; live configuration and charge activation remain the separate P6-A06C gate."
+  ],
+  "nextReadyTask": "P6-A06B",
+  "stopAfterCheckpoint": true
+}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RuntimeTool } from "../tool-registry.js";
+import { SafeToolOutputSchema, toolPolicy } from "../tool-policy.js";
 
 export const getInventoryInputSchema = z.object({
   productId: z.string().min(1),
@@ -37,6 +38,8 @@ export const getInventoryTool: RuntimeTool<
     },
   },
   inputSchema: getInventoryInputSchema,
+  outputSchema: SafeToolOutputSchema as z.ZodType<GetInventoryOutput>,
+  policy: toolPolicy({ toolId: "catalog.inventory", requiredCapability: "catalog", sideEffectClass: "read" }),
   async execute(input, context) {
     const storeId = input.storeId || context.storeId || "demo-store";
     const quantityAvailable = mockQuantity(input.productId, input.colour, storeId);

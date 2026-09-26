@@ -1,0 +1,1548 @@
+{
+  "contractVersion": "2.0.0",
+  "schemaDigest": "810e486576d5953927d8b5f98c4c36385d344857110b5d407777be1ff05481af",
+  "schemas": {
+    "V2CreateSessionRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "experienceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35
+        },
+        "browserCapabilities": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "required": [
+        "experienceId",
+        "deviceId"
+      ],
+      "additionalProperties": false
+    },
+    "V2BootstrapRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "experienceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35
+        },
+        "browserCapabilities": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "required": [
+        "experienceId",
+        "deviceId"
+      ],
+      "additionalProperties": false
+    },
+    "V2BootstrapResponse": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "bootstrapToken": {
+          "type": "string",
+          "minLength": 32
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        }
+      },
+      "required": [
+        "bootstrapToken",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "SessionPlan": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "agentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "experienceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "profileVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "pipelineMode": {
+          "type": "string",
+          "enum": [
+            "native-realtime",
+            "orchestrated-text",
+            "orchestrated-voice",
+            "composite-realtime"
+          ]
+        },
+        "capabilityOwners": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "providerBindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "bindingId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "providerId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "adapterKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "configurationVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "bindingId",
+              "providerId",
+              "adapterKey",
+              "capability",
+              "configurationVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "capabilityBindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "capabilityBindingId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "connectorKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "configurationVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "resourceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "capabilityBindingId",
+              "capability",
+              "connectorKey",
+              "configurationVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "policyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "toolCatalogVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "languagePolicy": {
+          "type": "object",
+          "properties": {
+            "defaultLocale": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "allowedLocales": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
+          },
+          "required": [
+            "defaultLocale",
+            "allowedLocales"
+          ],
+          "additionalProperties": false
+        },
+        "dataPolicy": {
+          "type": "object",
+          "properties": {
+            "policyRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "transcriptPersistence": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "minimised",
+                "enabled"
+              ]
+            },
+            "audioPersistence": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "enabled"
+              ]
+            },
+            "processingRegions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
+          },
+          "required": [
+            "policyRef",
+            "transcriptPersistence",
+            "audioPersistence",
+            "processingRegions"
+          ],
+          "additionalProperties": false
+        },
+        "usageLimits": {
+          "type": "object",
+          "properties": {
+            "maximumSessionSeconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maximumToolCalls": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "maximumSessionSeconds",
+            "maximumToolCalls"
+          ],
+          "additionalProperties": false
+        },
+        "fallbackPolicy": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "pre-session-only",
+                "explicit-reconnect"
+              ]
+            },
+            "allowedProfileVersions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
+          },
+          "required": [
+            "mode",
+            "allowedProfileVersions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "tenantId",
+        "agentId",
+        "experienceId",
+        "profileVersion",
+        "pipelineMode",
+        "capabilityOwners",
+        "providerBindings",
+        "capabilityBindings",
+        "policyVersion",
+        "toolCatalogVersion",
+        "languagePolicy",
+        "dataPolicy",
+        "usageLimits",
+        "fallbackPolicy"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderCapabilityManifest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "configurationSchema": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "capabilities": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "supportedModes": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "native-realtime",
+              "orchestrated-text",
+              "orchestrated-voice",
+              "composite-realtime"
+            ]
+          }
+        },
+        "supportedInputModalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "supportedOutputModalities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "toolSchemaCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "toolDeliveryModes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "transportAdapters": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "interruptionCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "inputAudioFormats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "outputAudioFormats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "usageDimensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "dataHandlingAssessmentRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "credentialRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "healthPolicy": {
+          "type": "object",
+          "properties": {
+            "checkKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "maximumAgeSeconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "failClosed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "checkKey",
+            "maximumAgeSeconds",
+            "failClosed"
+          ],
+          "additionalProperties": false
+        },
+        "compositeCapabilityOwners": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "reasoningIsReplaceable": {
+          "type": "boolean"
+        },
+        "maxSessionDuration": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "toolCatalogUpdateSupport": {
+          "type": "string",
+          "enum": [
+            "none",
+            "provisioning-job"
+          ]
+        },
+        "approvedModelAliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "concurrencyLimits": {
+          "type": "object",
+          "properties": {
+            "perTenant": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "global": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "providerId",
+        "adapterVersion",
+        "configurationSchema",
+        "capabilities",
+        "supportedModes",
+        "supportedInputModalities",
+        "supportedOutputModalities",
+        "languages",
+        "toolSchemaCapabilities",
+        "toolDeliveryModes",
+        "transportAdapters",
+        "interruptionCapabilities",
+        "inputAudioFormats",
+        "outputAudioFormats",
+        "usageDimensions",
+        "dataHandlingAssessmentRef",
+        "credentialRef",
+        "healthPolicy"
+      ],
+      "additionalProperties": false
+    },
+    "ToolDefinition": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "toolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "inputSchema": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "requiredCapability": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "requiredScopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "riskClass": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "sideEffectClass": {
+          "type": "string",
+          "enum": [
+            "read",
+            "ephemeral-ui",
+            "prepare-command",
+            "business-mutation",
+            "notification",
+            "handoff"
+          ]
+        },
+        "confirmationPolicy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "explicit-user-review"
+          ]
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "retryPolicy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "safe-read",
+            "idempotent-command"
+          ]
+        },
+        "idempotencyPolicy": {
+          "type": "string",
+          "enum": [
+            "not-applicable",
+            "tool-call",
+            "stable-command"
+          ]
+        },
+        "presentationSchemaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "dataClassification": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "public",
+              "internal",
+              "personal",
+              "sensitive"
+            ]
+          }
+        }
+      },
+      "required": [
+        "toolId",
+        "version",
+        "description",
+        "inputSchema",
+        "outputSchema",
+        "requiredCapability",
+        "requiredScopes",
+        "riskClass",
+        "sideEffectClass",
+        "confirmationPolicy",
+        "timeoutMs",
+        "retryPolicy",
+        "idempotencyPolicy",
+        "dataClassification"
+      ],
+      "additionalProperties": false
+    },
+    "ToolInvocation": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "toolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "arguments": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "tenantId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "agentId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "deviceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "capabilityBindingId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "actorRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "correlationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "providerCallId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "providerEventProvenance": {
+              "type": "string",
+              "enum": [
+                "server-provider-connection",
+                "verified-provider-webhook",
+                "authenticated-user-action",
+                "untrusted-client-bridge"
+              ]
+            },
+            "policyVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "deadline": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          },
+          "required": [
+            "tenantId",
+            "agentId",
+            "sessionId",
+            "deviceId",
+            "capabilityBindingId",
+            "actorRef",
+            "correlationId",
+            "toolCallId",
+            "providerEventProvenance",
+            "policyVersion",
+            "deadline"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "toolId",
+        "arguments",
+        "context"
+      ],
+      "additionalProperties": false
+    },
+    "ToolResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "requires_confirmation",
+            "accepted",
+            "processing",
+            "failed",
+            "denied",
+            "cancelled",
+            "outcome_unknown"
+          ]
+        },
+        "capability": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "data": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "display": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "data": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "schemaId",
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spokenSummary": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sourceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "retrievedAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "freshness": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "accessClassification": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "sourceRef",
+              "retrievedAt",
+              "freshness",
+              "accessClassification"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "workflowRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "UNAUTHENTICATED",
+                "FORBIDDEN",
+                "CAPABILITY_DISABLED",
+                "UNSUPPORTED_COMPOSITION",
+                "INVALID_INPUT",
+                "STALE_REVIEW",
+                "CONFIRMATION_REQUIRED",
+                "RESOURCE_UNAVAILABLE",
+                "CONFLICT",
+                "RATE_LIMITED",
+                "PROVIDER_UNAVAILABLE",
+                "OUTCOME_UNKNOWN"
+              ]
+            },
+            "safeMessage": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "correlationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "required": [
+            "code",
+            "safeMessage",
+            "retryable",
+            "correlationId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "toolCallId",
+        "toolId",
+        "status",
+        "capability"
+      ],
+      "additionalProperties": false
+    },
+    "CanonicalConversationEvent": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "turnEpoch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "session.starting",
+            "session.ready",
+            "session.failed",
+            "user.speech.started",
+            "user.transcript.partial",
+            "user.transcript.final",
+            "assistant.text.delta",
+            "assistant.audio.started",
+            "assistant.audio.stopped",
+            "turn.interrupted",
+            "tool.requested",
+            "tool.completed",
+            "ui.updated",
+            "session.closed"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "eventId",
+        "sessionId",
+        "sequence",
+        "turnEpoch",
+        "timestamp",
+        "type",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "ConnectionBootstrapEnvelope": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "bootstrapId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "transportId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "adapterKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "oneTime": {
+          "type": "boolean",
+          "const": true
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "payload": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "bootstrapId",
+        "transportId",
+        "adapterKey",
+        "oneTime",
+        "expiresAt",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "SessionDescriptor": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "experienceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "ready",
+            "failed",
+            "closed"
+          ]
+        },
+        "configurationVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "transports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "transportId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "protocol": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "adapterKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "mediaMode": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "toolDeliveryMode": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "connectionBootstrapRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "transportId",
+              "protocol",
+              "adapterKey",
+              "mediaMode",
+              "toolDeliveryMode",
+              "connectionBootstrapRef"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "uiHints": {
+          "type": "object",
+          "properties": {
+            "themeKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "enabledBlocks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "sessionId",
+        "experienceId",
+        "status",
+        "configurationVersion",
+        "capabilities",
+        "transports",
+        "expiresAt",
+        "uiHints"
+      ],
+      "additionalProperties": false
+    },
+    "CreateSessionResponse": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "descriptor": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "experienceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "starting",
+                "ready",
+                "failed",
+                "closed"
+              ]
+            },
+            "configurationVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "transports": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "transportId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "adapterKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "mediaMode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "toolDeliveryMode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "connectionBootstrapRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "required": [
+                  "transportId",
+                  "protocol",
+                  "adapterKey",
+                  "mediaMode",
+                  "toolDeliveryMode",
+                  "connectionBootstrapRef"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "uiHints": {
+              "type": "object",
+              "properties": {
+                "themeKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "displayName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "enabledBlocks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sessionId",
+            "experienceId",
+            "status",
+            "configurationVersion",
+            "capabilities",
+            "transports",
+            "expiresAt",
+            "uiHints"
+          ],
+          "additionalProperties": false
+        },
+        "connectionBootstrap": {
+          "type": "object",
+          "properties": {
+            "bootstrapId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "transportId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "adapterKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "oneTime": {
+              "type": "boolean",
+              "const": true
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "payload": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "bootstrapId",
+            "transportId",
+            "adapterKey",
+            "oneTime",
+            "expiresAt",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        "sessionAccessToken": {
+          "type": "string",
+          "minLength": 32
+        },
+        "sessionAccessExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        }
+      },
+      "required": [
+        "descriptor",
+        "connectionBootstrap",
+        "sessionAccessToken",
+        "sessionAccessExpiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "SessionStatusResponse": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "descriptor": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "experienceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "starting",
+                "ready",
+                "failed",
+                "closed"
+              ]
+            },
+            "configurationVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "transports": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "transportId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "adapterKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "mediaMode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "toolDeliveryMode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "connectionBootstrapRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                },
+                "required": [
+                  "transportId",
+                  "protocol",
+                  "adapterKey",
+                  "mediaMode",
+                  "toolDeliveryMode",
+                  "connectionBootstrapRef"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "uiHints": {
+              "type": "object",
+              "properties": {
+                "themeKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "displayName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "enabledBlocks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sessionId",
+            "experienceId",
+            "status",
+            "configurationVersion",
+            "capabilities",
+            "transports",
+            "expiresAt",
+            "uiHints"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "descriptor"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

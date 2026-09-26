@@ -1,10 +1,11 @@
 import { Module } from "@nestjs/common";
 import { ToolRegistryService } from "./tools.service.js";
-import { BusinessResearchService } from "./research/business-research.service.js";
-import { BusinessManagerClient } from "./real-estate/business-manager.client.js";
+import { ProvidersModule } from "../providers/providers.module.js";
+import { BusinessPacksModule } from "../business-packs/business-packs.module.js";
 
 @Module({
-  providers: [BusinessResearchService, BusinessManagerClient, ToolRegistryService],
+  imports: [ProvidersModule, BusinessPacksModule],
+  providers: [ToolRegistryService],
   exports: [ToolRegistryService],
 })
 export class ToolsModule {}

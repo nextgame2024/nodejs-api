@@ -65,6 +65,74 @@ export async function ensureTownPlannerBookingWorkflowSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_bm_inspection_deliveries_claim
       ON bm_inspection_confirmation_deliveries(status, next_attempt_at, created_at);
+
+    CREATE TABLE IF NOT EXISTS bm_inspection_email_commands (
+      command_id text PRIMARY KEY,
+      company_id uuid NOT NULL REFERENCES bm_company(company_id) ON DELETE CASCADE,
+      booking_id uuid NOT NULL REFERENCES bm_property_inspection_bookings(booking_id) ON DELETE CASCADE,
+      customer_email text NOT NULL,
+      status text NOT NULL DEFAULT 'executing'
+        CHECK (status IN ('executing', 'completed', 'failed', 'unknown')),
+      response jsonb,
+      last_error text,
+      attempt_count integer NOT NULL DEFAULT 1,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bm_inspection_email_commands_booking
+      ON bm_inspection_email_commands(company_id, booking_id, created_at DESC);
+
+    ALTER TABLE bm_property_report_jobs
+      ADD COLUMN IF NOT EXISTS claim_token uuid,
+      ADD COLUMN IF NOT EXISTS claim_generation integer NOT NULL DEFAULT 0;
+
+    ALTER TABLE bm_inspection_confirmation_deliveries
+      ADD COLUMN IF NOT EXISTS claim_token uuid,
+      ADD COLUMN IF NOT EXISTS claim_generation integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS workflow_version_id uuid,
+      ADD COLUMN IF NOT EXISTS provider_key text,
+      ADD COLUMN IF NOT EXISTS provider_message_id text,
+      ADD COLUMN IF NOT EXISTS provider_accepted_at timestamptz,
+      ADD COLUMN IF NOT EXISTS verified_delivered_at timestamptz;
+
+    ALTER TABLE bm_property_inspection_bookings
+      ADD COLUMN IF NOT EXISTS confirmation_email_provider_key text,
+      ADD COLUMN IF NOT EXISTS confirmation_email_provider_message_id text,
+      ADD COLUMN IF NOT EXISTS confirmation_email_accepted_at timestamptz,
+      ADD COLUMN IF NOT EXISTS confirmation_email_previewed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS confirmation_email_verified_delivered_at timestamptz;
+
+    ALTER TABLE bm_property_report_jobs
+      DROP CONSTRAINT IF EXISTS bm_property_report_jobs_claim_generation_check;
+    ALTER TABLE bm_property_report_jobs
+      ADD CONSTRAINT bm_property_report_jobs_claim_generation_check
+      CHECK (claim_generation >= 0);
+
+    ALTER TABLE bm_inspection_confirmation_deliveries
+      DROP CONSTRAINT IF EXISTS bm_inspection_confirmation_deliveries_claim_generation_check;
+    ALTER TABLE bm_inspection_confirmation_deliveries
+      ADD CONSTRAINT bm_inspection_confirmation_deliveries_claim_generation_check
+      CHECK (claim_generation >= 0);
+
+    ALTER TABLE bm_inspection_confirmation_deliveries
+      DROP CONSTRAINT IF EXISTS bm_inspection_confirmation_deliveries_status_check;
+    ALTER TABLE bm_inspection_confirmation_deliveries
+      ADD CONSTRAINT bm_inspection_confirmation_deliveries_status_check
+      CHECK (status IN (
+        'waiting_report', 'email_queued', 'email_sending', 'email_retry',
+        'provider_accepted', 'fallback_provider_accepted',
+        'previewed', 'fallback_previewed', 'outcome_unknown',
+        'delivered', 'fallback_delivered', 'sent', 'fallback_sent', 'failed'
+      ));
+
+    UPDATE bm_inspection_confirmation_deliveries
+    SET status = CASE status
+      WHEN 'sent' THEN 'provider_accepted'
+      WHEN 'fallback_sent' THEN 'fallback_provider_accepted'
+      ELSE status
+    END
+    WHERE status IN ('sent', 'fallback_sent');
   `);
 }
 

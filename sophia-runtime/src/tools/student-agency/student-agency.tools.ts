@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { RuntimeTool } from "../tool-registry.js";
-import type { BusinessManagerClient } from "../real-estate/business-manager.client.js";
+import type { StudentBusinessManagerClient } from "./student-business-manager.client.js";
 
-export function createStudentAgencyTools(client: BusinessManagerClient): RuntimeTool<any, unknown>[] {
+export function createStudentAgencyTools(client: StudentBusinessManagerClient): RuntimeTool<any, unknown>[] {
   return [{
     definition: {
       name: "searchStudentAgencyKnowledge",

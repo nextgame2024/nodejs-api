@@ -12,6 +12,7 @@ export type TavusFullSessionRequest = {
   deviceId?: string;
   storeId?: string;
   tools?: RuntimeToolDefinition[];
+  instructions?: string;
 };
 
 export type TavusFullSession = {
@@ -23,17 +24,29 @@ export type TavusFullSession = {
   meetingToken?: string;
 };
 
+export type TavusCatalogProvisionRequest = {
+  personaId: string;
+  definitions: RuntimeToolDefinition[];
+  existingToolIds?: Record<string, string>;
+  onToolAllocated?: (toolName: string, toolId: string) => Promise<void>;
+};
+
 type TavusConversationResponse = {
   conversation_id?: string;
   conversation_url?: string;
   meeting_token?: string;
 };
 
+export class TavusPartialSessionError extends Error {
+  constructor(readonly conversationId: string, options?: ErrorOptions) {
+    super("Tavus returned an incomplete conversation and cleanup must be reconciled.", options);
+    this.name = "TavusPartialSessionError";
+  }
+}
+
 @Injectable()
 export class TavusFullProvider {
   private readonly logger = new Logger(TavusFullProvider.name);
-  private internetSearchConfigured = false;
-  private runtimeToolsConfigured = false;
 
   async createSession(
     request: TavusFullSessionRequest,
@@ -52,46 +65,9 @@ export class TavusFullProvider {
         "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus Persona uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
       );
     }
-    const setupOperations: Array<{ name: string; promise: Promise<void> }> = [];
-    if (config.tavus.internetSearchEnabled) {
-      setupOperations.push({
-        name: "internet search",
-        promise: this.ensureInternetSearchSkill(apiBaseUrl, apiKey, personaId),
-      });
-    }
-    if (request.tools?.length) {
-      setupOperations.push({
-        name: "runtime tools",
-        promise: this.ensureRuntimeTools(
-          apiBaseUrl,
-          apiKey,
-          personaId,
-          request.tools,
-        ),
-      });
-    }
-
-    const setupPromise = Promise.all(
-      setupOperations.map(async ({ name, promise }) => {
-        const operationStartedAt = Date.now();
-        try {
-          await promise;
-          this.logger.log(
-            `Tavus ${name} setup completed in ${Date.now() - operationStartedAt}ms.`,
-          );
-        } catch (error) {
-          this.logger.warn(
-            `Tavus ${name} setup failed after ${Date.now() - operationStartedAt}ms; conversation creation will continue. ${errorMessage(error)}`,
-          );
-        }
-      }),
-    );
-
     let response: Response;
     try {
-      [, response] = await Promise.all([
-        setupPromise,
-        fetch(`${apiBaseUrl}/v2/conversations`, {
+      response = await fetch(`${apiBaseUrl}/v2/conversations`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -103,7 +79,7 @@ export class TavusFullProvider {
             ...(replicaId ? { replica_id: replicaId } : {}),
             conversation_name: `Sophia - ${request.storeId || request.customerId}`,
             conversational_context: [
-              sophiaConversationInstructions(),
+              request.instructions ?? sophiaConversationInstructions(),
               request.storeId ? `Store identifier: ${request.storeId}.` : "",
               "Use only the native Tavus Full conversational pipeline. Use the attached internet search skill for questions about named businesses and current public information.",
             ]
@@ -112,8 +88,7 @@ export class TavusFullProvider {
             require_auth: true,
             max_participants: 2,
           }),
-        }),
-      ]);
+        });
     } catch (error) {
       const message = `Tavus could not be reached: ${errorMessage(error)}`;
       this.logger.error(message);
@@ -134,7 +109,11 @@ export class TavusFullProvider {
       !payload.meeting_token
     ) {
       if (payload.conversation_id) {
-        await this.closeSession(payload.conversation_id).catch(() => undefined);
+        try {
+          await this.closeSession(payload.conversation_id);
+        } catch (cleanupError) {
+          throw new TavusPartialSessionError(payload.conversation_id, { cause: cleanupError });
+        }
       }
       const message =
         "Tavus conversation response did not include its ID, URL, and private-room meeting token.";
@@ -171,7 +150,7 @@ export class TavusFullProvider {
       },
     );
 
-    if (!response.ok) {
+    if (!response.ok && ![404, 409, 410].includes(response.status)) {
       const detail = await response.text();
       throw new Error(
         `Tavus conversation end request failed: ${response.status} ${detail}`,
@@ -179,13 +158,32 @@ export class TavusFullProvider {
     }
   }
 
+  async provisionCatalog(request: TavusCatalogProvisionRequest): Promise<{
+    personaId: string;
+    toolIds: Record<string, string>;
+    internetSearchEnabled: boolean;
+  }> {
+    const config = runtimeConfig();
+    if (!config.tavus.apiKey) throw new Error("TAVUS_API_KEY is required for catalog provisioning.");
+    if (config.tavus.internetSearchEnabled) {
+      await this.ensureInternetSearchSkill(config.tavus.apiBaseUrl, config.tavus.apiKey, request.personaId);
+    }
+    const toolIds = await this.ensureRuntimeTools(
+      config.tavus.apiBaseUrl,
+      config.tavus.apiKey,
+      request.personaId,
+      request.definitions,
+      request.existingToolIds ?? {},
+      request.onToolAllocated,
+    );
+    return { personaId: request.personaId, toolIds, internetSearchEnabled: config.tavus.internetSearchEnabled };
+  }
+
   private async ensureInternetSearchSkill(
     apiBaseUrl: string,
     apiKey: string,
     personaId: string,
   ): Promise<void> {
-    if (this.internetSearchConfigured) return;
-
     const response = await fetch(
       `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/skills/internet_search`,
       {
@@ -205,7 +203,6 @@ export class TavusFullProvider {
       );
     }
 
-    this.internetSearchConfigured = true;
   }
 
   private async ensureRuntimeTools(
@@ -213,29 +210,17 @@ export class TavusFullProvider {
     apiKey: string,
     personaId: string,
     definitions: RuntimeToolDefinition[],
-  ): Promise<void> {
-    if (this.runtimeToolsConfigured) return;
-
-    const existingResponse = await fetch(`${apiBaseUrl}/v2/tools?limit=100`, {
-      headers: { "x-api-key": apiKey },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!existingResponse.ok) {
-      const detail = await existingResponse.text();
-      throw new Error(`Tavus tool listing failed: ${existingResponse.status} ${detail}`);
-    }
-    const existingPayload = await existingResponse.json() as {
-      data?: Array<{ tool_id?: string; name?: string }>;
-      tools?: Array<{ tool_id?: string; name?: string }>;
-    };
-    const existingTools = existingPayload.data || existingPayload.tools || [];
-    const toolIds: string[] = [];
+    existingToolIds: Record<string, string>,
+    onToolAllocated?: (toolName: string, toolId: string) => Promise<void>,
+  ): Promise<Record<string, string>> {
+    const toolIds: Record<string, string> = {};
 
     for (const definition of definitions) {
-      const existing = existingTools.find((tool) => tool.name === definition.name);
-      if (existing?.tool_id) {
-        await this.updateTavusTool(apiBaseUrl, apiKey, existing.tool_id, definition);
-        toolIds.push(existing.tool_id);
+      const existingId = existingToolIds[definition.name];
+      if (existingId) {
+        await this.updateTavusTool(apiBaseUrl, apiKey, existingId, definition);
+        toolIds[definition.name] = existingId;
+        await onToolAllocated?.(definition.name, existingId);
         continue;
       }
 
@@ -251,7 +236,8 @@ export class TavusFullProvider {
       }
       const created = JSON.parse(detail) as { tool_id?: string };
       if (!created.tool_id) throw new Error(`Tavus did not return a tool ID for ${definition.name}.`);
-      toolIds.push(created.tool_id);
+      toolIds[definition.name] = created.tool_id;
+      await onToolAllocated?.(definition.name, created.tool_id);
     }
 
     const attachedResponse = await fetch(
@@ -274,7 +260,7 @@ export class TavusFullProvider {
         .map((tool) => tool.tool_id)
         .filter((id): id is string => Boolean(id)),
     );
-    const missingIds = toolIds.filter((id) => !attachedIds.has(id));
+    const missingIds = Object.values(toolIds).filter((id) => !attachedIds.has(id));
     if (missingIds.length) {
       const attachResponse = await fetch(
         `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/tools`,
@@ -291,7 +277,7 @@ export class TavusFullProvider {
       }
     }
 
-    this.runtimeToolsConfigured = true;
+    return toolIds;
   }
 
   private async updateTavusTool(

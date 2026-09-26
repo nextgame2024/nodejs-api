@@ -1,10 +1,11 @@
 import { z } from "zod";
 import type { RuntimeTool } from "../tool-registry.js";
-import type {
-  BusinessResearchRequest,
-  BusinessResearchResult,
-  BusinessResearchService,
-} from "./business-research.service.js";
+import type { BusinessResearchRequest, BusinessResearchResult } from "./business-research.service.js";
+import { SafeToolOutputSchema, toolPolicy } from "../tool-policy.js";
+
+export interface BusinessResearchCapability {
+  research(request: BusinessResearchRequest): Promise<BusinessResearchResult>;
+}
 
 const inputSchema = z.object({
   businessName: z.string().trim().min(2).max(160),
@@ -12,7 +13,7 @@ const inputSchema = z.object({
 });
 
 export function createResearchBusinessTool(
-  research: BusinessResearchService,
+  research: BusinessResearchCapability,
 ): RuntimeTool<BusinessResearchRequest, BusinessResearchResult> {
   return {
     definition: {
@@ -37,6 +38,14 @@ export function createResearchBusinessTool(
       },
     },
     inputSchema,
+    outputSchema: SafeToolOutputSchema as z.ZodType<BusinessResearchResult>,
+    policy: toolPolicy({
+      toolId: "research.public",
+      requiredCapability: "research",
+      sideEffectClass: "read",
+      retryPolicy: "none",
+      timeoutMs: 45_000,
+    }),
     execute: (input) => research.research(input),
   };
 }

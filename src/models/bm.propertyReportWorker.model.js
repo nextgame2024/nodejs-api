@@ -40,6 +40,7 @@ export async function recoverExpiredJobs(maxInitialAttempts) {
            locked_at = NULL,
            lease_until = NULL,
            locked_by = NULL,
+           claim_token = NULL,
            initial_attempts_exhausted_at = CASE
              WHEN attempt_count >= $1
                THEN COALESCE(initial_attempts_exhausted_at, now())
@@ -97,6 +98,8 @@ export async function claimNextJob({ workerId, leaseSeconds }) {
       `UPDATE bm_property_report_jobs
        SET status = 'running',
            attempt_count = attempt_count + 1,
+           claim_generation = claim_generation + 1,
+           claim_token = gen_random_uuid(),
            locked_at = now(),
            lease_until = now() + make_interval(secs => $2),
            locked_by = $3,
@@ -106,7 +109,8 @@ export async function claimNextJob({ workerId, leaseSeconds }) {
        RETURNING report_job_id AS "reportJobId",
          company_id AS "companyId", property_id AS "propertyId",
          report_version AS "reportVersion", report_inputs AS "reportInputs",
-         attempt_count AS "attemptCount"`,
+         attempt_count AS "attemptCount", claim_token AS "claimToken",
+         claim_generation AS "claimGeneration"`,
       [rows[0].report_job_id, leaseSeconds, workerId],
     );
     await client.query("COMMIT");
@@ -119,17 +123,18 @@ export async function claimNextJob({ workerId, leaseSeconds }) {
   }
 }
 
-export async function renewLease({ reportJobId, workerId, leaseSeconds }) {
+export async function renewLease({ reportJobId, workerId, claimToken, leaseSeconds }) {
   const { rowCount } = await pool.query(
     `UPDATE bm_property_report_jobs
      SET lease_until = now() + make_interval(secs => $3), updated_at = now()
-     WHERE report_job_id = $1 AND status = 'running' AND locked_by = $2`,
-    [reportJobId, workerId, leaseSeconds],
+     WHERE report_job_id = $1 AND status = 'running' AND locked_by = $2
+       AND claim_token = $4 AND lease_until > now()`,
+    [reportJobId, workerId, leaseSeconds, claimToken],
   );
   return rowCount === 1;
 }
 
-export async function markJobReady({ reportJobId, workerId, result }) {
+export async function markJobReady({ reportJobId, workerId, claimToken, result }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -137,20 +142,21 @@ export async function markJobReady({ reportJobId, workerId, result }) {
       `UPDATE bm_property_report_jobs
        SET status = 'ready', pdf_key = $3, pdf_url = $4,
            completed_at = now(), locked_at = NULL, lease_until = NULL,
-           locked_by = NULL, last_error = NULL, updated_at = now()
+           locked_by = NULL, claim_token = NULL, last_error = NULL, updated_at = now()
        WHERE report_job_id = $1 AND status = 'running' AND locked_by = $2
+         AND claim_token = $5 AND lease_until > now()
        RETURNING report_job_id`,
-      [reportJobId, workerId, result.pdfKey, result.pdfUrl],
+      [reportJobId, workerId, result.pdfKey, result.pdfUrl, claimToken],
     );
     if (!ready.rows[0]) throw new Error("Property report job lease was lost");
     await client.query(
       `UPDATE bm_inspection_confirmation_deliveries
        SET status = 'email_queued', fallback_without_report = false,
-           attempt_count = CASE WHEN status = 'fallback_sent' THEN 0 ELSE attempt_count END,
-           sent_at = CASE WHEN status = 'fallback_sent' THEN NULL ELSE sent_at END,
+           attempt_count = CASE WHEN status IN ('fallback_provider_accepted', 'fallback_previewed', 'fallback_delivered', 'fallback_sent') THEN 0 ELSE attempt_count END,
+           sent_at = CASE WHEN status IN ('fallback_provider_accepted', 'fallback_previewed', 'fallback_delivered', 'fallback_sent') THEN NULL ELSE sent_at END,
            next_attempt_at = now(), updated_at = now()
        WHERE report_job_id = $1
-         AND status IN ('waiting_report', 'fallback_queued', 'fallback_sent')`,
+         AND status IN ('waiting_report', 'fallback_queued', 'fallback_provider_accepted', 'fallback_previewed', 'fallback_delivered', 'fallback_sent')`,
       [reportJobId],
     );
     await client.query("COMMIT");
@@ -165,6 +171,7 @@ export async function markJobReady({ reportJobId, workerId, result }) {
 export async function markJobFailed({
   reportJobId,
   workerId,
+  claimToken,
   errorMessage,
   maxInitialAttempts,
   retryDelaySeconds,
@@ -188,13 +195,14 @@ export async function markJobFailed({
                THEN COALESCE(initial_attempts_exhausted_at, now())
              ELSE initial_attempts_exhausted_at
            END,
-           locked_at = NULL, lease_until = NULL, locked_by = NULL,
+           locked_at = NULL, lease_until = NULL, locked_by = NULL, claim_token = NULL,
            last_error = $3, updated_at = now()
        WHERE report_job_id = $1 AND status = 'running' AND locked_by = $2
+         AND claim_token = $7 AND lease_until > now()
        RETURNING attempt_count AS "attemptCount",
          initial_attempts_exhausted_at AS "initialAttemptsExhaustedAt"`,
       [reportJobId, workerId, errorMessage, maxInitialAttempts,
-        retryDelaySeconds, dailyRetryDelaySeconds],
+        retryDelaySeconds, dailyRetryDelaySeconds, claimToken],
     );
     if (!failed.rows[0]) throw new Error("Property report job lease was lost");
     if (failed.rows[0].attemptCount >= maxInitialAttempts) {
@@ -219,13 +227,10 @@ export async function markJobFailed({
 export async function recoverExpiredDeliveries() {
   const { rowCount } = await pool.query(
     `UPDATE bm_inspection_confirmation_deliveries
-     SET status = CASE
-           WHEN fallback_without_report THEN 'fallback_queued'
-           ELSE 'email_retry'
-         END,
+     SET status = 'outcome_unknown',
          next_attempt_at = now(), locked_at = NULL, lease_until = NULL,
-         locked_by = NULL,
-         last_error = COALESCE(last_error, 'Email worker lease expired'),
+         locked_by = NULL, claim_token = NULL,
+         last_error = COALESCE(last_error, 'Email worker lease expired after provider submission may have started'),
          updated_at = now()
      WHERE status = 'email_sending' AND lease_until <= now()`,
   );
@@ -252,6 +257,8 @@ export async function claimNextDelivery({ workerId, leaseSeconds }) {
     const claimed = await client.query(
       `UPDATE bm_inspection_confirmation_deliveries d
        SET status = 'email_sending', attempt_count = d.attempt_count + 1,
+           claim_generation = d.claim_generation + 1,
+           claim_token = gen_random_uuid(),
            locked_at = now(),
            lease_until = now() + make_interval(secs => $2),
            locked_by = $3, last_error = NULL, updated_at = now()
@@ -263,6 +270,7 @@ export async function claimNextDelivery({ workerId, leaseSeconds }) {
          AND r.report_job_id = d.report_job_id
        RETURNING d.delivery_id AS "deliveryId", d.booking_id AS "bookingId",
          d.attempt_count AS "attemptCount",
+         d.claim_token AS "claimToken", d.claim_generation AS "claimGeneration",
          d.fallback_without_report AS "fallbackWithoutReport",
          b.customer_name AS "customerName", b.customer_email AS "customerEmail",
          s.starts_at AS "startsAt", s.ends_at AS "endsAt",
@@ -282,30 +290,48 @@ export async function claimNextDelivery({ workerId, leaseSeconds }) {
   }
 }
 
-export async function markDeliverySent({ deliveryId, workerId }) {
+export async function renewDeliveryLease({ deliveryId, workerId, claimToken, leaseSeconds }) {
+  const { rowCount } = await pool.query(
+    `UPDATE bm_inspection_confirmation_deliveries
+     SET lease_until = now() + make_interval(secs => $4), updated_at = now()
+     WHERE delivery_id = $1 AND status = 'email_sending' AND locked_by = $2
+       AND claim_token = $3 AND lease_until > now()`,
+    [deliveryId, workerId, claimToken, leaseSeconds],
+  );
+  return rowCount === 1;
+}
+
+export async function markDeliveryAccepted({ deliveryId, workerId, claimToken, providerResult }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const sent = await client.query(
       `UPDATE bm_inspection_confirmation_deliveries
        SET status = CASE
-             WHEN fallback_without_report THEN 'fallback_sent'
-             ELSE 'sent'
+             WHEN $4 = 'preview' AND fallback_without_report THEN 'fallback_previewed'
+             WHEN $4 = 'preview' THEN 'previewed'
+             WHEN fallback_without_report THEN 'fallback_provider_accepted'
+             ELSE 'provider_accepted'
            END,
-           sent_at = now(), locked_at = NULL, lease_until = NULL,
-           locked_by = NULL, last_error = NULL, updated_at = now()
+           provider_key = $5, provider_message_id = $6,
+           provider_accepted_at = CASE WHEN $4 = 'accepted' THEN now() ELSE NULL END,
+           sent_at = NULL, locked_at = NULL, lease_until = NULL,
+           locked_by = NULL, claim_token = NULL, last_error = NULL, updated_at = now()
        WHERE delivery_id = $1 AND status = 'email_sending' AND locked_by = $2
-       RETURNING booking_id`,
-      [deliveryId, workerId],
+         AND claim_token = $3 AND lease_until > now()
+       RETURNING booking_id, status`,
+      [deliveryId, workerId, claimToken, providerResult.state,
+        providerResult.provider, providerResult.providerMessageId ?? null],
     );
     if (!sent.rows[0]) throw new Error("Inspection email delivery lease was lost");
     await client.query(
       `UPDATE bm_property_inspection_bookings
-       SET confirmation_email_sent_at = now(), confirmation_email_error = NULL
+       SET confirmation_email_error = NULL
        WHERE booking_id = $1`,
       [sent.rows[0].booking_id],
     );
     await client.query("COMMIT");
+    return sent.rows[0];
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -317,6 +343,7 @@ export async function markDeliverySent({ deliveryId, workerId }) {
 export async function markDeliveryFailed({
   deliveryId,
   workerId,
+  claimToken,
   errorMessage,
   maxAttempts,
   retryDelaySeconds,
@@ -332,11 +359,12 @@ export async function markDeliveryFailed({
              ELSE 'email_retry'
            END,
            next_attempt_at = now() + make_interval(secs => $5),
-           locked_at = NULL, lease_until = NULL, locked_by = NULL,
+           locked_at = NULL, lease_until = NULL, locked_by = NULL, claim_token = NULL,
            last_error = $3, updated_at = now()
        WHERE delivery_id = $1 AND status = 'email_sending' AND locked_by = $2
+         AND claim_token = $6 AND lease_until > now()
        RETURNING booking_id, attempt_count AS "attemptCount", status`,
-      [deliveryId, workerId, errorMessage, maxAttempts, retryDelaySeconds],
+      [deliveryId, workerId, errorMessage, maxAttempts, retryDelaySeconds, claimToken],
     );
     if (!failed.rows[0]) throw new Error("Inspection email delivery lease was lost");
     await client.query(
@@ -353,4 +381,19 @@ export async function markDeliveryFailed({
   } finally {
     client.release();
   }
+}
+
+export async function markDeliveryOutcomeUnknown({ deliveryId, workerId, claimToken, errorMessage }) {
+  const { rows } = await pool.query(
+    `UPDATE bm_inspection_confirmation_deliveries
+     SET status = 'outcome_unknown', last_error = $4,
+         locked_at = NULL, lease_until = NULL, locked_by = NULL, claim_token = NULL,
+         updated_at = now()
+     WHERE delivery_id = $1 AND status = 'email_sending' AND locked_by = $2
+       AND claim_token = $3 AND lease_until > now()
+     RETURNING delivery_id AS "deliveryId", status`,
+    [deliveryId, workerId, claimToken, errorMessage],
+  );
+  if (!rows[0]) throw new Error("Inspection email delivery lease was lost");
+  return rows[0];
 }

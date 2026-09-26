@@ -53,17 +53,19 @@ export async function enqueueSaleReportDelivery(client, input) {
   const status = ready ? "email_queued" : exhausted ? "fallback_queued" : "waiting_report";
   const deliveryResult = await client.query(
     `INSERT INTO bm_inspection_confirmation_deliveries (
-       company_id, booking_id, report_job_id, status, fallback_without_report
-     ) VALUES ($1, $2, $3, $4, $5)
+       company_id, booking_id, report_job_id, status, fallback_without_report, workflow_version_id
+     ) VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (booking_id) DO UPDATE
        SET report_job_id = EXCLUDED.report_job_id, updated_at = now()
      RETURNING *`,
-    [input.companyId, input.bookingId, report.report_job_id, status, exhausted],
+    [input.companyId, input.bookingId, report.report_job_id, status, exhausted, input.workflowVersionId ?? null],
   );
   return {
     reportJobId: report.report_job_id,
     reportStatus: report.status,
     deliveryId: deliveryResult.rows[0].delivery_id,
     deliveryStatus: deliveryResult.rows[0].status,
+    ...(deliveryResult.rows[0].workflow_version_id
+      ? { workflowVersionId: deliveryResult.rows[0].workflow_version_id } : {}),
   };
 }

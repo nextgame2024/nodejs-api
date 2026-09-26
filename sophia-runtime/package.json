@@ -9,22 +9,31 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "contracts:check": "node --import tsx scripts/generate-v2-contracts.mts --check",
+    "contracts:generate": "node --import tsx scripts/generate-v2-contracts.mts",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck:portability-core": "tsc -p tsconfig.portability-core.json",
     "start": "node dist/main.js",
     "start:dev": "tsx watch src/main.ts",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
-    "migrate": "tsx src/database/migrate.ts"
+    "migrate": "tsx src/database/migrate.ts",
+    "providers:provision": "tsx scripts/provider-operations.mts provision",
+    "providers:reconcile": "tsx scripts/provider-operations.mts reconcile",
+    "knowledge:file-worker": "tsx scripts/knowledge-file-worker.mts"
   },
   "dependencies": {
-    "@nestjs/common": "12.0.1",
-    "@nestjs/core": "12.0.1",
-    "@nestjs/platform-express": "12.0.1",
+    "@aws-sdk/client-s3": "^3.1139.0",
+    "@aws-sdk/s3-request-presigner": "^3.1139.0",
+    "@nestjs/common": "^12.1.0",
+    "@nestjs/core": "^12.1.0",
+    "@nestjs/platform-express": "^12.1.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dotenv": "^17.2.1",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "stripe": "^18.5.0",
     "zod": "4.5.2"
   },
   "devDependencies": {

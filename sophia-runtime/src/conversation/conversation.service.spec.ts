@@ -1,16 +1,20 @@
 import { describe, expect, it, beforeEach, jest } from "@jest/globals";
+import { createHash } from "node:crypto";
 import { ConversationService } from "./conversation.service.js";
 import type { AIProvider } from "../providers/ai/ai-provider.interface.js";
 import type { AvatarProvider } from "../providers/avatar/avatar-provider.interface.js";
-import { AvatarProviderRegistry } from "../providers/avatar/avatar-provider.registry.js";
 import { ToolRegistryService } from "../tools/tools.service.js";
 import { TavusFullProvider } from "../providers/tavus/tavus-full.provider.js";
+import { NativeRealtimeSessionAdapter } from "../providers/session/native-realtime-session.adapter.js";
+import { CompositeRealtimeSessionAdapter } from "../providers/session/composite-realtime-session.adapter.js";
+import { ProviderSessionRegistry } from "../providers/session/provider-session.registry.js";
 
 describe("ConversationService", () => {
   beforeEach(() => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_DEFAULT_CUSTOMER_ID =
       "11111111-1111-4111-8111-111111111111";
+    process.env.SOPHIA_DEFAULT_STORE_ID = "demo-store";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
   });
 
@@ -25,7 +29,7 @@ describe("ConversationService", () => {
             store_id: "demo-store",
             status: "active",
             ai_provider: "test-ai",
-            avatar_provider: "simli",
+            avatar_provider: "liveavatar",
             provider_session_id: "ai-session-1",
             avatar_session_id: "avatar-session-1",
             started_at: new Date("2026-01-01T00:00:00.000Z"),
@@ -38,43 +42,39 @@ describe("ConversationService", () => {
       listDefinitions: jest.fn().mockReturnValue([
         { name: "getInventory", description: "Mock", parameters: {} },
       ]),
+      conversationInstructions: jest.fn().mockReturnValue("legacy instructions"),
     } as unknown as ToolRegistryService;
     const aiProvider: AIProvider = {
       createSession: jest.fn().mockResolvedValue({
         provider: "test-ai",
         providerSessionId: "ai-session-1",
         model: "test-model",
-        outputModality: "audio",
+        outputModality: "text",
       }),
       sendMessage: jest.fn(),
       registerTools: jest.fn(),
       closeSession: jest.fn(),
     };
     const avatarProvider: AvatarProvider = {
-      providerName: "simli",
+      providerName: "liveavatar",
       createAvatarSession: jest.fn().mockResolvedValue({
-        provider: "simli",
+        provider: "liveavatar",
         avatarSessionId: "avatar-session-1",
       }),
       sendAudioChunk: jest.fn(),
       getVideoStream: jest.fn(),
       closeAvatarSession: jest.fn(),
     };
-    const avatarProviders = {
-      resolve: jest.fn().mockReturnValue(avatarProvider),
-    } as unknown as AvatarProviderRegistry;
-
     const service = new ConversationService(
-      database as never,
+      tenantDatabase(database) as never,
       tools,
-      aiProvider,
-      avatarProviders,
-      {} as TavusFullProvider,
+      sessionRegistry(aiProvider, avatarProvider),
+      operations(),
     );
 
     const result = await service.createSession({
       storeId: "demo-store",
-      avatarProvider: "simli",
+      experience: "professional",
     });
 
     expect(aiProvider.createSession).toHaveBeenCalledWith(
@@ -83,7 +83,7 @@ describe("ConversationService", () => {
         tools: expect.arrayContaining([
           expect.objectContaining({ name: "getInventory" }),
         ]),
-        outputModality: "audio",
+        outputModality: "text",
       }),
     );
     expect(avatarProvider.createAvatarSession).toHaveBeenCalledWith(
@@ -94,10 +94,10 @@ describe("ConversationService", () => {
     expect(result.session.sessionId).toBe(
       "22222222-2222-4222-8222-222222222222",
     );
-    expect(result.avatar.provider).toBe("simli");
+    expect(result.avatar.provider).toBe("liveavatar");
   });
 
-  it("creates an OpenAI-only session without resolving an avatar provider", async () => {
+  it("defaults to Essential and ignores legacy browser provider overrides", async () => {
     const database = {
       query: jest.fn().mockResolvedValue({
         rows: [
@@ -119,6 +119,7 @@ describe("ConversationService", () => {
     };
     const tools = {
       listDefinitions: jest.fn().mockReturnValue([]),
+      conversationInstructions: jest.fn().mockReturnValue("legacy instructions"),
     } as unknown as ToolRegistryService;
     const aiProvider: AIProvider = {
       createSession: jest.fn().mockResolvedValue({
@@ -131,20 +132,17 @@ describe("ConversationService", () => {
       registerTools: jest.fn(),
       closeSession: jest.fn(),
     };
-    const avatarProviders = {
-      resolve: jest.fn(),
-    } as unknown as AvatarProviderRegistry;
-
     const service = new ConversationService(
-      database as never,
+      tenantDatabase(database) as never,
       tools,
-      aiProvider,
-      avatarProviders,
-      {} as TavusFullProvider,
+      sessionRegistry(aiProvider),
+      operations(),
     );
-    const result = await service.createSession({ avatarProvider: "none" });
+    const result = await service.createSession({
+      aiProvider: "tavus-full",
+      avatarProvider: "liveavatar",
+    });
 
-    expect(avatarProviders.resolve).not.toHaveBeenCalled();
     expect(result.avatar).toMatchObject({ provider: "none" });
   });
 
@@ -170,6 +168,7 @@ describe("ConversationService", () => {
     };
     const tools = {
       listDefinitions: jest.fn().mockReturnValue([]),
+      conversationInstructions: jest.fn().mockReturnValue("legacy instructions"),
     } as unknown as ToolRegistryService;
     const aiProvider: AIProvider = {
       createSession: jest.fn().mockResolvedValue({
@@ -193,18 +192,15 @@ describe("ConversationService", () => {
       getVideoStream: jest.fn(),
       closeAvatarSession: jest.fn(),
     };
-    const avatarProviders = {
-      resolve: jest.fn().mockReturnValue(avatarProvider),
-    } as unknown as AvatarProviderRegistry;
     const service = new ConversationService(
-      database as never,
+      tenantDatabase(database) as never,
       tools,
-      aiProvider,
-      avatarProviders,
-      {} as TavusFullProvider,
+      sessionRegistry(aiProvider, avatarProvider),
+      operations(),
     );
 
     const result = await service.createSession({
+      experience: "professional",
       avatarProvider: "liveavatar",
       avatarMode: "FULL",
     });
@@ -241,6 +237,7 @@ describe("ConversationService", () => {
     };
     const tools = {
       listDefinitions: jest.fn().mockReturnValue([]),
+      conversationInstructions: jest.fn().mockReturnValue("legacy instructions"),
     } as unknown as ToolRegistryService;
     const aiProvider: AIProvider = {
       createSession: jest.fn(),
@@ -248,9 +245,6 @@ describe("ConversationService", () => {
       registerTools: jest.fn(),
       closeSession: jest.fn(),
     };
-    const avatarProviders = {
-      resolve: jest.fn(),
-    } as unknown as AvatarProviderRegistry;
     const tavusProvider = {
       createSession: jest.fn().mockResolvedValue({
         provider: "tavus-full",
@@ -263,14 +257,14 @@ describe("ConversationService", () => {
       closeSession: jest.fn(),
     } as unknown as TavusFullProvider;
     const service = new ConversationService(
-      database as never,
+      tenantDatabase(database) as never,
       tools,
-      aiProvider,
-      avatarProviders,
-      tavusProvider,
+      sessionRegistry(aiProvider, undefined, tavusProvider),
+      operations(),
     );
 
     const result = await service.createSession({
+      experience: "premium",
       aiProvider: "tavus-full",
       storeId: "demo-store",
     });
@@ -279,7 +273,6 @@ describe("ConversationService", () => {
       expect.objectContaining({ storeId: "demo-store" }),
     );
     expect(aiProvider.createSession).not.toHaveBeenCalled();
-    expect(avatarProviders.resolve).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ai: { provider: "tavus-full", model: "tavus-gpt-oss" },
       avatar: {
@@ -288,4 +281,107 @@ describe("ConversationService", () => {
       },
     });
   });
+
+  it("requires the session-specific access token without exposing stored metadata", async () => {
+    const token = "session-secret";
+    const database = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{
+          session_id: "22222222-2222-4222-8222-222222222222",
+          customer_id: "11111111-1111-4111-8111-111111111111",
+          device_id: null,
+          store_id: "demo-store",
+          status: "active",
+          ai_provider: "openai-realtime",
+          avatar_provider: "none",
+          provider_session_id: "provider-session",
+          avatar_session_id: null,
+          started_at: new Date("2026-01-01T00:00:00.000Z"),
+          ended_at: null,
+          metadata: {
+            sessionAccessTokenHash: createHash("sha256")
+              .update(token)
+              .digest("base64url"),
+            sessionAccessExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        }],
+      }),
+    };
+    const service = new ConversationService(
+      tenantDatabase(database) as never,
+      {} as ToolRegistryService,
+      {} as ProviderSessionRegistry,
+      operations(),
+    );
+
+    await expect(service.getSession("22222222-2222-4222-8222-222222222222"))
+      .rejects.toThrow("Session access token is required");
+    await expect(service.getSession("22222222-2222-4222-8222-222222222222", "wrong"))
+      .rejects.toThrow("invalid or expired");
+    const result = await service.getSession(
+      "22222222-2222-4222-8222-222222222222",
+      token,
+    );
+    expect(result.session).not.toHaveProperty("metadata");
+  });
+
+  it("blocks new admission for a suspended organisation before opening a provider session", async () => {
+    const database = { query: jest.fn() };
+    const providerSessions = { resolveExperience: jest.fn().mockReturnValue({ adapterKey: "native", open: jest.fn() }) } as unknown as ProviderSessionRegistry;
+    const providerOperations = { ...operations(), begin: jest.fn().mockRejectedValue(
+      new Error("This organisation is not admitting new Sophia sessions.")) };
+    const service = new ConversationService(
+      tenantDatabase(database) as never,
+      { listDefinitions: jest.fn() } as unknown as ToolRegistryService,
+      providerSessions,
+      providerOperations as never,
+    );
+    await expect(service.createSession({ experience: "essential" }))
+      .rejects.toThrow("not admitting new Sophia sessions");
+    expect(providerOperations.begin).toHaveBeenCalled();
+    expect(providerOperations.open).not.toHaveBeenCalled();
+  });
 });
+
+function sessionRegistry(
+  ai: AIProvider,
+  avatar?: AvatarProvider,
+  composite: TavusFullProvider = {} as TavusFullProvider,
+): ProviderSessionRegistry {
+  const capabilities = {
+    resolve: jest.fn((adapterKey: string) => {
+      if (adapterKey === "native-realtime-v1") return { adapterKey, implementation: ai };
+      if (adapterKey === "live-avatar-v1" && avatar) return { adapterKey, implementation: avatar };
+      if (adapterKey === "composite-realtime-v1") return { adapterKey, implementation: composite };
+      throw new Error(`Unexpected test adapter ${adapterKey}`);
+    }),
+  };
+  return new ProviderSessionRegistry([
+    new NativeRealtimeSessionAdapter(capabilities as never),
+    new CompositeRealtimeSessionAdapter(capabilities as never, catalogGate() as never),
+  ]);
+}
+
+function catalogGate() {
+  return { assertTavusReady: jest.fn().mockResolvedValue({ deploymentId: "deployment-1", catalogVersion: "test-v1",
+    catalogDigest: createHash("sha256").update("[]").digest("hex") }) };
+}
+
+function operations() {
+  return {
+    begin: jest.fn().mockResolvedValue({ allocationId: "allocation-1", customerId: "11111111-1111-4111-8111-111111111111", adapterKey: "test" }),
+    open: jest.fn(async (_allocation, adapter, request) => adapter.open(request)),
+    attach: jest.fn().mockResolvedValue(undefined),
+    compensate: jest.fn().mockResolvedValue(undefined),
+    close: jest.fn(async (row) => row),
+    heartbeat: jest.fn(async (row) => row),
+    disconnect: jest.fn(async (row) => row),
+  } as never;
+}
+
+function tenantDatabase<T extends { query: (...args: any[]) => any }>(database: T) {
+  return Object.assign(database, {
+    tenantTransaction: jest.fn((_tenantId: string, work: (client: { query: T["query"] }) => unknown) =>
+      work({ query: database.query })),
+  });
+}

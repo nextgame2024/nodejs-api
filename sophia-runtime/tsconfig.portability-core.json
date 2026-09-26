@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "files": [
+    "src/capabilities-v2/index.ts",
+    "src/platform/orchestration/reasoning-pipeline.ts",
+    "src/business-packs/business-pack.contracts.ts",
+    "src/business-packs/business-pack.registry.ts",
+    "src/tools/tool-registry.ts"
+  ],
+  "include": []
+}

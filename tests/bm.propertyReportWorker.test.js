@@ -34,6 +34,7 @@ function createModel(job) {
 
 const job = {
   reportJobId: "30000000-0000-4000-8000-000000000001",
+  claimToken: "40000000-0000-4000-8000-000000000001",
   attemptCount: 1,
   reportInputs: {
     addressLabel: "12 Smith Street, West End, Brisbane, QLD, 4101",
@@ -92,25 +93,19 @@ describe("property report worker", () => {
     expect((await model.acquireWorkerLock.mock.results[0].value).release).toHaveBeenCalled();
   });
 
-  it("reuses a cached report without running PDF generation", async () => {
+  it("does not reuse an unscoped Town Planner cache entry across tenants", async () => {
     const model = createModel(job);
     const generateReport = jest.fn();
-    const cached = {
-      pdfKey: "reports/cached.pdf",
-      pdfUrl: "https://example.test/cached.pdf",
-    };
-
     const result = await processPropertyReportCycle({
       model,
       generateReport,
-      findCachedReport: jest.fn().mockResolvedValue(cached),
       workerId: "worker-1",
       config,
     });
 
-    expect(generateReport).not.toHaveBeenCalled();
+    expect(generateReport).toHaveBeenCalledTimes(1);
     expect(model.markJobReady).toHaveBeenCalledWith(expect.objectContaining({
-      result: cached,
+      claimToken: job.claimToken,
     }));
     expect(result.status).toBe("ready");
   });

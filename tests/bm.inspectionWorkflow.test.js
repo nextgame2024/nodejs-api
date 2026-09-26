@@ -31,7 +31,7 @@ it("processes a queued report and then its email without a separate worker", asy
   const emailCycle = jest.fn(async () => {
     if (!reportReady || sent) return { status: "idle" };
     sent = true;
-    return { status: "sent" };
+    return { status: "provider_accepted" };
   });
   workflow = startInspectionWorkflow({
     ensureSchema: jest.fn().mockResolvedValue(undefined),

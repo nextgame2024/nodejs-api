@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import type {RuntimeTool,RuntimeToolContext} from '../tool-registry.js';
-import type {BusinessManagerClient} from '../real-estate/business-manager.client.js';
+import type {StudentBusinessManagerClient} from './student-business-manager.client.js';
 const details={
   slotId:z.string().uuid(),confirmedStartsAt:z.string().datetime({offset:true}),
   customerName:z.string().trim().min(2).max(120),customerEmail:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),
@@ -16,7 +16,7 @@ const normalize=(input:Record<string,any>)=>({...input,enquirySummary:input.incl
 const session=(context:RuntimeToolContext)=>{if(!context.sessionId)throw new Error('A session is required for consultation booking');return context.sessionId;};
 export const STUDENT_CONSULTATION_TOOL_NAMES=['getStudentConsultationSlots','reviewStudentConsultation','bookStudentConsultation','getStudentConsultationBooking','reviewStudentConsultationEmail','resendStudentConsultationEmail'];
 
-export function createStudentConsultationTools(client:BusinessManagerClient,state?:{clear?:(sessionId?:string)=>void}):RuntimeTool<any,unknown>[] {
+export function createStudentConsultationTools(client:StudentBusinessManagerClient,state?:{clear?:(sessionId?:string)=>void}):RuntimeTool<any,unknown>[] {
   const pending=new Map<string,{mode:'new'|'resend';input:Record<string,any>;expiresAt:number}>();
   if(state)state.clear=id=>{if(id)pending.delete(id);};
   const save=(id:string,mode:'new'|'resend',input:Record<string,any>)=>{

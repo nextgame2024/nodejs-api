@@ -1,0 +1,1113 @@
+{
+  "document": {
+    "id": "sophia-ai-realtime-architecture",
+    "title": "Sophia AI Real-Time Architecture and Future Build Standard",
+    "version": "1.0.0",
+    "generatedAt": "2026-09-22T00:00:00+10:00",
+    "status": "current-state-baseline-and-target-standard",
+    "scope": [
+      "Angular customer experience",
+      "NestJS Sophia Runtime",
+      "Express Business Manager API",
+      "PostgreSQL data stores",
+      "AI, voice, avatar and research providers",
+      "runtime tools",
+      "booking, report and email workflows",
+      "deployment and operations",
+      "mandatory architecture rules for future development"
+    ],
+    "repositorySnapshots": {
+      "backendBranch": "master",
+      "backendCommit": "e2e6ebd",
+      "backendEquivalentTree": "d9f9f81",
+      "frontendBranch": "main",
+      "frontendCommit": "3bbfacd",
+      "frontendEquivalentTree": "f27986c"
+    },
+    "interpretation": {
+      "currentState": "Facts observed in the repositories at the recorded snapshots.",
+      "targetState": "The required design for all new work and the direction for refactoring existing code.",
+      "priority": "The target-state rules are architectural requirements, not a claim that the current implementation already satisfies them."
+    }
+  },
+  "architectureSummary": {
+    "style": "Browser real-time client plus a dedicated session runtime and a separate business-system API.",
+    "primaryComponents": [
+      "Angular 21 single-page application",
+      "NestJS 12 Sophia Runtime on Node.js 22",
+      "Express 5 Business Manager API on Node.js 20",
+      "PostgreSQL/Neon",
+      "provider adapters for real-time AI and avatars",
+      "provider-neutral runtime tool registry",
+      "database-backed email and property-report queues"
+    ],
+    "centralRule": "Business behavior, tools, prompts, bookings and domain knowledge must remain independent of any AI, voice, avatar, search or transport provider.",
+    "providerPolicy": {
+      "hardcodedProvidersAllowed": false,
+      "requiredPattern": "Ports and adapters with dependency-injected provider registries and capability-based resolution.",
+      "configurationSource": "Server-side customer and experience configuration, with environment variables or a secret manager holding credentials.",
+      "clientResponsibility": "The browser requests an experience and consumes a normalized session/transport contract; it must not decide the vendor composition.",
+      "secretPolicy": "Provider API keys and long-lived credentials never enter Angular or API responses."
+    }
+  },
+  "systemContext": {
+    "actors": [
+      {
+        "name": "Customer",
+        "uses": "Voice-first Sophia kiosk in a browser"
+      },
+      {
+        "name": "Business administrator",
+        "uses": "Business Manager data, content, scheduling and operational workflows"
+      },
+      {
+        "name": "Background worker",
+        "uses": "Database queues for reports and email deliveries"
+      }
+    ],
+    "externalSystems": [
+      {
+        "name": "OpenAI",
+        "currentUses": [
+          "Realtime voice conversation for Essential and Professional",
+          "Responses/web search for the researchBusiness tool"
+        ]
+      },
+      {
+        "name": "Tavus",
+        "currentUses": [
+          "Premium full conversational pipeline",
+          "replica video and audio",
+          "Daily transport",
+          "PAL tools and native internet search"
+        ]
+      },
+      {
+        "name": "HeyGen LiveAvatar",
+        "currentUses": [
+          "Professional avatar session",
+          "FULL mode text-to-avatar speech and lip sync",
+          "LITE mode audio-driven avatar support"
+        ]
+      },
+      {
+        "name": "Simli",
+        "currentUses": [
+          "Optional audio-driven avatar integration retained in code"
+        ]
+      },
+      {
+        "name": "AWS",
+        "currentUses": [
+          "SES email",
+          "S3 media and generated property reports",
+          "Amplify/CloudFront/S3 frontend hosting"
+        ]
+      },
+      {
+        "name": "Official Australian Government websites",
+        "currentUses": [
+          "Approved student-migration source retrieval and verification"
+        ]
+      }
+    ]
+  },
+  "deployableUnits": [
+    {
+      "id": "sophia-web",
+      "repository": "frontend",
+      "technology": {
+        "framework": "Angular",
+        "version": "21.2.x",
+        "language": "TypeScript 5.9",
+        "state": "Angular signals plus component/service state",
+        "realtimeLibraries": [
+          "WebRTC browser APIs",
+          "@daily-co/daily-js",
+          "@heygen/liveavatar-web-sdk",
+          "simli-client"
+        ]
+      },
+      "hosting": "AWS Amplify with static assets delivered through CloudFront/S3",
+      "productionRoute": "/sophia",
+      "responsibilities": [
+        "experience selection and presentation",
+        "microphone permission and media playback",
+        "provider transport clients",
+        "rendering property, student guidance and booking panels",
+        "forwarding runtime tool calls and returning results to the active conversation",
+        "local interaction state and session cleanup"
+      ],
+      "mustNotOwn": [
+        "provider credentials",
+        "authoritative plan entitlements",
+        "business rules",
+        "booking truth",
+        "knowledge truth",
+        "email delivery",
+        "provider selection policy"
+      ]
+    },
+    {
+      "id": "sophia-runtime",
+      "repository": "backend/sophia-runtime",
+      "technology": {
+        "framework": "NestJS",
+        "version": "12.0.1",
+        "language": "TypeScript 6",
+        "runtime": "Node.js >=22 <23",
+        "container": "node:22-bookworm"
+      },
+      "hosting": "Dedicated Render web service",
+      "publicBasePath": "/api/runtime",
+      "responsibilities": [
+        "create, read and close Sophia sessions",
+        "resolve conversation and avatar capabilities",
+        "mint short-lived provider session metadata",
+        "inject Sophia instructions and runtime tool definitions",
+        "validate and execute trusted tools",
+        "record sessions and successful tool calls",
+        "mediate access to Business Manager"
+      ],
+      "modules": [
+        "DatabaseModule",
+        "ProvidersModule",
+        "ToolsModule",
+        "ConversationModule",
+        "HealthModule"
+      ]
+    },
+    {
+      "id": "business-manager-api",
+      "repository": "backend/src",
+      "technology": {
+        "framework": "Express",
+        "version": "5.x",
+        "language": "JavaScript ES modules",
+        "runtime": "Node.js 20.15.0"
+      },
+      "hosting": "Render web service named nodejs-api",
+      "publicBasePath": "/api",
+      "responsibilities": [
+        "authoritative business and customer data",
+        "real-estate listings, media and inspection availability",
+        "student knowledge, official-source verification and comparisons",
+        "inspection and adviser-consultation bookings",
+        "property report generation workflow",
+        "email queue persistence and workers",
+        "authentication and company scoping"
+      ],
+      "relationshipToRuntime": "The runtime calls protected Business Manager integration endpoints using a server-to-server bearer token."
+    },
+    {
+      "id": "background-worker",
+      "repository": "backend/cron/weeklyGenerator.js",
+      "technology": {
+        "runtime": "Node.js 20",
+        "container": "backend/Dockerfile"
+      },
+      "hosting": "Render worker service",
+      "responsibilities": [
+        "property report jobs",
+        "inspection confirmation delivery jobs",
+        "student consultation email delivery jobs",
+        "existing scheduled content work"
+      ],
+      "coordination": "Database leases, status fields and PostgreSQL advisory locks prevent duplicate work."
+    },
+    {
+      "id": "toolkit-email-cron",
+      "repository": "backend/cron/aiToolkitEmailCron.js",
+      "technology": {
+        "runtime": "Node.js 20"
+      },
+      "hosting": "Render cron job",
+      "scheduleObserved": "40 21 * * * UTC",
+      "responsibilities": [
+        "AI Toolkit scheduled emails only"
+      ],
+      "explicitBoundary": "This cron is not the inspection or student-consultation delivery mechanism."
+    }
+  ],
+  "frontendCurrentState": {
+    "entryFeature": "src/app/sophia-runtime",
+    "mainComponent": "src/app/sophia-runtime/kiosk/sophia-kiosk.page.ts",
+    "plans": [
+      {
+        "displayName": "Essential",
+        "experienceId": "openai",
+        "currentComposition": {
+          "conversation": "openai-realtime",
+          "avatar": "none",
+          "presentation": "static Sophia image"
+        }
+      },
+      {
+        "displayName": "Professional",
+        "experienceId": "openai-liveavatar-full",
+        "currentComposition": {
+          "conversation": "openai-realtime",
+          "avatar": "liveavatar",
+          "avatarMode": "FULL",
+          "voicePath": "OpenAI returns text; LiveAvatar performs speech and lip sync"
+        }
+      },
+      {
+        "displayName": "Premium",
+        "experienceId": "tavus",
+        "currentComposition": {
+          "conversation": "tavus-full",
+          "avatar": "tavus",
+          "transport": "Daily"
+        }
+      }
+    ],
+    "services": [
+      {
+        "name": "SophiaRuntimeSessionService",
+        "role": "HTTP client for runtime session and tool endpoints"
+      },
+      {
+        "name": "SophiaRealtimeClientService",
+        "role": "OpenAI Realtime WebRTC signaling, events, audio and tool calls"
+      },
+      {
+        "name": "SophiaAvatarClientService",
+        "role": "Facade that currently branches between Simli and LiveAvatar browser clients"
+      },
+      {
+        "name": "SophiaTavusClientService",
+        "role": "Daily join, Tavus remote media, speech events and app-message tool bridge"
+      },
+      {
+        "name": "SophiaLiveAvatarClientService",
+        "role": "HeyGen LiveAvatar browser SDK adapter"
+      },
+      {
+        "name": "SophiaSimliClientService",
+        "role": "Simli browser SDK adapter"
+      },
+      {
+        "name": "SophiaRuntimeConfigService",
+        "role": "Loads non-secret browser runtime configuration"
+      }
+    ],
+    "renderedDomains": [
+      "property search results",
+      "property details and photographs",
+      "inspection slots and booking review/results",
+      "real-estate agency knowledge",
+      "student guidance and source cards",
+      "student rule comparisons",
+      "student-adviser slots and booking review/results"
+    ],
+    "currentProviderCoupling": [
+      "SophiaExperience is a union containing vendor-specific names.",
+      "experienceConfiguration maps plans to vendor names in the component file.",
+      "startSession and finishSession branch explicitly on tavus-full.",
+      "voice and avatar paths contain OpenAI-specific method names and status text.",
+      "the kiosk hardcodes the demo deviceId and storeId."
+    ],
+    "targetFrontendBoundary": {
+      "request": "Send experienceId, customer/device identity and supported browser capabilities.",
+      "response": "Receive a normalized session descriptor with transport type, ephemeral credentials, media mode, UI capabilities and tool-delivery mode.",
+      "implementation": "A frontend TransportAdapterRegistry resolves adapters by protocol/capability. The page component must not branch on vendor names.",
+      "allowedVendorCode": "Only inside adapter implementations and their provider-specific tests."
+    }
+  },
+  "runtimeApi": {
+    "basePath": "/api/runtime",
+    "endpoints": [
+      {
+        "method": "GET",
+        "path": "/healthz",
+        "purpose": "Database-backed readiness check"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions",
+        "purpose": "Create a real-time session"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:sessionId",
+        "purpose": "Read session state"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:sessionId/tools",
+        "purpose": "Validate, execute and record a runtime tool call"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:sessionId/close",
+        "purpose": "Close provider transports and persist the closed state"
+      }
+    ],
+    "validation": [
+      "NestJS ValidationPipe with whitelist, transform and forbidNonWhitelisted",
+      "class-validator for HTTP DTOs",
+      "Zod strict schemas for tool inputs"
+    ],
+    "currentSessionSelection": {
+      "openAiPath": "Default path through the AI_PROVIDER injection token plus an optional AvatarProvider.",
+      "tavusPath": "Special branch in ConversationService when dto.aiProvider equals tavus-full.",
+      "configuration": "Environment variables plus client-provided provider fields.",
+      "databaseConfigStatus": "sophia_runtime.ai_configs exists and is seeded, but current session creation does not resolve it."
+    }
+  },
+  "providerArchitecture": {
+    "currentPorts": [
+      {
+        "port": "AIProvider",
+        "operations": [
+          "createSession",
+          "sendMessage",
+          "registerTools",
+          "closeSession"
+        ],
+        "currentImplementations": [
+          "OpenAIRealtimeProvider"
+        ],
+        "limitation": "The dependency injection token is statically bound to OpenAIRealtimeProvider."
+      },
+      {
+        "port": "AvatarProvider",
+        "operations": [
+          "createAvatarSession",
+          "sendAudioChunk",
+          "getVideoStream",
+          "closeAvatarSession"
+        ],
+        "currentImplementations": [
+          "SimliAvatarProvider",
+          "LiveAvatarProvider"
+        ],
+        "resolver": "AvatarProviderRegistry"
+      },
+      {
+        "port": "TavusFullProvider",
+        "operations": [
+          "createSession",
+          "closeSession",
+          "synchronize PAL tools and internet search"
+        ],
+        "limitation": "It is a provider-specific full-stack implementation outside the AIProvider registry and is special-cased by ConversationService."
+      }
+    ],
+    "currentAdapters": {
+      "openai-realtime": {
+        "capabilities": [
+          "speech input",
+          "server VAD",
+          "interruptible audio output",
+          "function tools",
+          "multilingual conversation"
+        ],
+        "sessionCredential": "Short-lived browser client secret",
+        "transport": "WebRTC established by Angular"
+      },
+      "tavus-full": {
+        "capabilities": [
+          "speech input",
+          "native LLM",
+          "speech output",
+          "replica video",
+          "Daily transport",
+          "PAL tools",
+          "native internet search"
+        ],
+        "guard": "TAVUS_NATIVE_LLM_ONLY must be true",
+        "sessionCredential": "Private conversation URL and meeting token",
+        "toolDelivery": "Daily app messages",
+        "startupBehavior": "The runtime lists, creates or updates Tavus tools and attaches missing tools to the PAL once per process."
+      },
+      "liveavatar": {
+        "capabilities": [
+          "FULL text-to-speech avatar mode",
+          "LITE audio-driven avatar mode"
+        ],
+        "browserSdk": "@heygen/liveavatar-web-sdk"
+      },
+      "simli": {
+        "capabilities": [
+          "audio-driven avatar",
+          "LiveKit or peer-to-peer transport"
+        ]
+      }
+    },
+    "mandatoryTargetModel": {
+      "principle": "Provider names are configuration data, never domain logic.",
+      "capabilityAxes": [
+        "conversation",
+        "reasoning",
+        "speech-to-text",
+        "text-to-speech",
+        "avatar",
+        "media transport",
+        "tool transport",
+        "web research"
+      ],
+      "ports": [
+        {
+          "name": "ConversationProvider",
+          "responsibility": "Create and close sessions and expose normalized events, messages and interruption controls."
+        },
+        {
+          "name": "SpeechProvider",
+          "responsibility": "Optional transcription and speech synthesis capabilities when they are not part of a composite provider."
+        },
+        {
+          "name": "AvatarProvider",
+          "responsibility": "Create avatar sessions and accept normalized text or audio input."
+        },
+        {
+          "name": "ResearchProvider",
+          "responsibility": "Search only approved domains, return source metadata and enforce freshness policy."
+        },
+        {
+          "name": "ToolTransport",
+          "responsibility": "Deliver provider tool calls to the runtime and return results exactly once."
+        },
+        {
+          "name": "MediaTransport",
+          "responsibility": "Describe how the browser joins and renders audio/video without exposing vendor decisions to the page."
+        }
+      ],
+      "providerManifestRequiredFields": [
+        "providerId",
+        "adapterVersion",
+        "capabilities",
+        "supportedInputModalities",
+        "supportedOutputModalities",
+        "supportedLanguages",
+        "supportsInterruption",
+        "supportsTools",
+        "toolDeliveryMode",
+        "transportTypes",
+        "healthCheck",
+        "costAndUsageDimensions",
+        "configurationSchema"
+      ],
+      "registryBehavior": [
+        "NestJS multi-provider registration discovers adapters at startup.",
+        "A ProviderResolver selects adapters from an ExperienceProfile and required capabilities.",
+        "The resolver rejects unsupported combinations before creating external sessions.",
+        "Composite providers such as Tavus may satisfy multiple capability axes with one adapter.",
+        "Adding a provider must not require edits to ConversationService, domain tools or the kiosk component."
+      ],
+      "experienceProfile": {
+        "identity": "Stable internal experienceId such as essential, professional or premium.",
+        "serverOwnedFields": [
+          "enabled",
+          "customerId",
+          "conversationProviderId",
+          "avatarProviderId",
+          "researchProviderId",
+          "modelAlias",
+          "voiceAlias",
+          "languagePolicy",
+          "enabledToolGroups",
+          "timeouts",
+          "fallbackPolicy",
+          "usageLimits"
+        ],
+        "clientContract": "Angular sends experienceId and never sends raw providerId in the public kiosk flow."
+      },
+      "configurationRules": [
+        "No switch statement over provider names in controllers, domain services or UI components.",
+        "No provider URL, model name, voice name, persona ID, replica ID or avatar ID in domain code.",
+        "No provider SDK import outside its adapter package.",
+        "No long-lived provider secret in PostgreSQL plaintext, Angular configuration, logs or API responses.",
+        "Environment variables or a secret manager provide credentials keyed by provider configuration.",
+        "Database configuration selects profiles and aliases; adapters translate aliases into vendor-specific values."
+      ]
+    }
+  },
+  "toolArchitecture": {
+    "registry": "ToolRegistry plus ToolRegistryService",
+    "contract": {
+      "definition": "name, description and JSON-schema parameters",
+      "validation": "Strict Zod input schema",
+      "execution": "Async function with customerId, sessionId and storeId context",
+      "persistence": "Successful calls are written to sophia_runtime.tool_calls"
+    },
+    "toolGroups": {
+      "utility": [
+        "getInventory"
+      ],
+      "studentKnowledge": [
+        "searchStudentAgencyKnowledge",
+        "verifyStudentRules",
+        "compareStudentRules",
+        "closeStudentView"
+      ],
+      "studentConsultation": [
+        "getStudentConsultationSlots",
+        "reviewStudentConsultation",
+        "bookStudentConsultation",
+        "getStudentConsultationBooking",
+        "reviewStudentConsultationEmail",
+        "resendStudentConsultationEmail"
+      ],
+      "realEstate": [
+        "searchProperties",
+        "getPropertyDetails",
+        "showPropertyPhoto",
+        "closePropertyView",
+        "getInspectionSlots",
+        "reviewInspectionBooking",
+        "bookInspection",
+        "reviewInspectionEmailResend",
+        "resendInspectionConfirmation",
+        "searchAgencyKnowledge"
+      ],
+      "publicResearch": [
+        "researchBusiness"
+      ]
+    },
+    "domainIsolation": {
+      "currentBehavior": "Student tool calls clear pending property-review state; property tool calls clear pending student-consultation review state.",
+      "requiredBehavior": [
+        "Classify each turn into one domain before exposing or selecting tools.",
+        "Expose the minimum tool set required for the active domain and task.",
+        "Never use property knowledge as a fallback for student migration or vice versa.",
+        "Domain routing must be deterministic application logic with model assistance, not prompt text alone."
+      ]
+    },
+    "requiredImprovements": [
+      "Record pending, succeeded and failed tool calls, including provider call ID and real start/completion timestamps.",
+      "Persist review/confirmation state or issue signed short-lived review tokens; do not keep booking authorization only in process memory.",
+      "Make every mutation idempotent.",
+      "Apply tool timeouts, cancellation and per-tool retry policy.",
+      "Version tool schemas so providers can synchronize changes before user sessions.",
+      "Pre-provision Tavus or other remote tools during deployment rather than the first customer session."
+    ]
+  },
+  "domainFlows": {
+    "realEstate": {
+      "supportedJourneys": [
+        "search rental properties",
+        "search properties for sale",
+        "view details and photos",
+        "list inspection slots",
+        "review customer, email, property and time",
+        "explicitly confirm",
+        "book inspection",
+        "send rental confirmation",
+        "generate sale property report and send it with confirmation",
+        "review and resend corrected email"
+      ],
+      "sourceOfTruth": "Business Manager PostgreSQL tables and services",
+      "mutationRule": "reviewInspectionBooking must precede bookInspection and the confirmed payload must match the reviewed payload.",
+      "saleDelivery": "Sale bookings enqueue a property-report job; the confirmation delivery waits for the report or follows the configured fallback path.",
+      "rentalDelivery": "Rental bookings queue or send the confirmation without a property report."
+    },
+    "studentAgency": {
+      "supportedJourneys": [
+        "search approved guidance",
+        "verify current rules against official sources",
+        "compare previous and current rules",
+        "show effects for new and existing students",
+        "list adviser consultation slots",
+        "review name, email, time and optional enquiry summary",
+        "explicitly confirm",
+        "book consultation",
+        "send or resend confirmation email"
+      ],
+      "sourceOfTruth": "Approved Business Manager knowledge rows plus retrieved official-source snapshots",
+      "officialSourcePolicy": "Use official Australian Government sources first. If official verification fails, clearly report that it could not be verified and offer adviser review; do not invent an answer.",
+      "mutationRule": "reviewStudentConsultation must precede bookStudentConsultation and the confirmed payload must match the reviewed payload.",
+      "demoRule": "Demo consultation slots must be described as demonstrations and must not imply a real adviser meeting."
+    },
+    "confirmationStandard": {
+      "requiredSteps": [
+        "Display the authoritative details.",
+        "Ask the customer to check the details, especially email spelling.",
+        "Wait for an explicit confirmation in a subsequent user turn.",
+        "Reject booking if displayed data changed or confirmation is absent.",
+        "Use an idempotency key for the mutation.",
+        "Report queued, sent, failed and pending-report states accurately."
+      ],
+      "futureRequirement": "Confirmation state must be enforced server-side and survive restarts and horizontal scaling."
+    }
+  },
+  "dataArchitecture": {
+    "databaseTechnology": "PostgreSQL hosted on Neon",
+    "logicalOwnership": [
+      {
+        "owner": "Sophia Runtime",
+        "schema": "sophia_runtime",
+        "tables": {
+          "customers": "Runtime tenant identity",
+          "devices": "Registered kiosk/browser device identity",
+          "ai_configs": "Intended customer/device provider configuration; currently not used by session resolution",
+          "sessions": "Normalized runtime and provider session lifecycle",
+          "tool_calls": "Tool request and output audit records",
+          "events": "Reserved event audit table; current application writes are not established"
+        },
+        "migrationMechanism": "Ordered SQL migrations run with npm run migrate"
+      },
+      {
+        "owner": "Business Manager API",
+        "schema": "public and existing Business Manager tables",
+        "realEstateTables": [
+          "bm_properties",
+          "bm_property_media",
+          "bm_property_inspection_slots",
+          "bm_property_inspection_bookings",
+          "bm_agency_knowledge",
+          "bm_property_report_jobs",
+          "bm_inspection_confirmation_deliveries"
+        ],
+        "studentTables": [
+          "bm_student_agency_knowledge",
+          "bm_student_source_snapshots",
+          "bm_student_advisers",
+          "bm_student_consultation_slots",
+          "bm_student_consultation_bookings",
+          "bm_student_consultation_deliveries"
+        ],
+        "otherData": "Business Manager, users, AI Toolkit, Town Planner and payment tables remain outside the Sophia real-time domain.",
+        "migrationMechanism": "SQL scripts plus startup schema guards in the Express service"
+      }
+    ],
+    "crossServiceRules": [
+      "The runtime accesses business data only through authenticated Business Manager APIs, not by importing Business Manager models.",
+      "Do not create foreign keys across independently deployable database ownership boundaries.",
+      "All business queries are company-scoped.",
+      "Store timestamps as timestamptz and return authoritative timezone labels from the business service.",
+      "Use JSONB for provider metadata only when fields are provider-specific or intentionally extensible; promote query-critical fields to typed columns."
+    ],
+    "targetConfigurationTables": [
+      {
+        "name": "experience_profiles",
+        "purpose": "Provider-neutral customer/plan composition and enabled capabilities"
+      },
+      {
+        "name": "provider_configurations",
+        "purpose": "Non-secret provider settings, adapter version and credential reference"
+      },
+      {
+        "name": "session_capabilities",
+        "purpose": "Resolved immutable capability snapshot for each session"
+      },
+      {
+        "name": "booking_reviews",
+        "purpose": "Durable review payload hash, expiry and confirmation status"
+      }
+    ]
+  },
+  "businessManagerIntegration": {
+    "client": "BusinessManagerClient in the NestJS runtime",
+    "authentication": {
+      "method": "Bearer service token",
+      "runtimeSecret": "BUSINESS_MANAGER_API_TOKEN",
+      "businessApiSecret": "SOPHIA_RUNTIME_SERVICE_TOKEN",
+      "tenantBinding": "SOPHIA_RUNTIME_COMPANY_ID",
+      "minimumTokenLength": 32,
+      "comparison": "timingSafeEqual"
+    },
+    "studentEndpoints": [
+      "GET /bm/student-agency/knowledge",
+      "GET /bm/student-agency/verify",
+      "GET /bm/student-agency/compare",
+      "GET /bm/student-agency/consultation-slots",
+      "POST /bm/student-agency/consultation-review",
+      "POST /bm/student-agency/consultation-bookings",
+      "GET /bm/student-agency/consultation-bookings/:bookingId",
+      "POST /bm/student-agency/consultation-bookings/:bookingId/review-email",
+      "POST /bm/student-agency/consultation-bookings/:bookingId/email"
+    ],
+    "realEstateEndpoints": [
+      "GET /bm/real-estate/properties",
+      "GET /bm/real-estate/properties/:propertyId",
+      "GET /bm/real-estate/properties/:propertyId/inspection-slots",
+      "POST /bm/real-estate/inspection-bookings",
+      "POST /bm/real-estate/inspection-bookings/:bookingId/email-confirmation",
+      "GET /bm/real-estate/knowledge"
+    ],
+    "requiredImprovements": [
+      "Use explicit scopes for student-agency and real-estate access instead of the current real-estate-only scope label.",
+      "Add request correlation IDs propagated from browser to runtime, Business Manager and workers.",
+      "Use typed/generated API contracts or a shared schema package without sharing persistence models.",
+      "Define retry behavior only for safe reads and idempotent writes."
+    ]
+  },
+  "asynchronousWorkflows": {
+    "inspectionBooking": {
+      "queues": [
+        "bm_property_report_jobs",
+        "bm_inspection_confirmation_deliveries"
+      ],
+      "workers": [
+        "bm.propertyReportWorker.service.js",
+        "bm.inspectionEmailWorker.service.js",
+        "bm.inspectionWorkflow.service.js"
+      ],
+      "deliveryProviders": [
+        "AWS SES v2",
+        "SMTP through Nodemailer",
+        "log mode for preview only"
+      ]
+    },
+    "studentConsultation": {
+      "queue": "bm_student_consultation_deliveries",
+      "worker": "bm.studentConsultationWorker.service.js",
+      "pollIntervalMs": 15000,
+      "deliveryProviders": [
+        "AWS SES v2",
+        "SMTP through Nodemailer",
+        "log mode for preview only"
+      ]
+    },
+    "queueStandard": [
+      "Persist status, attempt count, next attempt, lease owner, lease expiry, sent time and last error.",
+      "Workers claim atomically and recover expired leases.",
+      "API success means accepted/queued unless provider delivery is synchronously confirmed.",
+      "Never use the AI Toolkit daily cron for booking confirmations.",
+      "Expose delivery state to operations and support safe manual retry."
+    ]
+  },
+  "security": {
+    "currentControls": [
+      "Provider API keys remain in backend environment configuration.",
+      "OpenAI uses short-lived Realtime client secrets.",
+      "Tavus conversations require auth and return meeting tokens.",
+      "Business Manager integration uses a constant-time bearer-token comparison.",
+      "CORS allowlists are environment-configured.",
+      "HTTP DTOs and tool inputs are validated.",
+      "Database access uses parameterized queries for runtime values."
+    ],
+    "mandatoryRules": [
+      "Authenticate and authorize session creation; never trust plan or provider selection from the browser.",
+      "Bind sessionId to customerId, deviceId and experienceId.",
+      "Rate-limit session creation and tool execution by tenant and device.",
+      "Redact provider tokens, email addresses and conversation content from routine logs.",
+      "Encrypt secret references and personal data according to retention policy.",
+      "Use least-privilege service credentials and rotate them.",
+      "Validate provider webhook/app-message identity and deduplicate provider call IDs.",
+      "Apply an allowlist of official domains for regulated student-information research."
+    ]
+  },
+  "observability": {
+    "requiredIdentifiers": [
+      "correlationId",
+      "sessionId",
+      "customerId",
+      "experienceId",
+      "provider adapter ID and version",
+      "provider session ID in protected logs",
+      "toolCallId",
+      "bookingId",
+      "queue job/delivery ID"
+    ],
+    "requiredMetrics": [
+      "session creation latency by stage and provider",
+      "time to microphone-ready",
+      "time to first assistant audio/video",
+      "turn latency",
+      "tool latency and failure rate",
+      "provider connection failure rate",
+      "interrupt success rate",
+      "duplicate-response rate",
+      "avatar audio/video drift",
+      "booking conversion and confirmation failures",
+      "email/report queue age, retries and failures",
+      "provider minutes, tokens and cost by tenant/experience"
+    ],
+    "currentGaps": [
+      "tool_calls records only successful executions",
+      "tool timing begins at database insertion after execution, so it cannot measure true tool latency",
+      "events table is not consistently populated",
+      "provider setup and conversation creation are combined in the Premium startup path",
+      "no normalized per-provider usage ledger is present"
+    ]
+  },
+  "performanceStandard": {
+    "sessionStartup": [
+      "Warm and health-check providers before customer interaction.",
+      "Synchronize remote tool schemas during deployment or a controlled background task.",
+      "Run independent session and media setup concurrently only when lifecycle cleanup is deterministic.",
+      "Record stage timings separately: runtime, provider, transport join, microphone, remote media and first response."
+    ],
+    "turnHandling": [
+      "Select one domain and the minimum tool set per turn.",
+      "Avoid model-generated filler that can create duplicate speech or hide failures.",
+      "Stream speech when the provider supports it.",
+      "Cache only source content with explicit freshness and jurisdiction metadata.",
+      "Do not add UI loading messages that trigger extra model or network calls."
+    ],
+    "resilience": [
+      "Every external call has a timeout.",
+      "Cancellation closes partially created provider sessions.",
+      "Fallbacks must preserve the requested domain and must never silently substitute unverified information.",
+      "Circuit breakers and provider health must influence provider resolution where a configured fallback exists."
+    ]
+  },
+  "targetSessionFlow": [
+    "Angular requests POST /sessions with experienceId and device context.",
+    "Runtime authenticates the caller and loads the customer-owned ExperienceProfile.",
+    "CapabilityResolver builds a provider-neutral SessionPlan.",
+    "Provider registries resolve adapters for the plan without vendor branching in ConversationService.",
+    "Runtime creates provider sessions, records the resolved capability snapshot and returns a normalized TransportDescriptor.",
+    "Angular TransportAdapterRegistry connects the required media transports.",
+    "DomainRouter selects a domain and enables only the relevant tool group.",
+    "All tool calls enter the same server-side ToolExecutionPipeline for validation, authorization, idempotency, audit and output normalization.",
+    "Mutation tools require a durable reviewed payload and explicit confirmation token.",
+    "Session close is idempotent and closes every allocated provider resource."
+  ],
+  "normalizedContracts": {
+    "createSessionRequest": {
+      "required": [
+        "experienceId",
+        "deviceId"
+      ],
+      "optional": [
+        "storeId",
+        "locale",
+        "browserCapabilities"
+      ],
+      "forbiddenPublicFields": [
+        "providerId",
+        "providerApiKey",
+        "modelName",
+        "personaId",
+        "replicaId"
+      ]
+    },
+    "sessionDescriptor": {
+      "fields": [
+        "sessionId",
+        "experienceId",
+        "status",
+        "capabilities",
+        "transports",
+        "ephemeralCredentials",
+        "expiresAt",
+        "uiHints"
+      ],
+      "rule": "Vendor payloads are translated inside adapters and do not leak into the domain contract."
+    },
+    "toolResult": {
+      "fields": [
+        "toolCallId",
+        "toolName",
+        "status",
+        "domain",
+        "data",
+        "display",
+        "spokenSummary",
+        "sources",
+        "error"
+      ],
+      "rule": "Display data and spoken content are explicit fields; the frontend does not scrape markdown or infer domain from prose."
+    }
+  },
+  "developmentRules": {
+    "providerIndependence": [
+      "Depend on interfaces and capability types, never concrete provider classes outside composition roots.",
+      "Register adapters through dependency injection.",
+      "Keep provider SDK types inside adapters.",
+      "Use stable internal aliases for models and voices.",
+      "Write provider contract tests that every adapter must pass.",
+      "A new provider is complete only when it can be enabled through configuration without editing domain flows."
+    ],
+    "domainDesign": [
+      "Keep real estate and student migration as separate bounded contexts.",
+      "Share orchestration primitives, not domain data or fallback answers.",
+      "Use explicit application services for search, review, confirm, book and delivery status.",
+      "Prompts guide conversational behavior; code and persisted state enforce authorization and workflow order."
+    ],
+    "apiAndData": [
+      "Version public and provider callback contracts.",
+      "Use schema migrations for durable data changes; startup guards may verify but must not become the primary migration system.",
+      "All mutations require idempotency and an audit trail.",
+      "Do not return success before the database transaction commits.",
+      "Represent asynchronous delivery accurately as queued, processing, sent or failed."
+    ],
+    "testing": [
+      "Unit-test domain services without provider SDKs.",
+      "Run one shared contract suite for every conversation, avatar, research and tool-transport adapter.",
+      "Integration-test Runtime to Business Manager against a disposable PostgreSQL database.",
+      "End-to-end test Essential, Professional and Premium for both business domains.",
+      "Include multilingual, interruption, duplicate-answer, tool-timeout and session-cleanup scenarios.",
+      "Use provider sandboxes or recorded contract fixtures in CI; reserve metered live smoke tests for releases."
+    ],
+    "releaseGates": [
+      "Database migrations applied and backward-compatible for the deployment window.",
+      "Provider adapter contract tests pass.",
+      "Both domain booking flows pass through review, explicit confirmation and email queueing.",
+      "No provider secret appears in frontend artifacts or logs.",
+      "Startup and turn latency remain within the agreed service-level objectives.",
+      "Rollback commit or immutable previous deployment is identified before release.",
+      "Production smoke sessions are closed and test bookings are clearly labelled."
+    ]
+  },
+  "currentTechnicalDebt": [
+    {
+      "priority": "critical",
+      "item": "Provider selection is partially hardcoded.",
+      "evidence": [
+        "RuntimeConfig.aiProvider is typed and assigned only as openai-realtime.",
+        "ProvidersModule binds AI_PROVIDER directly to OpenAIRealtimeProvider.",
+        "ConversationService branches directly for tavus-full.",
+        "CreateSessionDto enumerates provider vendor names.",
+        "Angular experienceConfiguration maps plans directly to vendor names."
+      ],
+      "target": "ExperienceProfile plus capability resolver and provider registries."
+    },
+    {
+      "priority": "critical",
+      "item": "Booking review authorization is held in in-memory maps and frontend flags.",
+      "impact": "It is vulnerable to process restarts, horizontal scaling and event-order problems.",
+      "target": "Durable review record or signed review token enforced by the server."
+    },
+    {
+      "priority": "high",
+      "item": "Premium provider tool synchronization runs during the first session of a process.",
+      "impact": "Cold starts can add substantial latency.",
+      "target": "Deployment-time tool provisioning with version/hash checks."
+    },
+    {
+      "priority": "high",
+      "item": "The runtime database ai_configs table is not used to resolve sessions.",
+      "target": "Replace or evolve it into active ExperienceProfile configuration."
+    },
+    {
+      "priority": "high",
+      "item": "Provider entitlements can be requested from the browser.",
+      "target": "Resolve allowed experiences server-side from authenticated tenant/plan data."
+    },
+    {
+      "priority": "high",
+      "item": "Tool failures are not recorded by ToolRegistryService.",
+      "target": "Insert pending before execution and update succeeded/failed in a finally-safe pipeline."
+    },
+    {
+      "priority": "medium",
+      "item": "The Angular kiosk component owns substantial provider and domain orchestration.",
+      "target": "Split session facade, transport registry, domain view stores and booking workflow services."
+    },
+    {
+      "priority": "medium",
+      "item": "Demo device and store identifiers are hardcoded in Angular.",
+      "target": "Provisioned device configuration or authenticated runtime bootstrap."
+    },
+    {
+      "priority": "medium",
+      "item": "Express startup code applies schema guards in production.",
+      "target": "A single ordered migration pipeline with recorded migration versions."
+    },
+    {
+      "priority": "medium",
+      "item": "Runtime and Business Manager may share one Neon project even though they have separate ownership.",
+      "target": "Keep separate schemas at minimum and prefer separate database projects where operationally justified."
+    }
+  ],
+  "implementationRoadmap": [
+    {
+      "phase": 1,
+      "name": "Stabilize contracts and observability",
+      "deliverables": [
+        "Introduce experienceId while maintaining temporary compatibility with current provider fields.",
+        "Define normalized SessionDescriptor, ToolResult and provider capability contracts.",
+        "Record pending, failed and succeeded tool calls with accurate timings.",
+        "Add correlation IDs and startup/turn metrics.",
+        "Persist booking-review authorization."
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Complete the backend provider abstraction",
+      "deliverables": [
+        "Create ConversationProviderRegistry, ResearchProviderRegistry and capability resolver.",
+        "Adapt OpenAI Realtime and Tavus Full to the same session orchestration port.",
+        "Move all vendor branches out of ConversationService.",
+        "Resolve ExperienceProfiles from server-side configuration.",
+        "Add provider contract tests."
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Normalize browser transports",
+      "deliverables": [
+        "Create TransportAdapterRegistry in Angular.",
+        "Move OpenAI, Daily/Tavus, LiveAvatar and Simli branches out of the kiosk component.",
+        "Split domain view state into student and real-estate stores.",
+        "Remove vendor IDs from public experience types."
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Operationalize providers and queues",
+      "deliverables": [
+        "Provision remote provider tools during deployment.",
+        "Add provider readiness checks and configured fallback policies.",
+        "Add queue dashboards, alerts and manual retry controls.",
+        "Add provider usage and cost ledger."
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Enforce full release standards",
+      "deliverables": [
+        "End-to-end matrix for every plan, language and business domain.",
+        "Latency budgets and regression alerts.",
+        "Automated secret scanning and frontend artifact checks.",
+        "Documented rollback and provider outage runbooks."
+      ]
+    }
+  ],
+  "definitionOfDoneForNewProvider": [
+    "Provider manifest declares capabilities and configuration schema.",
+    "Adapter implements the required port without changing domain services.",
+    "Credentials are server-side and returned credentials are short-lived.",
+    "Adapter passes the shared contract suite.",
+    "Session close and partial-start cleanup are idempotent.",
+    "Tool delivery is deduplicated and correlated.",
+    "Startup, turn, error and usage metrics are emitted.",
+    "The provider is enabled by an ExperienceProfile configuration change.",
+    "Angular uses an existing normalized transport adapter or adds one without changing the kiosk domain logic.",
+    "Both real-estate and student-agency tool suites pass where the provider claims tool support.",
+    "Multilingual speech and interruption are explicitly tested if advertised.",
+    "Operational and rollback instructions are documented."
+  ],
+  "sourceFiles": {
+    "runtime": [
+      "backend/sophia-runtime/src/main.ts",
+      "backend/sophia-runtime/src/app.module.ts",
+      "backend/sophia-runtime/src/config/runtime-config.ts",
+      "backend/sophia-runtime/src/conversation/conversation.service.ts",
+      "backend/sophia-runtime/src/providers",
+      "backend/sophia-runtime/src/tools",
+      "backend/sophia-runtime/src/database/migrations",
+      "backend/sophia-runtime/README.md"
+    ],
+    "businessApi": [
+      "backend/src/app.js",
+      "backend/src/server.js",
+      "backend/src/routes/bm.realEstate.routes.js",
+      "backend/src/routes/bm.studentAgency.routes.js",
+      "backend/src/middlewares/bmIntegrationAuth.js",
+      "backend/src/models",
+      "backend/src/services",
+      "backend/src/config/startupMigrations.js",
+      "backend/src/config/studentConsultationSchema.js"
+    ],
+    "frontend": [
+      "frontend/src/app/sophia-runtime/kiosk/sophia-kiosk.page.ts",
+      "frontend/src/app/sophia-runtime/services",
+      "frontend/src/app/sophia-runtime/student",
+      "frontend/src/app/sophia-runtime/types/sophia-runtime.types.ts",
+      "frontend/src/environments/environment.ts",
+      "frontend/package.json"
+    ],
+    "workers": [
+      "backend/cron/weeklyGenerator.js",
+      "backend/cron/aiToolkitEmailCron.js",
+      "backend/src/services/bm.inspectionWorkflow.service.js",
+      "backend/src/services/bm.studentConsultationWorker.service.js"
+    ]
+  }
+}

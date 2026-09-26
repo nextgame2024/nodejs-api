@@ -53,13 +53,14 @@ describe("inspection booking report enqueue", () => {
 
     const result = await model.createInspectionBooking("company", {
       idempotencyKey: "sale-booking",
-    }, { reportVersion: "report-v1" });
+    }, { reportVersion: "report-v1", workflowVersionId: "60000000-0000-4000-8000-000000000001" });
 
     expect(enqueueSaleReportDelivery).toHaveBeenCalledWith(
       expect.objectContaining({ query }),
       expect.objectContaining({
         bookingId: existingBooking.bookingId,
         reportVersion: "report-v1",
+        workflowVersionId: "60000000-0000-4000-8000-000000000001",
       }),
     );
     expect(result.reportDelivery).toEqual({

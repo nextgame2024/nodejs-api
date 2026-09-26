@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-09-22T22:20:00+10:00",
+  "policy": {
+    "liveProviders": "forbidden_in_p0",
+    "emails": "forbidden_in_p0",
+    "paymentsAndSubscriptions": "forbidden_in_p0",
+    "productionDatabaseAndMigrations": "forbidden_in_p0"
+  },
+  "repositories": [
+    {
+      "name": "backend-business-manager",
+      "path": "backend",
+      "branchAtAudit": "master",
+      "headAtAudit": "e2e6ebd9916",
+      "requiredNode": "22.23.2",
+      "observedShell": { "node": "20.15.0", "npm": "10.7.0" },
+      "commands": [
+        { "command": "npm run test:p0:boundaries", "purpose": "Check only future v2 source roots for provider/domain boundary violations", "sideEffects": "none", "p0Run": true },
+        { "command": "npm run test:p0:real-estate", "purpose": "Deterministic mocked real-estate characterization", "sideEffects": "none; providers and email mocked", "p0Run": true },
+        { "command": "npm run test:release", "purpose": "Existing Business Manager regression suite", "sideEffects": "configured test email provider is log/mocked; SQL-gated suites remain skipped", "p0Run": true },
+        { "command": "npm run test:release:sql", "purpose": "SQL integration tests", "sideEffects": "writes to configured database", "p0Run": false, "gate": "disposable PostgreSQL only; never production" }
+      ]
+    },
+    {
+      "name": "backend-sophia-runtime",
+      "path": "backend/sophia-runtime",
+      "branchAtAudit": "inherits backend repository",
+      "requiredNode": ">=22 <23",
+      "dockerNode": "22-bookworm",
+      "localRuntimeSelection": "eval \"$(fnm env --shell zsh)\"; fnm use 22.23.2",
+      "commands": [
+        { "command": "npm test -- --runInBand", "purpose": "Nest unit tests with mocked integrations", "sideEffects": "none when dummy DB URL and test mocks are used", "p0Run": true },
+        { "command": "npm run build", "purpose": "Compile Nest runtime", "sideEffects": "writes local dist output", "p0Run": true },
+        { "command": "npm run migrate", "purpose": "Apply runtime schema migrations", "sideEffects": "writes configured database", "p0Run": false, "gate": "disposable database and explicit later-phase approval" }
+      ]
+    },
+    {
+      "name": "frontend",
+      "path": "frontend",
+      "branchAtAudit": "main",
+      "headAtAudit": "3bbfacd7",
+      "framework": "Angular 21.2.2 / TypeScript 5.9.x",
+      "packageNodeConstraint": "not_declared",
+      "commands": [
+        { "command": "npx tsc -p tsconfig.app.json --noEmit", "purpose": "Static application type check", "sideEffects": "none", "p0Run": true },
+        { "command": "npm run test:sophia", "purpose": "Sophia Angular unit tests", "sideEffects": "local headless browser only", "p0Run": true },
+        { "command": "npm run build", "purpose": "Production Angular compilation", "sideEffects": "writes local dist and generated runtime config", "p0Run": false }
+      ]
+    }
+  ],
+  "configurationNames": {
+    "database": ["DATABASE_URL", "SOPHIA_RUNTIME_DATABASE_URL", "INSPECTION_SQL_TEST_DATABASE"],
+    "identityAndIntegration": ["JWT_SECRET", "BUSINESS_MANAGER_BASE_URL", "BUSINESS_MANAGER_API_TOKEN", "BUSINESS_MANAGER_COMPANY_ID"],
+    "reasoningRealtimeAvatar": ["AI_PROVIDER", "OPENAI_API_KEY", "OPENAI_REALTIME_MODEL", "TAVUS_API_KEY", "TAVUS_REPLICA_ID", "TAVUS_PERSONA_ID", "LIVEAVATAR_API_KEY", "SIMLI_API_KEY"],
+    "emailAndStorage": ["EMAIL_PROVIDER", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "SES_FROM_EMAIL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "S3_BUCKET"],
+    "payments": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]
+  },
+  "notes": [
+    "Names are recorded without values.",
+    "Availability of a name does not prove valid credentials or production readiness.",
+    "No live provider configuration was invoked during P0 or P1.",
+    "P1 applied runtime migrations 004/005 and the additive Business Manager email-command table after local tests."
+  ]
+}

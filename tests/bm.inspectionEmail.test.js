@@ -14,7 +14,7 @@ describe("inspection confirmation email", () => {
     process.env.EMAIL_PROVIDER = "log";
     const log = jest.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await sendInspectionConfirmationEmail({
+    const result = await sendInspectionConfirmationEmail({
       bookingId: "30000000-0000-4000-8000-000000000001",
       customerName: "Jordan Lee",
       customerEmail: "jordan@example.com",
@@ -34,6 +34,7 @@ describe("inspection confirmation email", () => {
       "[inspection-email][LOG] Time:",
       "Wed, 9 Sept, 10:30 am",
     );
+    expect(result).toEqual({ state: "preview", provider: "log" });
   });
 
   it("reports the attached PDF in log-provider mode", async () => {

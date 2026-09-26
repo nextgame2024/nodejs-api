@@ -58,7 +58,7 @@ export class OpenAIRealtimeProvider implements AIProvider {
           session: {
             type: "realtime",
             model: request.model,
-            instructions: sophiaConversationInstructions(),
+            instructions: request.instructions ?? sophiaConversationInstructions(),
             output_modalities: [request.outputModality],
             audio: {
               input: {

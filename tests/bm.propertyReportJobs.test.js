@@ -26,9 +26,14 @@ describe("property report job persistence", () => {
       ...property,
       propertyUpdatedAt: "2026-09-13T00:00:00.000Z",
     }, "report-v1");
+    const anotherTenant = buildPropertyReportDescriptor({
+      ...property,
+      companyId: "10000000-0000-4000-8000-000000000099",
+    }, "report-v1");
 
     expect(first.cacheKey).toBe(same.cacheKey);
     expect(updated.cacheKey).not.toBe(first.cacheKey);
+    expect(anotherTenant.cacheKey).not.toBe(first.cacheKey);
     expect(first.reportInputs).toEqual(expect.objectContaining({
       addressLabel: "12 Smith Street, West End, Brisbane, QLD, 4101",
       lat: -27.4815,
@@ -46,6 +51,7 @@ describe("property report job persistence", () => {
       .mockResolvedValueOnce({ rows: [{
         delivery_id: "40000000-0000-4000-8000-000000000001",
         status: "email_queued",
+        workflow_version_id: "60000000-0000-4000-8000-000000000001",
       }] });
 
     const result = await enqueueSaleReportDelivery({ query }, {
@@ -53,14 +59,17 @@ describe("property report job persistence", () => {
       bookingId: "50000000-0000-4000-8000-000000000001",
       property,
       reportVersion: "report-v1",
+      workflowVersionId: "60000000-0000-4000-8000-000000000001",
     });
 
     expect(query.mock.calls[0][0]).toContain("ON CONFLICT (cache_key)");
     expect(query.mock.calls[1][0]).toContain("ON CONFLICT (booking_id)");
     expect(query.mock.calls[1][1][3]).toBe("email_queued");
+    expect(query.mock.calls[1][1][5]).toBe("60000000-0000-4000-8000-000000000001");
     expect(result).toEqual(expect.objectContaining({
       reportStatus: "ready",
       deliveryStatus: "email_queued",
+      workflowVersionId: "60000000-0000-4000-8000-000000000001",
     }));
   });
 });

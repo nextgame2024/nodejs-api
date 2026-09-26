@@ -1,13 +1,13 @@
 import {jest} from '@jest/globals';
 import {createStudentConsultationTools} from './student-consultation.tools.js';
 import {ToolRegistry} from '../tool-registry.js';
-import type {BusinessManagerClient} from '../real-estate/business-manager.client.js';
+import type {StudentBusinessManagerClient} from './student-business-manager.client.js';
 const details={slotId:'30000000-0000-4000-8000-000000000001',confirmedStartsAt:'2026-10-01T00:00:00Z',customerName:'Test Customer',customerEmail:'test@example.com'};
 function setup(){
- const book=jest.fn<BusinessManagerClient['bookStudentConsultation']>().mockResolvedValue({consultationBooking:{}});
- const review=jest.fn<BusinessManagerClient['reviewStudentConsultation']>().mockResolvedValue({consultationReview:{...details}});
+ const book=jest.fn<StudentBusinessManagerClient['bookStudentConsultation']>().mockResolvedValue({consultationBooking:{}});
+ const review=jest.fn<StudentBusinessManagerClient['reviewStudentConsultation']>().mockResolvedValue({consultationReview:{...details}});
  const state:{clear?:(id?:string)=>void}={};const registry=new ToolRegistry();
- for(const tool of createStudentConsultationTools({bookStudentConsultation:book,reviewStudentConsultation:review} as unknown as BusinessManagerClient,state))registry.register(tool);
+ for(const tool of createStudentConsultationTools({bookStudentConsultation:book,reviewStudentConsultation:review} as unknown as StudentBusinessManagerClient,state))registry.register(tool);
  const run=(name:string,input:unknown,sessionId='session')=>registry.execute(name,input,{customerId:'demo',sessionId});
  return {book,run,state};
 }
