@@ -4,7 +4,8 @@ import type { BillingProvider, BillingProviderStatus } from "./billing-provider.
 @Injectable()
 export class DisabledBillingProvider implements BillingProvider {
   status(): BillingProviderStatus {
-    return { availability: "disabled", providerKey: null, checkout: false, portal: false, signedWebhooks: false,
+    return { availability: "disabled", providerKey: null, providerAccountKey: null,
+      checkout: false, portal: false, signedWebhooks: false,
       reconciliation: false, missingConfiguration: ["provider"],
       detail: "No Sophia billing provider, approved commercial plan or sandbox lifecycle is configured." };
   }

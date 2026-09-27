@@ -106,6 +106,7 @@ export type RuntimeConfig = {
   };
   billing: {
     provider: "disabled" | "stripe_sandbox" | "stripe_live";
+    providerAccountKey: string;
     liveCheckoutEnabled: boolean;
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
@@ -300,6 +301,10 @@ function billingConfig(): RuntimeConfig["billing"] {
     throw new Error("SOPHIA_BILLING_PROVIDER must be disabled, stripe_sandbox, or stripe_live.");
   }
   const provider = (requestedProvider || "disabled") as RuntimeConfig["billing"]["provider"];
+  const providerAccountKey = emptyToUndefined(process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY) || "legacy-primary";
+  if (!/^[a-z][a-z0-9-]{1,79}$/.test(providerAccountKey)) {
+    throw new Error("SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY must be a stable lowercase account key.");
+  }
   const liveCheckoutEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED, false);
   const stripeSecretKey = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY);
   if (stripeSecretKey && !/^sk_(?:test|live)_/.test(stripeSecretKey)) {
@@ -324,6 +329,7 @@ function billingConfig(): RuntimeConfig["billing"] {
   }
   return {
     provider,
+    providerAccountKey,
     liveCheckoutEnabled,
     stripeSecretKey,
     stripeWebhookSecret,

@@ -72,12 +72,73 @@ describe("UsageBillingService", () => {
     expect(result.preview).toMatchObject({
       status: "preview_only", chargeExecution: false, currency: "AUD", interval: "month",
       period: { boundary: "calendar_utc" }, evidenceStatus: "measured", baseChargeMinor: "100",
-      subtotalMinor: "102", taxMinor: "11", totalMinor: "113",
-      lineItems: [{ dimension: "reasoning-input-tokens", quantity: "10.5", overageQuantity: "0.5", amountMinor: "2" }],
+      subtotalMinor: "103", taxMinor: "11", totalMinor: "114",
+      lineItems: [{ dimension: "reasoning-input-tokens", quantity: "10.5", overageQuantity: "0.5",
+        billableOverageQuantity: "1", billingUnitQuantity: "1", amountMinor: "3" }],
     });
     expect(result.subscriptions).toEqual([{ external_subscription_ref: "opaque-sub-ref" }]);
     expect(result.invoices).toEqual([{ external_invoice_ref: "opaque-invoice-ref" }]);
     expect(JSON.stringify(result)).not.toMatch(/checkoutSession|paymentIntent|cardLastFour/i);
+  });
+
+  it("aggregates active seconds across the period before applying included usage and rounding once", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("tenant_commercial_assignments")) return { rows: [{
+        commercial_assignment_id: "assignment-1", assignment_status: "active",
+        effective_from: "2020-01-01T00:00:00.000Z", effective_to: null,
+        commercial_plan_version_id: "plan-1", plan_key: "sophia-live", version: 1, display_name: "Sophia Live",
+        plan_status: "published", pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "175000", tax_mode: "not_applicable", tax_rate_basis_points: null,
+        overage_rounding: "ceil", rate_card: { dimensions: [{
+          dimension: "active-seconds", includedQuantity: "120000", unitQuantity: "60", unitPriceMinor: "50",
+        }] }, entitlements: { includedActiveMinutes: 2000 }, manifest_digest: "b".repeat(64),
+      }] };
+      if (sql.includes("provider_usage_events")) return { rows: [
+        { dimension: "active-seconds", measurement_status: "measured", quantity: "119999" },
+        { dimension: "active-seconds", measurement_status: "measured", quantity: "62" },
+      ] };
+      if (sql.includes("billing_subscription_references") || sql.includes("billing_invoice_references")
+        || sql.includes("billing_provider_customers") || sql.includes("billing_webhook_events")
+        || sql.includes("billing_checkout_intents")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await service(query).commercial(tenantId);
+
+    expect(result.preview).toMatchObject({
+      subtotalMinor: "175100", taxMinor: "0", totalMinor: "175100",
+      lineItems: [{ dimension: "active-seconds", quantity: "120061", includedQuantity: "120000",
+        overageQuantity: "61", billingUnitQuantity: "60", billableOverageQuantity: "2", amountMinor: "100" }],
+    });
+  });
+
+  it("does not calculate GST when the effective seller policy is not GST registered", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("tenant_commercial_assignments")) return { rows: [{
+        commercial_assignment_id: "assignment-1", assignment_status: "active",
+        effective_from: "2020-01-01T00:00:00.000Z", effective_to: null,
+        commercial_plan_version_id: "plan-1", plan_key: "sophia-voice", version: 1, display_name: "Sophia Voice",
+        plan_status: "published", pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "75000", tax_mode: "exclusive", tax_rate_basis_points: 1000,
+        overage_rounding: "ceil", rate_card: { dimensions: [] }, entitlements: {}, manifest_digest: "c".repeat(64),
+        seller_legal_entity_id: "seller-1", tax_category: "standard_rate",
+        seller_commercial_policy_version_id: "policy-1", seller_legal_entity_version_id: "legal-1",
+        customer_scope: "business_only", gst_registered: false, tax_calculation_mode: "none",
+        policy_tax_rate_basis_points: null, price_display_mode: "no_tax", tax_label: null,
+      }] };
+      if (sql.includes("provider_usage_events") || sql.includes("billing_subscription_references")
+        || sql.includes("billing_invoice_references") || sql.includes("billing_provider_customers")
+        || sql.includes("billing_webhook_events") || sql.includes("billing_checkout_intents")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await service(query).commercial(tenantId);
+
+    expect(result.assignment).toMatchObject({ taxMode: "not_applicable", taxCategory: "standard_rate",
+      commercialPolicy: { customerScope: "business_only", gstRegistered: false,
+        taxCalculationMode: "none", priceDisplayMode: "no_tax", taxLabel: null } });
+    expect(result.preview).toMatchObject({ subtotalMinor: "75000", taxMinor: "0", totalMinor: "75000",
+      taxMode: "not_applicable" });
   });
 
   it("keeps every provider mutation disabled", async () => {

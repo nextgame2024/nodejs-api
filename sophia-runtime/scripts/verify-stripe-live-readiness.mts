@@ -57,7 +57,8 @@ async function main() {
     const rawBody = Buffer.from(JSON.stringify({ id: `evt_readiness_${randomUUID()}`,
       type: "customer.subscription.updated", created: Math.floor(Date.now() / 1000), livemode: true,
       data: { object: { id: "sub_readiness_no_provider_call", customer: "cus_readiness_no_provider_call",
-        status: "active", metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live" } } } }));
+        status: "active", metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live",
+          sophiaProviderAccountKey: config.billing.providerAccountKey } } } }));
     const signature = Stripe.webhooks.generateTestHeaderString({ payload: rawBody,
       secret: config.billing.stripeWebhookSecret, timestamp: Math.floor(Date.now() / 1000) });
     const signingEvidence = await provider.verifyWebhook({ "stripe-signature": signature }, rawBody);
@@ -75,8 +76,8 @@ async function main() {
       const customerRef = await database.tenantReadTransaction(tenantId, async (client) => {
         const customer = await client.query<{ external_customer_ref: string }>(
           `SELECT external_customer_ref FROM ${config.schema}.billing_provider_customers
-           WHERE customer_id=$1 AND provider_key=$2 AND provider_environment='live'`,
-          [tenantId, STRIPE_BILLING_PROVIDER_KEY]);
+           WHERE customer_id=$1 AND provider_key=$2 AND provider_environment='live' AND provider_account_key=$3`,
+          [tenantId, STRIPE_BILLING_PROVIDER_KEY, config.billing.providerAccountKey]);
         return customer.rows[0]?.external_customer_ref ?? null;
       });
       if (!customerRef) {
@@ -95,10 +96,11 @@ async function main() {
           `SELECT processing_status,occurred_at,processed_at
            FROM ${config.schema}.billing_webhook_events
            WHERE customer_id=$1 AND provider_key=$2 AND provider_environment='live'
+             AND provider_account_key=$3
              AND event_type='customer.updated' AND occurred_at>=now()-interval '24 hours'
              AND processing_status IN ('processed','ignored')
            ORDER BY occurred_at DESC LIMIT 1`,
-          [tenantId, STRIPE_BILLING_PROVIDER_KEY]));
+          [tenantId, STRIPE_BILLING_PROVIDER_KEY, config.billing.providerAccountKey]));
         const evidence = delivery.rows[0];
         if (!evidence) {
           deployedDelivery = { verified: false,

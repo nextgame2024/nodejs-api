@@ -3,6 +3,7 @@ export const BILLING_PROVIDER = Symbol("BILLING_PROVIDER");
 export type BillingProviderStatus = {
   availability: "disabled" | "sandbox" | "live";
   providerKey: string | null;
+  providerAccountKey: string | null;
   checkout: boolean;
   portal: boolean;
   signedWebhooks: boolean;
@@ -13,6 +14,7 @@ export type BillingProviderStatus = {
 
 export type BillingWebhookEvidence = {
   providerKey: string;
+  providerAccountKey: string;
   environment: "sandbox" | "live";
   eventId: string;
   eventType: string;

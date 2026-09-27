@@ -24,8 +24,9 @@ describe("StripeBillingProvider", () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ mode: "subscription", client_reference_id: tenantId,
       line_items: [{ price: "price_sophiaSandbox123", quantity: 1 }],
       metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "sandbox",
+        sophiaProviderAccountKey: "legacy-primary",
         sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId } }),
-    { idempotencyKey: `sophia:sandbox:checkout:${tenantId}:${planVersionId}:${requestId}` });
+    { idempotencyKey: `sophia:sandbox:legacy-primary:checkout:${tenantId}:${planVersionId}:${requestId}` });
     expect(JSON.stringify(create.mock.calls[0])).not.toMatch(/card|payment_method/i);
   });
 
@@ -71,7 +72,8 @@ describe("StripeBillingProvider", () => {
     const secret = "whsec_sophia_live_secret";
     const body = JSON.stringify({ id: "evt_customer_updated_1", type: "customer.updated", created: 2_000_000_000,
       livemode: true, data: { object: { id: "cus_liveSophia123", metadata: {
-        sophiaNamespace: "subscription-v1", sophiaEnvironment: "live", sophiaTenantId: tenantId,
+        sophiaNamespace: "subscription-v1", sophiaEnvironment: "live",
+        sophiaProviderAccountKey: "legacy-primary", sophiaTenantId: tenantId,
       } } } });
     const signature = Stripe.webhooks.generateTestHeaderString({ payload: body, secret, timestamp: Math.floor(Date.now() / 1000) });
     const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
@@ -82,7 +84,8 @@ describe("StripeBillingProvider", () => {
 
   it("verifies an existing live Customer has exact Sophia tenant metadata before binding", async () => {
     const customersRetrieve = jest.fn(async () => ({ id: "cus_liveSophia123", livemode: true,
-      metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live", sophiaTenantId: tenantId } }));
+      metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live",
+        sophiaProviderAccountKey: "legacy-primary", sophiaTenantId: tenantId } }));
     const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
       stripeSecretKey: "sk_live_sophia" }, client({ liveMode: true, customersRetrieve }));
     await expect(provider.verifyCustomerBinding({ tenantId, customerRef: "cus_liveSophia123" }))
@@ -102,7 +105,8 @@ describe("StripeBillingProvider", () => {
 });
 
 function config(): RuntimeConfig["billing"] {
-  return { provider: "stripe_sandbox", liveCheckoutEnabled: false, stripeSecretKey: "sk_test_sophia",
+  return { provider: "stripe_sandbox", providerAccountKey: "legacy-primary",
+    liveCheckoutEnabled: false, stripeSecretKey: "sk_test_sophia",
     stripeWebhookSecret: "whsec_sophia", checkoutSuccessUrl: "https://example.test/success",
     stripePortalConfigurationId: "bpc_sophiaSandbox123",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",

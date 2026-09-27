@@ -4,6 +4,7 @@ import { runtimeConfig } from "./runtime-config.js";
 const billingKeys = [
   "SOPHIA_RUNTIME_DATABASE_URL",
   "SOPHIA_BILLING_PROVIDER",
+  "SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY",
   "SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED",
   "SOPHIA_BILLING_STRIPE_SECRET_KEY",
 ] as const;
@@ -42,5 +43,10 @@ describe("runtime billing configuration", () => {
     process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
     process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED = "true";
     expect(() => runtimeConfig()).toThrow("may only be enabled with stripe_live");
+  });
+
+  it("requires a stable lowercase provider account key", () => {
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "Stripe Account";
+    expect(() => runtimeConfig()).toThrow("stable lowercase account key");
   });
 });

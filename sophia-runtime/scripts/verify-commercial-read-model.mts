@@ -36,12 +36,12 @@ try {
     VALUES ($1,$2,'probe-provider','probe-v1','measured','{"reasoning-input-tokens":10.5}'::jsonb,
       1500,'AUD','provider-probe-v1',repeat('b',64),now())`, [tenantId, `commercial-${randomUUID()}`]);
   await client.query(`INSERT INTO ${schema}.billing_subscription_references
-    (customer_id, provider_key, external_subscription_ref, status, current_period_start, current_period_end, observed_at)
-    VALUES ($1,'probe-billing','opaque-subscription-reference','active',date_trunc('month',now()),
+    (customer_id, provider_key, provider_environment, provider_account_key, external_subscription_ref, status, current_period_start, current_period_end, observed_at)
+    VALUES ($1,'probe-billing','sandbox','legacy-primary','opaque-subscription-reference','active',date_trunc('month',now()),
       date_trunc('month',now())+interval '1 month',now())`, [tenantId]);
   await client.query(`INSERT INTO ${schema}.billing_invoice_references
-    (customer_id, provider_key, external_invoice_ref, status, currency, amount_due_minor, amount_paid_minor, observed_at)
-    VALUES ($1,'probe-billing','opaque-invoice-reference','open','AUD',113,0,now())`, [tenantId]);
+    (customer_id, provider_key, provider_environment, provider_account_key, external_invoice_ref, status, currency, amount_due_minor, amount_paid_minor, observed_at)
+    VALUES ($1,'probe-billing','sandbox','legacy-primary','opaque-invoice-reference','open','AUD',114,0,now())`, [tenantId]);
 
   await client.query("SET ROLE sophia_runtime_app");
   const database = {
@@ -71,8 +71,8 @@ try {
     `SELECT table_name, privilege_type FROM information_schema.role_table_grants
      WHERE grantee='sophia_runtime_app' AND table_schema=$1
        AND table_name=ANY($2::text[]) AND privilege_type<>'SELECT'`,
-    [schema, ["commercial_plan_versions", "tenant_commercial_assignments",
-      "billing_subscription_references", "billing_invoice_references"]]);
+    [schema, ["commercial_plan_versions", "tenant_commercial_assignments", "seller_legal_entities",
+      "seller_legal_entity_versions", "seller_commercial_policy_versions"]]);
 
   await client.query("RESET ROLE");
   await client.query("SAVEPOINT retire_plan_probe");
@@ -96,8 +96,9 @@ try {
     previewOnly: workspace.preview.status === "preview_only" && workspace.preview.chargeExecution === false,
     exactPreview: workspace.preview.status === "preview_only"
       && workspace.preview.lineItems[0]?.quantity === "10.5"
-      && workspace.preview.lineItems[0]?.amountMinor === "2"
-      && workspace.preview.totalMinor === "113",
+      && workspace.preview.lineItems[0]?.billableOverageQuantity === "1"
+      && workspace.preview.lineItems[0]?.amountMinor === "3"
+      && workspace.preview.totalMinor === "114",
     calendarUtcBoundary: workspace.preview.status === "preview_only"
       && workspace.preview.period.boundary === "calendar_utc",
     subscriptionReferenceVisible: workspace.subscriptions[0]?.external_subscription_ref === "opaque-subscription-reference",

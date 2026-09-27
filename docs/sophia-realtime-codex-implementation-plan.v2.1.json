@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.44",
+    "version": "2.1.46",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, no-charge live-customer bootstrap/signing-evidence and production-commercial-definition assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience and aggregate-active-minute assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,47 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-STRIPE-METER-LEDGER",
+      "taskId": "P6-A06",
+      "reason": "Stripe's documented Price constraints do not allow transform_quantity to be combined with tiered pricing. A single Stripe metered Price therefore cannot both grant 2000 included active minutes and apply Sophia's required one-time ceiling after aggregate seconds. Repository inspection also found no canonical active-seconds production writer, so submitting existing session-like counters would invent billable usage.",
+      "changes": [
+        "Scope every provider Customer, Checkout, webhook event, subscription and invoice identity by a stable internal provider-account key. Use an additive expand/deploy/contract sequence so the already-deployed writer remains compatible during rollout.",
+        "Capture canonical billable active seconds from an explicitly defined session lifecycle before implementing provider submission. Existing provider usage estimates are not automatically billable evidence.",
+        "Finalise one immutable tenant billing-period ledger after aggregating measured seconds, subtract 120000 included seconds and apply ceil(overageSeconds/60) exactly once.",
+        "Submit the resulting whole overage-minute quantity through a durable idempotent outbox to a separate metered Price. Reconcile eventual Stripe meter summaries and invoice lines back to the immutable period ledger before claiming billing correctness.",
+        "Sandbox-prove delayed, duplicate, out-of-order and retry behaviour before any live base or metered Price mapping is created. Keep live Checkout disabled."
+      ],
+      "externalEvidence": [
+        "https://docs.stripe.com/api/prices/create",
+        "https://docs.stripe.com/billing/subscriptions/metered-billing/thresholds",
+        "https://docs.stripe.com/api/billing/meter-event/create",
+        "https://docs.stripe.com/api/billing/meter-event-summary/list"
+      ],
+      "approvedBy": "Standing user instruction to correct the reference plan when implementation or provider evidence requires a safer design",
+      "recordedAt": "2026-09-27T13:20:00+10:00"
+    },
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-SELLER-TAX-METERING",
+      "taskId": "P6-A06",
+      "reason": "The operator approved three AUD monthly B2B plans and clarified that the seller is currently an Australian sole trader under an ABN but must not be treated as GST registered. The previous plan-local tax and fixed-price-only assumptions would either display/collect unapproved GST or require plan and subscription rewrites when the seller later becomes GST registered or migrates to a Pty Ltd entity. Inspection also proved the estimate rounded currency instead of rounding aggregate overage minutes once.",
+      "changes": [
+        "Version seller legal identity and seller commercial policy independently from plans, subscriptions and usage. Pin issued billing evidence to the legal-entity and policy versions that governed it.",
+        "Represent B2B-only as customer_scope=business_only in versioned seller policy. Keep consumer-only and mixed policies available rather than embedding Sophia's current sales channel throughout billing code.",
+        "While gst_registered=false, require tax calculation mode none, no tax label or rate, and no-tax price display. A later GST registration publishes a new effective policy version; it does not rewrite plans, assignments, subscriptions or usage.",
+        "Classify products for tax independently from seller registration. Provider automatic or fixed-rate tax remains a later activation path and cannot be inferred from an Australian address or ABN.",
+        "Meter active usage as aggregate active-seconds for the monthly period, subtract 120000 included seconds, round the remaining quantity up once in 60-second billing units, then multiply whole billable minutes by the plan rate. Never round individual sessions.",
+        "Define the approved price facts as Sophia Voice AUD 750/month plus AUD 0.10 per excess active minute, Sophia Live AUD 1750/month plus AUD 0.50, and Sophia Premium AUD 2750/month plus AUD 0.75; each includes 2000 active minutes. Publishing records still requires the seller's exact legal name/ABN and machine entitlement values.",
+        "Replace the fixed-price-only Stripe assumption with a separately verified base-plus-metered design before creating live Price mappings. Keep live Checkout disabled throughout readiness work."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/038_seller_legal_and_commercial_policy.sql",
+        "sophia-runtime/src/admin/billing/usage-billing.service.ts",
+        "docs/sophia/p6-a06c3b0a-checkpoint.md"
+      ],
+      "approvedBy": "User-provided commercial/legal configuration and standing instruction to correct the plan when a better design is identified",
+      "recordedAt": "2026-09-27T12:10:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-27-P6-A06C3-PRODUCTION-COMMERCIAL-DEFINITION",
       "taskId": "P6-A06",
@@ -5605,13 +5646,69 @@
                 },
                 {
                   "id": "P6-A06C3B",
-                  "status": "blocked_on_commercial_definition",
-                  "scope": "Approve and persist a production commercial plan, then configure its live recurring Price mapping, portal, webhook destination and secret-manager values while live Checkout remains disabled.",
+                  "status": "in_progress",
+                  "scope": "Implement versioned seller/commercial authority and exact aggregate active-minute billing, persist the three approved production plans, prove a base-plus-metered Stripe design, then configure live resources while Checkout remains disabled.",
                   "executionSlices": [
                     {
                       "id": "P6-A06C3B0",
-                      "status": "decision_required",
-                      "scope": "Approve the immutable production plan identity, amount, currency, interval, tax treatment, fixed-price scope and entitlements. Do not reuse the explicitly sandbox-labelled plan."
+                      "status": "in_progress",
+                      "scope": "Implement the approved commercial definition without reusing the sandbox plan.",
+                      "executionSlices": [
+                        {
+                          "id": "P6-A06C3B0A",
+                          "status": "complete",
+                          "scope": "Add immutable seller legal-entity and commercial-policy versions; make GST registration and B2B/B2C scope configurable; correct monthly active-second aggregation and one-time whole-minute rounding."
+                        },
+                        {
+                          "id": "P6-A06C3B0B",
+                          "status": "blocked_on_seller_identity_and_entitlements",
+                          "scope": "Configure the current sole-trader legal name and ABN, publish a non-GST business-only policy, and publish immutable Sophia Voice, Live and Premium plan versions with approved AUD base and overage prices plus machine entitlement values."
+                        },
+                        {
+                          "id": "P6-A06C3B0C",
+                          "status": "in_progress",
+                          "scope": "Implement provider-account isolation, canonical active-second evidence and an immutable period-ledger/outbox design, then sandbox-verify base-plus-metered Stripe submission and reconciliation without rounding sessions or enabling live Checkout.",
+                          "executionSlices": [
+                            {
+                              "id": "P6-A06C3B0C1",
+                              "status": "in_progress",
+                              "scope": "Add provider-account registry and account-scoped billing identities using an expand migration, account-aware runtime writer and post-deployment contract migration.",
+                              "executionSlices": [
+                                {
+                                  "id": "P6-A06C3B0C1A",
+                                  "status": "complete",
+                                  "scope": "Apply the additive account-scope migration with legacy defaults and implement the account-aware writer, metadata, idempotency, reads and rollback-only proof."
+                                },
+                                {
+                                  "id": "P6-A06C3B0C1B",
+                                  "status": "ready_for_deployment",
+                                  "scope": "Deploy the account-aware writer and configure the stable provider-account key without changing the underlying Stripe account identity."
+                                },
+                                {
+                                  "id": "P6-A06C3B0C1C",
+                                  "status": "blocked_on_C1B_observation",
+                                  "scope": "After the deployed writer is observed, remove legacy column defaults and the three-argument customer resolver, then prove no deployed path depends on them."
+                                }
+                              ]
+                            },
+                            {
+                              "id": "P6-A06C3B0C2",
+                              "status": "blocked_on_C1_deployment",
+                              "scope": "Define and persist canonical measured active seconds from the billable session lifecycle; prove retries and reconnects cannot double count."
+                            },
+                            {
+                              "id": "P6-A06C3B0C3",
+                              "status": "blocked_on_C2",
+                              "scope": "Finalise immutable monthly billing-period ledgers with one aggregate ceiling after the 120000-second inclusion."
+                            },
+                            {
+                              "id": "P6-A06C3B0C4",
+                              "status": "blocked_on_C3",
+                              "scope": "Submit whole overage minutes through a durable idempotent Stripe meter-event outbox and sandbox-reconcile eventual meter summaries and invoice lines."
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "P6-A06C3B1",

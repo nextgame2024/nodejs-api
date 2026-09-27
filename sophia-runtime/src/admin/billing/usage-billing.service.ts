@@ -20,6 +20,10 @@ type PlanRow = {
   pricing_status: string; billing_currency: string | null; billing_interval: string | null;
   base_charge_minor: string | null; tax_mode: string; tax_rate_basis_points: number | null;
   overage_rounding: string; rate_card: unknown; entitlements: Record<string, unknown>; manifest_digest: string;
+  seller_legal_entity_id?: string | null; tax_category?: string;
+  seller_commercial_policy_version_id?: string | null; seller_legal_entity_version_id?: string | null;
+  customer_scope?: string | null; gst_registered?: boolean | null; tax_calculation_mode?: string | null;
+  policy_tax_rate_basis_points?: number | null; price_display_mode?: string | null; tax_label?: string | null;
 };
 
 @Injectable()
@@ -36,14 +40,28 @@ export class UsageBillingService {
     const schema = runtimeConfig().schema;
     const providerStatus = this.billing.status();
     const activeEnvironment = providerStatus.availability === "disabled" ? null : providerStatus.availability;
+    const activeAccountKey = providerStatus.providerAccountKey;
     return this.database.tenantReadTransaction(tenantId, async (client) => {
       const assignment = await client.query<PlanRow>(
         `SELECT a.commercial_assignment_id, a.status AS assignment_status, a.effective_from, a.effective_to,
                 p.commercial_plan_version_id, p.plan_key, p.version, p.display_name, p.status AS plan_status,
                 p.pricing_status, p.billing_currency, p.billing_interval, p.base_charge_minor,
-                p.tax_mode, p.tax_rate_basis_points, p.overage_rounding, p.rate_card, p.entitlements, p.manifest_digest
+                p.tax_mode, p.tax_rate_basis_points, p.overage_rounding, p.rate_card, p.entitlements, p.manifest_digest,
+                p.seller_legal_entity_id, p.tax_category,
+                policy.seller_commercial_policy_version_id, policy.seller_legal_entity_version_id,
+                policy.customer_scope, policy.gst_registered, policy.tax_calculation_mode,
+                policy.tax_rate_basis_points AS policy_tax_rate_basis_points,
+                policy.price_display_mode, policy.tax_label
          FROM ${schema}.tenant_commercial_assignments a
          JOIN ${schema}.commercial_plan_versions p ON p.commercial_plan_version_id=a.commercial_plan_version_id
+         LEFT JOIN LATERAL (
+           SELECT seller_commercial_policy_version_id,seller_legal_entity_version_id,customer_scope,gst_registered,
+                  tax_calculation_mode,tax_rate_basis_points,price_display_mode,tax_label
+           FROM ${schema}.seller_commercial_policy_versions
+           WHERE seller_legal_entity_id=p.seller_legal_entity_id AND status='published'
+             AND effective_from<=now() AND (effective_to IS NULL OR effective_to>now())
+           ORDER BY effective_from DESC,version DESC LIMIT 1
+         ) policy ON true
          WHERE a.customer_id=$1 AND a.status='active' AND a.effective_from<=now()
            AND (a.effective_to IS NULL OR a.effective_to>now())
          ORDER BY a.effective_from DESC LIMIT 1`, [tenantId]);
@@ -58,25 +76,27 @@ export class UsageBillingService {
           [tenantId, period.from, period.to])
         : { rows: [] };
       const subscriptions = await client.query(
-        `SELECT billing_subscription_reference_id, provider_key, provider_environment, external_subscription_ref, status,
+        `SELECT billing_subscription_reference_id, provider_key, provider_environment, provider_account_key, external_subscription_ref, status,
                 current_period_start, current_period_end, observed_at, revision
          FROM ${schema}.billing_subscription_references WHERE customer_id=$1 ORDER BY observed_at DESC LIMIT 20`, [tenantId]);
       const invoices = await client.query(
-        `SELECT billing_invoice_reference_id, provider_key, provider_environment, external_invoice_ref, status, currency,
+        `SELECT billing_invoice_reference_id, provider_key, provider_environment, provider_account_key, external_invoice_ref, status, currency,
                 amount_due_minor, amount_paid_minor, hosted_invoice_url, due_at, observed_at, revision
          FROM ${schema}.billing_invoice_references WHERE customer_id=$1 ORDER BY observed_at DESC LIMIT 50`, [tenantId]);
-      const providerCustomers = await client.query<{ provider_key: string; provider_environment: string; observed_at: Date | string }>(
-        `SELECT provider_key,provider_environment,observed_at FROM ${schema}.billing_provider_customers
+      const providerCustomers = await client.query<{ provider_key: string; provider_environment: string;
+        provider_account_key: string; observed_at: Date | string }>(
+        `SELECT provider_key,provider_environment,provider_account_key,observed_at FROM ${schema}.billing_provider_customers
          WHERE customer_id=$1 ORDER BY observed_at DESC`, [tenantId]);
       const webhookEvents = await client.query(
-        `SELECT provider_environment,external_event_ref,event_type,processing_status,processing_detail,occurred_at,processed_at
+        `SELECT provider_environment,provider_account_key,external_event_ref,event_type,processing_status,processing_detail,occurred_at,processed_at
          FROM ${schema}.billing_webhook_events WHERE customer_id=$1 ORDER BY occurred_at DESC LIMIT 20`, [tenantId]);
       const checkoutIntents = await client.query(
         `SELECT request_id,commercial_plan_version_id,status,created_at,expires_at
          FROM ${schema}.billing_checkout_intents WHERE customer_id=$1
            AND provider_key='stripe-sophia' AND provider_environment=COALESCE($2,'__disabled__')
+           AND provider_account_key=COALESCE($3,'__disabled__')
            AND (status IN ('allocating','outcome_unknown') OR (status='created' AND expires_at>now()))
-         ORDER BY created_at DESC LIMIT 1`, [tenantId, activeEnvironment]);
+         ORDER BY created_at DESC LIMIT 1`, [tenantId, activeEnvironment, activeAccountKey]);
       return {
         tenantId,
         generatedAt: new Date().toISOString(),
@@ -86,7 +106,7 @@ export class UsageBillingService {
         subscriptions: subscriptions.rows,
         invoices: invoices.rows,
         providerCustomers: providerCustomers.rows.map((row) => ({ providerKey: row.provider_key,
-          environment: row.provider_environment, observedAt: iso(row.observed_at) })),
+          environment: row.provider_environment, providerAccountKey: row.provider_account_key, observedAt: iso(row.observed_at) })),
         recentWebhookEvents: webhookEvents.rows,
         activeCheckoutIntent: checkoutIntents.rows[0] ?? null,
         authority: {
@@ -108,7 +128,9 @@ function publicPlan(row: PlanRow) {
     planVersionId: row.commercial_plan_version_id, planKey: row.plan_key, version: row.version,
     displayName: row.display_name, planStatus: row.plan_status, pricingStatus: row.pricing_status,
     currency: row.billing_currency, interval: row.billing_interval,
-    baseChargeMinor: row.base_charge_minor, taxMode: row.tax_mode,
+    baseChargeMinor: row.base_charge_minor, taxMode: effectiveTax(row).mode,
+    sellerLegalEntityId: row.seller_legal_entity_id ?? null, taxCategory: row.tax_category ?? "unconfigured",
+    commercialPolicy: publicCommercialPolicy(row),
     overageRounding: row.overage_rounding, entitlements: row.entitlements, manifestDigest: row.manifest_digest };
 }
 
@@ -123,6 +145,13 @@ function preview(plan: PlanRow | null, rows: Array<{ dimension: string; measurem
   }
   const parsed = rateCardSchema.safeParse(plan.rate_card);
   if (!parsed.success || !period) return unavailablePreview("The assigned rate card or billing period is invalid.");
+  const taxPolicy = effectiveTax(plan);
+  if (plan.seller_legal_entity_id && !plan.seller_commercial_policy_version_id) {
+    return unavailablePreview("The assigned production plan has no effective published seller commercial policy.");
+  }
+  if (taxPolicy.calculationMode === "provider_automatic") {
+    return unavailablePreview("Provider automatic tax cannot produce a deterministic local total preview.");
+  }
   try {
     const totals = new Map<string, DecimalQuantity>();
     let evidenceStatus: "measured" | "estimated_or_incomplete" = "measured";
@@ -135,25 +164,52 @@ function preview(plan: PlanRow | null, rows: Array<{ dimension: string; measurem
       const includedNumerator = BigInt(rate.includedQuantity) * quantity.scale;
       const overageNumerator = quantity.numerator > includedNumerator
         ? quantity.numerator - includedNumerator : 0n;
-      const amount = ceilDiv(overageNumerator * BigInt(rate.unitPriceMinor),
+      const billableOverageQuantity = ceilDiv(overageNumerator,
         quantity.scale * BigInt(rate.unitQuantity));
+      const amount = billableOverageQuantity * BigInt(rate.unitPriceMinor);
       return { dimension: rate.dimension, quantity: decimalString(quantity), includedQuantity: rate.includedQuantity,
-        overageQuantity: decimalString({ numerator: overageNumerator, scale: quantity.scale }), amountMinor: amount.toString() };
+        overageQuantity: decimalString({ numerator: overageNumerator, scale: quantity.scale }),
+        billingUnitQuantity: rate.unitQuantity, billableOverageQuantity: billableOverageQuantity.toString(),
+        amountMinor: amount.toString() };
     });
     const subtotal = BigInt(plan.base_charge_minor) + lineItems.reduce((sum, item) => sum + BigInt(item.amountMinor), 0n);
-    const tax = plan.tax_mode === "exclusive" && plan.tax_rate_basis_points !== null
-      ? ceilDiv(subtotal * BigInt(plan.tax_rate_basis_points), 10000n) : 0n;
+    const tax = taxPolicy.mode === "exclusive" && taxPolicy.rateBasisPoints !== null
+      ? ceilDiv(subtotal * BigInt(taxPolicy.rateBasisPoints), 10000n) : 0n;
     return { status: "preview_only", chargeExecution: false, currency: plan.billing_currency,
       interval: plan.billing_interval, period: { from: period.from.toISOString(), to: period.to.toISOString(), boundary: period.boundary },
       evidenceStatus, baseChargeMinor: plan.base_charge_minor,
-      subtotalMinor: subtotal.toString(), taxMinor: plan.tax_mode === "inclusive" ? null : tax.toString(),
-      totalMinor: (subtotal + tax).toString(), taxMode: plan.tax_mode, lineItems,
+      subtotalMinor: subtotal.toString(), taxMinor: taxPolicy.mode === "inclusive" ? null : tax.toString(),
+      totalMinor: (subtotal + tax).toString(), taxMode: taxPolicy.mode, lineItems,
       disclaimer: "This deterministic preview creates no charge, invoice, subscription or payment instruction." };
   } catch {
     return unavailablePreview("Usage or rate-card quantities cannot be represented by the approved integer preview contract.");
   }
 }
 function unavailablePreview(reason: string) { return { status: "unavailable", chargeExecution: false, reason }; }
+function publicCommercialPolicy(row: PlanRow) {
+  if (!row.seller_commercial_policy_version_id) return null;
+  return {
+    policyVersionId: row.seller_commercial_policy_version_id,
+    legalEntityVersionId: row.seller_legal_entity_version_id,
+    customerScope: row.customer_scope,
+    gstRegistered: row.gst_registered,
+    taxCalculationMode: row.tax_calculation_mode,
+    priceDisplayMode: row.price_display_mode,
+    taxLabel: row.tax_label,
+  };
+}
+function effectiveTax(row: PlanRow) {
+  if (!row.seller_legal_entity_id) {
+    return { mode: row.tax_mode, rateBasisPoints: row.tax_rate_basis_points,
+      calculationMode: row.tax_mode === "not_applicable" ? "none" : "fixed_rate" };
+  }
+  if (!row.gst_registered || row.tax_category === "exempt" || row.tax_category === "out_of_scope") {
+    return { mode: "not_applicable", rateBasisPoints: null, calculationMode: "none" };
+  }
+  const mode = row.price_display_mode === "tax_inclusive" ? "inclusive" : "exclusive";
+  return { mode, rateBasisPoints: row.policy_tax_rate_basis_points ?? null,
+    calculationMode: row.tax_calculation_mode ?? "none" };
+}
 function ceilDiv(value: bigint, divisor: bigint) { return value === 0n ? 0n : (value + divisor - 1n) / divisor; }
 function parseDecimal(value: string): DecimalQuantity {
   const match = /^(\d+)(?:\.(\d+))?$/.exec(value); if (!match) throw new Error("invalid decimal");

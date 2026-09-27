@@ -47,6 +47,7 @@ export class StripeBillingProvider implements BillingProvider {
     return {
       availability: available ? environment : "disabled",
       providerKey: STRIPE_BILLING_PROVIDER_KEY,
+      providerAccountKey: this.config.providerAccountKey,
       checkout: checkoutEnabled,
       portal: available,
       signedWebhooks: available,
@@ -88,9 +89,9 @@ export class StripeBillingProvider implements BillingProvider {
       ...(input.customerRef ? { customer: input.customerRef } : {}),
       line_items: [{ price, quantity: 1 }],
       success_url: this.config.checkoutSuccessUrl!, cancel_url: this.config.checkoutCancelUrl!,
-      metadata: metadata(input.tenantId, input.planVersionId, environment),
-      subscription_data: { metadata: metadata(input.tenantId, input.planVersionId, environment) },
-    }, { idempotencyKey: `sophia:${environment}:checkout:${input.tenantId}:${input.planVersionId}:${input.requestId}` });
+      metadata: metadata(input.tenantId, input.planVersionId, environment, this.config.providerAccountKey),
+      subscription_data: { metadata: metadata(input.tenantId, input.planVersionId, environment, this.config.providerAccountKey) },
+    }, { idempotencyKey: `sophia:${environment}:${this.config.providerAccountKey}:checkout:${input.tenantId}:${input.planVersionId}:${input.requestId}` });
     return { url: hostedProviderUrl(session.url, "checkout.stripe.com"),
       expiresAt: session.expires_at ? secondsIso(session.expires_at) : null, externalCheckoutRef: session.id };
   }
@@ -101,7 +102,7 @@ export class StripeBillingProvider implements BillingProvider {
     const session = await client.billingPortal.sessions.create({
       customer: input.customerRef, configuration: this.config.stripePortalConfigurationId,
       return_url: this.config.portalReturnUrl!,
-    }, { idempotencyKey: `sophia:${environment}:portal:${input.tenantId}:${input.requestId}` });
+    }, { idempotencyKey: `sophia:${environment}:${this.config.providerAccountKey}:portal:${input.tenantId}:${input.requestId}` });
     return { url: hostedProviderUrl(session.url, "billing.stripe.com"), expiresAt: null };
   }
 
@@ -112,6 +113,7 @@ export class StripeBillingProvider implements BillingProvider {
     if (("deleted" in customer && customer.deleted) || customer.livemode !== (environment === "live")
       || metadataValue?.sophiaNamespace !== "subscription-v1"
       || metadataValue.sophiaEnvironment !== environment
+      || metadataValue.sophiaProviderAccountKey !== this.config.providerAccountKey
       || metadataValue.sophiaTenantId !== input.tenantId) {
       throw new ConflictException(`Stripe ${environment} Customer metadata does not authorize this Sophia tenant binding.`);
     }
@@ -134,13 +136,17 @@ export class StripeBillingProvider implements BillingProvider {
     const metadataValue = record(object.metadata);
     const metadataMatchesEnvironment = metadataValue?.sophiaNamespace === "subscription-v1"
       && (metadataValue.sophiaEnvironment === environment
-        || (environment === "sandbox" && metadataValue.sophiaEnvironment === undefined));
+        || (environment === "sandbox" && metadataValue.sophiaEnvironment === undefined))
+      && (metadataValue.sophiaProviderAccountKey === this.config.providerAccountKey
+        || (environment === "sandbox" && this.config.providerAccountKey === "legacy-primary"
+          && metadataValue.sophiaProviderAccountKey === undefined));
     const occurredAt = secondsIso(event.created);
     const customerRef = event.type === "customer.updated" ? reference(object.id) : reference(object.customer);
     const subscription = subscriptionObservation(event.type, object, occurredAt);
     const invoice = invoiceObservation(event.type, object, occurredAt);
     return {
-      providerKey: STRIPE_BILLING_PROVIDER_KEY, environment, eventId: event.id, eventType: event.type,
+      providerKey: STRIPE_BILLING_PROVIDER_KEY, providerAccountKey: this.config.providerAccountKey,
+      environment, eventId: event.id, eventType: event.type,
       occurredAt, payloadDigest: createHash("sha256").update(rawBody).digest("hex"), customerRef,
       checkoutRef: event.type === "checkout.session.completed" ? reference(object.id) : null,
       tenantHint: metadataMatchesEnvironment && uuid.safeParse(metadataValue?.sophiaTenantId).success
@@ -195,9 +201,9 @@ export class StripeBillingProvider implements BillingProvider {
   }
 }
 
-function metadata(tenantId: string, planVersionId: string, environment: "sandbox" | "live") {
+function metadata(tenantId: string, planVersionId: string, environment: "sandbox" | "live", providerAccountKey: string) {
   return { sophiaNamespace: "subscription-v1", sophiaEnvironment: environment,
-    sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId };
+    sophiaProviderAccountKey: providerAccountKey, sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId };
 }
 function unavailable(message: string) { return new ServiceUnavailableException(message); }
 function hostedProviderUrl(value: string | null, expectedHost: string): string {

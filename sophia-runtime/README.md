@@ -47,15 +47,18 @@ npm run migrate
 
 Do not copy secrets into Angular. Browser clients should call this runtime API for short-lived session metadata only.
 
-## Sophia subscription sandbox
+## Sophia subscription billing
 
-Sophia subscriptions use a dedicated, test-mode-only Stripe adapter. It never
+Sophia subscriptions use an independently configured Stripe adapter. It never
 falls back to the legacy Business Manager `STRIPE_*` variables used by Toolkit
-and video purchases. The adapter remains disabled unless every required value is
-present:
+and video purchases. `stripe_sandbox` is charge-safe test mode; `stripe_live`
+keeps Checkout disabled unless `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED=true` is
+separately authorised. The adapter remains disabled unless every required value
+is present:
 
 ```bash
 SOPHIA_BILLING_PROVIDER=stripe_sandbox
+SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY=legacy-primary
 SOPHIA_BILLING_STRIPE_SECRET_KEY=sk_test_...
 SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
@@ -65,16 +68,24 @@ SOPHIA_BILLING_CHECKOUT_CANCEL_URL=https://admin.example/sophia-admin/usage-bill
 SOPHIA_BILLING_PORTAL_RETURN_URL=https://admin.example/sophia-admin/usage-billing
 ```
 
+The provider-account key is a stable internal identifier, not a secret or a
+Stripe API key. Keep `legacy-primary` for the existing Stripe account during the
+expand rollout. Changing it creates a different billing identity scope and must
+be handled as an explicit provider-account migration, not routine secret
+rotation.
+
 The signed endpoint is `POST /api/billing/v1/webhooks/stripe`. Raw bodies are
 used only for signature verification and are never persisted. Store only opaque
 customer/subscription/invoice references and payload digests. Hosted actions and
 reconciliation require `billing.manage` plus recent MFA.
 
 Before Checkout, the adapter retrieves the mapped Stripe Price and requires an
-exact test-mode match to the approved fixed plan currency, base amount and
+exact environment-mode match to the approved fixed plan currency, base amount and
 month/year interval. This first lifecycle rejects usage-overage rate cards and
-tax modes other than `not_applicable`; metered billing or tax collection needs a
-separately approved design. Sandbox observations do not assign plans, enforce
+tax modes other than `not_applicable`. Base-plus-metered support requires the
+separately staged active-second ledger/outbox design recorded in plan 2.1.46;
+do not approximate it with per-session rounding or a single transformed tiered
+Price. Sandbox observations do not assign plans, enforce
 live entitlements or activate production charging.
 
 ## Provider-neutral reasoning

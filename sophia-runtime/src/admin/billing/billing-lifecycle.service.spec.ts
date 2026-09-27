@@ -27,7 +27,8 @@ describe("BillingLifecycleService", () => {
 
   it("refuses live Checkout before any database or provider I/O when charge activation is off", async () => {
     const provider = providerMock();
-    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia", checkout: false,
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: false,
       portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
     const query = jest.fn();
     const service = lifecycle(provider, query);
@@ -40,7 +41,8 @@ describe("BillingLifecycleService", () => {
 
   it("binds an externally created and provider-verified live Customer without creating a charge", async () => {
     const provider = providerMock();
-    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia", checkout: false,
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: false,
       portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
     provider.verifyCustomerBinding = jest.fn(async () => ({ observedAt: "2026-09-27T00:00:00.000Z" }));
     const query = jest.fn(async (sql: string) => {
@@ -130,7 +132,7 @@ describe("BillingLifecycleService", () => {
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
     expect(invoiceSql).toContain("WHERE EXCLUDED.observed_at>=billing_invoice_references.observed_at");
     expect(invoiceSql).toContain("provider_environment");
-    expect(invoiceSql).toContain("ON CONFLICT (provider_key,provider_environment,external_invoice_ref)");
+    expect(invoiceSql).toContain("ON CONFLICT (provider_key,provider_environment,provider_account_key,external_invoice_ref)");
   });
 });
 
@@ -141,14 +143,16 @@ function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) 
 }
 function providerMock() {
   return {
-    status: jest.fn(() => ({ availability: "sandbox", providerKey: "stripe-sophia", checkout: true,
+    status: jest.fn(() => ({ availability: "sandbox", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: true,
       portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "configured" })),
     mappedPlanVersionIds: jest.fn(() => new Set([planVersionId])), createHostedCheckout: jest.fn(),
     createHostedPortal: jest.fn(), verifyCustomerBinding: jest.fn(), verifyWebhook: jest.fn(), reconcileTenant: jest.fn(),
   } as unknown as BillingProvider & Record<string, jest.Mock>;
 }
 function invoiceEvent(): BillingWebhookEvidence {
-  return { providerKey: "stripe-sophia", environment: "sandbox", eventId: "evt_1", eventType: "invoice.paid",
+  return { providerKey: "stripe-sophia", providerAccountKey: "legacy-primary",
+    environment: "sandbox", eventId: "evt_1", eventType: "invoice.paid",
     occurredAt: "2026-09-26T00:00:00.000Z", payloadDigest: "a".repeat(64), customerRef: "cus_1",
     checkoutRef: null, tenantHint: null, planVersionHint: null, subscription: null,
     invoice: { externalRef: "in_1", status: "paid", currency: "AUD", amountDueMinor: "100",

@@ -39,7 +39,8 @@ try {
     },
   };
   const provider: BillingProvider = {
-    status: () => ({ availability: "sandbox", providerKey: "stripe-sophia", checkout: true, portal: true,
+    status: () => ({ availability: "sandbox", providerKey: "stripe-sophia", providerAccountKey: "legacy-primary",
+      checkout: true, portal: true,
       signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "synthetic rollback probe" }),
     mappedPlanVersionIds: () => new Set([planId]), createHostedCheckout: async () => { throw new Error("not used"); },
     createHostedPortal: async () => { throw new Error("not used"); },
@@ -49,8 +50,8 @@ try {
   const lifecycle = new BillingLifecycleService(database as never, provider, { record: async () => undefined } as never);
   await client.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenantId]);
   await client.query(`INSERT INTO ${schema}.billing_checkout_intents
-    (customer_id,provider_key,provider_environment,request_id,commercial_plan_version_id,external_checkout_ref,status,created_at,expires_at)
-    VALUES($1,'stripe-sophia','sandbox',$2,$3,$4,'created','2026-09-25T23:55:00.000Z','2026-09-26T00:30:00.000Z')`,
+    (customer_id,provider_key,provider_environment,provider_account_key,request_id,commercial_plan_version_id,external_checkout_ref,status,created_at,expires_at)
+    VALUES($1,'stripe-sophia','sandbox','legacy-primary',$2,$3,$4,'created','2026-09-25T23:55:00.000Z','2026-09-26T00:30:00.000Z')`,
   [tenantId, checkoutRequestId, planId, checkoutRef]);
   currentEvent = event("evt-checkout", "checkout.session.completed", "2026-09-26T00:00:00.000Z", {
     tenantHint: tenantId, planVersionHint: planId, checkoutRef,
@@ -72,7 +73,7 @@ try {
   const invoiceState = await client.query<{ status: string; revision: number }>(
     `SELECT status,revision FROM ${schema}.billing_invoice_references WHERE external_invoice_ref=$1`, [invoiceRef]);
   const route = await client.query<{ tenant_id: string }>(
-    `SELECT ${schema}.resolve_billing_customer_tenant('stripe-sophia','sandbox',$1) AS tenant_id`, [customerRef]);
+    `SELECT ${schema}.resolve_billing_customer_tenant('stripe-sophia','sandbox','legacy-primary',$1) AS tenant_id`, [customerRef]);
   const eventCount = await client.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM ${schema}.billing_webhook_events WHERE customer_id=$1`, [tenantId]);
   const checkoutIntent = await client.query<{ status: string; external_checkout_ref: string }>(
@@ -114,7 +115,8 @@ try {
 
 function event(eventId: string, eventType: string, occurredAt: string,
   values: Partial<Pick<BillingWebhookEvidence, "tenantHint" | "planVersionHint" | "checkoutRef" | "subscription" | "invoice">>): BillingWebhookEvidence {
-  return { providerKey: "stripe-sophia", environment: "sandbox", eventId, eventType, occurredAt,
+  return { providerKey: "stripe-sophia", providerAccountKey: "legacy-primary",
+    environment: "sandbox", eventId, eventType, occurredAt,
     payloadDigest: "a".repeat(64), customerRef, checkoutRef: null, tenantHint: null, planVersionHint: null,
     subscription: null, invoice: null, ...values };
 }
