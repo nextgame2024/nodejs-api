@@ -1869,6 +1869,12 @@
       "node": "20.15.0/22.23.2",
       "result": "pass",
       "detail": "P6-A06C3B preflight found only the published AUD 1/month sophia-sandbox-monthly plan with one active assignment. No mutation occurred. The verifier now rejects sandbox/test-labelled live mappings. Runtime passed 100 suites/352 tests plus typecheck, build and contract drift; boundary scan passed 217 files and protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "GET https://sophia-runtime-api.onrender.com/api/runtime/healthz",
+      "repository": "deployed backend",
+      "result": "pass",
+      "detail": "Public Runtime health returned HTTP 200 with revision 0bf88ee4281a after deploying the production-plan mapping safety check. No live Stripe call or billing configuration change was made."
     }
   ],
   "blockers": [

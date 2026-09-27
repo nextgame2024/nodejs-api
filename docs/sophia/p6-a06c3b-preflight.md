@@ -44,6 +44,8 @@ request.
   build and generated-contract drift check passed.
 - The boundary scan passed for 217 new-product files and all 8 protected
   real-estate suites/38 tests passed.
+- The public Runtime health endpoint returned HTTP 200 on deployed revision
+  `0bf88ee4281a` after the safety correction was pushed.
 
 ## Next input
 
