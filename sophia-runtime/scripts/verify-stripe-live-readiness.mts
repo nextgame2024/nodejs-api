@@ -25,10 +25,11 @@ async function main() {
   try {
     const planIds = Object.keys(config.billing.stripePriceMappings);
     const result = await database.query<{
-      commercial_plan_version_id: string; billing_currency: string | null; billing_interval: "month" | "year" | null;
+      commercial_plan_version_id: string; plan_key: string; display_name: string;
+      billing_currency: string | null; billing_interval: "month" | "year" | null;
       base_charge_minor: string | null; pricing_status: string; status: string; tax_mode: string; rate_card_dimensions: string;
     }>(
-      `SELECT commercial_plan_version_id,billing_currency,billing_interval,base_charge_minor::text,
+      `SELECT commercial_plan_version_id,plan_key,display_name,billing_currency,billing_interval,base_charge_minor::text,
               pricing_status,status,tax_mode,
               jsonb_array_length(COALESCE(rate_card->'dimensions','[]'::jsonb))::text AS rate_card_dimensions
        FROM ${config.schema}.commercial_plan_versions
@@ -40,7 +41,7 @@ async function main() {
         || row.tax_mode !== "not_applicable" || Number(row.rate_card_dimensions) !== 0) {
         throw new Error(`Mapped plan ${row.commercial_plan_version_id} is not an approved fixed recurring plan.`);
       }
-      return { planVersionId: row.commercial_plan_version_id,
+      return { planVersionId: row.commercial_plan_version_id, planKey: row.plan_key, displayName: row.display_name,
         priceId: config.billing.stripePriceMappings[row.commercial_plan_version_id]!,
         currency: row.billing_currency, interval: row.billing_interval, baseChargeMinor: row.base_charge_minor };
     });

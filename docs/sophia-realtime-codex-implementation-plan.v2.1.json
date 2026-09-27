@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.43",
+    "version": "2.1.44",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation and no-charge live-customer bootstrap/signing-evidence assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, no-charge live-customer bootstrap/signing-evidence and production-commercial-definition assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,24 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-PRODUCTION-COMMERCIAL-DEFINITION",
+      "taskId": "P6-A06",
+      "reason": "The authoritative Neon preflight found only one commercial plan: the published AUD 1 monthly sophia-sandbox-monthly plan used by the completed sandbox lifecycle. A technically valid live Price must not turn that explicitly sandbox-labelled record into an inferred production commercial approval.",
+      "changes": [
+        "Add a production-commercial-definition gate before creating or mapping live Stripe resources.",
+        "Require explicit approval of production plan identity, amount, currency, interval, tax treatment, fixed-price scope and entitlement policy; create a new immutable plan version rather than renaming or repurposing the sandbox record.",
+        "Make the live readiness verifier reject commercial plans labelled sandbox or test before any Stripe request.",
+        "Keep the existing sandbox plan and its active assignment unchanged, and keep live Checkout disabled."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
+        "sophia-runtime/src/admin/billing/stripe-live-readiness.spec.ts",
+        "docs/sophia/p6-a06c3b-preflight.md"
+      ],
+      "approvedBy": "User instruction to evaluate and improve the reference plan when implementation evidence requires it",
+      "recordedAt": "2026-09-27T10:24:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-27-P6-A06C3-LIVE-BOOTSTRAP-EVIDENCE",
       "taskId": "P6-A06",
@@ -5587,8 +5605,20 @@
                 },
                 {
                   "id": "P6-A06C3B",
-                  "status": "blocked_on_live_resources",
-                  "scope": "Configure the approved live recurring Price mapping, portal, webhook destination and secret-manager values while live Checkout remains disabled."
+                  "status": "blocked_on_commercial_definition",
+                  "scope": "Approve and persist a production commercial plan, then configure its live recurring Price mapping, portal, webhook destination and secret-manager values while live Checkout remains disabled.",
+                  "executionSlices": [
+                    {
+                      "id": "P6-A06C3B0",
+                      "status": "decision_required",
+                      "scope": "Approve the immutable production plan identity, amount, currency, interval, tax treatment, fixed-price scope and entitlements. Do not reuse the explicitly sandbox-labelled plan."
+                    },
+                    {
+                      "id": "P6-A06C3B1",
+                      "status": "blocked_on_live_resources",
+                      "scope": "Create and verify the approved live Product/Price, portal, thirteen-event webhook destination and secret-manager configuration."
+                    }
+                  ]
                 },
                 {
                   "id": "P6-A06C3C",

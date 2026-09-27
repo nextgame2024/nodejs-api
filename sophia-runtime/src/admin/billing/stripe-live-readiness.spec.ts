@@ -2,7 +2,8 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { STRIPE_BILLING_API_VERSION, STRIPE_BILLING_WEBHOOK_EVENT_TYPES } from "./stripe-billing.constants.js";
 import { verifyLiveStripeResources } from "./stripe-live-readiness.js";
 
-const plan = { planVersionId: "22222222-2222-4222-8222-222222222222", priceId: "price_live_sophia",
+const plan = { planVersionId: "22222222-2222-4222-8222-222222222222", planKey: "sophia-production-monthly",
+  displayName: "Sophia Production Monthly", priceId: "price_live_sophia",
   currency: "AUD", interval: "month" as const, baseChargeMinor: "1000" };
 
 describe("live Stripe resource readiness", () => {
@@ -23,6 +24,15 @@ describe("live Stripe resource readiness", () => {
       portalConfigurationId: "bpc_live_sophia", webhookUrl: "https://runtime.example/api/billing/v1/webhooks/stripe" }))
       .rejects.toThrow("does not match approved fixed plan");
     expect(client.billingPortal.configurations.retrieve).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sandbox-labelled commercial plan before calling Stripe", async () => {
+    const client = validClient();
+    await expect(verifyLiveStripeResources({ client: client as never,
+      plans: [{ ...plan, planKey: "sophia-sandbox-monthly", displayName: "Sophia Sandbox Monthly" }],
+      portalConfigurationId: "bpc_live_sophia", webhookUrl: "https://runtime.example/api/billing/v1/webhooks/stripe" }))
+      .rejects.toThrow("cannot use sandbox/test-labelled commercial plan");
+    expect(client.prices.retrieve).not.toHaveBeenCalled();
   });
 
   it("rejects a webhook destination with incomplete event coverage", async () => {

@@ -6,6 +6,8 @@ import {
 
 export type LivePlanExpectation = {
   planVersionId: string;
+  planKey: string;
+  displayName: string;
   priceId: string;
   currency: string;
   interval: "month" | "year";
@@ -36,6 +38,10 @@ export async function verifyLiveStripeResources(input: {
   const webhookUrl = canonicalHttpsUrl(input.webhookUrl);
 
   for (const plan of input.plans) {
+    const commercialIdentity = `${plan.planKey} ${plan.displayName}`;
+    if (/(^|[^a-z0-9])(sandbox|test)([^a-z0-9]|$)/i.test(commercialIdentity)) {
+      throw new Error(`Live Price mapping cannot use sandbox/test-labelled commercial plan ${plan.planVersionId}.`);
+    }
     const price = await input.client.prices.retrieve(plan.priceId);
     if (!price.livemode || !price.active || price.type !== "recurring"
       || price.currency.toUpperCase() !== plan.currency

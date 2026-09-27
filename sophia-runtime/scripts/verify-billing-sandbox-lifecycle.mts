@@ -43,6 +43,7 @@ try {
       signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "synthetic rollback probe" }),
     mappedPlanVersionIds: () => new Set([planId]), createHostedCheckout: async () => { throw new Error("not used"); },
     createHostedPortal: async () => { throw new Error("not used"); },
+    verifyCustomerBinding: async () => { throw new Error("not used"); },
     verifyWebhook: async () => currentEvent, reconcileTenant: async () => { throw new Error("not used"); },
   };
   const lifecycle = new BillingLifecycleService(database as never, provider, { record: async () => undefined } as never);
