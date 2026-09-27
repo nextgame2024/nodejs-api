@@ -55,6 +55,7 @@ import { BILLING_PROVIDER } from "./billing/billing-provider.port.js";
 import { DisabledBillingProvider } from "./billing/disabled-billing.provider.js";
 import { UsageGuardrailService } from "./billing/usage-guardrail.service.js";
 import { BillingLifecycleService } from "./billing/billing-lifecycle.service.js";
+import { BillingPeriodLedgerService } from "./billing/billing-period-ledger.service.js";
 import { BillingWebhookController } from "./billing/billing-webhook.controller.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { runtimeConfig } from "../config/runtime-config.js";
@@ -107,6 +108,7 @@ import { runtimeConfig } from "../config/runtime-config.js";
     UsageBillingService,
     UsageGuardrailService,
     BillingLifecycleService,
+    BillingPeriodLedgerService,
     DisabledBillingProvider,
     { provide: StripeBillingProvider,
       useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },

@@ -13,6 +13,7 @@ import {
 } from "./billing-provider.port.js";
 import { hostedActionSchema, hostedCheckoutSchema, liveCustomerBindingSchema } from "./billing-lifecycle.contracts.js";
 import { STRIPE_BILLING_OBSERVATION_EVENT_TYPES, STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
+import { BillingPeriodLedgerService } from "./billing-period-ledger.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 
@@ -22,6 +23,7 @@ export class BillingLifecycleService {
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
     @Inject(AdminAuditService) private readonly audit: AdminAuditService,
+    @Inject(BillingPeriodLedgerService) private readonly periodLedgers: BillingPeriodLedgerService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -189,13 +191,15 @@ export class BillingLifecycleService {
       for (const invoice of result.invoices) await upsertInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
         environment, accountKey, invoice);
     });
+    const periodLedger = await this.periodLedgers.finaliseEligible(tenantId, environment, accountKey);
     await this.audit.record({ tenantId, identityUserId: principal.identityUserId, eventType: "billing.reconciled",
       permission: "billing.manage", outcome: "allowed",
       resourceType: "billingCustomer", metadata: { providerKey: status.providerKey,
         providerAccountKey: accountKey, environment, reconciliationStatus: result.status,
         requestId: input.requestId, subscriptionCount: result.subscriptions.length, invoiceCount: result.invoices.length } });
     return { status: result.status, observedAt: result.observedAt,
-      subscriptionCount: result.subscriptions.length, invoiceCount: result.invoices.length, liveEntitlementMutation: false };
+      subscriptionCount: result.subscriptions.length, invoiceCount: result.invoices.length,
+      periodLedger, liveEntitlementMutation: false };
   }
 
   async webhook(headers: Readonly<Record<string, string | undefined>>, rawBody: Uint8Array) {
@@ -203,7 +207,7 @@ export class BillingLifecycleService {
     const event = await this.provider.verifyWebhook(headers, rawBody);
     const tenantId = await this.resolveWebhookTenant(event);
     if (!tenantId) throw new NotFoundException("The Stripe customer is not linked to a Sophia tenant.");
-    return this.database.tenantTransaction(tenantId, async (client) => {
+    const response = await this.database.tenantTransaction(tenantId, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         [`billing:${event.providerKey}:${event.environment}:${event.providerAccountKey}:${event.eventId}`]);
       const inserted = await client.query(
@@ -227,6 +231,7 @@ export class BillingLifecycleService {
           supported ? "provider_observation_applied" : "unsupported_event_type", event.eventId]);
       return { received: true, duplicate: false };
     });
+    return response;
   }
 
   private async billingContext(tenantId: string, environment: "sandbox" | "live", accountKey: string) {

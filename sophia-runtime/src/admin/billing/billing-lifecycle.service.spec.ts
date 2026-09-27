@@ -52,7 +52,7 @@ describe("BillingLifecycleService", () => {
     });
     const audit = { record: jest.fn() };
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
-    const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never);
+    const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never, ledger() as never);
     const customerRef = "cus_liveSophia123";
     await expect(service.bindCustomer(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333", customerRef,
@@ -109,7 +109,7 @@ describe("BillingLifecycleService", () => {
       tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
       tenantReadTransaction: jest.fn(),
     };
-    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never);
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never, ledger() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: true });
     expect(clientQuery.mock.calls.some((call) => String(call[0]).includes("billing_invoice_references"))).toBe(false);
@@ -126,7 +126,7 @@ describe("BillingLifecycleService", () => {
       tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
       tenantReadTransaction: jest.fn(),
     };
-    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never);
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never, ledger() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
@@ -139,7 +139,10 @@ describe("BillingLifecycleService", () => {
 function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) {
   const run = jest.fn(async (_id: string, work: (client: { query: jest.Mock }) => unknown) => work({ query }));
   return new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-    provider, { record: jest.fn() } as never);
+    provider, { record: jest.fn() } as never, ledger() as never);
+}
+function ledger() {
+  return { finaliseEligible: jest.fn(async () => ({ observedPeriods: 0, finalised: 0, existing: 0, blocked: [] })) };
 }
 function providerMock() {
   return {

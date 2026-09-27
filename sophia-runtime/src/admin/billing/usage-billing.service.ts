@@ -69,12 +69,35 @@ export class UsageBillingService {
       const period = plan ? commercialPeriod(plan, new Date()) : null;
       const dimensions = period
         ? await client.query<{ dimension: string; measurement_status: string; quantity: string }>(
-          `SELECT d.key AS dimension, u.measurement_status, sum(d.value::numeric)::text AS quantity
-           FROM ${schema}.provider_usage_events u CROSS JOIN LATERAL jsonb_each_text(u.usage_dimensions) d
-           WHERE u.customer_id=$1 AND u.occurred_at >= $2 AND u.occurred_at < $3
-           GROUP BY d.key,u.measurement_status ORDER BY d.key,u.measurement_status`,
+          `WITH provider_dimensions AS (
+             SELECT d.key AS dimension,u.measurement_status,sum(d.value::numeric)::text AS quantity
+             FROM ${schema}.provider_usage_events u CROSS JOIN LATERAL jsonb_each_text(u.usage_dimensions) d
+             WHERE u.customer_id=$1 AND u.occurred_at >= $2 AND u.occurred_at < $3
+               AND d.key <> 'active-seconds'
+             GROUP BY d.key,u.measurement_status
+           ), connected_activity AS (
+             SELECT 'active-seconds'::text AS dimension,'measured'::text AS measurement_status,
+               COALESCE(sum(extract(epoch FROM
+                 (LEAST(COALESCE(ended_at,last_confirmed_at),$3::timestamptz)
+                  -GREATEST(started_at,$2::timestamptz)))),0)::text AS quantity
+             FROM ${schema}.session_activity_intervals
+             WHERE customer_id=$1 AND started_at<$3
+               AND COALESCE(ended_at,last_confirmed_at)>$2
+           )
+           SELECT * FROM provider_dimensions UNION ALL SELECT * FROM connected_activity
+           ORDER BY dimension,measurement_status`,
           [tenantId, period.from, period.to])
         : { rows: [] };
+      const periodLedgers = await client.query(
+        `SELECT billing_usage_period_ledger_id,billing_subscription_period_id,
+                commercial_plan_version_id,assignment_revision,assignment_effective_from,assignment_effective_to,
+                seller_legal_entity_version_id,
+                seller_commercial_policy_version_id,period_start,period_end,
+                active_microseconds,included_active_seconds,overage_microseconds,
+                billable_overage_minutes,overage_unit_price_minor,currency,
+                plan_manifest_digest,ledger_digest,finalised_at
+         FROM ${schema}.billing_usage_period_ledgers
+         WHERE customer_id=$1 ORDER BY period_end DESC LIMIT 24`, [tenantId]);
       const subscriptions = await client.query(
         `SELECT billing_subscription_reference_id, provider_key, provider_environment, provider_account_key, external_subscription_ref, status,
                 current_period_start, current_period_end, observed_at, revision
@@ -103,6 +126,7 @@ export class UsageBillingService {
         providerIntegration: providerStatus,
         assignment: plan ? publicPlan(plan) : null,
         preview: preview(plan, dimensions.rows, period),
+        finalisedUsagePeriods: periodLedgers.rows,
         subscriptions: subscriptions.rows,
         invoices: invoices.rows,
         providerCustomers: providerCustomers.rows.map((row) => ({ providerKey: row.provider_key,

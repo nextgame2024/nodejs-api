@@ -685,7 +685,7 @@
     },
     "P6-A06": {
       "status": "in_progress",
-      "completedSlice": "P6-A06C3B0C2",
+      "completedSlice": "P6-A06C3B0C3",
       "evidence": [
         "p6-a06a-checkpoint.md",
         "p6-a06b-checkpoint.md",
@@ -701,6 +701,9 @@
         "../../sophia-runtime/src/database/migrations/039_billing_provider_account_scope.sql",
         "../../sophia-runtime/src/database/migrations/040_billing_provider_account_scope_contract.sql",
         "../../sophia-runtime/src/database/migrations/041_session_activity_intervals.sql",
+        "../../sophia-runtime/src/database/migrations/042_billing_period_ledgers.sql",
+        "../../sophia-runtime/src/database/migrations/043_billing_period_assignment_snapshot.sql",
+        "../../sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
         "../../sophia-runtime/src/admin/billing/stripe-billing.provider.ts",
         "../../sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
         "../../sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
@@ -715,9 +718,10 @@
         "p6-a06c3b0c1a-checkpoint.md",
         "p6-a06c3b0c1-checkpoint.md",
         "p6-a06c3b0c2-checkpoint.md",
+        "p6-a06c3b0c3-checkpoint.md",
         "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
       ],
-      "detail": "P6-A06A/B completed the fail-closed adapter and real recurring sandbox lifecycle. P6-A06C1/C2 established genuine non-owner database authentication and environment-separated dormant live mode; C3A added read-only live-resource verification and no-charge Customer binding. C3B0A implements versioned seller/legal/policy authority, configurable audience/GST state and exact aggregate active-minute preview. C3B0C1 completed provider-account isolation. C3B0C2 applies migration 041 and records immutable forced-RLS connected-activity intervals only after browser transports connect; heartbeat retries are monotonic, reconnect identities cannot overlap or be reused after finalisation, explicit close/disconnect ends activity before provider cleanup, and abrupt loss ends at the last authenticated confirmation. Plan 2.1.47 explicitly rejects operational session lifetime as billable usage. Exact legal name/ABN, external Stripe account ID and machine entitlement values are still required for registry/plan publication. No production plan, live Stripe resource, meter event or charge was created, and live Checkout remains disabled."
+      "detail": "P6-A06A/B completed the fail-closed adapter and recurring sandbox lifecycle. P6-A06C1/C2 established genuine non-owner authentication and environment-separated dormant live mode; C3A added read-only live verification and no-charge Customer binding. C3B0A adds seller/legal/policy authority and aggregate active-minute preview; C3B0C1 provider-account isolation; C3B0C2 canonical connected intervals. C3B0C3 applies migration 042, preserves provider-observed subscription periods and finalises immutable microsecond-precision ledgers only when one assignment and seller policy cover the whole period. It subtracts 120000 seconds and applies one 60-second ceiling. Active-seconds preview now comes only from canonical intervals. Plan 2.1.48 rejects calendar-month invoice assumptions and unapproved proration, and splits C4 into a ready provider-neutral outbox slice plus a Stripe sandbox evidence slice blocked on metered resources and plan publication. No meter event or charge was created; live Checkout remains disabled."
     }
   },
   "tests": [
@@ -1946,6 +1950,27 @@
       "node": "20.15.0",
       "result": "pass",
       "detail": "Applied contract migration 040 after the account-aware writer was live. The post-contract rollback-only account-scoped lifecycle proof passed and rolled back all synthetic rows; deployed revision 18d2d51419df remained healthy."
+    },
+    {
+      "command": "npm run migrate; psql read-only migration/RLS/grant/backfill verification",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied migrations 042 and 043. Both period tables report forced RLS; sophia_runtime_app can only read provider-captured periods and can read/insert but not update final ledgers. One existing subscription period was backfilled, assignment snapshot columns are present, and zero ledgers were manufactured from the unended fixed sandbox period."
+    },
+    {
+      "command": "npm run typecheck; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A06C3B0C3 passed TypeScript and generated-contract drift checks plus all 107 suites/374 tests. Coverage includes provider-period preservation, exact interval intersection, aggregate-only ceiling, open-interval denial, ambiguous mid-period policy denial, immutable evidence and assignment snapshots."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit; focused ChromeHeadless Usage/Billing suite; GOOGLE_MAPS_API_KEY=dummy npm run build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "Frontend TypeScript compilation, 4 focused Usage/Billing browser tests and the production build passed. Existing Angular bundle/font/CommonJS/PrimeIcons warnings remain."
     }
   ],
   "blockers": [
@@ -1988,8 +2013,8 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 does not invent or activate a production rate card, plan assignment, customer billing balance or tax conclusion. Tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A are complete. P6-A06C3B0A adds versioned seller/legal/policy authority and exact aggregate active-minute preview. C3B0C1 completed provider-account isolation and the account key is now explicit in Render. C3B0C2 adds canonical server-timestamped connected-activity intervals; operational provider lifetime is explicitly not billable usage. Production plan/provider registry publication remains blocked on the seller's exact legal name/ABN, the external Stripe account ID and machine entitlement values. Immutable period finalisation, durable idempotent meter submission and sandbox reconciliation remain C3B0C3-C4. C3B1/C3C then require live Stripe resources/secrets, an approved verification Customer, real signed customer.updated delivery and read-only reconciliation. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A are complete. P6-A06C3B0A adds versioned seller/legal/policy authority and exact aggregate active-minute preview; C3B0C1 provider-account isolation; C3B0C2 canonical connected activity; C3B0C3 provider-period preservation and immutable one-ceiling ledgers. Production plan/provider registry publication remains blocked on the seller's exact legal name/ABN, external Stripe account ID and machine entitlement values. C4A durable outbox implementation is ready; C4B Stripe sandbox dispatch/reconciliation requires approved Meter/metered Price resources and plan publication. C3B1/C3C require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": "P6-A06C3B0C3",
+  "nextReadyTask": "P6-A06C3B0C4A",
   "stopAfterCheckpoint": true
 }

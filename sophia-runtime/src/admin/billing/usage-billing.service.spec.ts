@@ -20,6 +20,7 @@ describe("UsageBillingService", () => {
   it("returns an explicitly unavailable commercial state when no platform assignment exists", async () => {
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("tenant_commercial_assignments")) return { rows: [] };
+      if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
       if (sql.includes("billing_subscription_references") || sql.includes("billing_invoice_references")) return { rows: [] };
       if (sql.includes("billing_provider_customers") || sql.includes("billing_webhook_events")) return { rows: [] };
       if (sql.includes("billing_checkout_intents")) return { rows: [] };
@@ -60,6 +61,7 @@ describe("UsageBillingService", () => {
           { dimension: "reasoning-input-tokens", measurement_status: "measured", quantity: "0.25" },
         ] };
       }
+      if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
       if (sql.includes("billing_subscription_references")) return { rows: [{ external_subscription_ref: "opaque-sub-ref" }] };
       if (sql.includes("billing_invoice_references")) return { rows: [{ external_invoice_ref: "opaque-invoice-ref" }] };
       if (sql.includes("billing_provider_customers")) return { rows: [] };
@@ -93,10 +95,16 @@ describe("UsageBillingService", () => {
           dimension: "active-seconds", includedQuantity: "120000", unitQuantity: "60", unitPriceMinor: "50",
         }] }, entitlements: { includedActiveMinutes: 2000 }, manifest_digest: "b".repeat(64),
       }] };
-      if (sql.includes("provider_usage_events")) return { rows: [
+      if (sql.includes("provider_usage_events")) {
+        expect(sql).toContain("d.key <> 'active-seconds'");
+        expect(sql).toContain("session_activity_intervals");
+        expect(sql).toContain("LEAST(COALESCE(ended_at,last_confirmed_at)");
+        return { rows: [
         { dimension: "active-seconds", measurement_status: "measured", quantity: "119999" },
         { dimension: "active-seconds", measurement_status: "measured", quantity: "62" },
-      ] };
+        ] };
+      }
+      if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
       if (sql.includes("billing_subscription_references") || sql.includes("billing_invoice_references")
         || sql.includes("billing_provider_customers") || sql.includes("billing_webhook_events")
         || sql.includes("billing_checkout_intents")) return { rows: [] };
@@ -126,6 +134,7 @@ describe("UsageBillingService", () => {
         customer_scope: "business_only", gst_registered: false, tax_calculation_mode: "none",
         policy_tax_rate_basis_points: null, price_display_mode: "no_tax", tax_label: null,
       }] };
+      if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
       if (sql.includes("provider_usage_events") || sql.includes("billing_subscription_references")
         || sql.includes("billing_invoice_references") || sql.includes("billing_provider_customers")
         || sql.includes("billing_webhook_events") || sql.includes("billing_checkout_intents")) return { rows: [] };
