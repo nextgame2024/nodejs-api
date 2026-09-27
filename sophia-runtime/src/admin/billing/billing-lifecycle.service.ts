@@ -11,15 +11,10 @@ import {
   type BillingSubscriptionObservation,
   type BillingWebhookEvidence,
 } from "./billing-provider.port.js";
-import { hostedActionSchema, hostedCheckoutSchema } from "./billing-lifecycle.contracts.js";
+import { hostedActionSchema, hostedCheckoutSchema, liveCustomerBindingSchema } from "./billing-lifecycle.contracts.js";
+import { STRIPE_BILLING_OBSERVATION_EVENT_TYPES, STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 
-const supportedWebhookTypes = new Set([
-  "checkout.session.completed",
-  "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted",
-  "customer.subscription.paused", "customer.subscription.resumed",
-  "invoice.created", "invoice.finalized", "invoice.paid", "invoice.payment_failed",
-  "invoice.voided", "invoice.marked_uncollectible",
-]);
+const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 
 @Injectable()
 export class BillingLifecycleService {
@@ -55,18 +50,18 @@ export class BillingLifecycleService {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`billing-checkout:${environment}:${tenantId}`]);
         await client.query(
           `UPDATE ${schema}.billing_checkout_intents SET status='expired',completed_at=now()
-          WHERE customer_id=$1 AND provider_key='stripe-sophia' AND provider_environment=$2
-             AND status='created' AND expires_at<=now()`, [tenantId, environment]);
+          WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3
+             AND status='created' AND expires_at<=now()`, [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment]);
         await client.query(
         `INSERT INTO ${schema}.billing_checkout_intents
           (customer_id,provider_key,provider_environment,request_id,commercial_plan_version_id,status)
-         VALUES ($1,'stripe-sophia',$2,$3,$4,'allocating')
+         VALUES ($1,$2,$3,$4,$5,'allocating')
          ON CONFLICT (customer_id,provider_key,provider_environment,request_id) DO NOTHING`,
-        [tenantId, environment, input.requestId, input.planVersionId]);
+        [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, input.requestId, input.planVersionId]);
         const reservation = await client.query<{ commercial_plan_version_id: string; status: string }>(
           `SELECT commercial_plan_version_id,status FROM ${schema}.billing_checkout_intents
-         WHERE customer_id=$1 AND provider_key='stripe-sophia' AND provider_environment=$2 AND request_id=$3`,
-          [tenantId, environment, input.requestId]);
+         WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3 AND request_id=$4`,
+          [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, input.requestId]);
         if (reservation.rows[0]?.commercial_plan_version_id !== input.planVersionId
           || !["allocating", "outcome_unknown", "created"].includes(reservation.rows[0]?.status ?? "")) {
           throw new ConflictException("The Checkout request ID is unavailable or already finalized.");
@@ -87,14 +82,14 @@ export class BillingLifecycleService {
       await this.database.tenantTransaction(tenantId, async (client) => {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`billing-checkout:${environment}:${tenantId}`]);
         await client.query(
-          `UPDATE ${schema}.billing_checkout_intents SET status='created',external_checkout_ref=$4,expires_at=$5
-           WHERE customer_id=$1 AND provider_key='stripe-sophia' AND provider_environment=$2
-             AND request_id=$3 AND status IN ('allocating','outcome_unknown')`,
-          [tenantId, environment, input.requestId, result.externalCheckoutRef, result.expiresAt]);
+          `UPDATE ${schema}.billing_checkout_intents SET status='created',external_checkout_ref=$5,expires_at=$6
+           WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3
+             AND request_id=$4 AND status IN ('allocating','outcome_unknown')`,
+          [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, input.requestId, result.externalCheckoutRef, result.expiresAt]);
         const issued = await client.query<{ commercial_plan_version_id: string; external_checkout_ref: string; status: string }>(
           `SELECT commercial_plan_version_id,external_checkout_ref,status FROM ${schema}.billing_checkout_intents
-           WHERE customer_id=$1 AND provider_key='stripe-sophia' AND provider_environment=$2 AND request_id=$3`,
-          [tenantId, environment, input.requestId]);
+           WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3 AND request_id=$4`,
+          [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, input.requestId]);
         if (issued.rows[0]?.commercial_plan_version_id !== input.planVersionId || issued.rows[0]?.status !== "created"
           || issued.rows[0]?.external_checkout_ref !== result.externalCheckoutRef) {
           throw new ConflictException("The Checkout request ID is already bound to different provider state.");
@@ -103,8 +98,9 @@ export class BillingLifecycleService {
     } catch (error) {
       await this.database.tenantTransaction(tenantId, (client) => client.query(
         `UPDATE ${schema}.billing_checkout_intents SET status='outcome_unknown'
-         WHERE customer_id=$1 AND provider_key='stripe-sophia' AND provider_environment=$2
-           AND request_id=$3 AND status='allocating'`, [tenantId, environment, input.requestId])).catch(() => undefined);
+         WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3
+           AND request_id=$4 AND status='allocating'`,
+        [tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, input.requestId])).catch(() => undefined);
       throw error;
     }
     await this.audit.record({ tenantId, identityUserId: principal.identityUserId, eventType: "billing.checkout.created",
@@ -126,6 +122,55 @@ export class BillingLifecycleService {
     return { ...result, environment, liveCharge: false };
   }
 
+  async bindCustomer(tenantId: string, principal: AdminPrincipal, body: unknown) {
+    const input = liveCustomerBindingSchema.parse(body);
+    const status = this.provider.status();
+    if (status.availability !== "live" || status.checkout) {
+      throw new ServiceUnavailableException("Customer bootstrap binding is available only in live mode while Checkout is disabled.");
+    }
+    const verified = await this.provider.verifyCustomerBinding({ tenantId, customerRef: input.customerRef });
+    const resolved = await this.database.query<{ tenant_id: string | null }>(
+      `SELECT ${runtimeConfig().schema}.resolve_billing_customer_tenant($1,'live',$2) AS tenant_id`,
+      [STRIPE_BILLING_PROVIDER_KEY, input.customerRef]);
+    if (resolved.rows[0]?.tenant_id && resolved.rows[0].tenant_id !== tenantId) {
+      throw new ConflictException("The verified live Customer is already bound to another Sophia tenant.");
+    }
+    let alreadyBound = resolved.rows[0]?.tenant_id === tenantId;
+    if (!alreadyBound) {
+      try {
+        await this.database.tenantTransaction(tenantId, async (client) => {
+          await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            [`billing-customer:live:${tenantId}`]);
+          const existing = await client.query<{ external_customer_ref: string }>(
+            `SELECT external_customer_ref FROM ${runtimeConfig().schema}.billing_provider_customers
+             WHERE customer_id=$1 AND provider_key=$2 AND provider_environment='live' FOR UPDATE`,
+            [tenantId, STRIPE_BILLING_PROVIDER_KEY]);
+          if (existing.rows[0]) {
+            if (existing.rows[0].external_customer_ref !== input.customerRef) {
+              throw new ConflictException("This tenant is already linked to another live Sophia billing Customer.");
+            }
+            alreadyBound = true;
+            return;
+          }
+          await client.query(
+            `INSERT INTO ${runtimeConfig().schema}.billing_provider_customers
+              (customer_id,provider_key,provider_environment,external_customer_ref,observed_at)
+             VALUES ($1,$2,'live',$3,$4)`,
+            [tenantId, STRIPE_BILLING_PROVIDER_KEY, input.customerRef, verified.observedAt]);
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new ConflictException("The verified live Customer binding conflicts with existing provider state.");
+        throw error;
+      }
+    }
+    await this.audit.record({ tenantId, identityUserId: principal.identityUserId,
+      eventType: "billing.customer.bound", permission: "billing.manage", outcome: "allowed",
+      resourceType: "billingCustomer", metadata: { providerKey: STRIPE_BILLING_PROVIDER_KEY,
+        environment: "live", requestId: input.requestId, alreadyBound } });
+    return { environment: "live", providerCustomerBound: true, alreadyBound,
+      observedAt: verified.observedAt, liveCharge: false };
+  }
+
   async reconcile(tenantId: string, principal: AdminPrincipal, body: unknown) {
     const input = hostedActionSchema.parse(body); const status = this.provider.status();
     const environment = providerEnvironment(status.availability);
@@ -134,8 +179,8 @@ export class BillingLifecycleService {
     if (!context.customerRef) throw new NotFoundException(`No Sophia ${environment} billing customer is linked to this tenant.`);
     const result = await this.provider.reconcileTenant({ tenantId, customerRef: context.customerRef });
     await this.database.tenantTransaction(tenantId, async (client) => {
-      for (const subscription of result.subscriptions) await upsertSubscription(client, tenantId, "stripe-sophia", environment, subscription);
-      for (const invoice of result.invoices) await upsertInvoice(client, tenantId, "stripe-sophia", environment, invoice);
+      for (const subscription of result.subscriptions) await upsertSubscription(client, tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, subscription);
+      for (const invoice of result.invoices) await upsertInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, invoice);
     });
     await this.audit.record({ tenantId, identityUserId: principal.identityUserId, eventType: "billing.reconciled",
       permission: "billing.manage", outcome: "allowed",
@@ -193,8 +238,8 @@ export class BillingLifecycleService {
            ORDER BY a.effective_from DESC LIMIT 1
          ) plan ON true
          LEFT JOIN ${schema}.billing_provider_customers customer
-           ON customer.customer_id=c.customer_id AND customer.provider_key='stripe-sophia' AND customer.provider_environment=$2
-         WHERE c.customer_id=$1`, [tenantId, environment]);
+           ON customer.customer_id=c.customer_id AND customer.provider_key=$3 AND customer.provider_environment=$2
+         WHERE c.customer_id=$1`, [tenantId, environment, STRIPE_BILLING_PROVIDER_KEY]);
       if (!result.rows[0]) throw new NotFoundException("Tenant not found.");
       const row = result.rows[0];
       return { planVersionId: row.commercial_plan_version_id, customerRef: row.external_customer_ref,

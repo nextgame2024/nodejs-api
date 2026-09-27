@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import Stripe from "stripe";
 import { z } from "zod";
 import { runtimeConfig, type RuntimeConfig } from "../../config/runtime-config.js";
@@ -11,6 +11,7 @@ import type {
   BillingSubscriptionObservation,
   BillingWebhookEvidence,
 } from "./billing-provider.port.js";
+import { STRIPE_BILLING_API_VERSION, STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 
 type StripeClient = {
   checkout: { sessions: { create(params: Stripe.Checkout.SessionCreateParams, options?: Stripe.RequestOptions): Promise<Stripe.Checkout.Session> } };
@@ -19,6 +20,7 @@ type StripeClient = {
   subscriptions: { list(params: Stripe.SubscriptionListParams): Promise<Stripe.ApiList<Stripe.Subscription>> };
   invoices: { list(params: Stripe.InvoiceListParams): Promise<Stripe.ApiList<Stripe.Invoice>> };
   prices: { retrieve(id: string): Promise<Stripe.Price> };
+  customers: { retrieve(id: string): Promise<Stripe.Customer | Stripe.DeletedCustomer> };
 };
 
 const eventSchema = z.object({
@@ -34,7 +36,7 @@ export class StripeBillingProvider implements BillingProvider {
   constructor(config: RuntimeConfig["billing"] = runtimeConfig().billing, client?: StripeClient) {
     this.config = config;
     this.client = client ?? (config.stripeSecretKey
-      ? new Stripe(config.stripeSecretKey, { apiVersion: "2025-08-27.basil", maxNetworkRetries: 2 }) : null);
+      ? new Stripe(config.stripeSecretKey, { apiVersion: STRIPE_BILLING_API_VERSION, maxNetworkRetries: 2 }) : null);
   }
 
   status(): BillingProviderStatus {
@@ -44,7 +46,7 @@ export class StripeBillingProvider implements BillingProvider {
     const checkoutEnabled = available && (environment === "sandbox" || this.config.liveCheckoutEnabled);
     return {
       availability: available ? environment : "disabled",
-      providerKey: "stripe-sophia",
+      providerKey: STRIPE_BILLING_PROVIDER_KEY,
       checkout: checkoutEnabled,
       portal: available,
       signedWebhooks: available,
@@ -103,6 +105,19 @@ export class StripeBillingProvider implements BillingProvider {
     return { url: hostedProviderUrl(session.url, "billing.stripe.com"), expiresAt: null };
   }
 
+  async verifyCustomerBinding(input: { tenantId: string; customerRef: string }) {
+    const environment = this.availableEnvironment();
+    const customer = await this.availableClient().customers.retrieve(input.customerRef);
+    const metadataValue = "deleted" in customer && customer.deleted ? null : customer.metadata;
+    if (("deleted" in customer && customer.deleted) || customer.livemode !== (environment === "live")
+      || metadataValue?.sophiaNamespace !== "subscription-v1"
+      || metadataValue.sophiaEnvironment !== environment
+      || metadataValue.sophiaTenantId !== input.tenantId) {
+      throw new ConflictException(`Stripe ${environment} Customer metadata does not authorize this Sophia tenant binding.`);
+    }
+    return { observedAt: new Date().toISOString() };
+  }
+
   async verifyWebhook(headers: Readonly<Record<string, string | undefined>>, rawBody: Uint8Array): Promise<BillingWebhookEvidence> {
     const client = this.availableClient();
     const signature = headers["stripe-signature"];
@@ -121,11 +136,11 @@ export class StripeBillingProvider implements BillingProvider {
       && (metadataValue.sophiaEnvironment === environment
         || (environment === "sandbox" && metadataValue.sophiaEnvironment === undefined));
     const occurredAt = secondsIso(event.created);
-    const customerRef = reference(object.customer);
+    const customerRef = event.type === "customer.updated" ? reference(object.id) : reference(object.customer);
     const subscription = subscriptionObservation(event.type, object, occurredAt);
     const invoice = invoiceObservation(event.type, object, occurredAt);
     return {
-      providerKey: "stripe-sophia", environment, eventId: event.id, eventType: event.type,
+      providerKey: STRIPE_BILLING_PROVIDER_KEY, environment, eventId: event.id, eventType: event.type,
       occurredAt, payloadDigest: createHash("sha256").update(rawBody).digest("hex"), customerRef,
       checkoutRef: event.type === "checkout.session.completed" ? reference(object.id) : null,
       tenantHint: metadataMatchesEnvironment && uuid.safeParse(metadataValue?.sophiaTenantId).success

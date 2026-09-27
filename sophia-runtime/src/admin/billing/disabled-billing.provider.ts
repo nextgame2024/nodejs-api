@@ -11,6 +11,7 @@ export class DisabledBillingProvider implements BillingProvider {
   mappedPlanVersionIds(): ReadonlySet<string> { return new Set(); }
   createHostedCheckout(): Promise<never> { return Promise.reject(unavailable()); }
   createHostedPortal(): Promise<never> { return Promise.reject(unavailable()); }
+  verifyCustomerBinding(): Promise<never> { return Promise.reject(unavailable()); }
   verifyWebhook(): Promise<never> { return Promise.reject(unavailable()); }
   reconcileTenant(): Promise<never> { return Promise.reject(unavailable()); }
 }

@@ -2,13 +2,13 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.42",
+    "version": "2.1.43",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
     "artifactType": "Codex task specification, not a native Codex configuration file",
     "implementationPerformed": true,
-    "lastValidatedOn": "2026-09-26",
+    "lastValidatedOn": "2026-09-27",
     "implementationEvidence": "docs/sophia/implementation-progress.json",
     "baseline": {
       "fileName": "sophia-realtime-architecture.json",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation and Stripe credential-isolation assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation and no-charge live-customer bootstrap/signing-evidence assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,26 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-LIVE-BOOTSTRAP-EVIDENCE",
+      "taskId": "P6-A06",
+      "reason": "Implementing read-only live verification proved a circular dependency: with live Checkout disabled, the Runtime had no authorised way to establish the first live tenant-to-Customer binding, so portal, webhook routing and reconciliation could never be verified. A locally generated signature also cannot prove that Stripe's deployed webhook destination uses the configured signing secret.",
+      "changes": [
+        "Split P6-A06C3 into implementation, live-resource configuration, and deployed evidence slices.",
+        "Allow a recent-MFA billing administrator to bind only an already-existing live Stripe Customer after the adapter read-only verifies exact Sophia namespace, environment and tenant metadata. The action must not create a Customer, Checkout, subscription, invoice, charge, entitlement or plan assignment.",
+        "Require the live webhook destination to subscribe to customer.updated in addition to lifecycle events so an operator can produce harmless signed delivery evidence after binding.",
+        "Do not treat local signing-secret verification as deployed endpoint proof. Require a persisted signed live customer.updated event from the last 24 hours plus bounded read-only reconciliation before C3 completes."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
+        "sophia-runtime/scripts/verify-stripe-live-readiness.mts",
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts",
+        "docs/sophia/p6-a06c3-checkpoint.md"
+      ],
+      "approvedBy": "User instruction to evaluate and improve the reference plan when implementation evidence requires it",
+      "recordedAt": "2026-09-27T11:15:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-27-P6-A06C2-ENVIRONMENT-CONTRACT",
       "taskId": "P6-A06",
@@ -5557,8 +5577,25 @@
             },
             {
               "id": "P6-A06C3",
-              "status": "blocked_on_live_resources",
-              "scope": "Configure secret-manager-injected live credentials, recurring Price mappings, portal configuration and signed webhook destination; verify readiness, signatures and read-only reconciliation without creating a Checkout or charge."
+              "status": "in_progress",
+              "scope": "Configure secret-manager-injected live credentials, recurring Price mappings, portal configuration and signed webhook destination; verify readiness, signatures and read-only reconciliation without creating a Checkout or charge.",
+              "executionSlices": [
+                {
+                  "id": "P6-A06C3A",
+                  "status": "complete",
+                  "scope": "Implement read-only live resource verification and a recent-MFA, metadata-verified, no-charge binding path for an externally created live Stripe Customer."
+                },
+                {
+                  "id": "P6-A06C3B",
+                  "status": "blocked_on_live_resources",
+                  "scope": "Configure the approved live recurring Price mapping, portal, webhook destination and secret-manager values while live Checkout remains disabled."
+                },
+                {
+                  "id": "P6-A06C3C",
+                  "status": "blocked_on_live_evidence",
+                  "scope": "Bind the approved live Customer, record a harmless signed customer.updated delivery through the deployed endpoint, and run bounded read-only reconciliation."
+                }
+              ]
             },
             {
               "id": "P6-A06C4",

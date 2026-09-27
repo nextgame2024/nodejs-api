@@ -36,6 +36,11 @@ export class UsageBillingController {
     return this.lifecycle.portal(tenantId, request.adminPrincipal, body);
   }
 
+  @Post("customer-binding") @RequireAdminPermissions("billing.manage")
+  bindCustomer(@Param("tenantId") tenantId: string, @Req() request: { adminPrincipal: AdminPrincipal }, @Body() body: unknown) {
+    return this.lifecycle.bindCustomer(tenantId, request.adminPrincipal, body);
+  }
+
   @Post("reconcile") @RequireAdminPermissions("billing.manage")
   reconcile(@Param("tenantId") tenantId: string, @Req() request: { adminPrincipal: AdminPrincipal }, @Body() body: unknown) {
     return this.lifecycle.reconcile(tenantId, request.adminPrincipal, body);

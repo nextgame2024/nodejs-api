@@ -66,6 +66,39 @@ describe("StripeBillingProvider", () => {
     await expect(provider.verifyWebhook({ "stripe-signature": signature }, Buffer.from(body)))
       .rejects.toThrow("sandbox events are rejected by the live adapter");
   });
+
+  it("routes signed Customer update evidence by the Customer object's own ID", async () => {
+    const secret = "whsec_sophia_live_secret";
+    const body = JSON.stringify({ id: "evt_customer_updated_1", type: "customer.updated", created: 2_000_000_000,
+      livemode: true, data: { object: { id: "cus_liveSophia123", metadata: {
+        sophiaNamespace: "subscription-v1", sophiaEnvironment: "live", sophiaTenantId: tenantId,
+      } } } });
+    const signature = Stripe.webhooks.generateTestHeaderString({ payload: body, secret, timestamp: Math.floor(Date.now() / 1000) });
+    const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
+      stripeSecretKey: "sk_live_sophia", stripeWebhookSecret: secret });
+    await expect(provider.verifyWebhook({ "stripe-signature": signature }, Buffer.from(body)))
+      .resolves.toMatchObject({ eventType: "customer.updated", environment: "live", customerRef: "cus_liveSophia123" });
+  });
+
+  it("verifies an existing live Customer has exact Sophia tenant metadata before binding", async () => {
+    const customersRetrieve = jest.fn(async () => ({ id: "cus_liveSophia123", livemode: true,
+      metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live", sophiaTenantId: tenantId } }));
+    const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
+      stripeSecretKey: "sk_live_sophia" }, client({ liveMode: true, customersRetrieve }));
+    await expect(provider.verifyCustomerBinding({ tenantId, customerRef: "cus_liveSophia123" }))
+      .resolves.toEqual({ observedAt: expect.any(String) });
+    expect(customersRetrieve).toHaveBeenCalledWith("cus_liveSophia123");
+  });
+
+  it("rejects a live Customer whose metadata authorizes another tenant", async () => {
+    const customersRetrieve = jest.fn(async () => ({ id: "cus_liveSophia123", livemode: true,
+      metadata: { sophiaNamespace: "subscription-v1", sophiaEnvironment: "live",
+        sophiaTenantId: "44444444-4444-4444-8444-444444444444" } }));
+    const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
+      stripeSecretKey: "sk_live_sophia" }, client({ liveMode: true, customersRetrieve }));
+    await expect(provider.verifyCustomerBinding({ tenantId, customerRef: "cus_liveSophia123" }))
+      .rejects.toThrow("does not authorize this Sophia tenant binding");
+  });
 });
 
 function config(): RuntimeConfig["billing"] {
@@ -75,12 +108,13 @@ function config(): RuntimeConfig["billing"] {
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" } };
 }
-function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean } = {}) {
+function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; customersRetrieve?: jest.Mock } = {}) {
   return {
     checkout: { sessions: { create: input.checkoutCreate ?? jest.fn() } },
     billingPortal: { sessions: { create: jest.fn() } },
     webhooks: { constructEvent: jest.fn() }, subscriptions: { list: jest.fn() }, invoices: { list: jest.fn() },
     prices: { retrieve: jest.fn(async () => ({ livemode: input.liveMode ?? false, active: true, type: "recurring", currency: "aud",
       unit_amount: 1000, recurring: { interval: "month" } })) },
+    customers: { retrieve: input.customersRetrieve ?? jest.fn() },
   } as never;
 }

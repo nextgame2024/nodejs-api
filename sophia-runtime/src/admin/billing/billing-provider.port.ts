@@ -60,6 +60,7 @@ export interface BillingProvider {
       url: string; expiresAt: string | null; externalCheckoutRef: string;
     }>;
   createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string }): Promise<{ url: string; expiresAt: string | null }>;
+  verifyCustomerBinding(input: { tenantId: string; customerRef: string }): Promise<{ observedAt: string }>;
   verifyWebhook(headers: Readonly<Record<string, string | undefined>>, rawBody: Uint8Array): Promise<BillingWebhookEvidence>;
   reconcileTenant(input: { tenantId: string; customerRef: string }): Promise<BillingReconciliation>;
 }

@@ -38,6 +38,41 @@ describe("BillingLifecycleService", () => {
     expect(provider.createHostedCheckout).not.toHaveBeenCalled();
   });
 
+  it("binds an externally created and provider-verified live Customer without creating a charge", async () => {
+    const provider = providerMock();
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia", checkout: false,
+      portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
+    provider.verifyCustomerBinding = jest.fn(async () => ({ observedAt: "2026-09-27T00:00:00.000Z" }));
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("resolve_billing_customer_tenant")) return { rows: [{ tenant_id: null }] };
+      if (sql.includes("SELECT external_customer_ref")) return { rows: [] };
+      return { rows: [], rowCount: 1 };
+    });
+    const audit = { record: jest.fn() };
+    const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
+    const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never);
+    const customerRef = "cus_liveSophia123";
+    await expect(service.bindCustomer(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333", customerRef,
+    })).resolves.toEqual({ environment: "live", providerCustomerBound: true, alreadyBound: false,
+      observedAt: "2026-09-27T00:00:00.000Z", liveCharge: false });
+    expect(provider.verifyCustomerBinding).toHaveBeenCalledWith({ tenantId, customerRef });
+    expect(query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO sophia_runtime.billing_provider_customers"))).toBe(true);
+    expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ eventType: "billing.customer.bound",
+      permission: "billing.manage", metadata: expect.objectContaining({ environment: "live" }) }));
+    expect(JSON.stringify(audit.record.mock.calls)).not.toContain(customerRef);
+  });
+
+  it("refuses bootstrap binding outside dormant live mode before provider I/O", async () => {
+    const provider = providerMock();
+    const service = lifecycle(provider, jest.fn());
+    await expect(service.bindCustomer(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333", customerRef: "cus_liveSophia123",
+    })).rejects.toThrow("only in live mode while Checkout is disabled");
+    expect(provider.verifyCustomerBinding).not.toHaveBeenCalled();
+  });
+
   it("reserves one tenant Checkout before provider I/O and attaches the returned session", async () => {
     const provider = providerMock();
     provider.createHostedCheckout = jest.fn(async () => ({ url: "https://checkout.stripe.com/c/pay/test",
@@ -109,7 +144,7 @@ function providerMock() {
     status: jest.fn(() => ({ availability: "sandbox", providerKey: "stripe-sophia", checkout: true,
       portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "configured" })),
     mappedPlanVersionIds: jest.fn(() => new Set([planVersionId])), createHostedCheckout: jest.fn(),
-    createHostedPortal: jest.fn(), verifyWebhook: jest.fn(), reconcileTenant: jest.fn(),
+    createHostedPortal: jest.fn(), verifyCustomerBinding: jest.fn(), verifyWebhook: jest.fn(), reconcileTenant: jest.fn(),
   } as unknown as BillingProvider & Record<string, jest.Mock>;
 }
 function invoiceEvent(): BillingWebhookEvidence {

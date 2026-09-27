@@ -19,7 +19,8 @@
     "migrate": "tsx src/database/migrate.ts",
     "providers:provision": "tsx scripts/provider-operations.mts provision",
     "providers:reconcile": "tsx scripts/provider-operations.mts reconcile",
-    "knowledge:file-worker": "tsx scripts/knowledge-file-worker.mts"
+    "knowledge:file-worker": "tsx scripts/knowledge-file-worker.mts",
+    "billing:verify-live": "tsx scripts/verify-stripe-live-readiness.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1139.0",

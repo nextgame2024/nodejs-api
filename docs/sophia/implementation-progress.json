@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06B",
-  "updatedAt": "2026-09-26T18:40:00+10:00",
+  "checkpoint": "P6-A06C3A",
+  "updatedAt": "2026-09-27T11:15:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -685,7 +685,7 @@
     },
     "P6-A06": {
       "status": "in_progress",
-      "completedSlice": "P6-A06B",
+      "completedSlice": "P6-A06C3A",
       "evidence": [
         "p6-a06a-checkpoint.md",
         "p6-a06b-checkpoint.md",
@@ -695,13 +695,19 @@
         "../../sophia-runtime/src/database/migrations/033_billing_checkout_intents.sql",
         "../../sophia-runtime/src/database/migrations/034_billing_checkout_reservations.sql",
         "../../sophia-runtime/src/database/migrations/035_billing_reference_trigger_routing.sql",
-        "../../sophia-runtime/src/admin/billing/stripe-sandbox-billing.provider.ts",
+        "../../sophia-runtime/src/database/migrations/036_billing_provider_environment.sql",
+        "../../sophia-runtime/src/database/migrations/037_billing_provider_environment_contract.sql",
+        "../../sophia-runtime/src/admin/billing/stripe-billing.provider.ts",
+        "../../sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
         "../../sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
         "../../sophia-runtime/src/admin/billing/billing-webhook.controller.ts",
         "../../sophia-runtime/scripts/verify-billing-sandbox-lifecycle.mts",
+        "../../sophia-runtime/scripts/verify-stripe-live-readiness.mts",
+        "p6-a06c2-checkpoint.md",
+        "p6-a06c3-checkpoint.md",
         "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
       ],
-      "detail": "P6-A06A implemented the fail-closed Stripe test-mode boundary. P6-A06B then completed a real provider-hosted AUD 1 monthly sandbox lifecycle against deployed Sophia Runtime: an issued tenant/plan-bound Checkout reservation, hosted cs_test Session, signed checkout completion, customer binding, one active subscription, one paid invoice, hosted portal creation and authoritative reconciliation with no live entitlement mutation. The enabled test-mode destination carries all twelve declared events. Initial reconciliation exposed a shared-trigger field-routing defect; its transaction rolled back, migration 035 replaced boolean table checks with nested table-specific branches, and reconciliation passed. Business Manager recent-MFA enforcement remains unchanged; a bounded synthetic sandbox operator invoked the same lifecycle service for the proof because the current identity response has no mfaVerifiedAt. Plan 2.1.40 records the evidence and correction. P6-A06C remains the independently authorised live-mode configuration/activation gate."
+      "detail": "P6-A06A/B completed the fail-closed adapter and real recurring sandbox lifecycle. P6-A06C1/C2 then established genuine non-owner database authentication and environment-separated dormant live mode. P6-A06C3A adds read-only verification of exact live Prices, portal features and webhook configuration plus a recent-MFA no-charge bootstrap that binds only an externally created live Customer whose Stripe metadata exactly authorizes the tenant. It also corrects the evidence model: local signature construction is not deployed destination proof, so C3 completion requires a real signed live customer.updated event persisted within 24 hours and bounded read-only reconciliation. No live Stripe request or secret change occurred during implementation. Plan 2.1.43 records the correction. C3B/C remain blocked on approved live resources, production commercial values, a verification Customer and deployed delivery evidence; C4 remains the separate real-charge decision."
     }
   },
   "tests": [
@@ -1835,6 +1841,20 @@
       "node": "22.23.2",
       "result": "pass",
       "detail": "P6-A06A boundary scan passed 214 new-product files; 8 protected real-estate suites/38 tests passed."
+    },
+    {
+      "command": "npm test -- --runTestsByPath src/admin/billing/billing-lifecycle.service.spec.ts src/admin/billing/stripe-billing.provider.spec.ts src/admin/billing/stripe-live-readiness.spec.ts src/admin/billing/usage-billing.controller.spec.ts; npm run typecheck",
+      "repository": "backend/sophia-runtime",
+      "node": "22.23.2",
+      "result": "pass",
+      "detail": "P6-A06C3A focused billing verification passed 4 suites/19 tests. The full Runtime passed 100 suites/351 tests plus production typecheck, build and generated-contract drift check. No live Stripe API request was made."
+    },
+    {
+      "command": "npx tsc -p tsconfig.app.json --noEmit",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "pass",
+      "detail": "The live Customer binding control and environment-aware hosted-action contracts compile successfully; all 82 Sophia Runtime/Admin browser tests and the production build passed. Existing bundle/font/CommonJS/PrimeIcons warnings remain."
     }
   ],
   "blockers": [
@@ -1878,8 +1898,8 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 does not invent or activate a production rate card, plan assignment, customer billing balance or tax conclusion. Tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. Plans with usage-overage lines or tax collection remain ineligible until an approved metering/tax design exists. The Business Manager identity still has no recent-MFA evidence, so deployed hosted Admin actions remain fail-closed; the bounded verification operator did not weaken that guard. P6-A06C1/C2 are complete: the deployed Runtime authenticates as the genuine non-owner sophia_runtime_login, and the common Stripe adapter plus persistence now separate sandbox/live identity throughout. Live Checkout is independently disabled by default and cannot perform database or Stripe I/O until explicitly activated. Live resources and read-only verification remain P6-A06C3; real-charge authority remains P6-A06C4."
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. Plans with usage-overage lines or tax collection remain ineligible until an approved metering/tax design exists. The Business Manager identity still has no recent-MFA evidence, so deployed hosted Admin actions remain fail-closed; the bounded verification operator did not weaken that guard. P6-A06C1/C2 are complete: the deployed Runtime authenticates as the genuine non-owner sophia_runtime_login, and the common Stripe adapter plus persistence now separate sandbox/live identity throughout. P6-A06C3A implements read-only live resource verification and a recent-MFA, metadata-verified, no-charge live Customer bootstrap. C3B/C remain blocked on approved production commercial values, live Stripe resources/secrets, an approved verification Customer, real signed customer.updated delivery and read-only reconciliation. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": "P6-A06C3",
+  "nextReadyTask": "P6-A06C3B",
   "stopAfterCheckpoint": true
 }
