@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Headers, Inject, Param, Post } from "@ne
 import { ConversationService } from "./conversation.service.js";
 import { CreateSessionDto } from "./dto/create-session.dto.js";
 import { ExecuteToolDto } from "./dto/execute-tool.dto.js";
+import { OptionalSessionActivityDto, SessionActivityDto } from "./dto/session-activity.dto.js";
 
 @Controller("runtime/sessions")
 export class ConversationController {
@@ -35,25 +36,37 @@ export class ConversationController {
   @Post(":sessionId/close")
   closeSession(
     @Param("sessionId") sessionId: string,
+    @Body() dto: OptionalSessionActivityDto,
     @Headers("authorization") authorization?: string,
   ) {
-    return this.conversation.closeSession(sessionId, bearerToken(authorization));
+    return this.conversation.closeSession(sessionId, bearerToken(authorization), dto.connectionId);
+  }
+
+  @Post(":sessionId/connected")
+  connectedSession(
+    @Param("sessionId") sessionId: string,
+    @Body() dto: SessionActivityDto,
+    @Headers("authorization") authorization?: string,
+  ) {
+    return this.conversation.connectedSession(sessionId, dto.connectionId, bearerToken(authorization));
   }
 
   @Post(":sessionId/heartbeat")
   heartbeatSession(
     @Param("sessionId") sessionId: string,
+    @Body() dto: OptionalSessionActivityDto,
     @Headers("authorization") authorization?: string,
   ) {
-    return this.conversation.heartbeatSession(sessionId, bearerToken(authorization));
+    return this.conversation.heartbeatSession(sessionId, bearerToken(authorization), dto.connectionId);
   }
 
   @Post(":sessionId/disconnect")
   disconnectSession(
     @Param("sessionId") sessionId: string,
+    @Body() dto: OptionalSessionActivityDto,
     @Headers("authorization") authorization?: string,
   ) {
-    return this.conversation.disconnectSession(sessionId, bearerToken(authorization));
+    return this.conversation.disconnectSession(sessionId, bearerToken(authorization), dto.connectionId);
   }
 
   @Post(":sessionId/action-reviews/:reviewId/confirm")

@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.46",
+    "version": "2.1.47",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience and aggregate-active-minute assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute and canonical-connected-activity assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,25 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-ACTIVE-LIFECYCLE",
+      "taskId": "P6-A06",
+      "reason": "Implementation inspection proved that sessions.started_at-to-ended_at is an operational provider-resource lifetime, not billable connected activity: it includes provider bootstrap, disconnect grace and cleanup retry delay. Treating those timestamps as measured usage would overcharge and make retries affect invoices.",
+      "changes": [
+        "Start billable activity only after browser media transports connect and the authenticated session records a server-timestamped connection identity; session/provider creation alone records no usage.",
+        "Persist one open interval per session and connection identity. Heartbeat retries advance one monotonic last-confirmed timestamp and never add counters, while a reconnect must use a new connection identity.",
+        "Finalise explicit disconnect/close at server receipt before provider cleanup. For abrupt loss or reconciliation, end activity at the last authenticated confirmation rather than the later disconnect-grace or cleanup time.",
+        "Retain exact interval boundaries for period intersection. Do not round sessions; P6-A06C3B0C3 aggregates intersected duration across the billing period before applying the single whole-minute ceiling."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/041_session_activity_intervals.sql",
+        "sophia-runtime/src/providers/session/provider-operations.service.ts",
+        "frontend/src/app/sophia-runtime/services/sophia-session.facade.ts",
+        "docs/sophia/p6-a06c3b0c2-checkpoint.md"
+      ],
+      "approvedBy": "Standing user instruction to correct the reference plan when implementation evidence requires a safer design",
+      "recordedAt": "2026-09-27T15:50:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-27-P6-A06C3-STRIPE-METER-LEDGER",
       "taskId": "P6-A06",
@@ -5693,12 +5712,12 @@
                             },
                             {
                               "id": "P6-A06C3B0C2",
-                              "status": "ready",
-                              "scope": "Define and persist canonical measured active seconds from the billable session lifecycle; prove retries and reconnects cannot double count."
+                              "status": "complete",
+                              "scope": "Persist canonical server-timestamped connected-activity intervals separately from operational provider lifetime; prove retries are monotonic, reconnects use distinct identities and cleanup delay cannot become billable usage."
                             },
                             {
                               "id": "P6-A06C3B0C3",
-                              "status": "blocked_on_C2",
+                              "status": "ready",
                               "scope": "Finalise immutable monthly billing-period ledgers with one aggregate ceiling after the 120000-second inclusion."
                             },
                             {

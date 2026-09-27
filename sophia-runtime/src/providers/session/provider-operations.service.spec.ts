@@ -27,6 +27,7 @@ describe("ProviderOperationsService", () => {
     const client = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [closing], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [closed], rowCount: 1 }) } as unknown as PoolClient;
     const adapter = { close: jest.fn().mockResolvedValue(undefined) };
     const registry = { resolveStoredSession: jest.fn().mockReturnValue(adapter) };
@@ -42,6 +43,60 @@ describe("ProviderOperationsService", () => {
     expect(second.status).toBe("closed");
     expect(adapter.close).toHaveBeenCalledTimes(1);
     expect(database.tenantTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens a connection interval idempotently and never derives activity from session creation", async () => {
+    const active = session("active");
+    const client = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [active], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [active], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 }) } as unknown as PoolClient;
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (client: PoolClient) => unknown) => work(client)),
+    };
+    const service = new ProviderOperationsService(database as never, {} as never, admission());
+
+    await service.connected(active, "33333333-3333-4333-8333-333333333333");
+    await service.connected(active, "33333333-3333-4333-8333-333333333333");
+
+    const inserts = client.query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.session_activity_intervals"));
+    expect(inserts).toHaveLength(2);
+    expect(String(inserts[0]?.[0])).toContain("ON CONFLICT (session_id, connection_id) DO UPDATE");
+  });
+
+  it("makes heartbeat retries monotonic rather than additive", async () => {
+    const active = session("active");
+    const client = { query: jest.fn().mockResolvedValue({ rows: [active], rowCount: 1 }) } as unknown as PoolClient;
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (client: PoolClient) => unknown) => work(client)),
+    };
+    const service = new ProviderOperationsService(database as never, {} as never, admission());
+
+    await service.heartbeat(active, "33333333-3333-4333-8333-333333333333");
+    await service.heartbeat(active, "33333333-3333-4333-8333-333333333333");
+
+    const activityUpdates = client.query.mock.calls.filter(([sql]) => String(sql).includes("session_activity_intervals"));
+    expect(activityUpdates).toHaveLength(2);
+    expect(activityUpdates.every(([sql]) => String(sql).includes("GREATEST(last_confirmed_at, now())"))).toBe(true);
+    expect(activityUpdates.every(([sql]) => !String(sql).match(/active_seconds\s*\+/))).toBe(true);
+  });
+
+  it("finalises client disconnect once using the matching connection identity", async () => {
+    const active = session("active");
+    const client = { query: jest.fn().mockResolvedValue({ rows: [active], rowCount: 1 }) } as unknown as PoolClient;
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (client: PoolClient) => unknown) => work(client)),
+    };
+    const service = new ProviderOperationsService(database as never, {} as never, admission());
+
+    await service.disconnect(active, "33333333-3333-4333-8333-333333333333");
+    const finalisation = client.query.mock.calls.find(([sql]) => String(sql).includes("SET status = $1"));
+    expect(finalisation?.[1]).toEqual([
+      "finalised", "client_disconnect", active.session_id, active.customer_id,
+      "33333333-3333-4333-8333-333333333333",
+    ]);
+    expect(String(finalisation?.[0])).toContain("status = 'open'");
   });
 
   it("records a recoverable cleanup state when provider close fails", async () => {

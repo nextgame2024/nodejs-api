@@ -148,14 +148,21 @@ export class V2SessionService {
     return { reviewId, status: "confirmed" };
   }
 
-  async close(sessionId: string, token?: string) { return this.lifecycle(sessionId, token, "close"); }
-  async heartbeat(sessionId: string, token?: string) { return this.lifecycle(sessionId, token, "heartbeat"); }
-  async disconnect(sessionId: string, token?: string) { return this.lifecycle(sessionId, token, "disconnect"); }
-
-  private async lifecycle(sessionId: string, token: string | undefined, action: "close" | "heartbeat" | "disconnect") {
+  async connected(sessionId: string, connectionId: string, token?: string) {
     const row = await this.load(sessionId);
     assertAccess(row, token);
-    const updated = await this.operations[action](row);
+    const updated = await this.operations.connected(row, connectionId);
+    return SessionStatusResponseSchema.parse({ descriptor: descriptorFrom(updated as V2SessionRow) });
+  }
+
+  async close(sessionId: string, token?: string, connectionId?: string) { return this.lifecycle(sessionId, token, "close", connectionId); }
+  async heartbeat(sessionId: string, token?: string, connectionId?: string) { return this.lifecycle(sessionId, token, "heartbeat", connectionId); }
+  async disconnect(sessionId: string, token?: string, connectionId?: string) { return this.lifecycle(sessionId, token, "disconnect", connectionId); }
+
+  private async lifecycle(sessionId: string, token: string | undefined, action: "close" | "heartbeat" | "disconnect", connectionId?: string) {
+    const row = await this.load(sessionId);
+    assertAccess(row, token);
+    const updated = await this.operations[action](row, connectionId);
     return SessionStatusResponseSchema.parse({ descriptor: descriptorFrom(updated as V2SessionRow) });
   }
 

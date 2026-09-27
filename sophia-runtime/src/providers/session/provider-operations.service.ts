@@ -1,4 +1,4 @@
-import { Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
 import { runtimeConfig } from "../../config/runtime-config.js";
@@ -92,15 +92,56 @@ export class ProviderOperationsService {
     }
   }
 
-  async close(row: OperationalSessionRow): Promise<OperationalSessionRow> {
+  async connected(row: OperationalSessionRow, connectionId: string): Promise<OperationalSessionRow> {
+    if (row.status !== "active") return row;
+    const config = runtimeConfig();
+    try {
+      const result = await this.database.tenantTransaction(row.customer_id, async (client) => {
+        const locked = await client.query<OperationalSessionRow>(
+          `SELECT * FROM ${config.schema}.sessions
+           WHERE session_id = $1 AND customer_id = $2 FOR UPDATE`,
+          [row.session_id, row.customer_id],
+        );
+        if (locked.rows[0]?.status !== "active") return locked;
+        const interval = await client.query<{ status: string }>(
+          `INSERT INTO ${config.schema}.session_activity_intervals
+             (customer_id, session_id, connection_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (session_id, connection_id) DO UPDATE
+             SET updated_at = ${config.schema}.session_activity_intervals.updated_at
+             WHERE ${config.schema}.session_activity_intervals.status = 'open'
+           RETURNING status`,
+          [row.customer_id, row.session_id, connectionId],
+        );
+        if (interval.rows[0]?.status !== "open") {
+          throw new ConflictException("A finalised connection identity cannot be reused.");
+        }
+        return locked;
+      });
+      return result.rows[0] ?? row;
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException("This session already has an active connection.");
+      }
+      throw error;
+    }
+  }
+
+  async close(row: OperationalSessionRow, connectionId?: string): Promise<OperationalSessionRow> {
     if (row.status === "closed" || row.status === "closing" || row.status === "cleanup_pending") return row;
     const schema = runtimeConfig().schema;
-    const claimed = await this.database.tenantTransaction(row.customer_id, (client) => client.query<OperationalSessionRow>(
-      `UPDATE ${schema}.sessions SET status = 'closing', updated_at = now()
-       WHERE session_id = $1 AND customer_id = $2 AND status = 'active'
-       RETURNING *`,
-      [row.session_id, row.customer_id],
-    ));
+    const claimed = await this.database.tenantTransaction(row.customer_id, async (client) => {
+      const result = await client.query<OperationalSessionRow>(
+        `UPDATE ${schema}.sessions SET status = 'closing', updated_at = now()
+         WHERE session_id = $1 AND customer_id = $2 AND status = 'active'
+         RETURNING *`,
+        [row.session_id, row.customer_id],
+      );
+      if (result.rows[0]) await finaliseOpenActivity(
+        client, schema, row.customer_id, row.session_id, "session_close", "finalised",
+      );
+      return result;
+    });
     if (!claimed.rows[0]) return row;
     const stored = storedFromRow(claimed.rows[0]);
     try {
@@ -144,30 +185,45 @@ export class ProviderOperationsService {
     }
   }
 
-  async heartbeat(row: OperationalSessionRow): Promise<OperationalSessionRow> {
+  async heartbeat(row: OperationalSessionRow, connectionId?: string): Promise<OperationalSessionRow> {
     const config = runtimeConfig();
     if (row.status !== "active") return row;
-    const result = await this.database.tenantTransaction(row.customer_id, (client) => client.query<OperationalSessionRow>(
-      `UPDATE ${config.schema}.sessions
-       SET last_seen_at = now(),
-           disconnect_expires_at = LEAST(hard_expires_at, now() + make_interval(secs => $1)),
-           updated_at = now()
-       WHERE session_id = $2 AND customer_id = $3 AND status = 'active'
-       RETURNING *`,
-      [config.disconnectGraceSeconds, row.session_id, row.customer_id],
-    ));
+    const result = await this.database.tenantTransaction(row.customer_id, async (client) => {
+      const updated = await client.query<OperationalSessionRow>(
+        `UPDATE ${config.schema}.sessions
+         SET last_seen_at = now(),
+             disconnect_expires_at = LEAST(hard_expires_at, now() + make_interval(secs => $1)),
+             updated_at = now()
+         WHERE session_id = $2 AND customer_id = $3 AND status = 'active'
+         RETURNING *`,
+        [config.disconnectGraceSeconds, row.session_id, row.customer_id],
+      );
+      if (updated.rows[0] && connectionId) await client.query(
+        `UPDATE ${config.schema}.session_activity_intervals
+         SET last_confirmed_at = GREATEST(last_confirmed_at, now()), updated_at = now()
+         WHERE session_id = $1 AND customer_id = $2 AND connection_id = $3 AND status = 'open'`,
+        [row.session_id, row.customer_id, connectionId],
+      );
+      return updated;
+    });
     return result.rows[0] ?? row;
   }
 
-  async disconnect(row: OperationalSessionRow): Promise<OperationalSessionRow> {
+  async disconnect(row: OperationalSessionRow, connectionId?: string): Promise<OperationalSessionRow> {
     if (row.status !== "active") return row;
     const config = runtimeConfig();
-    const result = await this.database.tenantTransaction(row.customer_id, (client) => client.query<OperationalSessionRow>(
-      `UPDATE ${config.schema}.sessions
-       SET disconnect_expires_at = LEAST(hard_expires_at, now() + make_interval(secs => $1)), updated_at = now()
-       WHERE session_id = $2 AND customer_id = $3 AND status = 'active' RETURNING *`,
-      [config.disconnectGraceSeconds, row.session_id, row.customer_id],
-    ));
+    const result = await this.database.tenantTransaction(row.customer_id, async (client) => {
+      const updated = await client.query<OperationalSessionRow>(
+        `UPDATE ${config.schema}.sessions
+         SET disconnect_expires_at = LEAST(hard_expires_at, now() + make_interval(secs => $1)), updated_at = now()
+         WHERE session_id = $2 AND customer_id = $3 AND status = 'active' RETURNING *`,
+        [config.disconnectGraceSeconds, row.session_id, row.customer_id],
+      );
+      if (updated.rows[0]) await finaliseOpenActivity(
+        client, config.schema, row.customer_id, row.session_id, "client_disconnect", "finalised", connectionId,
+      );
+      return updated;
+    });
     return result.rows[0] ?? row;
   }
 
@@ -229,6 +285,10 @@ export class ProviderOperationsService {
           [workerId, candidate.allocation_id],
         );
         if (candidate.session_id) {
+          await finaliseOpenActivity(
+            client, config.schema, customerId, candidate.session_id,
+            "lease_expired", "expired", undefined, true,
+          );
           await client.query(
             `UPDATE ${config.schema}.sessions SET status = 'closing', updated_at = now()
              WHERE session_id = $1 AND customer_id = $2 AND status IN ('active', 'cleanup_pending')`,
@@ -326,6 +386,33 @@ export class ProviderOperationsService {
       [safeError(error), allocation.allocationId, allocation.customerId],
     ));
   }
+}
+
+async function finaliseOpenActivity(
+  client: import("pg").PoolClient,
+  schema: string,
+  customerId: string,
+  sessionId: string,
+  reason: "client_disconnect" | "session_close" | "lease_expired" | "session_reconciled",
+  status: "finalised" | "expired",
+  connectionId?: string,
+  atLastConfirmation = false,
+): Promise<void> {
+  await client.query(
+    `UPDATE ${schema}.session_activity_intervals
+     SET status = $1,
+         ended_at = ${atLastConfirmation ? "last_confirmed_at" : "GREATEST(last_confirmed_at, now())"},
+         last_confirmed_at = ${atLastConfirmation ? "last_confirmed_at" : "GREATEST(last_confirmed_at, now())"},
+         end_reason = $2, updated_at = now()
+     WHERE session_id = $3 AND customer_id = $4 AND status = 'open'
+       AND ($5::uuid IS NULL OR connection_id = $5::uuid)`,
+    [status, reason, sessionId, customerId, connectionId ?? null],
+  );
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error
+    && (error as { code?: unknown }).code === "23505";
 }
 
 class OperationTimeoutError extends Error {}

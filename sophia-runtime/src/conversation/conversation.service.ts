@@ -197,26 +197,33 @@ export class ConversationService {
     return { reviewId, status: "cancelled" };
   }
 
-  async closeSession(sessionId: string, accessToken?: string) {
+  async connectedSession(sessionId: string, connectionId: string, accessToken?: string) {
     const row = await this.loadSession(sessionId);
     assertSessionAccess(row, accessToken);
-    await this.tools.clearActionReviews({ sessionId, customerId: row.customer_id });
-    const closed = await this.providerOperations.close(row as OperationalSessionRow);
-    return { session: normalizeSession(closed as SessionRow) };
-  }
-
-  async heartbeatSession(sessionId: string, accessToken?: string) {
-    const row = await this.loadSession(sessionId);
-    assertSessionAccess(row, accessToken);
-    const updated = await this.providerOperations.heartbeat(row as OperationalSessionRow);
+    const updated = await this.providerOperations.connected(row as OperationalSessionRow, connectionId);
     return { session: normalizeSession(updated as SessionRow) };
   }
 
-  async disconnectSession(sessionId: string, accessToken?: string) {
+  async closeSession(sessionId: string, accessToken?: string, connectionId?: string) {
     const row = await this.loadSession(sessionId);
     assertSessionAccess(row, accessToken);
     await this.tools.clearActionReviews({ sessionId, customerId: row.customer_id });
-    const updated = await this.providerOperations.disconnect(row as OperationalSessionRow);
+    const closed = await this.providerOperations.close(row as OperationalSessionRow, connectionId);
+    return { session: normalizeSession(closed as SessionRow) };
+  }
+
+  async heartbeatSession(sessionId: string, accessToken?: string, connectionId?: string) {
+    const row = await this.loadSession(sessionId);
+    assertSessionAccess(row, accessToken);
+    const updated = await this.providerOperations.heartbeat(row as OperationalSessionRow, connectionId);
+    return { session: normalizeSession(updated as SessionRow) };
+  }
+
+  async disconnectSession(sessionId: string, accessToken?: string, connectionId?: string) {
+    const row = await this.loadSession(sessionId);
+    assertSessionAccess(row, accessToken);
+    await this.tools.clearActionReviews({ sessionId, customerId: row.customer_id });
+    const updated = await this.providerOperations.disconnect(row as OperationalSessionRow, connectionId);
     return { session: normalizeSession(updated as SessionRow) };
   }
 
