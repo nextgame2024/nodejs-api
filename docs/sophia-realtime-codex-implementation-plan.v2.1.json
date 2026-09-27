@@ -5671,7 +5671,7 @@
                           "executionSlices": [
                             {
                               "id": "P6-A06C3B0C1",
-                              "status": "in_progress",
+                              "status": "complete",
                               "scope": "Add provider-account registry and account-scoped billing identities using an expand migration, account-aware runtime writer and post-deployment contract migration.",
                               "executionSlices": [
                                 {
@@ -5681,19 +5681,19 @@
                                 },
                                 {
                                   "id": "P6-A06C3B0C1B",
-                                  "status": "ready_for_deployment",
+                                  "status": "complete",
                                   "scope": "Deploy the account-aware writer and configure the stable provider-account key without changing the underlying Stripe account identity."
                                 },
                                 {
                                   "id": "P6-A06C3B0C1C",
-                                  "status": "blocked_on_C1B_observation",
+                                  "status": "complete",
                                   "scope": "After the deployed writer is observed, remove legacy column defaults and the three-argument customer resolver, then prove no deployed path depends on them."
                                 }
                               ]
                             },
                             {
                               "id": "P6-A06C3B0C2",
-                              "status": "blocked_on_C1_deployment",
+                              "status": "ready",
                               "scope": "Define and persist canonical measured active seconds from the billable session lifecycle; prove retries and reconnects cannot double count."
                             },
                             {
