@@ -1855,6 +1855,12 @@
       "node": "20.19.1",
       "result": "pass",
       "detail": "The live Customer binding control and environment-aware hosted-action contracts compile successfully; all 82 Sophia Runtime/Admin browser tests and the production build passed. Existing bundle/font/CommonJS/PrimeIcons warnings remain."
+    },
+    {
+      "command": "GET https://sophia-runtime-api.onrender.com/api/runtime/healthz",
+      "repository": "deployed backend",
+      "result": "pass",
+      "detail": "Public Runtime health returned HTTP 200 with revision d098d70c9944 after the P6-A06C3A deployment. Billing remained on its previously configured mode; no live Stripe resource or charge action was invoked."
     }
   ],
   "blockers": [
