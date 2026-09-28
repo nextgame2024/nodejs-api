@@ -32,6 +32,8 @@ The corrected `prepare` then completed on the existing isolated Customer and sub
 
 The next `close` reached transactional ledger/outbox creation and exposed a schema assumption: the outbox required `event_timestamp <= created_at`, but the isolated Stripe test clock had advanced one provider month beyond database wall time. The transaction rolled back, leaving zero C4B ledgers and zero outbox events. Migration 048 replaces the anonymous rule with an environment-specific named constraint: live events remain non-future, while sandbox events are bounded to `created_at + 62 days`, matching the separate harness cutoff. The migration is applied to Neon; it does not permit simulated live events or expose a public clock override.
 
+The corrected `close` finalized one immutable ledger with two whole overage minutes at AUD 0.10 and Stripe accepted exactly one Meter event. The outbox remains `provider_accepted` with attempt count one and no reconciliation evidence, so `close` must not be rerun. Its immediate reconciliation returned a local mismatch because the real provider period is `2026-09-28T08:51:05Z` through `2026-10-28T08:51:05Z`, while Stripe requires Meter-summary request bounds aligned to minutes. Plan 2.1.58 keeps the exact second boundaries for invoice-line matching but uses ceil-to-minute summary bounds. This includes the single aggregate event at period-end minus one second and excludes the preceding period's aggregate event.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.

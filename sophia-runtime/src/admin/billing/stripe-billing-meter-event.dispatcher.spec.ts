@@ -44,17 +44,19 @@ describe("StripeBillingMeterEventDispatcher", () => {
   });
 
   it("reconciles only an exact Meter summary and finalized metered invoice line", async () => {
-    const periodStart = "2026-08-15T00:00:00.000Z";
-    const periodEnd = "2026-09-15T00:00:00.000Z";
+    const periodStart = "2026-08-15T00:00:05.000Z";
+    const periodEnd = "2026-09-15T00:00:05.000Z";
     const start = Date.parse(periodStart) / 1000;
     const end = Date.parse(periodEnd) / 1000;
+    const summaryStart = Math.ceil(start / 60) * 60;
+    const summaryEnd = Math.ceil(end / 60) * 60;
     const stripe = {
       prices: { retrieve: jest.fn(async () => ({ active: true, livemode: false, currency: "aud",
         unit_amount: 10, recurring: { usage_type: "metered", meter: "mtr_1" } })) },
       billing: {
         meterEvents: { create: jest.fn() },
         meters: { listEventSummaries: jest.fn(async () => ({ has_more: false, data: [{
-          id: "mtrsum_1", meter: "mtr_1", start_time: start, end_time: end,
+          id: "mtrsum_1", meter: "mtr_1", start_time: summaryStart, end_time: summaryEnd,
           aggregated_value: 2, livemode: false,
         }] })) },
       },
@@ -77,6 +79,9 @@ describe("StripeBillingMeterEventDispatcher", () => {
       meterRef: "mtr_1", meterSummaryRef: "mtrsum_1", invoiceRef: "in_1",
       invoiceLineRef: "il_1", invoiceLineQuantity: "2", invoiceLineAmountMinor: "20",
     } });
+    expect(stripe.billing.meters.listEventSummaries).toHaveBeenCalledWith("mtr_1", {
+      customer: "cus_sandbox", start_time: summaryStart, end_time: summaryEnd, limit: 100,
+    });
   });
 
   it("does not claim reconciliation while Stripe aggregation is not yet consistent", async () => {

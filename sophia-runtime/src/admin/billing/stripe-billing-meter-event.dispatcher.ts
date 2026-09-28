@@ -106,9 +106,12 @@ export class StripeBillingMeterEventDispatcher implements BillingMeterEventDispa
     if (!eventName || !meteredPriceId) {
       return mismatch("The plan has no approved Stripe Meter event and metered Price mapping.");
     }
-    const start = unixMinute(input.periodStart);
-    const end = unixMinute(input.periodEnd);
-    if (start === null || end === null || end <= start || !/^\d+$/.test(input.quantity)
+    const periodStart = unixSecond(input.periodStart);
+    const periodEnd = unixSecond(input.periodEnd);
+    const summaryStart = periodStart === null ? null : ceilUnixMinute(periodStart);
+    const summaryEnd = periodEnd === null ? null : ceilUnixMinute(periodEnd);
+    if (periodStart === null || periodEnd === null || periodEnd <= periodStart
+      || summaryStart === null || summaryEnd === null || summaryEnd <= summaryStart || !/^\d+$/.test(input.quantity)
       || !/^\d+$/.test(input.unitPriceMinor)) {
       return mismatch("The immutable reconciliation period or commercial quantity is invalid.");
     }
@@ -120,11 +123,11 @@ export class StripeBillingMeterEventDispatcher implements BillingMeterEventDispa
         return mismatch("The configured Stripe metered Price no longer matches the immutable plan rate.");
       }
       const summaries = await this.client.billing.meters.listEventSummaries(meterRef, {
-        customer: input.externalCustomerRef, start_time: start, end_time: end, limit: 100,
+        customer: input.externalCustomerRef, start_time: summaryStart, end_time: summaryEnd, limit: 100,
       });
       if (summaries.has_more) return mismatch("The Meter summary exceeded the bounded reconciliation response.");
       const matchingSummaries = summaries.data.filter((summary) => summary.meter === meterRef
-        && summary.start_time === start && summary.end_time === end
+        && summary.start_time === summaryStart && summary.end_time === summaryEnd
         && summary.livemode === (environment === "live"));
       if (matchingSummaries.length === 0) {
         return { outcome: "pending", detail: "Stripe has not produced the exact period Meter summary yet." };
@@ -144,7 +147,7 @@ export class StripeBillingMeterEventDispatcher implements BillingMeterEventDispa
         if (lines.has_more) return mismatch(`Invoice ${invoice.id} exceeded the bounded line-item response.`);
         for (const line of lines.data) {
           if (line.pricing?.price_details?.price === meteredPriceId
-            && line.period.start === start && line.period.end === end) lineMatches.push({ invoice, line });
+            && line.period.start === periodStart && line.period.end === periodEnd) lineMatches.push({ invoice, line });
         }
       }
       if (lineMatches.length === 0) {
@@ -201,10 +204,14 @@ function mismatch(detail: string): BillingMeterEventReconciliationResult {
   return { outcome: "mismatch", detail };
 }
 
-function unixMinute(value: string): number | null {
+function unixSecond(value: string): number | null {
   const milliseconds = Date.parse(value);
-  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds % 60_000 !== 0) return null;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds % 1_000 !== 0) return null;
   return milliseconds / 1000;
+}
+
+function ceilUnixMinute(seconds: number): number {
+  return Math.ceil(seconds / 60) * 60;
 }
 
 function isStripeResponseError(error: unknown): error is { statusCode?: number; message: string } {
