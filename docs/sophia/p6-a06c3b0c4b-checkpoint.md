@@ -2,7 +2,7 @@
 
 Date: 2026-09-28 (Australia/Brisbane)
 
-Status: in progress. Provider integration and durable reconciliation are implemented; the real sandbox lifecycle proof is still pending.
+Status: in progress. The real sandbox lifecycle disproved the post-period Meter invoice-line assumption; the corrected draft-renewal invoice-adjustment proof is pending.
 
 ## Deployed sandbox preparation
 
@@ -16,7 +16,7 @@ Status: in progress. Provider integration and durable reconciliation are impleme
 
 Stripe test clocks attach only to newly created Customers. C4B therefore uses a separate synthetic sandbox tenant, Customer and Voice subscription. The operator harness may pass a bounded simulated provider time to the ledger finalizer, but only through the sandbox-specific method and for at most two monthly intervals. Normal API reconciliation and every live path continue to use database `now()`.
 
-The proof is staged so the aggregate event is accepted while the renewal invoice is still draft: observe the closed provider period, finalise the Sophia ledger, dispatch the Meter event, wait for its asynchronous summary, then advance/finalise the invoice and require the exact invoice line. This avoids claiming success from an event submitted after invoice finalization.
+The original proof attempted to stage the aggregate event before renewal-invoice finalization. Real test-clock behavior showed that advancing past the provider boundary created and paid the renewal invoice before Sophia could finalise the exact period ledger and submit the aggregate. The harness therefore proved that the proposed ordering cannot be relied upon.
 
 The compiled production-image harness is `npm run billing:c4b-sandbox -- prepare|close|finalize|status`. It refuses live mode and non-test keys, requires the reserved C4B tenant and Sophia Voice assignment, and requires an explicit confirmation environment value. The public API cannot supply the simulated cutoff.
 
@@ -36,9 +36,13 @@ The corrected `close` finalized one immutable ledger with two whole overage minu
 
 After the aligned-summary fix, two finalize windows found the Meter summary but not a finalized invoice line matching the exact metered Price and provider period. The accepted event remains unchanged and is not redispatched. Plan 2.1.59 adds a gated read-only `diagnose` stage that emits bounded non-personal invoice, line, Price, quantity and period metadata so the remaining provider-state mismatch can be identified without another billing mutation.
 
+The diagnostic completed the investigation. Stripe reports one exact aligned Meter summary with quantity `2`, so the event and Meter binding are correct. The renewal invoice is already `paid`; its approved metered Price line has quantity `0`, amount `0`, and ends at `2026-10-28T08:51:00Z`. The exact subscription period ends at `08:51:05Z`, and Sophia's single aggregate was timestamped at `08:51:04Z`. A closed invoice cannot be retroactively changed, and repeated reconciliation cannot turn this line into quantity two.
+
+Plan 2.1.60 therefore invalidates the Meter-backed subscription line as the charging mechanism for Sophia's post-period aggregate-once rule. The existing outbox row remains honest `provider_accepted` evidence and must never be redispatched or marked reconciled. The corrected path will preserve the Meter summary as independent usage-delivery evidence, then add the immutable whole-minute quantity and unit rate idempotently to the matching draft renewal invoice using a separately approved one-time overage Price. That path needs a fresh isolated fixture, duplicate `invoice.created` proof, missed-draft-window recovery and exact finalized invoice-line evidence before any live usage charge is possible.
+
 ## Delivered
 
-- Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.
+- The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
 - The aggregate Meter event is timestamped one second before the exact provider-period end. Stripe Meter summaries use an inclusive start and exclusive end, so the prior period-end timestamp was outside the period being reconciled.
 - Reconciliation reads the exact full-period Meter summary and finalized `open` or `paid` invoice lines. It requires one summary and one line to match the immutable quantity, unit price, currency, metered Price, environment and period.
 - Migration 047 adds tenant-isolated immutable reconciliation evidence. The outbox cannot advance from `provider_accepted` or `outcome_unknown` to `reconciled` until that evidence is inserted in the same transaction.
@@ -56,8 +60,8 @@ After the aligned-summary fix, two finalize windows found the Meter summary but 
 
 ## Remaining C4B external proof
 
-No Stripe request was made in this slice and no Meter event, Checkout, invoice or charge was created.
+The deployed mappings, Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event and exact quantity-two Meter summary are complete. The current paid invoice's zero-quantity line is preserved as negative provider evidence; `close` and `finalize` must not be rerun on this fixture.
 
-The deployed mappings and Sophia Voice assignment are complete. The remaining work is to run the isolated test-clock harness, create its base-plus-metered Voice subscription and positive-overage fixture, dispatch once during the draft-invoice window, and repeat reconciliation until Stripe supplies the exact summary and finalized invoice line. Preserve the resulting redacted object identities as completion evidence.
+The remaining work is P6-A06C3B0C4B3: define and configure a sandbox one-time overage Price, implement the idempotent draft-renewal invoice-item outbox, run a fresh isolated clock fixture, prove duplicate webhook behavior and missed-window recovery, then reconcile the finalized adjustment line to the immutable ledger.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.
