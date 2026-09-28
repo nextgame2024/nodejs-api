@@ -18,7 +18,7 @@ Stripe test clocks attach only to newly created Customers. C4B therefore uses a 
 
 The proof is staged so the aggregate event is accepted while the renewal invoice is still draft: observe the closed provider period, finalise the Sophia ledger, dispatch the Meter event, wait for its asynchronous summary, then advance/finalise the invoice and require the exact invoice line. This avoids claiming success from an event submitted after invoice finalization.
 
-The harness is `npm run billing:c4b-sandbox -- prepare|close|finalize|status`. It refuses live mode and non-test keys, requires the reserved C4B tenant and Sophia Voice assignment, and requires an explicit confirmation environment value. The public API cannot supply the simulated cutoff.
+The compiled production-image harness is `npm run billing:c4b-sandbox -- prepare|close|finalize|status`. It refuses live mode and non-test keys, requires the reserved C4B tenant and Sophia Voice assignment, and requires an explicit confirmation environment value. The public API cannot supply the simulated cutoff.
 
 ## Delivered
 

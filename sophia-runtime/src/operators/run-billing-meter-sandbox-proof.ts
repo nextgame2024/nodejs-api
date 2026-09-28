@@ -2,13 +2,13 @@ import "reflect-metadata";
 import { randomUUID } from "node:crypto";
 import { NestFactory } from "@nestjs/core";
 import Stripe from "stripe";
-import { AppModule } from "../src/app.module.js";
-import { BillingLifecycleService } from "../src/admin/billing/billing-lifecycle.service.js";
-import { BillingMeterOutboxService } from "../src/admin/billing/billing-meter-outbox.service.js";
-import { BillingPeriodLedgerService } from "../src/admin/billing/billing-period-ledger.service.js";
-import type { AdminPrincipal } from "../src/admin/contracts/admin-contracts.js";
-import { runtimeConfig } from "../src/config/runtime-config.js";
-import { DatabaseService } from "../src/database/database.service.js";
+import { AppModule } from "../app.module.js";
+import { BillingLifecycleService } from "../admin/billing/billing-lifecycle.service.js";
+import { BillingMeterOutboxService } from "../admin/billing/billing-meter-outbox.service.js";
+import { BillingPeriodLedgerService } from "../admin/billing/billing-period-ledger.service.js";
+import type { AdminPrincipal } from "../admin/contracts/admin-contracts.js";
+import { runtimeConfig } from "../config/runtime-config.js";
+import { DatabaseService } from "../database/database.service.js";
 
 const VOICE_PLAN_ID = "112e2d08-9e8b-4748-a89a-954a28ad43c9";
 const PROVIDER_KEY = "stripe-sophia";
@@ -105,7 +105,7 @@ async function prepare() {
     if (binding.rows[0]?.external_customer_ref !== state.customerId) throw new Error("The C4B Customer binding conflicts with existing state.");
   });
   if (!state.subscriptionId) {
-    await stripe.paymentMethods.attach("pm_card_visa", { customer: state.customerId });
+    await stripe.paymentMethods.attach("pm_card_visa", { customer: state.customerId! });
     await stripe.customers.update(state.customerId!, { invoice_settings: { default_payment_method: "pm_card_visa" } });
     const subscription = await stripe.subscriptions.create({
       customer: state.customerId!,
