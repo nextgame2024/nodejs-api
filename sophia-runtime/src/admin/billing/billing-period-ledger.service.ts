@@ -153,8 +153,8 @@ export class BillingPeriodLedgerService {
     }
     const open = await client.query(
       `SELECT 1 FROM ${schema}.session_activity_intervals
-       WHERE customer_id=$1 AND status='open' AND started_at<$3 LIMIT 1`,
-      [tenantId, periodStart, periodEnd],
+       WHERE customer_id=$1 AND status='open' AND started_at<$2::timestamptz LIMIT 1`,
+      [tenantId, periodEnd],
     );
     if (open.rowCount) return "An activity interval crossing the provider period is still open.";
     const measured = await client.query<{ active_microseconds: string }>(

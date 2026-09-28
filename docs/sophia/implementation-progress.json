@@ -2060,6 +2060,13 @@
       "node": "22.23.3",
       "result": "pass",
       "detail": "Plan 2.1.55 qualifies the concurrent claim as FOR UPDATE OF o SKIP LOCKED so PostgreSQL locks only the mutable outbox row and does not require UPDATE on the immutable usage ledger. The exact joined candidate query completed under transaction-local sophia_runtime_app in Neon and was rolled back. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "rollback-only typed open-activity query and C4B state inspection; npm test -- --runInBand src/admin/billing/billing-period-ledger.service.spec.ts; npm run typecheck; npm run build",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.56 replaces the skipped open-activity query parameter with contiguous $1/$2 bindings and an explicit timestamptz cast. The exact prepared query passed under transaction-local sophia_runtime_app. After the stopped close attempt, Neon showed zero C4B usage ledgers and zero outbox events; the Stripe test clock may be reused by the idempotent close stage. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
     }
   ],
   "blockers": [

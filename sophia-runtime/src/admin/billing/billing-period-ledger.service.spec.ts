@@ -47,6 +47,9 @@ describe("BillingPeriodLedgerService", () => {
     const measuredSql = String(query.mock.calls.find(([sql]) => String(sql).includes("AS active_microseconds"))?.[0]);
     expect(measuredSql).toContain("LEAST(ended_at,$3::timestamptz)-GREATEST(started_at,$2::timestamptz)");
     expect(measuredSql).toContain("sum(");
+    const openCall = query.mock.calls.find(([sql]) => String(sql).includes("status='open'"));
+    expect(openCall?.[0]).toContain("started_at<$2::timestamptz");
+    expect(openCall?.[1]).toEqual([tenantId, new Date("2026-09-15T00:00:00.000Z")]);
     const periodSql = String(query.mock.calls.find(([sql]) => String(sql).includes("billing_subscription_periods"))?.[0]);
     expect(periodSql).not.toContain("FOR UPDATE");
     const insert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers"));

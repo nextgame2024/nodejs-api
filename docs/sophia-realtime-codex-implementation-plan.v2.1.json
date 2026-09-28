@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.55",
+    "version": "2.1.56",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof and table-specific outbox row locking; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof, table-specific outbox row locking and contiguous typed billing-period parameters; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,23 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-28-C4B-TYPED-PERIOD-PARAMETERS",
+      "taskId": "P6-A06C3B0C4B",
+      "reason": "The first deployed close stage advanced the isolated Stripe test clock, then PostgreSQL rejected the open-activity guard because its parameter array skipped an unused $2 while referencing $3. PostgreSQL must determine every bound parameter type before executing the statement, even when the unused value is otherwise valid.",
+      "changes": [
+        "Bind the open-activity cutoff as the contiguous $2 parameter and cast it explicitly to timestamptz at the SQL boundary.",
+        "Keep the guard semantics unchanged: block finalization when any open activity began before the provider-period end.",
+        "Require the C4B harness to remain resumable after a test-clock advance but before ledger creation or Meter dispatch."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.spec.ts",
+        "docs/sophia/p6-a06c3b0c4b-checkpoint.md"
+      ],
+      "approvedBy": "Standing user instruction to correct the plan when deployed evidence identifies a safer implementation",
+      "recordedAt": "2026-09-28T21:20:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-28-C4B-OUTBOX-CLAIM-LOCKING",
       "taskId": "P6-A06C3B0C4B",
