@@ -95,7 +95,7 @@ export class BillingPeriodLedgerService {
          WHERE p.customer_id=$1 AND p.provider_key=$4
            AND p.provider_environment=$2 AND p.provider_account_key=$3
            AND p.period_end<=COALESCE($5::timestamptz,now()) AND l.billing_usage_period_ledger_id IS NULL
-         ORDER BY p.period_end,p.billing_subscription_period_id FOR UPDATE OF p SKIP LOCKED LIMIT 24`,
+         ORDER BY p.period_end,p.billing_subscription_period_id LIMIT 24`,
         [tenantId, environment, providerAccountKey, providerKey, eligibleThrough],
       );
       const result: BillingPeriodFinalisation = {

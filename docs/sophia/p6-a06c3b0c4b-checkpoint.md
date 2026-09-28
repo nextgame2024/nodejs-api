@@ -24,6 +24,8 @@ The first deployed `prepare` attempt created the isolated test clock and Custome
 
 The resumed `prepare` created the intended Voice subscription and one synthetic positive-overage interval, then exposed a pooled-database role assumption defect during reconciliation. Neon grants were correct and the exact query passed under an explicit `sophia_runtime_app` transaction. Plan 2.1.53 therefore moves least-privilege role assumption into every transaction with `SET LOCAL ROLE`; connection-session role state is no longer trusted across the pooled endpoint. The stopped attempt created no Meter event.
 
+After transaction-local role assumption was deployed, reconciliation exposed a second least-privilege mismatch: immutable provider-period selection used `FOR UPDATE`, which requires table `UPDATE` privilege. Plan 2.1.54 removes that redundant row lock instead of broadening the runtime grant. The existing tenant/provider advisory transaction lock serializes finalization, and unique period-ledger constraints plus digest comparison remain the idempotence fence.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.

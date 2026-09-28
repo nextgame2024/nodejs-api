@@ -2046,6 +2046,13 @@
       "node": "20.15.0",
       "result": "pass",
       "detail": "Plan 2.1.53 moves runtime role assumption into each transaction for compatibility with Neon's pooled endpoint. The exact failed reconciliation SELECT passed under transaction-local sophia_runtime_app, both typechecks/build/contracts passed, Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests. The resumable C4B fixture has one test subscription and one activity interval but still zero Meter events."
+    },
+    {
+      "command": "least-privilege immutable-period SELECT; npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test; npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend/sophia-runtime + backend + Neon",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Plan 2.1.54 removes redundant FOR UPDATE from immutable provider-period selection instead of granting runtime UPDATE. The corrected SELECT returned the synthetic Voice period under sophia_runtime_app in a rollback-only Neon transaction. Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests. Advisory transaction locking plus unique ledger constraints and digest comparison remain the concurrency/idempotence fences."
     }
   ],
   "blockers": [

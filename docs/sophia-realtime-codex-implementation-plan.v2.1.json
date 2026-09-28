@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.53",
+    "version": "2.1.54",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,23 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-28-C4B-IMMUTABLE-PERIOD-LOCKING",
+      "taskId": "P6-A06C3B0C4B",
+      "reason": "Deployed reconciliation reached the ledger finalizer under the correct least-privilege role and proved that SELECT FOR UPDATE on immutable billing_subscription_periods requires an unnecessary UPDATE grant. The finalizer already holds a tenant/provider advisory transaction lock and the ledger has unique period constraints.",
+      "changes": [
+        "Remove the redundant row-level FOR UPDATE/SKIP LOCKED clause from immutable provider-period selection.",
+        "Retain SELECT-only runtime access to billing_subscription_periods; do not broaden grants to satisfy a lock on data the runtime may never update.",
+        "Continue to serialize finalization with the existing transaction-scoped tenant/provider advisory lock and enforce idempotence with unique ledger constraints plus digest comparison."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.spec.ts",
+        "sophia-runtime/src/database/migrations/042_billing_period_ledgers.sql"
+      ],
+      "approvedBy": "Standing user instruction to correct the plan when deployed evidence identifies a safer implementation",
+      "recordedAt": "2026-09-28T19:20:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-28-DATABASE-POOLED-ROLE-ASSUMPTION",
       "taskId": "P6-A06C3B0C4B",
