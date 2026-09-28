@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.52",
+    "version": "2.1.53",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,24 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-28-DATABASE-POOLED-ROLE-ASSUMPTION",
+      "taskId": "P6-A06C3B0C4B",
+      "reason": "The deployed C4B preparation proved that assuming sophia_runtime_app once in the PostgreSQL client connection hook is unsafe with Neon pooled endpoints: transaction-pooling may reset session role state before a later transaction. Grants were correct and the same reconciliation SQL succeeded when the role was assumed inside a rollback-only transaction.",
+      "changes": [
+        "Assume the validated least-privilege database role with SET LOCAL ROLE inside every write transaction after BEGIN.",
+        "For repeatable-read tenant queries, establish transaction characteristics first, then assume the role and set the tenant RLS context on the same client.",
+        "Execute standalone DatabaseService queries inside a short transaction with the same transaction-local role assumption; do not rely on connection-session state across pooled transactions.",
+        "Keep the owner connection limited to migrations and explicit operator maintenance. Runtime requests continue to use the non-owner, non-BYPASSRLS role."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/database.service.ts",
+        "sophia-runtime/src/database/database.service.spec.ts",
+        "docs/sophia/p6-a06c3b0c4b-checkpoint.md"
+      ],
+      "approvedBy": "Standing user instruction to correct the reference plan when deployed evidence proves an assumption unsafe",
+      "recordedAt": "2026-09-28T19:05:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-28-P6-A06-C4B-TEST-CLOCK-ISOLATION",
       "taskId": "P6-A06C3B0C4B",

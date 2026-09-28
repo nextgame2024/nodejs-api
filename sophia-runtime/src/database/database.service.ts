@@ -5,26 +5,35 @@ import { runtimeConfig } from "../config/runtime-config.js";
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool;
+  private readonly databaseRole?: string;
 
   constructor() {
     const config = runtimeConfig();
+    this.databaseRole = config.databaseRole;
     this.pool = new Pool({
       connectionString: config.databaseUrl,
       max: config.databasePoolSize,
       ssl: config.databaseSsl ? { rejectUnauthorized: true } : undefined,
-      verify: config.databaseRole
-        ? (client, done) => {
-            client.query(`SET ROLE "${config.databaseRole}"`).then(() => done()).catch((error: Error) => done(error));
-          }
-        : undefined,
     });
   }
 
-  query<T extends QueryResultRow = QueryResultRow>(
+  async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     params: unknown[] = [],
   ): Promise<QueryResult<T>> {
-    return this.pool.query<T>(text, params);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.assumeRuntimeRole(client);
+      const result = await client.query<T>(text, params);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async ping(): Promise<void> {
@@ -35,6 +44,7 @@ export class DatabaseService implements OnModuleDestroy {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await this.assumeRuntimeRole(client);
       const result = await work(client);
       await client.query("COMMIT");
       return result;
@@ -70,6 +80,7 @@ export class DatabaseService implements OnModuleDestroy {
     try {
       await client.query("BEGIN");
       await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await this.assumeRuntimeRole(client);
       await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [tenantId]);
       const result = await work(client);
       await client.query("COMMIT");
@@ -84,5 +95,9 @@ export class DatabaseService implements OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
+  }
+
+  private async assumeRuntimeRole(client: PoolClient): Promise<void> {
+    if (this.databaseRole) await client.query(`SET LOCAL ROLE "${this.databaseRole}"`);
   }
 }

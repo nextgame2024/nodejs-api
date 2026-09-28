@@ -23,11 +23,12 @@ describe("DatabaseService tenant transactions", () => {
 
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
       "BEGIN",
+      'SET LOCAL ROLE "sophia_runtime_app"',
       "SELECT set_config('sophia.tenant_id', $1, true)",
       "SELECT 1",
       "COMMIT",
     ]);
-    expect(query.mock.calls[1]?.[1]).toEqual([tenantId]);
+    expect(query.mock.calls[2]?.[1]).toEqual([tenantId]);
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -44,11 +45,12 @@ describe("DatabaseService tenant transactions", () => {
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
       "BEGIN",
       "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      'SET LOCAL ROLE "sophia_runtime_app"',
       "SELECT set_config('sophia.tenant_id', $1, true)",
       "SELECT count(*) FROM evidence",
       "COMMIT",
     ]);
-    expect(query.mock.calls[2]?.[1]).toEqual([tenantId]);
+    expect(query.mock.calls[3]?.[1]).toEqual([tenantId]);
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -57,10 +59,20 @@ describe("DatabaseService tenant transactions", () => {
     expect(() => new DatabaseService()).toThrow("SOPHIA_RUNTIME_DATABASE_ROLE must be a valid PostgreSQL identifier");
   });
 
-  it("assumes the least-privilege runtime role by default", async () => {
+  it("assumes the least-privilege runtime role inside direct-query transactions", async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{ value: 1 }] });
+    const client = { query, release: jest.fn() };
     const service = new DatabaseService();
-    const poolOptions = (service as unknown as { pool: { options: { verify?: unknown } } }).pool.options;
-    expect(poolOptions.verify).toEqual(expect.any(Function));
-    await service.onModuleDestroy();
+    (service as unknown as { pool: { connect: () => Promise<typeof client> } }).pool = {
+      connect: jest.fn().mockResolvedValue(client),
+    };
+    await expect(service.query("SELECT 1 AS value")).resolves.toEqual({ rows: [{ value: 1 }] });
+    expect(query.mock.calls.map(([sql]) => sql)).toEqual([
+      "BEGIN",
+      'SET LOCAL ROLE "sophia_runtime_app"',
+      "SELECT 1 AS value",
+      "COMMIT",
+    ]);
+    expect(client.release).toHaveBeenCalled();
   });
 });

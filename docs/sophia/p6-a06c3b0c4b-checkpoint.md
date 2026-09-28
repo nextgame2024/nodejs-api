@@ -22,6 +22,8 @@ The compiled production-image harness is `npm run billing:c4b-sandbox -- prepare
 
 The first deployed `prepare` attempt created the isolated test clock and Customer and attached a Stripe-generated test PaymentMethod, then stopped before subscription creation because it used the reusable test alias rather than the returned attached ID as the Customer default. The resumable harness now discovers/reuses that attached card and persists its concrete ID before continuing. No subscription, Meter event, invoice or charge resulted from the stopped attempt.
 
+The resumed `prepare` created the intended Voice subscription and one synthetic positive-overage interval, then exposed a pooled-database role assumption defect during reconciliation. Neon grants were correct and the exact query passed under an explicit `sophia_runtime_app` transaction. Plan 2.1.53 therefore moves least-privilege role assumption into every transaction with `SET LOCAL ROLE`; connection-session role state is no longer trusted across the pooled endpoint. The stopped attempt created no Meter event.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.
