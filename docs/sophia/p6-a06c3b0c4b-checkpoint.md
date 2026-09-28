@@ -4,6 +4,22 @@ Date: 2026-09-28 (Australia/Brisbane)
 
 Status: in progress. Provider integration and durable reconciliation are implemented; the real sandbox lifecycle proof is still pending.
 
+## Deployed sandbox preparation
+
+- Render is live on revision `8eee034b3182` with the fixed-base mappings, Meter-backed mappings and `active-overage-minutes` event-name binding configured.
+- The demo tenant's legacy AUD 1 assignment ended at the exact existing provider-period boundary `2026-09-26T08:31:49Z`.
+- Sophia Voice is its sole active assignment from that boundary, using the published AUD 750 monthly base, 2,000 included active minutes and AUD 0.10 whole-minute overage rate.
+- The existing sandbox Customer remains bound to its historical non-clocked subscription. It will not be overwritten or repurposed for accelerated proof.
+- Synthetic tenant `5b45d778-4fb0-458e-a337-b115c3169927` is reserved for the isolated proof and has Sophia Voice as its sole active assignment. It has no Stripe binding until the deployed harness `prepare` stage runs.
+
+## Test-clock correction
+
+Stripe test clocks attach only to newly created Customers. C4B therefore uses a separate synthetic sandbox tenant, Customer and Voice subscription. The operator harness may pass a bounded simulated provider time to the ledger finalizer, but only through the sandbox-specific method and for at most two monthly intervals. Normal API reconciliation and every live path continue to use database `now()`.
+
+The proof is staged so the aggregate event is accepted while the renewal invoice is still draft: observe the closed provider period, finalise the Sophia ledger, dispatch the Meter event, wait for its asynchronous summary, then advance/finalise the invoice and require the exact invoice line. This avoids claiming success from an event submitted after invoice finalization.
+
+The harness is `npm run billing:c4b-sandbox -- prepare|close|finalize|status`. It refuses live mode and non-test keys, requires the reserved C4B tenant and Sophia Voice assignment, and requires an explicit confirmation environment value. The public API cannot supply the simulated cutoff.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.
@@ -26,6 +42,6 @@ Status: in progress. Provider integration and durable reconciliation are impleme
 
 No Stripe request was made in this slice and no Meter event, Checkout, invoice or charge was created.
 
-The deployed sandbox still needs the exact fixed-base Price mappings for Voice, Live and Premium, the three Meter-backed Price mappings, and the semantic `active-overage-minutes` Meter event-name binding. A tenant then needs an approved base-plus-metered sandbox subscription and one closed provider period with positive overage. Run dispatch once and repeat reconciliation until Stripe supplies the exact summary and finalized invoice line. Preserve the resulting redacted object identities as completion evidence.
+The deployed mappings and Sophia Voice assignment are complete. The remaining work is to run the isolated test-clock harness, create its base-plus-metered Voice subscription and positive-overage fixture, dispatch once during the draft-invoice window, and repeat reconciliation until Stripe supplies the exact summary and finalized invoice line. Preserve the resulting redacted object identities as completion evidence.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.

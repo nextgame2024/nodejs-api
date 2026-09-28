@@ -89,6 +89,26 @@ describe("BillingPeriodLedgerService", () => {
     expect(result.finalised).toBe(1);
     expect(query.mock.calls.some(([sql]) => String(sql).includes("billing_meter_event_outbox"))).toBe(false);
   });
+
+  it("uses an explicit bounded provider cutoff only for the sandbox test-clock harness", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.billing_subscription_periods")) return { rows: [], rowCount: 0 };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const cutoff = new Date(Date.now() + 31 * 24 * 60 * 60 * 1_000).toISOString();
+    await expect(service(query).finaliseSandboxTestClock(
+      tenantId, "stripe-sophia", "legacy-primary", cutoff,
+    )).resolves.toEqual({ observedPeriods: 0, finalised: 0, existing: 0, blocked: [] });
+    const periodQuery = query.mock.calls.find(([sql]) => String(sql).includes("billing_subscription_periods"));
+    expect(String(periodQuery?.[0])).toContain("COALESCE($5::timestamptz,now())");
+    expect(periodQuery?.[1]?.[4]).toBe(cutoff);
+
+    const tooFar = new Date(Date.now() + 63 * 24 * 60 * 60 * 1_000).toISOString();
+    await expect(service(query).finaliseSandboxTestClock(
+      tenantId, "stripe-sophia", "legacy-primary", tooFar,
+    )).rejects.toThrow("exceeds two monthly intervals");
+  });
 });
 
 function service(query: jest.Mock) {

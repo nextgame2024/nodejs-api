@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.51",
+    "version": "2.1.52",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition and dual-source Meter reconciliation evidence; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence and isolated Stripe test-clock proof; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,29 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-28-P6-A06-C4B-TEST-CLOCK-ISOLATION",
+      "taskId": "P6-A06C3B0C4B",
+      "reason": "The existing Sophia sandbox Customer is already attached to a non-clocked legacy subscription, and Stripe test clocks can only be attached to new Customers. Replacing that binding would destroy account-scoped webhook resolution history. A clock advanced beyond wall time also cannot pass the normal production period-end cutoff without an explicitly isolated simulation boundary.",
+      "changes": [
+        "Keep the approved Sophia Voice assignment on the demo tenant, but run accelerated C4B evidence on a separate synthetic sandbox tenant, Customer and base-plus-metered subscription.",
+        "Use a Stripe test clock only in an operator harness. The public reconciliation API and every live path continue to finalise periods against database now().",
+        "Permit the operator harness to provide a bounded sandbox-only provider-clock cutoff of no more than two monthly intervals. It cannot select live mode or alter commercial arithmetic.",
+        "Stage the proof around Stripe's draft-invoice window: observe the closed period, finalise the immutable Sophia ledger, submit and observe the asynchronous Meter event, then advance/finalise the invoice and require exact summary plus invoice-line evidence.",
+        "Preserve the synthetic tenant's redacted evidence while allowing Stripe to expire the temporary test clock. Do not replace or repurpose the existing demo Customer binding."
+      ],
+      "externalEvidence": [
+        "https://docs.stripe.com/api/test_clocks",
+        "https://docs.stripe.com/api/invoices",
+        "https://docs.stripe.com/api/billing/meter-event/create"
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
+        "docs/sophia/p6-a06c3b0c4b-checkpoint.md"
+      ],
+      "approvedBy": "User approved Sophia Voice as the dedicated C4B test plan and standing instruction requires correcting unsafe plan assumptions",
+      "recordedAt": "2026-09-28T18:45:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-28-P6-A06-METER-PERIOD-RECONCILIATION",
       "taskId": "P6-A06",
@@ -5815,7 +5838,19 @@
                                 {
                                   "id": "P6-A06C3B0C4B",
                                   "status": "in_progress",
-                                  "scope": "Configure approved Sophia sandbox fixed-base plus Meter-backed Price mappings, dispatch a finalised whole-minute ledger once at a timestamp inside its provider period, and persist exact Stripe period-summary plus finalized invoice-line reconciliation evidence."
+                                  "scope": "Configure approved Sophia sandbox fixed-base plus Meter-backed Price mappings, dispatch a finalised whole-minute ledger once at a timestamp inside its provider period, and persist exact Stripe period-summary plus finalized invoice-line reconciliation evidence.",
+                                  "executionSlices": [
+                                    {
+                                      "id": "P6-A06C3B0C4B1",
+                                      "status": "in_progress",
+                                      "scope": "Prepare the isolated Sophia Voice test-clock harness and synthetic tenant without replacing the existing sandbox Customer binding."
+                                    },
+                                    {
+                                      "id": "P6-A06C3B0C4B2",
+                                      "status": "pending",
+                                      "scope": "Run the staged draft-invoice lifecycle, dispatch once, and persist exact Stripe Meter-summary plus finalized invoice-line evidence."
+                                    }
+                                  ]
                                 }
                               ]
                             }

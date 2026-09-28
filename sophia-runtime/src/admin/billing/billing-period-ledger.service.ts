@@ -53,6 +53,30 @@ export class BillingPeriodLedgerService {
     environment: "sandbox" | "live",
     providerAccountKey: string,
   ): Promise<BillingPeriodFinalisation> {
+    return this.finaliseEligibleThrough(tenantId, providerKey, environment, providerAccountKey, null);
+  }
+
+  async finaliseSandboxTestClock(
+    tenantId: string,
+    providerKey: string,
+    providerAccountKey: string,
+    providerClockTime: string,
+  ): Promise<BillingPeriodFinalisation> {
+    const cutoff = new Date(providerClockTime);
+    const maximum = Date.now() + 62 * 24 * 60 * 60 * 1_000;
+    if (!Number.isFinite(cutoff.getTime()) || cutoff.getTime() <= 0 || cutoff.getTime() > maximum) {
+      throw new ConflictException("The sandbox test-clock cutoff is invalid or exceeds two monthly intervals.");
+    }
+    return this.finaliseEligibleThrough(tenantId, providerKey, "sandbox", providerAccountKey, cutoff.toISOString());
+  }
+
+  private async finaliseEligibleThrough(
+    tenantId: string,
+    providerKey: string,
+    environment: "sandbox" | "live",
+    providerAccountKey: string,
+    eligibleThrough: string | null,
+  ): Promise<BillingPeriodFinalisation> {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
@@ -70,9 +94,9 @@ export class BillingPeriodLedgerService {
           AND customer.provider_account_key=p.provider_account_key
          WHERE p.customer_id=$1 AND p.provider_key=$4
            AND p.provider_environment=$2 AND p.provider_account_key=$3
-           AND p.period_end<=now() AND l.billing_usage_period_ledger_id IS NULL
+           AND p.period_end<=COALESCE($5::timestamptz,now()) AND l.billing_usage_period_ledger_id IS NULL
          ORDER BY p.period_end,p.billing_subscription_period_id FOR UPDATE OF p SKIP LOCKED LIMIT 24`,
-        [tenantId, environment, providerAccountKey, providerKey],
+        [tenantId, environment, providerAccountKey, providerKey, eligibleThrough],
       );
       const result: BillingPeriodFinalisation = {
         observedPeriods: periods.rows.length, finalised: 0, existing: 0, blocked: [],
