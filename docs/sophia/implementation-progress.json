@@ -2067,6 +2067,13 @@
       "node": "22.23.3",
       "result": "pass",
       "detail": "Plan 2.1.56 replaces the skipped open-activity query parameter with contiguous $1/$2 bindings and an explicit timestamptz cast. The exact prepared query passed under transaction-local sophia_runtime_app. After the stopped close attempt, Neon showed zero C4B usage ledgers and zero outbox events; the Stripe test clock may be reused by the idempotent close stage. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "npm run migrate; Neon timestamp-constraint/state verification; focused migration and ledger tests",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Applied migration 048. Neon now enforces non-future live Meter timestamps and permits only the isolated sandbox clock's bounded 62-day horizon. The failed close transaction left zero C4B ledgers and zero outbox events. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 114 suites/402 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
     }
   ],
   "blockers": [
