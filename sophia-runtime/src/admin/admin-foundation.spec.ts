@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { AdminAuditService } from "./authorization/admin-audit.service.js";
 import { AdminModule } from "./admin.module.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
+import { StripeBillingMeterEventDispatcher } from "./billing/stripe-billing-meter-event.dispatcher.js";
 
 describe("Sophia Admin foundation", () => {
   beforeEach(() => {
@@ -54,5 +55,15 @@ describe("Sophia Admin foundation", () => {
       { useFactory?: () => StripeBillingProvider } | undefined;
     expect(registration?.useFactory).toEqual(expect.any(Function));
     expect(registration?.useFactory?.()).toBeInstanceOf(StripeBillingProvider);
+  });
+
+  it("constructs the Stripe Meter adapter through an explicit configuration factory", () => {
+    const providers = Reflect.getMetadata("providers", AdminModule) as unknown[];
+    expect(providers).not.toContain(StripeBillingMeterEventDispatcher);
+    const registration = providers.find((provider) => provider && typeof provider === "object"
+      && (provider as { provide?: unknown }).provide === StripeBillingMeterEventDispatcher) as
+      { useFactory?: () => StripeBillingMeterEventDispatcher } | undefined;
+    expect(registration?.useFactory).toEqual(expect.any(Function));
+    expect(registration?.useFactory?.()).toBeInstanceOf(StripeBillingMeterEventDispatcher);
   });
 });

@@ -115,10 +115,11 @@ import { runtimeConfig } from "../config/runtime-config.js";
     BillingPeriodLedgerService,
     BillingMeterOutboxService,
     DisabledBillingMeterEventDispatcher,
-    StripeBillingMeterEventDispatcher,
     DisabledBillingProvider,
     { provide: StripeBillingProvider,
       useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },
+    { provide: StripeBillingMeterEventDispatcher,
+      useFactory: () => new StripeBillingMeterEventDispatcher(runtimeConfig().billing) },
     { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeBillingProvider],
       useFactory: (disabled: DisabledBillingProvider, stripe: StripeBillingProvider) =>
         runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
