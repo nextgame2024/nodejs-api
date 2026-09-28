@@ -26,6 +26,8 @@ The resumed `prepare` created the intended Voice subscription and one synthetic 
 
 After transaction-local role assumption was deployed, reconciliation exposed a second least-privilege mismatch: immutable provider-period selection used `FOR UPDATE`, which requires table `UPDATE` privilege. Plan 2.1.54 removes that redundant row lock instead of broadening the runtime grant. The existing tenant/provider advisory transaction lock serializes finalization, and unique period-ledger constraints plus digest comparison remain the idempotence fence.
 
+The next resumed `prepare` reached the outbox dispatcher and exposed the same privilege class in a different concurrency boundary: the claim joined the mutable outbox to its immutable usage ledger and used an unqualified `FOR UPDATE SKIP LOCKED`. PostgreSQL therefore attempted to lock both tables and required an invalid ledger `UPDATE` grant. Plan 2.1.55 narrows the clause to `FOR UPDATE OF o SKIP LOCKED`; concurrent workers still fence the mutable outbox claim, while the immutable ledger remains `SELECT, INSERT` only. The exact corrected joined query succeeds under `sophia_runtime_app` in a rollback-only Neon transaction.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.

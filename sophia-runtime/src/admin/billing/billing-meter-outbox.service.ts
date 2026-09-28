@@ -245,7 +245,7 @@ export class BillingMeterOutboxService {
              AND o.provider_account_key=$3 AND o.next_attempt_at<=now() AND o.attempt_count<o.max_attempts
              AND (o.status='pending' OR (o.status='leased' AND o.lease_until<=now() AND o.submission_started_at IS NULL))
            ORDER BY o.next_attempt_at,o.created_at,o.billing_meter_event_outbox_id
-           FOR UPDATE SKIP LOCKED LIMIT 1
+           FOR UPDATE OF o SKIP LOCKED LIMIT 1
          )
          UPDATE ${schema}.billing_meter_event_outbox o
          SET status='leased',attempt_count=o.attempt_count+1,lease_owner=$4,lease_token=$5,

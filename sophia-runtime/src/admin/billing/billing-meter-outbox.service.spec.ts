@@ -33,6 +33,8 @@ describe("BillingMeterOutboxService", () => {
     expect(dispatcher.submit).toHaveBeenCalledWith(expect.objectContaining({
       submissionIdentifier: `sophia-active-minutes-${outboxId}`, quantity: "2", quantityUnit: "whole-minute",
     }));
+    const claim = query.mock.calls.find(([sql]) => String(sql).includes("WITH candidate AS"));
+    expect(claim?.[0]).toContain("FOR UPDATE OF o SKIP LOCKED");
     const accepted = query.mock.calls.find(([sql]) => String(sql).includes("status='provider_accepted'"));
     expect(accepted?.[1]?.slice(0, 3)).toEqual([outboxId, tenantId, "33333333-3333-4333-8333-333333333333"]);
   });

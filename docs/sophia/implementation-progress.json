@@ -2053,6 +2053,13 @@
       "node": "20.15.0",
       "result": "pass",
       "detail": "Plan 2.1.54 removes redundant FOR UPDATE from immutable provider-period selection instead of granting runtime UPDATE. The corrected SELECT returned the synthetic Voice period under sophia_runtime_app in a rollback-only Neon transaction. Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests. Advisory transaction locking plus unique ledger constraints and digest comparison remain the concurrency/idempotence fences."
+    },
+    {
+      "command": "rollback-only least-privilege joined outbox claim; npm test -- --runInBand src/admin/billing/billing-meter-outbox.service.spec.ts; npm run typecheck; npm run build",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.55 qualifies the concurrent claim as FOR UPDATE OF o SKIP LOCKED so PostgreSQL locks only the mutable outbox row and does not require UPDATE on the immutable usage ledger. The exact joined candidate query completed under transaction-local sophia_runtime_app in Neon and was rolled back. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 113 suites/400 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
     }
   ],
   "blockers": [
