@@ -63,10 +63,31 @@ SOPHIA_BILLING_STRIPE_SECRET_KEY=sk_test_...
 SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
 SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
+SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
+SOPHIA_BILLING_STRIPE_METER_BINDINGS={"active-overage-minutes":"sophia_active_overage_minutes"}
 SOPHIA_BILLING_CHECKOUT_SUCCESS_URL=https://admin.example/sophia-admin/usage-billing?checkout=success
 SOPHIA_BILLING_CHECKOUT_CANCEL_URL=https://admin.example/sophia-admin/usage-billing?checkout=cancelled
 SOPHIA_BILLING_PORTAL_RETURN_URL=https://admin.example/sophia-admin/usage-billing
 ```
+
+Commercial plan entitlements remain provider-neutral. Runtime safety/capacity
+controls can only lower those ceilings and are configured independently:
+
+```bash
+SOPHIA_PROVIDER_SESSION_CAPACITY={"lifecycle-adapter-key":3}
+SOPHIA_TOOL_READ_SEARCH_CALLS_PER_MINUTE=15
+SOPHIA_TOOL_MUTATION_CALLS_PER_MINUTE=15
+SOPHIA_TOOL_SENSITIVE_CALLS_PER_MINUTE=15
+SOPHIA_TOOL_CALLS_PER_MINUTE_BY_TOOL={"booking.commit":5}
+```
+
+Provider-capacity keys are internal lifecycle-adapter identifiers, not vendor
+names embedded in plans. The effective session ceiling is the minimum of the
+commercial entitlement, tenant guardrail, platform cap, and configured capacity
+for the selected adapter. An explicit `default` key may represent a verified
+platform-wide fallback; without an adapter key or that fallback, new sessions
+fail closed. Tool class and per-tool values are operational abuse
+guards and may not raise the commercial aggregate limit.
 
 The provider-account key is a stable internal identifier, not a secret or a
 Stripe API key. Keep `legacy-primary` for the existing Stripe account during the

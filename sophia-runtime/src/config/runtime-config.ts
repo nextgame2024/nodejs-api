@@ -16,6 +16,11 @@ export type RuntimeConfig = {
   allowedExperiences: Array<"essential" | "professional" | "premium">;
   maxConcurrentSessions: number;
   maxToolCallsPerMinute: number;
+  providerSessionCapacity: Record<string, number>;
+  toolAdmissionLimits: {
+    classes: { readSearch: number; mutation: number; sensitive: number };
+    perTool: Record<string, number>;
+  };
   providerOpenTimeoutMs: number;
   providerCloseTimeoutMs: number;
   providerSessionMaxSeconds: number;
@@ -115,6 +120,8 @@ export type RuntimeConfig = {
     checkoutCancelUrl?: string;
     portalReturnUrl?: string;
     stripePriceMappings: Record<string, string>;
+    stripeMeteredPriceMappings: Record<string, string>;
+    stripeMeterBindings: Record<string, string>;
   };
 };
 
@@ -155,16 +162,21 @@ export function runtimeConfig(): RuntimeConfig {
     allowedExperiences: parseAllowedExperiences(
       process.env.SOPHIA_ALLOWED_EXPERIENCES,
     ),
-    maxConcurrentSessions: clampNumber(
-      Number(process.env.SOPHIA_MAX_CONCURRENT_SESSIONS || 10),
-      1,
-      100,
-    ),
-    maxToolCallsPerMinute: clampNumber(
-      Number(process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE || 20),
-      1,
-      1000,
-    ),
+    maxConcurrentSessions: positiveInteger(process.env.SOPHIA_MAX_CONCURRENT_SESSIONS, 10, 100),
+    maxToolCallsPerMinute: positiveInteger(process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE, 20, 1000),
+    providerSessionCapacity: positiveIntegerMap(process.env.SOPHIA_PROVIDER_SESSION_CAPACITY, "SOPHIA_PROVIDER_SESSION_CAPACITY", 100),
+    toolAdmissionLimits: {
+      classes: {
+        readSearch: positiveInteger(process.env.SOPHIA_TOOL_READ_SEARCH_CALLS_PER_MINUTE,
+          positiveInteger(process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE, 20, 1000), 1000),
+        mutation: positiveInteger(process.env.SOPHIA_TOOL_MUTATION_CALLS_PER_MINUTE,
+          positiveInteger(process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE, 20, 1000), 1000),
+        sensitive: positiveInteger(process.env.SOPHIA_TOOL_SENSITIVE_CALLS_PER_MINUTE,
+          positiveInteger(process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE, 20, 1000), 1000),
+      },
+      perTool: positiveIntegerMap(process.env.SOPHIA_TOOL_CALLS_PER_MINUTE_BY_TOOL,
+        "SOPHIA_TOOL_CALLS_PER_MINUTE_BY_TOOL", 1000),
+    },
     providerOpenTimeoutMs: clampNumber(Number(process.env.SOPHIA_PROVIDER_OPEN_TIMEOUT_MS || 25_000), 1_000, 60_000),
     providerCloseTimeoutMs: clampNumber(Number(process.env.SOPHIA_PROVIDER_CLOSE_TIMEOUT_MS || 20_000), 1_000, 60_000),
     providerSessionMaxSeconds: clampNumber(Number(process.env.SOPHIA_PROVIDER_SESSION_MAX_SECONDS || 7_200), 60, 14_400),
@@ -338,6 +350,8 @@ function billingConfig(): RuntimeConfig["billing"] {
     checkoutCancelUrl: hostedUrl(process.env.SOPHIA_BILLING_CHECKOUT_CANCEL_URL),
     portalReturnUrl: hostedUrl(process.env.SOPHIA_BILLING_PORTAL_RETURN_URL),
     stripePriceMappings: stripePriceMappings(process.env.SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS),
+    stripeMeteredPriceMappings: stripePriceMappings(process.env.SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS),
+    stripeMeterBindings: stripeMeterBindings(process.env.SOPHIA_BILLING_STRIPE_METER_BINDINGS),
   };
 }
 
@@ -361,6 +375,21 @@ function stripePriceMappings(value: string | undefined): Record<string, string> 
   if (entries.some(([id, price]) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
       || typeof price !== "string" || !/^price_[A-Za-z0-9]{8,}$/.test(price))) {
     throw new Error("Sophia Stripe mappings must map plan-version UUIDs to Stripe Price IDs.");
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function stripeMeterBindings(value: string | undefined): Record<string, string> {
+  if (!value?.trim()) return {};
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error("SOPHIA_BILLING_STRIPE_METER_BINDINGS must be valid JSON."); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("SOPHIA_BILLING_STRIPE_METER_BINDINGS must be an object keyed by internal Meter binding key.");
+  }
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.some(([binding, eventName]) => !/^[a-z][a-z0-9-]{1,79}$/.test(binding)
+      || typeof eventName !== "string" || !/^[a-z][a-z0-9_]{1,99}$/.test(eventName))) {
+    throw new Error("Sophia Stripe Meter bindings must map stable lowercase binding keys to Stripe event names.");
   }
   return Object.fromEntries(entries) as Record<string, string>;
 }
@@ -398,6 +427,27 @@ function emptyToUndefined(value: string | undefined): string | undefined {
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
+}
+
+function positiveInteger(value: string | undefined, fallback: number, maximum: number): number {
+  const parsed = value === undefined || value.trim() === "" ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`Sophia admission limits must be whole numbers between 1 and ${maximum}.`);
+  }
+  return parsed;
+}
+
+function positiveIntegerMap(value: string | undefined, name: string, maximum: number): Record<string, number> {
+  if (!value?.trim()) return {};
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error(`${name} must be valid JSON.`); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${name} must be a JSON object.`);
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.some(([key, limit]) => !/^[a-z][a-z0-9._-]{1,119}$/.test(key)
+      || !Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > maximum)) {
+    throw new Error(`${name} must map stable lowercase keys to whole-number limits between 1 and ${maximum}.`);
+  }
+  return Object.fromEntries(entries) as Record<string, number>;
 }
 
 function environmentKey(value: string): string {

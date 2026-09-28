@@ -21,6 +21,7 @@ describe("UsageBillingService", () => {
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("tenant_commercial_assignments")) return { rows: [] };
       if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
+      if (sql.includes("billing_meter_event_outbox")) return { rows: [] };
       if (sql.includes("billing_subscription_references") || sql.includes("billing_invoice_references")) return { rows: [] };
       if (sql.includes("billing_provider_customers") || sql.includes("billing_webhook_events")) return { rows: [] };
       if (sql.includes("billing_checkout_intents")) return { rows: [] };
@@ -62,6 +63,7 @@ describe("UsageBillingService", () => {
         ] };
       }
       if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
+      if (sql.includes("billing_meter_event_outbox")) return { rows: [] };
       if (sql.includes("billing_subscription_references")) return { rows: [{ external_subscription_ref: "opaque-sub-ref" }] };
       if (sql.includes("billing_invoice_references")) return { rows: [{ external_invoice_ref: "opaque-invoice-ref" }] };
       if (sql.includes("billing_provider_customers")) return { rows: [] };
@@ -105,6 +107,7 @@ describe("UsageBillingService", () => {
         ] };
       }
       if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
+      if (sql.includes("billing_meter_event_outbox")) return { rows: [] };
       if (sql.includes("billing_subscription_references") || sql.includes("billing_invoice_references")
         || sql.includes("billing_provider_customers") || sql.includes("billing_webhook_events")
         || sql.includes("billing_checkout_intents")) return { rows: [] };
@@ -135,6 +138,7 @@ describe("UsageBillingService", () => {
         policy_tax_rate_basis_points: null, price_display_mode: "no_tax", tax_label: null,
       }] };
       if (sql.includes("billing_usage_period_ledgers")) return { rows: [] };
+      if (sql.includes("billing_meter_event_outbox")) return { rows: [] };
       if (sql.includes("provider_usage_events") || sql.includes("billing_subscription_references")
         || sql.includes("billing_invoice_references") || sql.includes("billing_provider_customers")
         || sql.includes("billing_webhook_events") || sql.includes("billing_checkout_intents")) return { rows: [] };
@@ -153,7 +157,8 @@ describe("UsageBillingService", () => {
   it("keeps every provider mutation disabled", async () => {
     const provider = new DisabledBillingProvider();
     await expect(provider.createHostedCheckout({ tenantId, planVersionId: "plan-1", requestId: "request-1", customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "100" } })).rejects.toThrow("billing integration is disabled");
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "100", meteredOverage: null } }))
+      .rejects.toThrow("billing integration is disabled");
     await expect(provider.createHostedPortal({ tenantId, requestId: "request-1", customerRef: "customer-1" })).rejects.toThrow("billing integration is disabled");
     await expect(provider.verifyWebhook({}, new Uint8Array())).rejects.toThrow("billing integration is disabled");
     await expect(provider.reconcileTenant({ tenantId, customerRef: "customer-1" })).rejects.toThrow("billing integration is disabled");

@@ -9,13 +9,17 @@ export type LivePlanExpectation = {
   planKey: string;
   displayName: string;
   priceId: string;
+  meteredPriceId: string;
+  meterEventName: string;
   currency: string;
   interval: "month" | "year";
   baseChargeMinor: string;
+  overageRateMinor: string;
 };
 
 export type ReadOnlyStripeBillingClient = {
   prices: { retrieve(id: string): Promise<Stripe.Price> };
+  billing: { meters: { retrieve(id: string): Promise<Stripe.Billing.Meter> } };
   billingPortal: { configurations: { retrieve(id: string): Promise<Stripe.BillingPortal.Configuration> } };
   webhookEndpoints: { list(params: Stripe.WebhookEndpointListParams): Promise<Stripe.ApiList<Stripe.WebhookEndpoint>> };
 };
@@ -42,12 +46,27 @@ export async function verifyLiveStripeResources(input: {
     if (/(^|[^a-z0-9])(sandbox|test)([^a-z0-9]|$)/i.test(commercialIdentity)) {
       throw new Error(`Live Price mapping cannot use sandbox/test-labelled commercial plan ${plan.planVersionId}.`);
     }
-    const price = await input.client.prices.retrieve(plan.priceId);
+    const [price, meteredPrice] = await Promise.all([
+      input.client.prices.retrieve(plan.priceId), input.client.prices.retrieve(plan.meteredPriceId),
+    ]);
     if (!price.livemode || !price.active || price.type !== "recurring"
       || price.currency.toUpperCase() !== plan.currency
       || price.unit_amount === null || String(price.unit_amount) !== plan.baseChargeMinor
-      || price.recurring?.interval !== plan.interval) {
+      || price.recurring?.interval !== plan.interval || price.recurring?.usage_type !== "licensed"
+      || price.recurring.meter !== null) {
       throw new Error(`Live Price mapping does not match approved fixed plan ${plan.planVersionId}.`);
+    }
+    if (!meteredPrice.livemode || !meteredPrice.active || meteredPrice.type !== "recurring"
+      || meteredPrice.currency.toUpperCase() !== plan.currency
+      || meteredPrice.unit_amount === null || String(meteredPrice.unit_amount) !== plan.overageRateMinor
+      || meteredPrice.recurring?.interval !== plan.interval || meteredPrice.recurring?.usage_type !== "metered"
+      || !meteredPrice.recurring.meter) {
+      throw new Error(`Live metered Price mapping does not match approved overage plan ${plan.planVersionId}.`);
+    }
+    const meter = await input.client.billing.meters.retrieve(meteredPrice.recurring.meter);
+    if (!meter.livemode || meter.status !== "active" || meter.event_name !== plan.meterEventName
+      || meter.default_aggregation.formula !== "sum") {
+      throw new Error(`Live Meter does not match approved overage semantics for plan ${plan.planVersionId}.`);
     }
   }
 

@@ -56,6 +56,10 @@ import { DisabledBillingProvider } from "./billing/disabled-billing.provider.js"
 import { UsageGuardrailService } from "./billing/usage-guardrail.service.js";
 import { BillingLifecycleService } from "./billing/billing-lifecycle.service.js";
 import { BillingPeriodLedgerService } from "./billing/billing-period-ledger.service.js";
+import { BillingMeterOutboxService } from "./billing/billing-meter-outbox.service.js";
+import { BILLING_METER_EVENT_DISPATCHER, BILLING_METER_EVENT_RECONCILER } from "./billing/billing-meter-event.port.js";
+import { DisabledBillingMeterEventDispatcher } from "./billing/disabled-billing-meter-event.dispatcher.js";
+import { StripeBillingMeterEventDispatcher } from "./billing/stripe-billing-meter-event.dispatcher.js";
 import { BillingWebhookController } from "./billing/billing-webhook.controller.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { runtimeConfig } from "../config/runtime-config.js";
@@ -109,11 +113,22 @@ import { runtimeConfig } from "../config/runtime-config.js";
     UsageGuardrailService,
     BillingLifecycleService,
     BillingPeriodLedgerService,
+    BillingMeterOutboxService,
+    DisabledBillingMeterEventDispatcher,
+    StripeBillingMeterEventDispatcher,
     DisabledBillingProvider,
     { provide: StripeBillingProvider,
       useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },
     { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeBillingProvider],
       useFactory: (disabled: DisabledBillingProvider, stripe: StripeBillingProvider) =>
+        runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
+    { provide: BILLING_METER_EVENT_DISPATCHER,
+      inject: [DisabledBillingMeterEventDispatcher, StripeBillingMeterEventDispatcher],
+      useFactory: (disabled: DisabledBillingMeterEventDispatcher, stripe: StripeBillingMeterEventDispatcher) =>
+        runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
+    { provide: BILLING_METER_EVENT_RECONCILER,
+      inject: [DisabledBillingMeterEventDispatcher, StripeBillingMeterEventDispatcher],
+      useFactory: (disabled: DisabledBillingMeterEventDispatcher, stripe: StripeBillingMeterEventDispatcher) =>
         runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
     { provide: APP_INTERCEPTOR, useClass: AdminAuditInterceptor },
     { provide: KNOWLEDGE_OBJECT_STORAGE, useExisting: PrivateS3KnowledgeStorageService },

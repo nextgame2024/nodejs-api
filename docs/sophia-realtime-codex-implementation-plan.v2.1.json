@@ -2,13 +2,13 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.48",
+    "version": "2.1.51",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
     "artifactType": "Codex task specification, not a native Codex configuration file",
     "implementationPerformed": true,
-    "lastValidatedOn": "2026-09-27",
+    "lastValidatedOn": "2026-09-28",
     "implementationEvidence": "docs/sophia/implementation-progress.json",
     "baseline": {
       "fileName": "sophia-realtime-architecture.json",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period and proration assumptions; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition and dual-source Meter reconciliation evidence; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,70 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-09-28-P6-A06-METER-PERIOD-RECONCILIATION",
+      "taskId": "P6-A06",
+      "reason": "Implementing C4B against Stripe's provider contract proved two correctness gaps. Meter summary end_time is exclusive, so an aggregate event timestamped at the exact subscription-period end belongs outside the intended summary. The existing reconciliation stored subscription and invoice headers but did not prove that Stripe's aggregated Meter quantity and the finalized metered invoice line matched Sophia's immutable period ledger.",
+      "changes": [
+        "Timestamp the one aggregate overage event at the final whole second inside the exact provider period, never at its exclusive end boundary.",
+        "Require Checkout subscriptions for active-minute plans to contain one exact licensed fixed-base Price and one exact Meter-backed Price; validate environment, currency, interval, amount, usage type and semantic Meter binding before creating the hosted Session.",
+        "Treat Stripe Meter summaries as eventually consistent. Do not mark an accepted or outcome-unknown event reconciled until exactly one full-period summary and exactly one finalized open/paid invoice line match the immutable ledger quantity, unit rate, currency, Price and environment.",
+        "Persist the matched summary and invoice-line observations as tenant-isolated immutable evidence before advancing the outbox state. A pending observation or mismatch never claims billing correctness.",
+        "Use the recent-MFA billing reconciliation action as the bounded C4B sandbox dispatcher, at most one outbox item per request. Keep live Meter dispatch independently disabled until explicit live usage-billing authority exists."
+      ],
+      "externalEvidence": [
+        "https://docs.stripe.com/api/billing/meter-event-summary/list",
+        "https://docs.stripe.com/api/invoice-line-item/retrieve"
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
+        "sophia-runtime/src/admin/billing/stripe-billing.provider.ts",
+        "sophia-runtime/src/admin/billing/stripe-billing-meter-event.dispatcher.ts",
+        "sophia-runtime/src/admin/billing/billing-meter-outbox.service.ts",
+        "sophia-runtime/src/database/migrations/047_billing_meter_reconciliation_evidence.sql"
+      ],
+      "approvedBy": "Standing user instruction to correct the reference plan when implementation or provider evidence requires a safer design",
+      "recordedAt": "2026-09-28T12:35:00+10:00"
+    },
+    {
+      "id": "AMEND-2026-09-28-P6-A06-ENTITLEMENT-CAPACITY-SEPARATION",
+      "taskId": "P6-A06",
+      "reason": "The operator approved equal initial commercial session and tool-rate entitlements for all three plans and clarified that provider capacity and safety throttles are operational controls, not commercial differentiators. The existing admission path had one undifferentiated tool rate and no provider-capacity term, which could incorrectly encode vendor capacity into an immutable rate card.",
+      "changes": [
+        "Publish concurrentSessions=3 and toolCallsPerMinute=15 for Sophia Voice, Sophia Live and Sophia Premium. Premium may move to 10 only through a new/configured commercial plan version; no provider limit is stored in a plan.",
+        "Compute session admission as the minimum of tenant commercial entitlement, tenant guardrail, platform cap and the provider-neutral capacity configured for the selected lifecycle adapter. Serialize and count provider occupancy globally by adapter key, and fail closed when no adapter-specific or explicitly verified default capacity is configured.",
+        "Keep the aggregate toolCallsPerMinute entitlement as a commercial ceiling, then apply independent operational read/search, mutation, sensitive-action and per-tool safety ceilings. These safety controls may only lower the commercial ceiling.",
+        "Keep the 2000 included active minutes and active-minute overage rate card independent from concurrency and tool admission. Do not encode Tavus, HeyGen, OpenAI or any other vendor limits in plan definitions."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/platform/admission/runtime-admission.service.ts",
+        "sophia-runtime/src/database/migrations/046_provider_capacity_and_tool_admission_classes.sql",
+        "sophia-runtime/src/admin/billing/stripe-billing-meter-event.dispatcher.ts"
+      ],
+      "approvedBy": "User-approved entitlement and provider-capacity policy",
+      "recordedAt": "2026-09-28T10:00:00+10:00"
+    },
+    {
+      "id": "AMEND-2026-09-27-P6-A06C3-METER-OUTBOX",
+      "taskId": "P6-A06",
+      "reason": "Implementing C4A proved that creating a meter-event job after ledger finalisation would leave an avoidable database dual-write gap. It also showed that zero-overage periods need durable ledger evidence but no external event, and that a timeout after provider submission cannot safely enter the ordinary retry queue even when the intended submission identity is deterministic.",
+      "changes": [
+        "Create exactly one positive whole-minute outbox payload in the same tenant transaction that creates the immutable billing-period ledger. Persist no provider event for a zero-overage ledger.",
+        "Bind the payload to the ledger digest, account-scoped provider Customer, semantic Meter binding, provider/account scope, a timestamp inside the exact provider period and a deterministic submission identifier; validate that digest before dispatch.",
+        "Use skip-locked claims, expiring lease tokens, monotonic attempts, bounded backoff and fenced state completion. Reclaim only expired leases for which provider submission never started.",
+        "Quarantine a thrown or explicitly ambiguous post-submit outcome as outcome_unknown. Never automatically transition outcome_unknown back to pending; only provider reconciliation may resolve it.",
+        "Keep the production dispatcher registered as disabled until C4B supplies an approved sandbox Meter binding and metered Price mapping. C4A creates no Stripe object, meter event, invoice or charge."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/044_billing_meter_event_outbox.sql",
+        "sophia-runtime/src/database/migrations/045_billing_meter_event_outbox_contract.sql",
+        "sophia-runtime/src/admin/billing/billing-meter-outbox.service.ts",
+        "sophia-runtime/scripts/verify-billing-meter-outbox.mts",
+        "docs/sophia/p6-a06c3b0c4a-checkpoint.md"
+      ],
+      "approvedBy": "Standing user instruction to correct the reference plan when implementation evidence requires a safer design",
+      "recordedAt": "2026-09-27T19:30:00+10:00"
+    },
     {
       "id": "AMEND-2026-09-27-P6-A06C3-PROVIDER-PERIODS",
       "taskId": "P6-A06",
@@ -5698,7 +5762,7 @@
                         },
                         {
                           "id": "P6-A06C3B0B",
-                          "status": "blocked_on_seller_identity_and_entitlements",
+                          "status": "complete",
                           "scope": "Configure the current sole-trader legal name and ABN, publish a non-GST business-only policy, and publish immutable Sophia Voice, Live and Premium plan versions with approved AUD base and overage prices plus machine entitlement values."
                         },
                         {
@@ -5745,13 +5809,13 @@
                               "executionSlices": [
                                 {
                                   "id": "P6-A06C3B0C4A",
-                                  "status": "ready",
+                                  "status": "complete",
                                   "scope": "Implement the provider-neutral durable outbox, deterministic idempotency identity, lease/retry state machine and no-provider dispatch boundary without submitting a meter event."
                                 },
                                 {
                                   "id": "P6-A06C3B0C4B",
-                                  "status": "blocked_on_sandbox_meter_resources_and_plan_publication",
-                                  "scope": "Configure an approved Sophia sandbox Meter and metered Price mapping, dispatch a finalised whole-minute ledger once, and reconcile Stripe's eventual meter summary and invoice-line evidence."
+                                  "status": "in_progress",
+                                  "scope": "Configure approved Sophia sandbox fixed-base plus Meter-backed Price mappings, dispatch a finalised whole-minute ledger once at a timestamp inside its provider period, and persist exact Stripe period-summary plus finalized invoice-line reconciliation evidence."
                                 }
                               ]
                             }

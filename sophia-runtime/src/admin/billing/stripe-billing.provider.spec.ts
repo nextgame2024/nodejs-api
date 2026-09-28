@@ -18,7 +18,7 @@ describe("StripeBillingProvider", () => {
     const create = jest.fn(async () => ({ id: "cs_test_sophia", url: "https://checkout.stripe.com/c/pay/test", expires_at: 2_000_000_000 }));
     const provider = new StripeBillingProvider(config(), client({ checkoutCreate: create }));
     await expect(provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000" } })).resolves.toMatchObject({
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000", meteredOverage: null } })).resolves.toMatchObject({
       url: "https://checkout.stripe.com/c/pay/test", externalCheckoutRef: "cs_test_sophia",
     });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ mode: "subscription", client_reference_id: tenantId,
@@ -28,6 +28,22 @@ describe("StripeBillingProvider", () => {
         sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId } }),
     { idempotencyKey: `sophia:sandbox:legacy-primary:checkout:${tenantId}:${planVersionId}:${requestId}` });
     expect(JSON.stringify(create.mock.calls[0])).not.toMatch(/card|payment_method/i);
+  });
+
+  it("verifies and attaches separate fixed and metered recurring Prices", async () => {
+    const create = jest.fn(async () => ({ id: "cs_test_metered", url: "https://checkout.stripe.com/c/pay/metered",
+      expires_at: 2_000_000_000 }));
+    const retrieve = jest.fn(async (id: string) => id === "price_sophiaSandbox123"
+      ? recurringPrice({ unitAmount: 1000, usageType: "licensed", meter: null })
+      : recurringPrice({ unitAmount: 50, usageType: "metered", meter: "mtr_sophia" }));
+    const provider = new StripeBillingProvider(config(), client({ checkoutCreate: create, pricesRetrieve: retrieve }));
+    await provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000",
+        meteredOverage: { unitPriceMinor: "50", meterBindingKey: "active-overage-minutes" } } });
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["price_sophiaSandbox123", "price_sophiaMetered123"]);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ line_items: [
+      { price: "price_sophiaSandbox123", quantity: 1 }, { price: "price_sophiaMetered123" },
+    ] }), expect.any(Object));
   });
 
   it("verifies a real Stripe signature locally and rejects live-mode payloads", async () => {
@@ -52,7 +68,7 @@ describe("StripeBillingProvider", () => {
     expect(provider.status()).toMatchObject({ availability: "live", checkout: false,
       portal: true, signedWebhooks: true, reconciliation: true });
     await expect(provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000" } }))
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000", meteredOverage: null } }))
       .rejects.toThrow("explicit charge activation");
     expect(checkoutCreate).not.toHaveBeenCalled();
   });
@@ -110,15 +126,23 @@ function config(): RuntimeConfig["billing"] {
     stripeWebhookSecret: "whsec_sophia", checkoutSuccessUrl: "https://example.test/success",
     stripePortalConfigurationId: "bpc_sophiaSandbox123",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
-    stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" } };
+    stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" },
+    stripeMeteredPriceMappings: { [planVersionId]: "price_sophiaMetered123" },
+    stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };
 }
-function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; customersRetrieve?: jest.Mock } = {}) {
+function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; customersRetrieve?: jest.Mock;
+  pricesRetrieve?: jest.Mock } = {}) {
   return {
     checkout: { sessions: { create: input.checkoutCreate ?? jest.fn() } },
     billingPortal: { sessions: { create: jest.fn() } },
     webhooks: { constructEvent: jest.fn() }, subscriptions: { list: jest.fn() }, invoices: { list: jest.fn() },
-    prices: { retrieve: jest.fn(async () => ({ livemode: input.liveMode ?? false, active: true, type: "recurring", currency: "aud",
-      unit_amount: 1000, recurring: { interval: "month" } })) },
+    prices: { retrieve: input.pricesRetrieve ?? jest.fn(async () => recurringPrice({
+      unitAmount: 1000, usageType: "licensed", meter: null, liveMode: input.liveMode })) },
     customers: { retrieve: input.customersRetrieve ?? jest.fn() },
   } as never;
+}
+
+function recurringPrice(input: { unitAmount: number; usageType: "licensed" | "metered"; meter: string | null; liveMode?: boolean }) {
+  return { livemode: input.liveMode ?? false, active: true, type: "recurring", currency: "aud",
+    unit_amount: input.unitAmount, recurring: { interval: "month", usage_type: input.usageType, meter: input.meter } };
 }

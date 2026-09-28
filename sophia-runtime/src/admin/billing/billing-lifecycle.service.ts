@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { PoolClient } from "pg";
+import { z } from "zod";
 import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import { AdminAuditService } from "../authorization/admin-audit.service.js";
@@ -14,8 +15,15 @@ import {
 import { hostedActionSchema, hostedCheckoutSchema, liveCustomerBindingSchema } from "./billing-lifecycle.contracts.js";
 import { STRIPE_BILLING_OBSERVATION_EVENT_TYPES, STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 import { BillingPeriodLedgerService } from "./billing-period-ledger.service.js";
+import { BillingMeterOutboxService } from "./billing-meter-outbox.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
+const checkoutMeteredRateSchema = z.object({
+  dimensions: z.tuple([z.object({
+    dimension: z.literal("active-seconds"), includedQuantity: z.literal("120000"),
+    unitQuantity: z.literal("60"), unitPriceMinor: z.string().regex(/^\d+$/),
+  }).strict()]),
+}).strict();
 
 @Injectable()
 export class BillingLifecycleService {
@@ -24,6 +32,7 @@ export class BillingLifecycleService {
     @Inject(BILLING_PROVIDER) private readonly provider: BillingProvider,
     @Inject(AdminAuditService) private readonly audit: AdminAuditService,
     @Inject(BillingPeriodLedgerService) private readonly periodLedgers: BillingPeriodLedgerService,
+    @Inject(BillingMeterOutboxService) private readonly meterOutbox: BillingMeterOutboxService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -43,9 +52,10 @@ export class BillingLifecycleService {
     if (!this.provider.mappedPlanVersionIds().has(input.planVersionId)) {
       throw new ConflictException(`The active plan has no approved Sophia ${environment} Price mapping.`);
     }
+    const meteredOverage = checkoutMeteredOverage(context.rateCard, context.rateCardDimensions);
     if (context.pricingStatus !== "configured" || !context.currency || !context.interval || context.baseChargeMinor === null
-      || context.taxMode !== "not_applicable" || context.rateCardDimensions !== 0) {
-      throw new ConflictException("Hosted Checkout requires a configured fixed recurring plan with no usage overage lines and tax marked not applicable.");
+      || context.taxMode !== "not_applicable" || (context.rateCardDimensions > 0 && !meteredOverage)) {
+      throw new ConflictException("Hosted Checkout requires an approved fixed base and optional exact active-minute overage rate card with tax marked not applicable.");
     }
     const schema = runtimeConfig().schema;
     try {
@@ -78,7 +88,8 @@ export class BillingLifecycleService {
     try {
       result = await this.provider.createHostedCheckout({ tenantId, planVersionId: input.planVersionId,
         requestId: input.requestId, customerRef: context.customerRef,
-        commercial: { currency: context.currency, interval: context.interval, baseChargeMinor: context.baseChargeMinor } });
+        commercial: { currency: context.currency, interval: context.interval, baseChargeMinor: context.baseChargeMinor,
+          meteredOverage } });
       if (!result.expiresAt || Date.parse(result.expiresAt) <= Date.now()) {
         throw new ConflictException("Stripe did not return a usable future Checkout expiry.");
       }
@@ -191,7 +202,17 @@ export class BillingLifecycleService {
       for (const invoice of result.invoices) await upsertInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
         environment, accountKey, invoice);
     });
-    const periodLedger = await this.periodLedgers.finaliseEligible(tenantId, environment, accountKey);
+    const periodLedger = await this.periodLedgers.finaliseEligible(
+      tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
+    );
+    const meterEventDispatch = environment === "sandbox"
+      ? await this.meterOutbox.dispatchNext(tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY,
+        environment, accountKey, `billing-reconcile:${input.requestId}`)
+      : { status: "disabled" as const,
+        detail: "Live Meter dispatch is disabled pending explicit live usage-billing activation." };
+    const meterEventReconciliation = await this.meterOutbox.reconcileNext(
+      tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
+    );
     await this.audit.record({ tenantId, identityUserId: principal.identityUserId, eventType: "billing.reconciled",
       permission: "billing.manage", outcome: "allowed",
       resourceType: "billingCustomer", metadata: { providerKey: status.providerKey,
@@ -199,7 +220,7 @@ export class BillingLifecycleService {
         requestId: input.requestId, subscriptionCount: result.subscriptions.length, invoiceCount: result.invoices.length } });
     return { status: result.status, observedAt: result.observedAt,
       subscriptionCount: result.subscriptions.length, invoiceCount: result.invoices.length,
-      periodLedger, liveEntitlementMutation: false };
+      periodLedger, meterEventDispatch, meterEventReconciliation, liveEntitlementMutation: false };
   }
 
   async webhook(headers: Readonly<Record<string, string | undefined>>, rawBody: Uint8Array) {
@@ -239,13 +260,13 @@ export class BillingLifecycleService {
     return this.database.tenantReadTransaction(tenantId, async (client) => {
       const result = await client.query<{ commercial_plan_version_id: string | null; external_customer_ref: string | null;
         pricing_status: string | null; billing_currency: string | null; billing_interval: "month" | "year" | null;
-        base_charge_minor: string | null; tax_mode: string | null; rate_card_dimensions: string }>(
+        base_charge_minor: string | null; tax_mode: string | null; rate_card: unknown; rate_card_dimensions: string }>(
         `SELECT plan.commercial_plan_version_id,plan.pricing_status,plan.billing_currency,plan.billing_interval,
-                plan.base_charge_minor::text,plan.tax_mode,plan.rate_card_dimensions::text,customer.external_customer_ref
+                plan.base_charge_minor::text,plan.tax_mode,plan.rate_card,plan.rate_card_dimensions::text,customer.external_customer_ref
          FROM ${schema}.customers c
          LEFT JOIN LATERAL (
            SELECT p.commercial_plan_version_id,p.pricing_status,p.billing_currency,p.billing_interval,p.base_charge_minor,
-                  p.tax_mode,jsonb_array_length(COALESCE(p.rate_card->'dimensions','[]'::jsonb)) AS rate_card_dimensions
+                  p.tax_mode,p.rate_card,jsonb_array_length(COALESCE(p.rate_card->'dimensions','[]'::jsonb)) AS rate_card_dimensions
            FROM ${schema}.tenant_commercial_assignments a JOIN ${schema}.commercial_plan_versions p
              ON p.commercial_plan_version_id=a.commercial_plan_version_id
            WHERE a.customer_id=c.customer_id AND a.status='active' AND a.effective_from<=now()
@@ -260,7 +281,8 @@ export class BillingLifecycleService {
       const row = result.rows[0];
       return { planVersionId: row.commercial_plan_version_id, customerRef: row.external_customer_ref,
         pricingStatus: row.pricing_status, currency: row.billing_currency, interval: row.billing_interval,
-        baseChargeMinor: row.base_charge_minor, taxMode: row.tax_mode, rateCardDimensions: Number(row.rate_card_dimensions ?? 0) };
+        baseChargeMinor: row.base_charge_minor, taxMode: row.tax_mode, rateCard: row.rate_card,
+        rateCardDimensions: Number(row.rate_card_dimensions ?? 0) };
     });
   }
 
@@ -310,6 +332,14 @@ export class BillingLifecycleService {
        WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3 AND provider_account_key=$4 AND external_checkout_ref=$5`,
       [tenantId, event.providerKey, event.environment, event.providerAccountKey, event.checkoutRef]);
   }
+}
+
+function checkoutMeteredOverage(rateCard: unknown, dimensions: number) {
+  if (dimensions === 0) return null;
+  const parsed = checkoutMeteredRateSchema.safeParse(rateCard);
+  return parsed.success
+    ? { unitPriceMinor: parsed.data.dimensions[0].unitPriceMinor, meterBindingKey: "active-overage-minutes" }
+    : null;
 }
 
 function isUniqueViolation(error: unknown): boolean {

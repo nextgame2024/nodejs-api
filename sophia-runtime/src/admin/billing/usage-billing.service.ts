@@ -98,6 +98,14 @@ export class UsageBillingService {
                 plan_manifest_digest,ledger_digest,finalised_at
          FROM ${schema}.billing_usage_period_ledgers
          WHERE customer_id=$1 ORDER BY period_end DESC LIMIT 24`, [tenantId]);
+      const meterEventOutbox = await client.query(
+        `SELECT billing_meter_event_outbox_id,billing_usage_period_ledger_id,
+                provider_key,provider_environment,provider_account_key,meter_binding_key,
+                submission_identifier,event_timestamp,quantity,quantity_unit,payload_digest,
+                status,attempt_count,max_attempts,next_attempt_at,submission_started_at,
+                provider_accepted_at,reconciled_at,last_error_code,created_at,updated_at
+         FROM ${schema}.billing_meter_event_outbox
+         WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 24`, [tenantId]);
       const subscriptions = await client.query(
         `SELECT billing_subscription_reference_id, provider_key, provider_environment, provider_account_key, external_subscription_ref, status,
                 current_period_start, current_period_end, observed_at, revision
@@ -127,6 +135,7 @@ export class UsageBillingService {
         assignment: plan ? publicPlan(plan) : null,
         preview: preview(plan, dimensions.rows, period),
         finalisedUsagePeriods: periodLedgers.rows,
+        meterEventOutbox: meterEventOutbox.rows,
         subscriptions: subscriptions.rows,
         invoices: invoices.rows,
         providerCustomers: providerCustomers.rows.map((row) => ({ providerKey: row.provider_key,

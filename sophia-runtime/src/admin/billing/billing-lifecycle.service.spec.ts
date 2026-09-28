@@ -52,7 +52,8 @@ describe("BillingLifecycleService", () => {
     });
     const audit = { record: jest.fn() };
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
-    const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never, ledger() as never);
+    const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never,
+      ledger() as never, meterOutbox() as never);
     const customerRef = "cus_liveSophia123";
     await expect(service.bindCustomer(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333", customerRef,
@@ -98,6 +99,33 @@ describe("BillingLifecycleService", () => {
       provider.createHostedCheckout.mock.invocationCallOrder[0]);
   });
 
+  it("passes only the exact aggregate active-minute rate card to base-plus-metered Checkout", async () => {
+    const provider = providerMock();
+    provider.createHostedCheckout = jest.fn(async () => ({ url: "https://checkout.stripe.com/c/pay/metered",
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(), externalCheckoutRef: "cs_test_metered" }));
+    let intentStatus = "allocating";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM sophia_runtime.customers")) return { rows: [{ commercial_plan_version_id: planVersionId,
+        external_customer_ref: null, pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "75000", tax_mode: "not_applicable", rate_card_dimensions: "1",
+        rate_card: { dimensions: [{ dimension: "active-seconds", includedQuantity: "120000",
+          unitQuantity: "60", unitPriceMinor: "10" }] } }] };
+      if (sql.includes("SET status='created'")) { intentStatus = "created"; return { rows: [], rowCount: 1 }; }
+      if (sql.includes("SELECT commercial_plan_version_id") && sql.includes("billing_checkout_intents")) {
+        return { rows: [{ commercial_plan_version_id: planVersionId,
+          external_checkout_ref: intentStatus === "created" ? "cs_test_metered" : null, status: intentStatus }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    await lifecycle(provider, query).checkout(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333", planVersionId,
+    });
+    expect(provider.createHostedCheckout).toHaveBeenCalledWith(expect.objectContaining({ commercial: {
+      currency: "AUD", interval: "month", baseChargeMinor: "75000",
+      meteredOverage: { unitPriceMinor: "10", meterBindingKey: "active-overage-minutes" },
+    } }));
+  });
+
   it("deduplicates signed provider events before applying observations", async () => {
     const provider = providerMock(); provider.verifyWebhook = jest.fn(async () => invoiceEvent());
     const clientQuery = jest.fn(async (sql: string) => {
@@ -109,7 +137,8 @@ describe("BillingLifecycleService", () => {
       tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
       tenantReadTransaction: jest.fn(),
     };
-    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never, ledger() as never);
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: true });
     expect(clientQuery.mock.calls.some((call) => String(call[0]).includes("billing_invoice_references"))).toBe(false);
@@ -126,7 +155,8 @@ describe("BillingLifecycleService", () => {
       tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
       tenantReadTransaction: jest.fn(),
     };
-    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never, ledger() as never);
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
@@ -134,15 +164,44 @@ describe("BillingLifecycleService", () => {
     expect(invoiceSql).toContain("provider_environment");
     expect(invoiceSql).toContain("ON CONFLICT (provider_key,provider_environment,provider_account_key,external_invoice_ref)");
   });
+
+  it("never dispatches a live Meter event from the read-only live reconciliation path", async () => {
+    const provider = providerMock();
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: false, portal: true, signedWebhooks: true,
+      reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
+    provider.reconcileTenant = jest.fn(async () => ({ status: "observed", observedAt: "2026-09-28T00:00:00.000Z",
+      subscriptions: [], invoices: [] }));
+    const query = jest.fn(async (sql: string) => sql.includes("FROM sophia_runtime.customers")
+      ? { rows: [{ commercial_plan_version_id: planVersionId, external_customer_ref: "cus_live",
+        pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "75000", tax_mode: "not_applicable", rate_card_dimensions: "1",
+        rate_card: { dimensions: [{ dimension: "active-seconds", includedQuantity: "120000",
+          unitQuantity: "60", unitPriceMinor: "10" }] } }] }
+      : { rows: [], rowCount: 0 });
+    const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
+    const outbox = meterOutbox();
+    const service = new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
+      provider, { record: jest.fn() } as never, ledger() as never, outbox as never);
+    await expect(service.reconcile(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333",
+    })).resolves.toMatchObject({ meterEventDispatch: { status: "disabled" }, liveEntitlementMutation: false });
+    expect(outbox.dispatchNext).not.toHaveBeenCalled();
+    expect(outbox.reconcileNext).toHaveBeenCalled();
+  });
 });
 
 function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) {
   const run = jest.fn(async (_id: string, work: (client: { query: jest.Mock }) => unknown) => work({ query }));
   return new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-    provider, { record: jest.fn() } as never, ledger() as never);
+    provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never);
 }
 function ledger() {
   return { finaliseEligible: jest.fn(async () => ({ observedPeriods: 0, finalised: 0, existing: 0, blocked: [] })) };
+}
+function meterOutbox() {
+  return { dispatchNext: jest.fn(async () => ({ status: "idle" })),
+    reconcileNext: jest.fn(async () => ({ status: "idle" })) };
 }
 function providerMock() {
   return {

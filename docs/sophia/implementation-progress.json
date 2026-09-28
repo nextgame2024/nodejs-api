@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0C1",
-  "updatedAt": "2026-09-27T15:20:00+10:00",
+  "checkpoint": "P6-A06C3B0B",
+  "updatedAt": "2026-09-28T10:30:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -685,7 +685,7 @@
     },
     "P6-A06": {
       "status": "in_progress",
-      "completedSlice": "P6-A06C3B0C3",
+      "completedSlice": "P6-A06C3B0B",
       "evidence": [
         "p6-a06a-checkpoint.md",
         "p6-a06b-checkpoint.md",
@@ -703,7 +703,14 @@
         "../../sophia-runtime/src/database/migrations/041_session_activity_intervals.sql",
         "../../sophia-runtime/src/database/migrations/042_billing_period_ledgers.sql",
         "../../sophia-runtime/src/database/migrations/043_billing_period_assignment_snapshot.sql",
+        "../../sophia-runtime/src/database/migrations/044_billing_meter_event_outbox.sql",
+        "../../sophia-runtime/src/database/migrations/045_billing_meter_event_outbox_contract.sql",
+        "../../sophia-runtime/src/database/migrations/046_provider_capacity_and_tool_admission_classes.sql",
+        "../../sophia-runtime/src/database/migrations/047_billing_meter_reconciliation_evidence.sql",
         "../../sophia-runtime/src/admin/billing/billing-period-ledger.service.ts",
+        "../../sophia-runtime/src/admin/billing/billing-meter-outbox.service.ts",
+        "../../sophia-runtime/src/admin/billing/billing-meter-event.port.ts",
+        "../../sophia-runtime/src/admin/billing/stripe-billing-meter-event.dispatcher.ts",
         "../../sophia-runtime/src/admin/billing/stripe-billing.provider.ts",
         "../../sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
         "../../sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
@@ -711,6 +718,8 @@
         "../../sophia-runtime/scripts/verify-commercial-read-model.mts",
         "../../sophia-runtime/scripts/verify-billing-sandbox-lifecycle.mts",
         "../../sophia-runtime/scripts/verify-stripe-live-readiness.mts",
+        "../../sophia-runtime/scripts/verify-billing-meter-outbox.mts",
+        "../../sophia-runtime/scripts/publish-commercial-catalog.mts",
         "p6-a06c2-checkpoint.md",
         "p6-a06c3-checkpoint.md",
         "p6-a06c3b-preflight.md",
@@ -719,9 +728,12 @@
         "p6-a06c3b0c1-checkpoint.md",
         "p6-a06c3b0c2-checkpoint.md",
         "p6-a06c3b0c3-checkpoint.md",
+        "p6-a06c3b0c4a-checkpoint.md",
+        "p6-a06c3b0c4b-checkpoint.md",
+        "p6-a06c3b0b-checkpoint.md",
         "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
       ],
-      "detail": "P6-A06A/B completed the fail-closed adapter and recurring sandbox lifecycle. P6-A06C1/C2 established genuine non-owner authentication and environment-separated dormant live mode; C3A added read-only live verification and no-charge Customer binding. C3B0A adds seller/legal/policy authority and aggregate active-minute preview; C3B0C1 provider-account isolation; C3B0C2 canonical connected intervals. C3B0C3 applies migration 042, preserves provider-observed subscription periods and finalises immutable microsecond-precision ledgers only when one assignment and seller policy cover the whole period. It subtracts 120000 seconds and applies one 60-second ceiling. Active-seconds preview now comes only from canonical intervals. Plan 2.1.48 rejects calendar-month invoice assumptions and unapproved proration, and splits C4 into a ready provider-neutral outbox slice plus a Stripe sandbox evidence slice blocked on metered resources and plan publication. No meter event or charge was created; live Checkout remains disabled."
+      "detail": "P6-A06A/B completed the fail-closed adapter and recurring sandbox lifecycle. P6-A06C1/C2 established genuine non-owner authentication and environment-separated dormant live mode; C3A added read-only live verification and no-charge Customer binding. C3B0A adds seller/legal/policy authority and aggregate active-minute preview; C3B0B publishes the approved non-GST B2B seller policy and three immutable AUD plan versions with 3 concurrent sessions and 15 aggregate tool calls/minute; C3B0C1 provider-account isolation; C3B0C2 canonical connected intervals; C3B0C3 provider-period preservation and immutable one-ceiling ledgers. C4A applies migrations 044/045 and atomically creates one digest-bound outbox item only for positive whole-minute overage. Migration 046 and plan 2.1.50 separate provider-neutral capacity plus read/search, mutation, sensitive and per-tool safety admission from commercial entitlements. Plan 2.1.51 corrects the Stripe end-exclusive period boundary, enforces exact fixed-base plus metered Checkout composition, and migration 047 adds immutable dual-source Meter-summary/invoice-line reconciliation evidence. No Meter event has been submitted. C4B remains in progress pending deployed sandbox mappings, a base-plus-metered subscription, a closed positive-overage period, dispatch and real Stripe evidence. No live Stripe event or charge was created; live Checkout remains disabled."
     }
   },
   "tests": [
@@ -1971,6 +1983,55 @@
       "node": "20.19.1",
       "result": "pass",
       "detail": "Frontend TypeScript compilation, 4 focused Usage/Billing browser tests and the production build passed. Existing Angular bundle/font/CommonJS/PrimeIcons warnings remain."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-billing-meter-outbox.mts",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied migrations 044 and 045. A rollback-only sophia_runtime_app proof verified forced RLS, least-privilege grants, cross-tenant hiding, fenced claim ownership, stale-token denial and permanent quarantine of an ambiguous post-submission outcome. All synthetic rows were rolled back and no provider was invoked."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A06C3B0C4A passed both typechecks, build, generated-contract drift check and all 110 suites/382 tests. Coverage includes atomic positive-overage enqueue, zero-overage suppression, disabled-provider no-claim behavior, ledger-bound payload-integrity rejection, deterministic payload submission, fenced provider acceptance and post-submit exception quarantine."
+    },
+    {
+      "command": "npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Boundary scan passed 223 new-product files; protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "npm run migrate; publish-commercial-catalog; psql read-only catalog/capacity verification",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied additive migration 046 and published the approved sole-trader/non-GST/business-only seller authority, sandbox provider-account identity, and immutable Sophia Voice/Live/Premium v1 plan versions. Neon verifies AUD 750/1750/2750 base charges, 10/50/75-cent whole-minute overage rates after 120000 included seconds, concurrentSessions=3 and toolCallsPerMinute=15 for every plan. No tenant assignment, Meter event, Checkout, invoice or charge was created."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test; npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend/sophia-runtime + backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "P6-A06C3B0B and the partial C4B adapter passed both typechecks, build, generated-contract drift check and all 112 Runtime suites/390 tests. Boundary scan passed 225 files and protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "npm run migrate; node --import tsx scripts/verify-billing-meter-outbox.mts",
+      "repository": "backend/sophia-runtime + Neon",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Applied migration 047. The rollback-only runtime-role proof verified immutable dual-source reconciliation evidence, forced RLS, cross-tenant hiding, least-privilege grants, fenced claims, stale-token denial and the outcome_unknown-to-reconciled transition. All synthetic rows were rolled back and no Stripe API was invoked."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm run build; npm run contracts:check; npm test; npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "backend/sophia-runtime + backend",
+      "node": "20.15.0",
+      "result": "pass",
+      "detail": "Plan 2.1.51 C4B implementation passed both typechecks, build, generated-contract drift check and all 113 Runtime suites/398 tests. Boundary scan passed 225 files and protected real-estate passed 8 suites/38 tests."
     }
   ],
   "blockers": [
@@ -2012,9 +2073,10 @@
     "P6-03 does not invent or approve any tenant retention duration or legal conclusion. Provider deletion and backup expiry remain evidence-gated; no live provider deletion or backup operation was run. The Business Manager privacy owner API is implemented and unit-tested but remains fail-closed in deployment until a connector credential explicitly includes bm:real-estate:privacy:write; the legacy broad service token is rejected. Retention runs are bounded on-demand operations, not a deployed scheduler, and unbound or provider-cleanup-unsafe sessions remain blocked.",
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
-    "P6-A05 does not invent or activate a production rate card, plan assignment, customer billing balance or tax conclusion. Tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A are complete. P6-A06C3B0A adds versioned seller/legal/policy authority and exact aggregate active-minute preview; C3B0C1 provider-account isolation; C3B0C2 canonical connected activity; C3B0C3 provider-period preservation and immutable one-ceiling ledgers. Production plan/provider registry publication remains blocked on the seller's exact legal name/ABN, external Stripe account ID and machine entitlement values. C4A durable outbox implementation is ready; C4B Stripe sandbox dispatch/reconciliation requires approved Meter/metered Price resources and plan publication. C3B1/C3C require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
+    "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A are complete. P6-A06C3B0A adds versioned seller/legal/policy authority and exact aggregate active-minute preview; C3B0B publishes the approved seller, policy, provider account and Voice/Live/Premium plans; C3B0C1 provider-account isolation; C3B0C2 canonical connected activity; C3B0C3 provider-period preservation and immutable one-ceiling ledgers; C4A durable provider-neutral outbox and its no-provider boundary are complete. C4B now enforces exact licensed-base plus Meter-backed Price composition, emits inside the provider period and persists dual-source summary/invoice-line evidence under migration 047, but still requires deployed sandbox mappings, a base-plus-metered subscription, a closed positive-overage period, dispatch and real Stripe evidence. C3B1/C3C require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": "P6-A06C3B0C4A",
+  "nextReadyTask": "P6-A06C3B0C4B",
+  "nextBlockedTask": "P6-A06C3B1",
   "stopAfterCheckpoint": true
 }

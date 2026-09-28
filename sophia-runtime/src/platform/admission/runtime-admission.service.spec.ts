@@ -10,6 +10,11 @@ describe("RuntimeAdmissionService", () => {
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
     process.env.SOPHIA_MAX_CONCURRENT_SESSIONS = "10";
     process.env.SOPHIA_MAX_TOOL_CALLS_PER_MINUTE = "20";
+    process.env.SOPHIA_PROVIDER_SESSION_CAPACITY = '{"default":10}';
+    delete process.env.SOPHIA_TOOL_READ_SEARCH_CALLS_PER_MINUTE;
+    delete process.env.SOPHIA_TOOL_MUTATION_CALLS_PER_MINUTE;
+    delete process.env.SOPHIA_TOOL_SENSITIVE_CALLS_PER_MINUTE;
+    delete process.env.SOPHIA_TOOL_CALLS_PER_MINUTE_BY_TOOL;
   });
 
   it("takes the minimum platform, commercial and tenant ceilings", async () => {
@@ -52,6 +57,37 @@ describe("RuntimeAdmissionService", () => {
       .toBeLessThan(sql.findIndex((item) => item.includes("INSERT INTO sophia_runtime.provider_session_allocations")));
   });
 
+  it("keeps configured provider capacity separate from the commercial entitlement", async () => {
+    process.env.SOPHIA_PROVIDER_SESSION_CAPACITY = '{"native":1}';
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (sql.includes("LEFT JOIN") && sql.includes("tenant_usage_guardrails")) {
+        return { rows: [limitRow({ entitlements: { concurrentSessions: 3 }, plan_key: "voice", plan_version: 1 })] };
+      }
+      if (sql.includes("SELECT status FROM")) return { rows: [{ status: "active" }] };
+      if (sql.includes("provider_session_capacity_occupied")) return { rows: [{ occupied_count: "1" }] };
+      if (sql.includes("occupied_count")) return { rows: [{ occupied_count: "0" }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await expect(service(query).reserveProviderSession(tenantId, "native", "essential"))
+      .rejects.toThrow("provider capacity is unavailable");
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.provider_session_allocations")))
+      .toBe(false);
+  });
+
+  it("fails closed when the selected adapter has no configured provider capacity", async () => {
+    delete process.env.SOPHIA_PROVIDER_SESSION_CAPACITY;
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (sql.includes("LEFT JOIN") && sql.includes("tenant_usage_guardrails")) return { rows: [limitRow({})] };
+      if (sql.includes("SELECT status FROM")) return { rows: [{ status: "active" }] };
+      if (sql.includes("occupied_count")) return { rows: [{ occupied_count: "0" }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await expect(service(query).reserveProviderSession(tenantId, "unconfigured", "essential"))
+      .rejects.toThrow("no configured capacity");
+  });
+
   it("enforces the immutable v2 session total separately from the minute rate", async () => {
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("pg_advisory_xact_lock") || sql.includes("DELETE FROM")) return { rows: [] };
@@ -61,7 +97,8 @@ describe("RuntimeAdmissionService", () => {
     });
     await expect(service(query).reserveToolAttempt({ tenantId, sessionId,
       invocationId: "33333333-3333-4333-8333-333333333333", deduplicationKey: null,
-      maximumSessionToolCalls: 20 })).rejects.toThrow("immutable total tool-call limit");
+      maximumSessionToolCalls: 20, toolId: "catalog.search", admissionClass: "read-search" }))
+      .rejects.toThrow("immutable total tool-call limit");
     expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.tool_admission_reservations"))).toBe(false);
   });
 
@@ -73,7 +110,26 @@ describe("RuntimeAdmissionService", () => {
     });
     await expect(service(query).reserveToolAttempt({ tenantId, sessionId,
       invocationId: "33333333-3333-4333-8333-333333333333", deduplicationKey: "provider:event-1",
-      maximumSessionToolCalls: 1 })).resolves.toBeUndefined();
+      maximumSessionToolCalls: 1, toolId: "catalog.search", admissionClass: "read-search" }))
+      .resolves.toBeUndefined();
+  });
+
+  it("applies a tool-class safety ceiling below the aggregate commercial ceiling", async () => {
+    process.env.SOPHIA_TOOL_MUTATION_CALLS_PER_MINUTE = "1";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock") || sql.includes("DELETE FROM")) return { rows: [] };
+      if (sql.includes("LEFT JOIN") && sql.includes("tenant_usage_guardrails")) {
+        return { rows: [limitRow({ entitlements: { toolCallsPerMinute: 15 }, plan_key: "voice", plan_version: 1 })] };
+      }
+      if (sql.includes("recent_count")) {
+        return { rows: [{ recent_count: "1", class_count: "1", tool_count: "0", total_count: "1" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await expect(service(query).reserveToolAttempt({ tenantId, sessionId,
+      invocationId: "33333333-3333-4333-8333-333333333333", deduplicationKey: null,
+      maximumSessionToolCalls: null, toolId: "booking.commit", admissionClass: "mutation" }))
+      .rejects.toThrow("mutation tool safety limit");
   });
 });
 

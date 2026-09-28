@@ -24,13 +24,20 @@ async function main() {
   const database = new DatabaseService();
   try {
     const planIds = Object.keys(config.billing.stripePriceMappings);
+    const meteredPlanIds = Object.keys(config.billing.stripeMeteredPriceMappings);
+    if (planIds.length !== meteredPlanIds.length || planIds.some((id) => !config.billing.stripeMeteredPriceMappings[id])) {
+      throw new Error("Every live base Price mapping must have one matching metered Price mapping.");
+    }
+    const meterEventName = config.billing.stripeMeterBindings["active-overage-minutes"];
+    if (!meterEventName) throw new Error("The live active-overage-minutes Meter binding is required.");
     const result = await database.query<{
       commercial_plan_version_id: string; plan_key: string; display_name: string;
       billing_currency: string | null; billing_interval: "month" | "year" | null;
-      base_charge_minor: string | null; pricing_status: string; status: string; tax_mode: string; rate_card_dimensions: string;
+      base_charge_minor: string | null; pricing_status: string; status: string; tax_mode: string;
+      rate_card: { dimensions?: unknown[] }; rate_card_dimensions: string;
     }>(
       `SELECT commercial_plan_version_id,plan_key,display_name,billing_currency,billing_interval,base_charge_minor::text,
-              pricing_status,status,tax_mode,
+              pricing_status,status,tax_mode,rate_card,
               jsonb_array_length(COALESCE(rate_card->'dimensions','[]'::jsonb))::text AS rate_card_dimensions
        FROM ${config.schema}.commercial_plan_versions
        WHERE commercial_plan_version_id=ANY($1::uuid[])`, [planIds]);
@@ -38,11 +45,18 @@ async function main() {
     const plans: LivePlanExpectation[] = result.rows.map((row) => {
       if (row.pricing_status !== "configured" || !["published", "retired"].includes(row.status)
         || !row.billing_currency || !row.billing_interval || row.base_charge_minor === null
-        || row.tax_mode !== "not_applicable" || Number(row.rate_card_dimensions) !== 0) {
-        throw new Error(`Mapped plan ${row.commercial_plan_version_id} is not an approved fixed recurring plan.`);
+        || row.tax_mode !== "not_applicable" || Number(row.rate_card_dimensions) !== 1) {
+        throw new Error(`Mapped plan ${row.commercial_plan_version_id} is not an approved base-plus-metered plan.`);
+      }
+      const rate = row.rate_card.dimensions?.[0] as Record<string, unknown> | undefined;
+      if (rate?.dimension !== "active-seconds" || rate.includedQuantity !== "120000"
+        || rate.unitQuantity !== "60" || typeof rate.unitPriceMinor !== "string" || !/^\d+$/.test(rate.unitPriceMinor)) {
+        throw new Error(`Mapped plan ${row.commercial_plan_version_id} has an invalid active-minute rate card.`);
       }
       return { planVersionId: row.commercial_plan_version_id, planKey: row.plan_key, displayName: row.display_name,
         priceId: config.billing.stripePriceMappings[row.commercial_plan_version_id]!,
+        meteredPriceId: config.billing.stripeMeteredPriceMappings[row.commercial_plan_version_id]!,
+        meterEventName, overageRateMinor: rate.unitPriceMinor,
         currency: row.billing_currency, interval: row.billing_interval, baseChargeMinor: row.base_charge_minor };
     });
 

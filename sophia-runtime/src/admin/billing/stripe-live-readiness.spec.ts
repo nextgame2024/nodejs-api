@@ -4,7 +4,8 @@ import { verifyLiveStripeResources } from "./stripe-live-readiness.js";
 
 const plan = { planVersionId: "22222222-2222-4222-8222-222222222222", planKey: "sophia-production-monthly",
   displayName: "Sophia Production Monthly", priceId: "price_live_sophia",
-  currency: "AUD", interval: "month" as const, baseChargeMinor: "1000" };
+  meteredPriceId: "price_live_sophia_metered", meterEventName: "sophia_active_overage_minutes",
+  currency: "AUD", interval: "month" as const, baseChargeMinor: "1000", overageRateMinor: "50" };
 
 describe("live Stripe resource readiness", () => {
   it("verifies live fixed Prices, portal features and the exact signed webhook destination read-only", async () => {
@@ -14,6 +15,7 @@ describe("live Stripe resource readiness", () => {
       .resolves.toMatchObject({ environment: "live", checkoutEnabled: false, prices: { verified: 1 },
         webhook: { requiredEventCount: STRIPE_BILLING_WEBHOOK_EVENT_TYPES.length } });
     expect(client.prices.retrieve).toHaveBeenCalledWith(plan.priceId);
+    expect(client.prices.retrieve).toHaveBeenCalledWith(plan.meteredPriceId);
     expect(client.webhookEndpoints.list).toHaveBeenCalledWith({ limit: 100 });
   });
 
@@ -47,7 +49,9 @@ describe("live Stripe resource readiness", () => {
 
 function validClient() {
   return {
-    prices: { retrieve: jest.fn(async () => livePrice()) },
+    prices: { retrieve: jest.fn(async (id: string) => id === plan.priceId ? livePrice() : liveMeteredPrice()) },
+    billing: { meters: { retrieve: jest.fn(async () => ({ livemode: true, status: "active",
+      event_name: plan.meterEventName, default_aggregation: { formula: "sum" } })) } },
     billingPortal: { configurations: { retrieve: jest.fn(async () => ({ livemode: true, active: true,
       features: { invoice_history: { enabled: true }, payment_method_update: { enabled: true },
         subscription_cancel: { enabled: true } } })) } },
@@ -56,6 +60,8 @@ function validClient() {
   };
 }
 function livePrice() { return { livemode: true, active: true, type: "recurring", currency: "aud",
-  unit_amount: 1000, recurring: { interval: "month" } }; }
+  unit_amount: 1000, recurring: { interval: "month", usage_type: "licensed", meter: null } }; }
+function liveMeteredPrice() { return { livemode: true, active: true, type: "recurring", currency: "aud",
+  unit_amount: 50, recurring: { interval: "month", usage_type: "metered", meter: "mtr_live_sophia" } }; }
 function liveWebhook() { return { livemode: true, status: "enabled", url: "https://runtime.example/api/billing/v1/webhooks/stripe",
   api_version: STRIPE_BILLING_API_VERSION, enabled_events: [...STRIPE_BILLING_WEBHOOK_EVENT_TYPES] }; }

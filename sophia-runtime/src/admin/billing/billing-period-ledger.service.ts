@@ -14,6 +14,11 @@ const activeRateSchema = z.object({
 
 type PeriodRow = {
   billing_subscription_period_id: string;
+  provider_key: string;
+  provider_environment: "sandbox" | "live";
+  provider_account_key: string;
+  billing_provider_customer_id: string | null;
+  external_customer_ref: string | null;
   period_start: Date | string;
   period_end: Date | string;
 };
@@ -44,24 +49,30 @@ export class BillingPeriodLedgerService {
 
   async finaliseEligible(
     tenantId: string,
+    providerKey: string,
     environment: "sandbox" | "live",
     providerAccountKey: string,
   ): Promise<BillingPeriodFinalisation> {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-        `billing-period-ledger:${environment}:${providerAccountKey}:${tenantId}`,
+        `billing-period-ledger:${providerKey}:${environment}:${providerAccountKey}:${tenantId}`,
       ]);
       const periods = await client.query<PeriodRow>(
-        `SELECT p.billing_subscription_period_id,p.period_start,p.period_end
+        `SELECT p.billing_subscription_period_id,p.provider_key,p.provider_environment,p.provider_account_key,
+                customer.billing_provider_customer_id,customer.external_customer_ref,p.period_start,p.period_end
          FROM ${schema}.billing_subscription_periods p
          LEFT JOIN ${schema}.billing_usage_period_ledgers l
            ON l.billing_subscription_period_id=p.billing_subscription_period_id
-         WHERE p.customer_id=$1 AND p.provider_key='stripe-sophia'
+         LEFT JOIN ${schema}.billing_provider_customers customer
+           ON customer.customer_id=p.customer_id AND customer.provider_key=p.provider_key
+          AND customer.provider_environment=p.provider_environment
+          AND customer.provider_account_key=p.provider_account_key
+         WHERE p.customer_id=$1 AND p.provider_key=$4
            AND p.provider_environment=$2 AND p.provider_account_key=$3
            AND p.period_end<=now() AND l.billing_usage_period_ledger_id IS NULL
          ORDER BY p.period_end,p.billing_subscription_period_id FOR UPDATE OF p SKIP LOCKED LIMIT 24`,
-        [tenantId, environment, providerAccountKey],
+        [tenantId, environment, providerAccountKey, providerKey],
       );
       const result: BillingPeriodFinalisation = {
         observedPeriods: periods.rows.length, finalised: 0, existing: 0, blocked: [],
@@ -135,6 +146,9 @@ export class BillingPeriodLedgerService {
     const includedSeconds = 120000n;
     const overageMicroseconds = maxBigInt(0n, activeMicroseconds - includedSeconds * 1_000_000n);
     const billableMinutes = ceilDiv(overageMicroseconds, 60_000_000n);
+    if (billableMinutes > 0n && (!period.billing_provider_customer_id || !period.external_customer_ref)) {
+      return "The positive overage cannot be finalised without an account-scoped provider Customer binding.";
+    }
     const ledger = {
       customerId: tenantId,
       periodId: period.billing_subscription_period_id,
@@ -158,7 +172,7 @@ export class BillingPeriodLedgerService {
       planManifestDigest: plan.manifest_digest,
     };
     const digest = createHash("sha256").update(JSON.stringify(ledger)).digest("hex");
-    const inserted = await client.query(
+    const inserted = await client.query<{ billing_usage_period_ledger_id: string }>(
       `INSERT INTO ${schema}.billing_usage_period_ledgers (
          customer_id,billing_subscription_period_id,commercial_assignment_id,assignment_revision,
          assignment_effective_from,assignment_effective_to,commercial_plan_version_id,
@@ -175,16 +189,68 @@ export class BillingPeriodLedgerService {
         billableMinutes.toString(), parsedRate.data.unitPriceMinor, plan.billing_currency,
         JSON.stringify(parsedRate.data), plan.manifest_digest, digest],
     );
-    if (inserted.rowCount) return "finalised";
-    const existing = await client.query<{ ledger_digest: string }>(
-      `SELECT ledger_digest FROM ${schema}.billing_usage_period_ledgers
+    const existing = inserted.rowCount ? null : await client.query<{
+      billing_usage_period_ledger_id: string; ledger_digest: string;
+    }>(
+      `SELECT billing_usage_period_ledger_id,ledger_digest FROM ${schema}.billing_usage_period_ledgers
        WHERE billing_subscription_period_id=$1 AND customer_id=$2`,
       [period.billing_subscription_period_id, tenantId],
     );
-    if (existing.rows[0]?.ledger_digest !== digest) {
+    if (existing && existing.rows[0]?.ledger_digest !== digest) {
       throw new ConflictException("The finalised billing period conflicts with recomputed evidence.");
     }
-    return "existing";
+    const ledgerId = inserted.rows[0]?.billing_usage_period_ledger_id
+      ?? existing?.rows[0]?.billing_usage_period_ledger_id;
+    if (!ledgerId) throw new ConflictException("The finalised billing period has no durable ledger identity.");
+    if (billableMinutes > 0n) {
+      await this.enqueueOverage(client, tenantId, period, ledgerId, billableMinutes, digest);
+    }
+    return inserted.rowCount ? "finalised" : "existing";
+  }
+
+  private async enqueueOverage(
+    client: PoolClient,
+    tenantId: string,
+    period: PeriodRow,
+    ledgerId: string,
+    quantity: bigint,
+    ledgerDigest: string,
+  ) {
+    const schema = runtimeConfig().schema;
+    const meterBindingKey = "active-overage-minutes";
+    const submissionIdentifier = `sophia-active-minutes-${ledgerId}`;
+    const periodStart = new Date(period.period_start).getTime();
+    const periodEnd = new Date(period.period_end).getTime();
+    const eventMilliseconds = periodEnd - 1_000;
+    if (!Number.isSafeInteger(periodStart) || !Number.isSafeInteger(periodEnd)
+      || eventMilliseconds < periodStart) {
+      throw new ConflictException("The provider period cannot contain a whole-second Meter event timestamp.");
+    }
+    // Stripe summaries use [start, end); place the aggregate inside the observed provider period.
+    const eventTimestamp = new Date(eventMilliseconds).toISOString();
+    const payload = { ledgerId, ledgerDigest, providerKey: period.provider_key,
+      providerEnvironment: period.provider_environment, providerAccountKey: period.provider_account_key,
+      billingProviderCustomerId: period.billing_provider_customer_id, meterBindingKey,
+      externalCustomerRef: period.external_customer_ref,
+      submissionIdentifier, eventTimestamp, quantity: quantity.toString(), quantityUnit: "whole-minute" };
+    const payloadDigest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await client.query(
+      `INSERT INTO ${schema}.billing_meter_event_outbox (
+         customer_id,billing_usage_period_ledger_id,billing_provider_customer_id,
+         provider_key,provider_environment,provider_account_key,external_customer_ref,
+         meter_binding_key,submission_identifier,event_timestamp,quantity,quantity_unit,payload_digest
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'whole-minute',$12)
+       ON CONFLICT (billing_usage_period_ledger_id) DO NOTHING`,
+      [tenantId, ledgerId, period.billing_provider_customer_id, period.provider_key,
+        period.provider_environment, period.provider_account_key, period.external_customer_ref,
+        meterBindingKey, submissionIdentifier, eventTimestamp, quantity.toString(), payloadDigest],
+    );
+    const persisted = await client.query<{ payload_digest: string }>(
+      `SELECT payload_digest FROM ${schema}.billing_meter_event_outbox
+       WHERE customer_id=$1 AND billing_usage_period_ledger_id=$2`, [tenantId, ledgerId]);
+    if (persisted.rows[0]?.payload_digest !== payloadDigest) {
+      throw new ConflictException("The meter-event outbox conflicts with the immutable period ledger.");
+    }
   }
 }
 

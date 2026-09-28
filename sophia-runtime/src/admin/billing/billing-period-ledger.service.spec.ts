@@ -15,6 +15,8 @@ describe("BillingPeriodLedgerService", () => {
       if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
       if (sql.includes("FROM sophia_runtime.billing_subscription_periods")) return { rows: [{
         billing_subscription_period_id: periodId,
+        provider_key: "stripe-sophia", provider_environment: "sandbox", provider_account_key: "legacy-primary",
+        billing_provider_customer_id: "77777777-7777-4777-8777-777777777777", external_customer_ref: "cus_sandbox",
         period_start: "2026-08-15T00:00:00.000Z", period_end: "2026-09-15T00:00:00.000Z",
       }], rowCount: 1 };
       if (sql.includes("FROM sophia_runtime.tenant_commercial_assignments")) return { rows: [{
@@ -32,9 +34,14 @@ describe("BillingPeriodLedgerService", () => {
       if (sql.includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers")) {
         return { rows: [{ billing_usage_period_ledger_id: "ledger-1" }], rowCount: 1 };
       }
+      if (sql.includes("INSERT INTO sophia_runtime.billing_meter_event_outbox")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.billing_meter_event_outbox")) {
+        const insert = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO sophia_runtime.billing_meter_event_outbox"));
+        return { rows: [{ payload_digest: insert?.[1]?.[11] }], rowCount: 1 };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
-    const result = await service(query).finaliseEligible(tenantId, "sandbox", "legacy-primary");
+    const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "sandbox", "legacy-primary");
 
     expect(result).toEqual({ observedPeriods: 1, finalised: 1, existing: 0, blocked: [] });
     const measuredSql = String(query.mock.calls.find(([sql]) => String(sql).includes("AS active_microseconds"))?.[0]);
@@ -42,19 +49,45 @@ describe("BillingPeriodLedgerService", () => {
     expect(measuredSql).toContain("sum(");
     const insert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers"));
     expect(insert?.[1]?.slice(11, 15)).toEqual(["120060000001", "120000", "60000001", "2"]);
+    const outbox = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.billing_meter_event_outbox"));
+    expect(outbox?.[1]?.[8]).toBe("sophia-active-minutes-ledger-1");
+    expect(outbox?.[1]?.[9]).toBe("2026-09-14T23:59:59.000Z");
+    expect(outbox?.[1]?.[10]).toBe("2");
   });
 
   it("fails closed while an interval overlapping the ended period remains open", async () => {
     const query = baseQuery({ open: true });
-    const result = await service(query).finaliseEligible(tenantId, "live", "legacy-primary");
+    const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "live", "legacy-primary");
     expect(result).toMatchObject({ finalised: 0, blocked: [{ periodId, reason: expect.stringContaining("still open") }] });
     expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers"))).toBe(false);
   });
 
   it("refuses an ambiguous mid-period commercial or seller-policy transition", async () => {
     const query = baseQuery({ commercialRows: 2 });
-    const result = await service(query).finaliseEligible(tenantId, "sandbox", "legacy-primary");
+    const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "sandbox", "legacy-primary");
     expect(result).toMatchObject({ finalised: 0, blocked: [{ reason: expect.stringContaining("proration is unavailable") }] });
+  });
+
+  it("persists a zero-overage ledger without creating a meaningless provider event", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.billing_subscription_periods")) return { rows: [{
+        billing_subscription_period_id: periodId,
+        provider_key: "stripe-sophia", provider_environment: "sandbox", provider_account_key: "legacy-primary",
+        billing_provider_customer_id: "77777777-7777-4777-8777-777777777777", external_customer_ref: "cus_sandbox",
+        period_start: "2026-08-15T00:00:00.000Z", period_end: "2026-09-15T00:00:00.000Z",
+      }], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.tenant_commercial_assignments")) return baseCommercial();
+      if (sql.includes("status='open'")) return { rows: [], rowCount: 0 };
+      if (sql.includes("AS active_microseconds")) return { rows: [{ active_microseconds: "120000000000" }], rowCount: 1 };
+      if (sql.includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers")) {
+        return { rows: [{ billing_usage_period_ledger_id: "ledger-zero" }], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "sandbox", "legacy-primary");
+    expect(result.finalised).toBe(1);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("billing_meter_event_outbox"))).toBe(false);
   });
 });
 
@@ -68,10 +101,24 @@ function baseQuery(options: { open?: boolean; commercialRows?: number }) {
     if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
     if (sql.includes("FROM sophia_runtime.billing_subscription_periods")) return { rows: [{
       billing_subscription_period_id: periodId,
+      provider_key: "stripe-sophia", provider_environment: "sandbox", provider_account_key: "legacy-primary",
+      billing_provider_customer_id: "77777777-7777-4777-8777-777777777777", external_customer_ref: "cus_sandbox",
       period_start: "2026-08-15T00:00:00.000Z", period_end: "2026-09-15T00:00:00.000Z",
     }], rowCount: 1 };
-    if (sql.includes("FROM sophia_runtime.tenant_commercial_assignments")) return {
-      rows: Array.from({ length: options.commercialRows ?? 1 }, () => ({
+    if (sql.includes("FROM sophia_runtime.tenant_commercial_assignments")) {
+      const commercial = baseCommercial();
+      return {
+      rows: Array.from({ length: options.commercialRows ?? 1 }, () => commercial.rows[0]),
+      rowCount: options.commercialRows ?? 1,
+    };
+    }
+    if (sql.includes("status='open'")) return { rows: options.open ? [{ exists: 1 }] : [], rowCount: options.open ? 1 : 0 };
+    throw new Error(`unexpected query: ${sql}`);
+  });
+}
+
+function baseCommercial() {
+  return { rows: [{
         commercial_assignment_id: "33333333-3333-4333-8333-333333333333",
         assignment_revision: 1, assignment_effective_from: "2026-01-01T00:00:00.000Z", assignment_effective_to: null,
         commercial_plan_version_id: "44444444-4444-4444-8444-444444444444",
@@ -80,9 +127,5 @@ function baseQuery(options: { open?: boolean; commercialRows?: number }) {
         seller_commercial_policy_version_id: "66666666-6666-4666-8666-666666666666",
         rate_card: { dimensions: [{ dimension: "active-seconds", includedQuantity: "120000",
           unitQuantity: "60", unitPriceMinor: "50" }] },
-      })), rowCount: options.commercialRows ?? 1,
-    };
-    if (sql.includes("status='open'")) return { rows: options.open ? [{ exists: 1 }] : [], rowCount: options.open ? 1 : 0 };
-    throw new Error(`unexpected query: ${sql}`);
-  });
+      }], rowCount: 1 };
 }

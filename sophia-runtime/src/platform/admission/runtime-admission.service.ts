@@ -28,6 +28,8 @@ export type EffectiveAdmissionLimits = {
   effective: { maxConcurrentSessions: number; maxToolCallsPerMinute: number };
 };
 
+export type ToolAdmissionClass = "read-search" | "mutation" | "sensitive";
+
 @Injectable()
 export class RuntimeAdmissionService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
@@ -40,6 +42,7 @@ export class RuntimeAdmissionService {
     const config = runtimeConfig();
     return this.database.tenantTransaction(customerId, async (client) => {
       await advisoryLock(client, `session:${customerId}`);
+      await advisoryLock(client, `provider-capacity:${adapterKey}`);
       const limits = await this.limitsWithClient(client, customerId);
       if ((await this.organisationStatus(client, customerId)) !== "active") {
         throw new AdmissionLimitExceededException("This organisation is not admitting new Sophia sessions.", HttpStatus.FORBIDDEN);
@@ -57,6 +60,18 @@ export class RuntimeAdmissionService {
         throw new AdmissionLimitExceededException(
           "Sophia has reached the active-session limit for this organisation.", HttpStatus.TOO_MANY_REQUESTS);
       }
+      const providerCapacity = config.providerSessionCapacity[adapterKey]
+        ?? config.providerSessionCapacity.default;
+      if (providerCapacity === undefined) {
+        throw new AdmissionLimitExceededException(
+          "Sophia has no configured capacity for the selected provider adapter.", HttpStatus.SERVICE_UNAVAILABLE);
+      }
+      const providerOccupied = await client.query<{ occupied_count: string }>(
+        `SELECT ${config.schema}.provider_session_capacity_occupied($1)::text AS occupied_count`, [adapterKey]);
+      if (Number(providerOccupied.rows[0]?.occupied_count ?? 0) >= providerCapacity) {
+        throw new AdmissionLimitExceededException(
+          "Sophia's currently configured provider capacity is unavailable.", HttpStatus.TOO_MANY_REQUESTS);
+      }
       const result = await client.query<{ allocation_id: string }>(
         `INSERT INTO ${config.schema}.provider_session_allocations
           (customer_id, lifecycle_adapter_key, experience_key, cleanup_after)
@@ -68,7 +83,7 @@ export class RuntimeAdmissionService {
 
   async reserveToolAttempt(input: {
     tenantId: string; sessionId: string; invocationId: string; deduplicationKey: string | null;
-    maximumSessionToolCalls: number | null;
+    maximumSessionToolCalls: number | null; toolId: string; admissionClass: ToolAdmissionClass;
   }): Promise<void> {
     const config = runtimeConfig();
     await this.database.tenantTransaction(input.tenantId, async (client) => {
@@ -86,7 +101,7 @@ export class RuntimeAdmissionService {
         if (duplicate.rows[0]) return;
       }
       const limits = await this.limitsWithClient(client, input.tenantId);
-      const counts = await client.query<{ recent_count: string; total_count: string }>(
+      const counts = await client.query<{ recent_count: string; total_count: string; class_count: string; tool_count: string }>(
         `SELECT
           (SELECT count(*) FROM (
             SELECT invocation_id FROM ${config.schema}.tool_calls
@@ -95,14 +110,35 @@ export class RuntimeAdmissionService {
             SELECT invocation_id FROM ${config.schema}.tool_admission_reservations
              WHERE customer_id=$1 AND session_id=$2 AND created_at>now()-interval '1 minute'
           ) recent)::text AS recent_count,
+          (SELECT count(*) FROM ${config.schema}.tool_admission_reservations
+             WHERE customer_id=$1 AND session_id=$2 AND created_at>now()-interval '1 minute'
+               AND admission_class=$3)::text AS class_count,
+          (SELECT count(*) FROM ${config.schema}.tool_admission_reservations
+             WHERE customer_id=$1 AND session_id=$2 AND created_at>now()-interval '1 minute'
+               AND tool_id=$4)::text AS tool_count,
           (SELECT count(*) FROM (
             SELECT invocation_id FROM ${config.schema}.tool_calls WHERE customer_id=$1 AND session_id=$2
             UNION
             SELECT invocation_id FROM ${config.schema}.tool_admission_reservations WHERE customer_id=$1 AND session_id=$2
-          ) total)::text AS total_count`, [input.tenantId, input.sessionId]);
+          ) total)::text AS total_count`, [input.tenantId, input.sessionId, input.admissionClass, input.toolId]);
       if (Number(counts.rows[0]?.recent_count ?? 0) >= limits.effective.maxToolCallsPerMinute) {
         throw new AdmissionLimitExceededException(
           "Sophia's per-minute tool limit has been reached. Please wait before trying again.", HttpStatus.TOO_MANY_REQUESTS);
+      }
+      const classLimit = Math.min(limits.effective.maxToolCallsPerMinute,
+        input.admissionClass === "read-search" ? config.toolAdmissionLimits.classes.readSearch
+          : input.admissionClass === "mutation" ? config.toolAdmissionLimits.classes.mutation
+            : config.toolAdmissionLimits.classes.sensitive);
+      if (Number(counts.rows[0]?.class_count ?? 0) >= classLimit) {
+        throw new AdmissionLimitExceededException(
+          `Sophia's ${input.admissionClass} tool safety limit has been reached. Please wait before trying again.`,
+          HttpStatus.TOO_MANY_REQUESTS);
+      }
+      const toolLimit = Math.min(limits.effective.maxToolCallsPerMinute,
+        config.toolAdmissionLimits.perTool[input.toolId] ?? Number.POSITIVE_INFINITY);
+      if (Number(counts.rows[0]?.tool_count ?? 0) >= toolLimit) {
+        throw new AdmissionLimitExceededException(
+          "This tool's safety limit has been reached. Please wait before trying again.", HttpStatus.TOO_MANY_REQUESTS);
       }
       if (input.maximumSessionToolCalls !== null
           && Number(counts.rows[0]?.total_count ?? 0) >= input.maximumSessionToolCalls) {
@@ -111,9 +147,10 @@ export class RuntimeAdmissionService {
       }
       await client.query(
         `INSERT INTO ${config.schema}.tool_admission_reservations
-          (invocation_id,customer_id,session_id,deduplication_key)
-         VALUES ($1,$2,$3,$4)`,
-        [input.invocationId, input.tenantId, input.sessionId, input.deduplicationKey]);
+          (invocation_id,customer_id,session_id,deduplication_key,tool_id,admission_class)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [input.invocationId, input.tenantId, input.sessionId, input.deduplicationKey,
+          input.toolId, input.admissionClass]);
     });
   }
 

@@ -12,7 +12,8 @@ import { sophiaConversationInstructions } from "../knowledge/sophia-profile.js";
 import { createResearchBusinessTool, type BusinessResearchCapability } from "./research/research-business.tool.js";
 import { minimiseToolOutput } from "./tool-policy.js";
 import { ToolRegistry, type RuntimeTool, type RuntimeToolContext, type RuntimeToolDefinition, type RuntimeToolPolicy } from "./tool-registry.js";
-import { AdmissionLimitExceededException, RuntimeAdmissionService } from "../platform/admission/runtime-admission.service.js";
+import { AdmissionLimitExceededException, RuntimeAdmissionService,
+  type ToolAdmissionClass } from "../platform/admission/runtime-admission.service.js";
 
 type SessionRow = {
   session_id: string;
@@ -133,12 +134,14 @@ export class ToolRegistryService {
     const deduplicationKey = providerEventId ? `provider:${providerEventId}` : null;
     const sessionTotalLimit = session.runtime_api_version === "v2"
       ? session.session_plan_snapshot?.usageLimits?.maximumToolCalls ?? 0 : null;
-    await this.admission.reserveToolAttempt({ tenantId, sessionId: session.session_id, invocationId,
-      deduplicationKey, maximumSessionToolCalls: sessionTotalLimit });
-    const provenance = callerContext.provenance ?? "untrusted-client-bridge";
-    const startedAt = Date.now();
     const tool = this.registry.resolve(requestedName);
     const policy = tool?.policy;
+    await this.admission.reserveToolAttempt({ tenantId, sessionId: session.session_id, invocationId,
+      deduplicationKey, maximumSessionToolCalls: sessionTotalLimit,
+      toolId: policy?.toolId ?? `unknown.${requestedName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 100)}`,
+      admissionClass: admissionClass(policy) });
+    const provenance = callerContext.provenance ?? "untrusted-client-bridge";
+    const startedAt = Date.now();
     const deadlineAt = new Date(startedAt + (policy?.timeoutMs ?? 5_000));
     let parsedInput: unknown = input;
     let capabilityBindingId: string | undefined;
@@ -372,6 +375,13 @@ function resolveCapabilityGrant(session: SessionRow, policy: RuntimeToolPolicy):
   const binding = session.session_plan_snapshot?.capabilityBindings.find((candidate) => candidate.capability === policy.requiredCapability);
   if (!binding) throw new ForbiddenException(`Capability ${policy.requiredCapability} is not granted to this session.`);
   return binding.capabilityBindingId;
+}
+
+function admissionClass(policy: RuntimeToolPolicy | undefined): ToolAdmissionClass {
+  if (!policy) return "sensitive";
+  if (policy.sideEffectClass === "read" || policy.sideEffectClass === "ephemeral-ui") return "read-search";
+  if (policy.sideEffectClass === "notification" || policy.sideEffectClass === "handoff") return "sensitive";
+  return "mutation";
 }
 
 function reviewIdFrom(input: unknown): string {

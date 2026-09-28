@@ -66,28 +66,50 @@ export class StripeBillingProvider implements BillingProvider {
   mappedPlanVersionIds(): ReadonlySet<string> { return new Set(Object.keys(this.config.stripePriceMappings)); }
 
   async createHostedCheckout(input: { tenantId: string; planVersionId: string; requestId: string; customerRef: string | null;
-    commercial: { currency: string; interval: "month" | "year"; baseChargeMinor: string } }) {
+    commercial: { currency: string; interval: "month" | "year"; baseChargeMinor: string;
+      meteredOverage: { unitPriceMinor: string; meterBindingKey: string } | null } }) {
     const status = this.status();
     if (!status.checkout) throw unavailable(status.availability === "live"
       ? "Sophia Stripe live Checkout is disabled pending explicit charge activation."
       : "Sophia Stripe Checkout is not fully configured.");
     const client = this.availableClient();
     const environment = this.availableEnvironment();
-    const price = this.config.stripePriceMappings[input.planVersionId];
-    if (!price) throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} Price mapping.`);
-    const providerPrice = await client.prices.retrieve(price);
-    if (providerPrice.livemode !== (environment === "live") || !providerPrice.active || providerPrice.type !== "recurring"
-      || providerPrice.currency.toUpperCase() !== input.commercial.currency
-      || providerPrice.unit_amount === null || String(providerPrice.unit_amount) !== input.commercial.baseChargeMinor
-      || providerPrice.recurring?.interval !== input.commercial.interval) {
+    const basePrice = this.config.stripePriceMappings[input.planVersionId];
+    if (!basePrice) throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} base Price mapping.`);
+    const meteredPrice = input.commercial.meteredOverage
+      ? this.config.stripeMeteredPriceMappings[input.planVersionId] : null;
+    if (input.commercial.meteredOverage && !meteredPrice) {
+      throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} metered Price mapping.`);
+    }
+    const [providerBasePrice, providerMeteredPrice] = await Promise.all([
+      client.prices.retrieve(basePrice),
+      meteredPrice ? client.prices.retrieve(meteredPrice) : Promise.resolve(null),
+    ]);
+    if (providerBasePrice.livemode !== (environment === "live") || !providerBasePrice.active
+      || providerBasePrice.type !== "recurring" || providerBasePrice.currency.toUpperCase() !== input.commercial.currency
+      || providerBasePrice.unit_amount === null || String(providerBasePrice.unit_amount) !== input.commercial.baseChargeMinor
+      || providerBasePrice.recurring?.interval !== input.commercial.interval
+      || providerBasePrice.recurring?.usage_type !== "licensed" || providerBasePrice.recurring.meter !== null) {
       throw unavailable(`The Stripe ${environment} Price does not exactly match the approved fixed recurring plan currency, amount and interval.`);
     }
+    if (providerMeteredPrice && input.commercial.meteredOverage
+      && (providerMeteredPrice.livemode !== (environment === "live") || !providerMeteredPrice.active
+        || providerMeteredPrice.type !== "recurring" || providerMeteredPrice.currency.toUpperCase() !== input.commercial.currency
+        || providerMeteredPrice.unit_amount === null
+        || String(providerMeteredPrice.unit_amount) !== input.commercial.meteredOverage.unitPriceMinor
+        || providerMeteredPrice.recurring?.interval !== input.commercial.interval
+        || providerMeteredPrice.recurring?.usage_type !== "metered" || !providerMeteredPrice.recurring.meter
+        || this.config.stripeMeterBindings[input.commercial.meteredOverage.meterBindingKey] === undefined)) {
+      throw unavailable(`The Stripe ${environment} metered Price does not exactly match the approved overage rate, interval and Meter binding.`);
+    }
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [{ price: basePrice, quantity: 1 }];
+    if (meteredPrice) lineItems.push({ price: meteredPrice });
     const session = await client.checkout.sessions.create({
       mode: "subscription",
       ui_mode: "hosted",
       client_reference_id: input.tenantId,
       ...(input.customerRef ? { customer: input.customerRef } : {}),
-      line_items: [{ price, quantity: 1 }],
+      line_items: lineItems,
       success_url: this.config.checkoutSuccessUrl!, cancel_url: this.config.checkoutCancelUrl!,
       metadata: metadata(input.tenantId, input.planVersionId, environment, this.config.providerAccountKey),
       subscription_data: { metadata: metadata(input.tenantId, input.planVersionId, environment, this.config.providerAccountKey) },
