@@ -53,6 +53,7 @@ type ProofState = {
   clockId?: string;
   customerId?: string;
   subscriptionId?: string;
+  paymentMethodId?: string;
   periodStart?: string;
   periodEnd?: string;
   fixtureSessionId?: string;
@@ -105,8 +106,16 @@ async function prepare() {
     if (binding.rows[0]?.external_customer_ref !== state.customerId) throw new Error("The C4B Customer binding conflicts with existing state.");
   });
   if (!state.subscriptionId) {
-    await stripe.paymentMethods.attach("pm_card_visa", { customer: state.customerId! });
-    await stripe.customers.update(state.customerId!, { invoice_settings: { default_payment_method: "pm_card_visa" } });
+    let paymentMethodId = state.paymentMethodId;
+    if (!paymentMethodId) {
+      const attached = await stripe.paymentMethods.list({ customer: state.customerId!, type: "card", limit: 10 });
+      paymentMethodId = attached.data[0]?.id;
+      if (!paymentMethodId) {
+        paymentMethodId = (await stripe.paymentMethods.attach("pm_card_visa", { customer: state.customerId! })).id;
+      }
+      state = await saveState({ ...state, paymentMethodId, stage: "payment_method_attached" });
+    }
+    await stripe.customers.update(state.customerId!, { invoice_settings: { default_payment_method: paymentMethodId } });
     const subscription = await stripe.subscriptions.create({
       customer: state.customerId!,
       items: [{ price: basePrice, quantity: 1 }, { price: meteredPrice }],

@@ -20,6 +20,8 @@ The proof is staged so the aggregate event is accepted while the renewal invoice
 
 The compiled production-image harness is `npm run billing:c4b-sandbox -- prepare|close|finalize|status`. It refuses live mode and non-test keys, requires the reserved C4B tenant and Sophia Voice assignment, and requires an explicit confirmation environment value. The public API cannot supply the simulated cutoff.
 
+The first deployed `prepare` attempt created the isolated test clock and Customer and attached a Stripe-generated test PaymentMethod, then stopped before subscription creation because it used the reusable test alias rather than the returned attached ID as the Customer default. The resumable harness now discovers/reuses that attached card and persists its concrete ID before continuing. No subscription, Meter event, invoice or charge resulted from the stopped attempt.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.
