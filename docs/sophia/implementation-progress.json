@@ -2081,6 +2081,13 @@
       "node": "22.23.3",
       "result": "pass-with-follow-up",
       "detail": "The C4B close stage finalized one two-minute AUD 0.10 ledger and Stripe accepted exactly one Meter event. Least-privilege inspection confirms one provider_accepted outbox row, attempt count one and no reconciliation evidence. Plan 2.1.58 separates exact second-precision subscription/invoice boundaries from Stripe's required minute-aligned Meter-summary request window. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 114 suites/402 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
+    },
+    {
+      "command": "two C4B finalize windows; implement sandbox-only read-only diagnose stage; npm run typecheck; npm run build",
+      "repository": "backend/sophia-runtime + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "pass-with-follow-up",
+      "detail": "Both finalize windows found the exact Meter summary but no finalized invoice line matching the expected metered Price and provider period. No Meter event was redispatched. Plan 2.1.59 adds bounded non-personal invoice-line diagnostics to distinguish provider state safely. Both Runtime typechecks, build and generated-contract drift check passed; Runtime passed 114 suites/402 tests, boundary scan passed 225 files, and protected real-estate passed 8 suites/38 tests."
     }
   ],
   "blockers": [

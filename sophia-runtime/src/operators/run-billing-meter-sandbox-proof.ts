@@ -18,8 +18,8 @@ const tenantId = process.env.SOPHIA_C4B_TENANT_ID;
 
 if (!tenantId || !/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error("SOPHIA_C4B_TENANT_ID must be the approved synthetic tenant UUID.");
 if (process.env.SOPHIA_C4B_CONFIRM !== PROOF_CONFIRMATION) throw new Error(`Set SOPHIA_C4B_CONFIRM=${PROOF_CONFIRMATION}.`);
-if (!new Set(["prepare", "close", "finalize", "status"]).has(stage ?? "")) {
-  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|status");
+if (!new Set(["prepare", "close", "finalize", "diagnose", "status"]).has(stage ?? "")) {
+  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|diagnose|status");
 }
 
 const config = runtimeConfig();
@@ -44,6 +44,7 @@ try {
   if (stage === "prepare") await prepare();
   if (stage === "close") await closePeriod();
   if (stage === "finalize") await finalizeInvoice();
+  if (stage === "diagnose") await diagnoseInvoice();
   if (stage === "status") await printStatus();
 } finally {
   await app.close();
@@ -185,6 +186,71 @@ async function finalizeInvoice() {
   if (result?.meterEventReconciliation.status !== "reconciled") process.exitCode = 2;
 }
 
+async function diagnoseInvoice() {
+  const state = await requiredState();
+  const periodStart = unixSecond(state.periodStart!);
+  const periodEnd = unixSecond(state.periodEnd!);
+  if (periodStart === null || periodEnd === null) throw new Error("The stored provider period is invalid.");
+  const summaryStart = ceilUnixMinute(periodStart);
+  const summaryEnd = ceilUnixMinute(periodEnd);
+  const price = await stripe.prices.retrieve(meteredPrice);
+  const meterRef = typeof price.recurring?.meter === "string" ? price.recurring.meter : null;
+  const summaries = meterRef ? await stripe.billing.meters.listEventSummaries(meterRef, {
+    customer: state.customerId!, start_time: summaryStart, end_time: summaryEnd, limit: 100,
+  }) : null;
+  const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
+  const invoiceDiagnostics: Array<Record<string, unknown>> = [];
+  for (const invoice of invoices.data) {
+    if (!invoice.id) {
+      invoiceDiagnostics.push({ id: null, status: invoice.status, stableIdentity: false });
+      continue;
+    }
+    const lines = await stripe.invoices.listLineItems(invoice.id, { limit: 100 });
+    invoiceDiagnostics.push({
+      id: invoice.id,
+      status: invoice.status,
+      billingReason: invoice.billing_reason,
+      autoAdvance: invoice.auto_advance,
+      periodStart: unixIso(invoice.period_start),
+      periodEnd: unixIso(invoice.period_end),
+      linesHasMore: lines.has_more,
+      lines: lines.data.map((line) => ({
+        id: line.id,
+        priceRef: line.pricing?.price_details?.price ?? null,
+        quantity: line.quantity,
+        amountMinor: line.amount,
+        currency: line.currency.toUpperCase(),
+        periodStart: unixIso(line.period.start),
+        periodEnd: unixIso(line.period.end),
+        livemode: line.livemode,
+      })),
+    });
+  }
+  print({
+    stage: "diagnostic",
+    expected: {
+      subscriptionId: state.subscriptionId,
+      meteredPrice,
+      providerPeriodStart: state.periodStart,
+      providerPeriodEnd: state.periodEnd,
+      summaryStart: unixIso(summaryStart),
+      summaryEnd: unixIso(summaryEnd),
+      meterRef,
+    },
+    summariesHasMore: summaries?.has_more ?? null,
+    summaries: summaries?.data.map((summary) => ({
+      id: summary.id,
+      meterRef: summary.meter,
+      start: unixIso(summary.start_time),
+      end: unixIso(summary.end_time),
+      quantity: summary.aggregated_value,
+      livemode: summary.livemode,
+    })) ?? [],
+    invoicesHasMore: invoices.has_more,
+    invoices: invoiceDiagnostics,
+  });
+}
+
 async function printStatus() {
   const state = await readState();
   const evidence = await database.tenantReadTransaction(tenantId!, async (client) => client.query(
@@ -252,3 +318,12 @@ function principal(): AdminPrincipal {
 
 function delay(milliseconds: number) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function print(value: unknown) { process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); }
+
+function unixSecond(value: string): number | null {
+  const milliseconds = Date.parse(value);
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds % 1_000 !== 0) return null;
+  return milliseconds / 1_000;
+}
+
+function ceilUnixMinute(seconds: number): number { return Math.ceil(seconds / 60) * 60; }
+function unixIso(seconds: number): string { return new Date(seconds * 1_000).toISOString(); }

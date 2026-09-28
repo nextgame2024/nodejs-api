@@ -34,6 +34,8 @@ The next `close` reached transactional ledger/outbox creation and exposed a sche
 
 The corrected `close` finalized one immutable ledger with two whole overage minutes at AUD 0.10 and Stripe accepted exactly one Meter event. The outbox remains `provider_accepted` with attempt count one and no reconciliation evidence, so `close` must not be rerun. Its immediate reconciliation returned a local mismatch because the real provider period is `2026-09-28T08:51:05Z` through `2026-10-28T08:51:05Z`, while Stripe requires Meter-summary request bounds aligned to minutes. Plan 2.1.58 keeps the exact second boundaries for invoice-line matching but uses ceil-to-minute summary bounds. This includes the single aggregate event at period-end minus one second and excludes the preceding period's aggregate event.
 
+After the aligned-summary fix, two finalize windows found the Meter summary but not a finalized invoice line matching the exact metered Price and provider period. The accepted event remains unchanged and is not redispatched. Plan 2.1.59 adds a gated read-only `diagnose` stage that emits bounded non-personal invoice, line, Price, quantity and period metadata so the remaining provider-state mismatch can be identified without another billing mutation.
+
 ## Delivered
 
 - Active-minute Checkout now requires two plan-version mappings: one licensed fixed recurring Price for the monthly base charge and one Meter-backed recurring Price for whole overage minutes. Both are retrieved and checked against the immutable plan before Stripe Checkout is created.
