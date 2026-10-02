@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0D3",
-  "updatedAt": "2026-10-02T22:40:00+10:00",
+  "checkpoint": "P6-A06C3B0D4-PREPARED",
+  "updatedAt": "2026-10-03T07:04:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2249,6 +2249,13 @@
       "node": "22.23.3",
       "result": "pass-d3-complete",
       "detail": "P6-A06C3B0D3 adds unapplied migration 054 with an immutable signed-provider subscription plan pin and tenant-isolated commitment evidence. A paid initial subscription invoice anchors the first exact provider period; only twelve contiguous immutable provider periods establish the commitment end. Before that boundary, the runtime validates and uses a separate cancellation-disabled Stripe portal configuration; at or after it, the validated standard cancellation-enabled portal is used. Conflicting provider plan metadata fails closed, the enforcement services are required dependencies and no local future-cancellation scheduler or collection guarantee is inferred. Runtime passed both typechecks, build and 125 suites/456 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. Migrations 052-054 remain unapplied and no database, Stripe object, invoice or charge mutation occurred."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:generate; npm run contracts:check; direct publisher typecheck; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass-d4-operator-preparation",
+      "detail": "P6-A06C3B0D4 remains in progress. The unapplied migration 052 now permits each immutable usage ledger to snapshot its plan-specific non-negative included allowance instead of requiring 120000 seconds. The owner publisher supports backward-compatible extended plan manifests and attaches immutable components before publication. A fail-closed Stripe sandbox provisioner, isolated Founding fixture, resumable full-lifecycle proof and exact catalog entry are ready for the authorised operator sequence. Portal policy accepts either the local commitment boundary or an authoritative provider period at that boundary, enabling honest Stripe test-clock evidence without relaxing production enforcement. Runtime passed both typechecks, build and 128 suites/466 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. Migrations 052-054 remain unapplied, and no database record, Stripe object, invoice or charge was created during preparation."
     }
   ],
   "blockers": [

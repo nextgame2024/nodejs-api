@@ -97,6 +97,25 @@ provider subscription metadata must pin the same immutable commercial plan.
 This does not create a local cancellation scheduler or claim that Stripe
 guarantees collection of the contractual term.
 
+Founding sandbox resources and proof fixtures are operator-only workflows:
+
+```bash
+SOPHIA_FOUNDING_PLAN_VERSION_ID=<published-plan-uuid> \
+SOPHIA_FOUNDING_CONFIRM=I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS \
+npm run billing:founding-provision
+
+SOPHIA_FOUNDING_PLAN_VERSION_ID=<published-plan-uuid> \
+SOPHIA_FOUNDING_TENANT_ID=<isolated-proof-tenant-uuid> \
+SOPHIA_FOUNDING_CONFIRM=I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS \
+npm run billing:founding-sandbox -- prepare
+```
+
+Provisioning is idempotent by immutable Product metadata and Price lookup keys,
+refuses non-test keys, and prints mapping entries to merge with existing Render
+JSON values. The proof stages are `prepare`, `close`, `milestone`,
+`advance-commitment`, and `status`; they create Stripe sandbox objects and must
+never be run against a real tenant.
+
 Commercial plan entitlements remain provider-neutral. Runtime safety/capacity
 controls can only lower those ceilings and are configured independently:
 

@@ -7,6 +7,12 @@ ALTER TABLE __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_versions
   ADD CONSTRAINT commercial_plan_versions_minimum_commitment_months_check
   CHECK (minimum_commitment_months IS NULL OR minimum_commitment_months BETWEEN 1 AND 120);
 
+ALTER TABLE __SOPHIA_RUNTIME_SCHEMA__.billing_usage_period_ledgers
+  DROP CONSTRAINT IF EXISTS billing_usage_period_ledgers_included_active_seconds_check;
+ALTER TABLE __SOPHIA_RUNTIME_SCHEMA__.billing_usage_period_ledgers
+  ADD CONSTRAINT billing_usage_period_ledgers_included_active_seconds_check
+  CHECK (included_active_seconds >= 0);
+
 CREATE TABLE IF NOT EXISTS __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_charge_components (
   commercial_plan_charge_component_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   commercial_plan_version_id uuid NOT NULL REFERENCES __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_versions(
@@ -48,5 +54,7 @@ GRANT SELECT ON __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_charge_components TO s
 
 COMMENT ON COLUMN __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_versions.minimum_commitment_months IS
   'Immutable minimum monthly contractual term for new assignments; null means no plan-defined minimum.';
+COMMENT ON COLUMN __SOPHIA_RUNTIME_SCHEMA__.billing_usage_period_ledgers.included_active_seconds IS
+  'Immutable plan-version allowance snapshot for the exact provider period; it is not a platform-wide constant.';
 COMMENT ON TABLE __SOPHIA_RUNTIME_SCHEMA__.commercial_plan_charge_components IS
   'Immutable one-time commercial obligations belonging to a plan version; provider delivery evidence is stored separately.';

@@ -131,10 +131,10 @@ export class BillingSubscriptionCommitmentService {
     const schema = runtimeConfig().schema;
     const result = await this.database.tenantReadTransaction(tenantId, (client) => client.query<{
       minimum_commitment_months: number | null; required_periods: number | null; periods_observed: number | null;
-      commitment_end: Date | string | null;
+      commitment_end: Date | string | null; current_period_start: Date | string | null;
     }>(
       `SELECT active_plan.minimum_commitment_months,commitment.required_periods,
-              commitment.periods_observed,commitment.commitment_end
+              commitment.periods_observed,commitment.commitment_end,subscription.current_period_start
        FROM ${schema}.billing_subscription_references subscription
        LEFT JOIN ${schema}.billing_subscription_commitments commitment
          ON commitment.billing_subscription_reference_id=subscription.billing_subscription_reference_id
@@ -159,7 +159,9 @@ export class BillingSubscriptionCommitmentService {
     if (result.rows.length !== 1) throw new ConflictException("Cancellation policy is ambiguous across active subscriptions.");
     const row = result.rows[0];
     const end = row.commitment_end ? iso(row.commitment_end) : null;
-    const satisfied = end !== null && Date.now() >= Date.parse(end);
+    const providerAdvancedBeyondCommitment = end !== null && row.current_period_start !== null
+      && Date.parse(iso(row.current_period_start)) >= Date.parse(end);
+    const satisfied = end !== null && (Date.now() >= Date.parse(end) || providerAdvancedBeyondCommitment);
     return { mode: satisfied ? "standard" as const : "commitment_restricted" as const,
       commitmentEnd: end, requiredPeriods: row.required_periods ?? row.minimum_commitment_months!,
       periodsObserved: row.periods_observed ?? 0 };

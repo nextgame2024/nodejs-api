@@ -1,0 +1,29 @@
+{
+  "planKey": "sophia-essential-founding",
+  "version": 1,
+  "displayName": "Sophia Essential Founding",
+  "baseChargeMinor": "19000",
+  "overageRateMinor": "10",
+  "concurrentSessions": 3,
+  "toolCallsPerMinute": 15,
+  "includedActiveSeconds": "60000",
+  "minimumCommitmentMonths": 12,
+  "chargeComponents": [
+    {
+      "componentKey": "commencement",
+      "chargeTiming": "initial_checkout",
+      "milestoneKey": null,
+      "amountMinor": "95000",
+      "currency": "AUD",
+      "description": "Implementation and onboarding — commencement"
+    },
+    {
+      "componentKey": "production-deployment",
+      "chargeTiming": "operator_milestone",
+      "milestoneKey": "production-deployment",
+      "amountMinor": "95000",
+      "currency": "AUD",
+      "description": "Implementation and onboarding — production deployment accepted"
+    }
+  ]
+}

@@ -21,6 +21,9 @@
     "providers:reconcile": "tsx scripts/provider-operations.mts reconcile",
     "knowledge:file-worker": "tsx scripts/knowledge-file-worker.mts",
     "billing:verify-live": "tsx scripts/verify-stripe-live-readiness.mts",
+    "commercial:publish": "tsx scripts/publish-commercial-catalog.mts",
+    "billing:founding-provision": "node dist/operators/provision-founding-sandbox.js",
+    "billing:founding-sandbox": "node dist/operators/run-founding-sandbox-proof.js",
     "billing:c4b-sandbox": "node dist/operators/run-billing-meter-sandbox-proof.js"
   },
   "dependencies": {

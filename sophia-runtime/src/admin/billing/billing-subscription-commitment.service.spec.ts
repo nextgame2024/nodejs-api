@@ -75,13 +75,25 @@ describe("BillingSubscriptionCommitmentService", () => {
 
   it("keeps cancellation restricted before the exact boundary and enables it afterwards", async () => {
     const query = jest.fn(async () => ({ rows: [{ minimum_commitment_months: 12, required_periods: 12,
-      periods_observed: 12, commitment_end: "2027-10-02T00:00:00.000Z" }] }));
+      periods_observed: 12, commitment_end: "2027-10-02T00:00:00.000Z",
+      current_period_start: "2027-09-02T00:00:00.000Z" }] }));
     const run = async (_tenant: string, work: (client: { query: typeof query }) => unknown) => work({ query });
     const service = new BillingSubscriptionCommitmentService({ tenantReadTransaction: run } as never);
     jest.spyOn(Date, "now").mockReturnValue(Date.parse("2027-10-01T23:59:59.000Z"));
     await expect(service.portalPolicy(tenantId, "stripe-sophia", "sandbox", "legacy-primary"))
       .resolves.toMatchObject({ mode: "commitment_restricted", commitmentEnd: "2027-10-02T00:00:00.000Z" });
     jest.spyOn(Date, "now").mockReturnValue(Date.parse("2027-10-02T00:00:00.000Z"));
+    await expect(service.portalPolicy(tenantId, "stripe-sophia", "sandbox", "legacy-primary"))
+      .resolves.toMatchObject({ mode: "standard", commitmentEnd: "2027-10-02T00:00:00.000Z" });
+  });
+
+  it("accepts an observed provider period at the boundary as authoritative test-clock evidence", async () => {
+    const query = jest.fn(async () => ({ rows: [{ minimum_commitment_months: 12, required_periods: 12,
+      periods_observed: 12, commitment_end: "2027-10-02T00:00:00.000Z",
+      current_period_start: "2027-10-02T00:00:00.000Z" }] }));
+    const run = async (_tenant: string, work: (client: { query: typeof query }) => unknown) => work({ query });
+    const service = new BillingSubscriptionCommitmentService({ tenantReadTransaction: run } as never);
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-03T00:00:00.000Z"));
     await expect(service.portalPolicy(tenantId, "stripe-sophia", "sandbox", "legacy-primary"))
       .resolves.toMatchObject({ mode: "standard", commitmentEnd: "2027-10-02T00:00:00.000Z" });
   });

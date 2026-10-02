@@ -2,6 +2,19 @@ import { createHash } from "node:crypto";
 import { Client } from "pg";
 import { z } from "zod";
 
+const chargeComponentSchema = z.object({
+  componentKey: z.string().regex(/^[a-z][a-z0-9-]{1,79}$/),
+  chargeTiming: z.enum(["initial_checkout", "operator_milestone"]),
+  milestoneKey: z.string().regex(/^[a-z][a-z0-9-]{1,79}$/).nullable(),
+  amountMinor: z.string().regex(/^[1-9]\d*$/),
+  currency: z.literal("AUD"),
+  description: z.string().min(1).max(240),
+}).strict().superRefine((component, context) => {
+  if ((component.chargeTiming === "initial_checkout") !== (component.milestoneKey === null)) {
+    context.addIssue({ code: "custom", message: "Only operator milestones may declare a milestone key." });
+  }
+});
+
 const planSchema = z.object({
   planKey: z.string().regex(/^[a-z][a-z0-9-]{1,79}$/),
   version: z.number().int().positive(),
@@ -10,6 +23,9 @@ const planSchema = z.object({
   overageRateMinor: z.string().regex(/^\d+$/),
   concurrentSessions: z.number().int().positive(),
   toolCallsPerMinute: z.number().int().positive(),
+  includedActiveSeconds: z.string().regex(/^[1-9]\d*$/).optional(),
+  minimumCommitmentMonths: z.number().int().min(1).max(120).nullable().optional(),
+  chargeComponents: z.array(chargeComponentSchema).max(10).optional(),
 }).strict();
 
 const catalogSchema = z.object({
@@ -102,16 +118,29 @@ try {
 
   const published: Array<{ planKey: string; version: number; planVersionId: string }> = [];
   for (const plan of catalog.plans) {
-    const rateCard = { dimensions: [{ dimension: "active-seconds", includedQuantity: "120000",
+    const components = plan.chargeComponents ?? [];
+    if (new Set(components.map((component) => component.componentKey)).size !== components.length) {
+      throw new Error(`Commercial plan ${plan.planKey} v${plan.version} contains duplicate charge-component keys.`);
+    }
+    const rateCard = { dimensions: [{ dimension: "active-seconds",
+      includedQuantity: plan.includedActiveSeconds ?? "120000",
       unitQuantity: "60", unitPriceMinor: plan.overageRateMinor }] };
     const entitlements = { concurrentSessions: plan.concurrentSessions, toolCallsPerMinute: plan.toolCallsPerMinute };
     const manifest = { planKey: plan.planKey, version: plan.version, displayName: plan.displayName,
       billingCurrency: "AUD", billingInterval: "month", baseChargeMinor: plan.baseChargeMinor,
       taxMode: "not_applicable", taxCategory: "standard_rate", overageRounding: "ceil",
-      rateCard, entitlements, sellerKey: catalog.sellerKey };
+      rateCard, entitlements, sellerKey: catalog.sellerKey,
+      ...((plan.minimumCommitmentMonths !== undefined || plan.includedActiveSeconds !== undefined
+        || plan.chargeComponents !== undefined) ? {
+          minimumCommitmentMonths: plan.minimumCommitmentMonths ?? null,
+          chargeComponents: components,
+        } : {}),
+    };
     const digest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
-    const existing = await client.query<{ commercial_plan_version_id: string; manifest_digest: string }>(
-      `SELECT commercial_plan_version_id,manifest_digest FROM ${schema}.commercial_plan_versions
+    const existing = await client.query<{ commercial_plan_version_id: string; manifest_digest: string;
+      minimum_commitment_months: number | null; status: string }>(
+      `SELECT commercial_plan_version_id,manifest_digest,minimum_commitment_months,status
+       FROM ${schema}.commercial_plan_versions
        WHERE plan_key=$1 AND version=$2`, [plan.planKey, plan.version]);
     if (existing.rows[0] && existing.rows[0].manifest_digest !== digest) {
       throw new Error(`Published plan ${plan.planKey} v${plan.version} differs from the requested immutable manifest.`);
@@ -119,13 +148,47 @@ try {
     const inserted = existing.rows[0] ?? (await client.query<{ commercial_plan_version_id: string; manifest_digest: string }>(
       `INSERT INTO ${schema}.commercial_plan_versions(
          plan_key,version,display_name,status,pricing_status,billing_currency,billing_interval,base_charge_minor,
-         tax_mode,overage_rounding,rate_card,entitlements,manifest_digest,published_at,seller_legal_entity_id,tax_category)
-       VALUES($1,$2,$3,'published','configured','AUD','month',$4,'not_applicable','ceil',$5::jsonb,$6::jsonb,$7,$8,$9,'standard_rate')
+         tax_mode,overage_rounding,rate_card,entitlements,manifest_digest,published_at,seller_legal_entity_id,
+         tax_category,minimum_commitment_months)
+       VALUES($1,$2,$3,'draft','configured','AUD','month',$4,'not_applicable','ceil',$5::jsonb,$6::jsonb,$7,NULL,$8,
+         'standard_rate',$9)
        RETURNING commercial_plan_version_id,manifest_digest`,
       [plan.planKey, plan.version, plan.displayName, plan.baseChargeMinor, JSON.stringify(rateCard),
-        JSON.stringify(entitlements), digest, catalog.effectiveFrom, sellerId])).rows[0];
+        JSON.stringify(entitlements), digest, sellerId, plan.minimumCommitmentMonths ?? null])).rows[0];
+    const planVersionId = inserted.commercial_plan_version_id;
+    if (!existing.rows[0]) {
+      for (const component of components) {
+        await client.query(
+          `INSERT INTO ${schema}.commercial_plan_charge_components(
+             commercial_plan_version_id,component_key,charge_timing,milestone_key,amount_minor,currency,description)
+           VALUES($1,$2,$3,$4,$5,$6,$7)`,
+          [planVersionId, component.componentKey, component.chargeTiming, component.milestoneKey,
+            component.amountMinor, component.currency, component.description]);
+      }
+      await client.query(
+        `UPDATE ${schema}.commercial_plan_versions SET status='published',published_at=$2
+         WHERE commercial_plan_version_id=$1 AND status='draft'`, [planVersionId, catalog.effectiveFrom]);
+    } else {
+      if (existing.rows[0].status !== "published"
+        || existing.rows[0].minimum_commitment_months !== (plan.minimumCommitmentMonths ?? null)) {
+        throw new Error(`Commercial plan ${plan.planKey} v${plan.version} has inconsistent published commitment state.`);
+      }
+      const storedComponents = await client.query<{
+        component_key: string; charge_timing: string; milestone_key: string | null;
+        amount_minor: string; currency: string; description: string;
+      }>(`SELECT component_key,charge_timing,milestone_key,amount_minor::text,currency,description
+           FROM ${schema}.commercial_plan_charge_components WHERE commercial_plan_version_id=$1
+           ORDER BY component_key`, [planVersionId]);
+      const expectedComponents = components.map((component) => ({ component_key: component.componentKey,
+        charge_timing: component.chargeTiming, milestone_key: component.milestoneKey,
+        amount_minor: component.amountMinor, currency: component.currency, description: component.description }))
+        .sort((left, right) => left.component_key.localeCompare(right.component_key));
+      if (JSON.stringify(storedComponents.rows) !== JSON.stringify(expectedComponents)) {
+        throw new Error(`Commercial plan ${plan.planKey} v${plan.version} has inconsistent immutable charge components.`);
+      }
+    }
     published.push({ planKey: plan.planKey, version: plan.version,
-      planVersionId: inserted.commercial_plan_version_id });
+      planVersionId });
   }
 
   await client.query("COMMIT");

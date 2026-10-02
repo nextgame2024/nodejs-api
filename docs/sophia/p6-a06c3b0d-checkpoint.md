@@ -27,7 +27,7 @@ Stripe can place one-time Prices on the initial subscription invoice and can cre
 
 The billing anchor is the successful subscription commencement time. The monthly allowance and AUD 190 renewal follow that anniversary boundary. The minimum contractual term ends after the twelfth monthly billing period; the twelve monthly fees remain owed under the contract even if collection fails.
 
-Before that boundary, a cancellation request may be recorded but cannot end service or recurring billing earlier than the commitment end. After the boundary, the subscription continues month-to-month and may cancel at the end of the current billing period. The customer portal must use plan-aware cancellation controls; the current single global portal configuration is insufficient.
+Before that boundary, the managed customer portal does not expose subscription cancellation. The implementation does not store a future cancellation request or run a local cancellation scheduler. After the boundary, the subscription continues month-to-month and the standard portal permits cancellation at the end of the current billing period.
 
 ## Required implementation and evidence
 
@@ -47,6 +47,16 @@ Hosted Checkout now reads initial-only components from the active immutable plan
 
 Repository validation passed both Runtime typechecks, build and 121 suites/439 tests. Contract generation and 15 contract tests passed, the boundary scan passed 233 files, and protected real-estate passed 8 suites/38 tests.
 
-Migrations 052 and 053 remain unapplied. D2 now provides immutable recent-MFA production-deployment acceptance, a dedicated digest-bound milestone invoice outbox, stable sandbox provider idempotency and exact finalized-line reconciliation. It does not reuse the usage-overage adjustment path, and live milestone submission/reconciliation remain disabled.
+Migrations 052, 053 and 054 remain unapplied. D2 provides immutable recent-MFA production-deployment acceptance, a dedicated digest-bound milestone invoice outbox, stable sandbox provider idempotency and exact finalized-line reconciliation. D3 anchors the commitment to the paid initial invoice and twelve contiguous provider periods, then selects distinct validated pre-term and post-term portal configurations. Live milestone submission/reconciliation and live Checkout remain disabled.
 
-No Founding plan record, Stripe Product/Price, invoice or charge was created. The next slice is D3: persist the twelve-period commitment boundary from subscription commencement and enforce plan-aware cancellation and portal behavior.
+## D4 operational preparation
+
+The publisher now supports plan-specific included seconds, minimum terms and immutable charge components. New plans are authored as draft, receive their components and become published in one owner transaction. Legacy catalog manifests remain unchanged when these fields are omitted. Migration 052 also replaces the old `included_active_seconds = 120000` ledger constraint with a non-negative immutable plan snapshot constraint; otherwise the approved 60,000-second Founding allowance could never be finalized.
+
+The approved plan entry is [founding-plan-catalog-entry.json](./founding-plan-catalog-entry.json). Add that exact object to the previously approved commercial catalog input and run `npm run commercial:publish` with the owner connection only after migrations 052–054 have been applied.
+
+`npm run billing:founding-provision` is an explicitly confirmed, test-key-only provisioner. It idempotently creates or validates the sandbox Product, recurring membership Price, commencement Price, deployment Price, one-time overage Price, Meter-evidence Price and cancellation-disabled portal configuration. It prints mapping entries for merging into Render; it never overwrites the existing standard mappings.
+
+After those mappings are deployed, run [founding-sandbox-fixture.sql](./founding-sandbox-fixture.sql) once with the owner connection and use tenant `e9c17e94-35b0-4a2c-a114-932e0c59f9b2`. The compiled `billing:founding-sandbox` stages are `prepare`, `close`, `milestone`, `advance-commitment` and `status`. The harness is resumable and refuses live mode, non-test keys, another plan assignment or missing explicit object-creation confirmation.
+
+No Founding plan record, Stripe Product/Price, invoice or charge has been created by repository preparation. D4 remains incomplete until the owner migrations, publication, sandbox provisioning, Render mapping deployment and full proof outputs are captured.

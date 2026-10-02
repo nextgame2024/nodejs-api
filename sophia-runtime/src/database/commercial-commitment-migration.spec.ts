@@ -12,6 +12,9 @@ describe("commercial commitment and charge-component migration", () => {
     expect(sql).toContain("initial_checkout");
     expect(sql).toContain("operator_milestone");
     expect(sql).toContain("Published commercial plan charge components are immutable");
+    expect(sql).toContain("billing_usage_period_ledgers_included_active_seconds_check");
+    expect(sql).toContain("CHECK (included_active_seconds >= 0)");
+    expect(sql).not.toContain("CHECK (included_active_seconds = 120000)");
   });
 
   it("keeps runtime access read-only", () => {
