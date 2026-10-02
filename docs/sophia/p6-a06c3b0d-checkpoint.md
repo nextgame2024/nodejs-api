@@ -47,4 +47,6 @@ Hosted Checkout now reads initial-only components from the active immutable plan
 
 Repository validation passed both Runtime typechecks, build and 121 suites/439 tests. Contract generation and 15 contract tests passed, the boundary scan passed 233 files, and protected real-estate passed 8 suites/38 tests.
 
-Migration 052 remains unapplied. No Founding plan record, Stripe Product/Price, invoice or charge was created. The next slice is the separate authorised production-deployment milestone evidence and invoice outbox; live submission remains disabled.
+Migrations 052 and 053 remain unapplied. D2 now provides immutable recent-MFA production-deployment acceptance, a dedicated digest-bound milestone invoice outbox, stable sandbox provider idempotency and exact finalized-line reconciliation. It does not reuse the usage-overage adjustment path, and live milestone submission/reconciliation remain disabled.
+
+No Founding plan record, Stripe Product/Price, invoice or charge was created. The next slice is D3: persist the twelve-period commitment boundary from subscription commencement and enforce plan-aware cancellation and portal behavior.

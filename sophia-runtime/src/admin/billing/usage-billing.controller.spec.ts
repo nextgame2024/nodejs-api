@@ -13,5 +13,6 @@ describe("UsageBillingController permissions", () => {
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.portal)).toEqual(["billing.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.bindCustomer)).toEqual(["billing.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.reconcile)).toEqual(["billing.manage"]);
+    expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.acceptProductionDeployment)).toEqual(["billing.manage"]);
   });
 });

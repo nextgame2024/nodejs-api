@@ -65,6 +65,10 @@ import { BillingInvoiceAdjustmentRecoveryService } from "./billing/billing-invoi
 import { BILLING_INVOICE_ADJUSTMENT_DISPATCHER } from "./billing/billing-invoice-adjustment.port.js";
 import { DisabledBillingInvoiceAdjustmentDispatcher } from "./billing/disabled-billing-invoice-adjustment.dispatcher.js";
 import { StripeBillingInvoiceAdjustmentDispatcher } from "./billing/stripe-billing-invoice-adjustment.dispatcher.js";
+import { BillingCommercialMilestoneService } from "./billing/billing-commercial-milestone.service.js";
+import { BILLING_COMMERCIAL_MILESTONE_DISPATCHER } from "./billing/billing-commercial-milestone.port.js";
+import { DisabledBillingCommercialMilestoneDispatcher } from "./billing/disabled-billing-commercial-milestone.dispatcher.js";
+import { StripeBillingCommercialMilestoneDispatcher } from "./billing/stripe-billing-commercial-milestone.dispatcher.js";
 import { BillingWebhookController } from "./billing/billing-webhook.controller.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { runtimeConfig } from "../config/runtime-config.js";
@@ -121,8 +125,10 @@ import { runtimeConfig } from "../config/runtime-config.js";
     BillingMeterOutboxService,
     BillingInvoiceAdjustmentOutboxService,
     BillingInvoiceAdjustmentRecoveryService,
+    BillingCommercialMilestoneService,
     DisabledBillingMeterEventDispatcher,
     DisabledBillingInvoiceAdjustmentDispatcher,
+    DisabledBillingCommercialMilestoneDispatcher,
     DisabledBillingProvider,
     { provide: StripeBillingProvider,
       useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },
@@ -130,6 +136,8 @@ import { runtimeConfig } from "../config/runtime-config.js";
       useFactory: () => new StripeBillingMeterEventDispatcher(runtimeConfig().billing) },
     { provide: StripeBillingInvoiceAdjustmentDispatcher,
       useFactory: () => new StripeBillingInvoiceAdjustmentDispatcher(runtimeConfig().billing) },
+    { provide: StripeBillingCommercialMilestoneDispatcher,
+      useFactory: () => new StripeBillingCommercialMilestoneDispatcher(runtimeConfig().billing) },
     { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeBillingProvider],
       useFactory: (disabled: DisabledBillingProvider, stripe: StripeBillingProvider) =>
         runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
@@ -145,6 +153,11 @@ import { runtimeConfig } from "../config/runtime-config.js";
       inject: [DisabledBillingInvoiceAdjustmentDispatcher, StripeBillingInvoiceAdjustmentDispatcher],
       useFactory: (disabled: DisabledBillingInvoiceAdjustmentDispatcher,
         stripe: StripeBillingInvoiceAdjustmentDispatcher) =>
+        runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
+    { provide: BILLING_COMMERCIAL_MILESTONE_DISPATCHER,
+      inject: [DisabledBillingCommercialMilestoneDispatcher, StripeBillingCommercialMilestoneDispatcher],
+      useFactory: (disabled: DisabledBillingCommercialMilestoneDispatcher,
+        stripe: StripeBillingCommercialMilestoneDispatcher) =>
         runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
     { provide: APP_INTERCEPTOR, useClass: AdminAuditInterceptor },
     { provide: KNOWLEDGE_OBJECT_STORAGE, useExisting: PrivateS3KnowledgeStorageService },

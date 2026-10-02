@@ -121,6 +121,7 @@ export type RuntimeConfig = {
     portalReturnUrl?: string;
     stripePriceMappings: Record<string, string>;
     stripeInitialPriceMappings: Record<string, Record<string, string>>;
+    stripeMilestonePriceMappings: Record<string, Record<string, string>>;
     stripeMeteredPriceMappings: Record<string, string>;
     stripeOveragePriceMappings: Record<string, string>;
     stripeMeterBindings: Record<string, string>;
@@ -358,6 +359,10 @@ function billingConfig(): RuntimeConfig["billing"] {
     stripeInitialPriceMappings: stripeComponentPriceMappings(
       process.env.SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS,
       "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
+    ),
+    stripeMilestonePriceMappings: stripeComponentPriceMappings(
+      process.env.SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS,
+      "SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS",
     ),
     stripeMeteredPriceMappings: stripePriceMappings(
       process.env.SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS,

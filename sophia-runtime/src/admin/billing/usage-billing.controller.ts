@@ -5,12 +5,14 @@ import { UsageBillingService } from "./usage-billing.service.js";
 import { UsageGuardrailService } from "./usage-guardrail.service.js";
 import type { AdminPrincipal } from "../contracts/admin-contracts.js";
 import { BillingLifecycleService } from "./billing-lifecycle.service.js";
+import { BillingCommercialMilestoneService } from "./billing-commercial-milestone.service.js";
 
 @Controller("admin/v1/tenants/:tenantId/usage-billing")
 @UseGuards(AdminAuthGuard)
 export class UsageBillingController {
   constructor(private readonly workspace: UsageBillingService, private readonly guardrails: UsageGuardrailService,
-    private readonly lifecycle: BillingLifecycleService) {}
+    private readonly lifecycle: BillingLifecycleService,
+    private readonly commercialMilestones: BillingCommercialMilestoneService) {}
 
   @Get("usage") @RequireAdminPermissions("usage.read")
   usage(@Param("tenantId") tenantId: string) { return this.workspace.usage(tenantId); }
@@ -44,5 +46,11 @@ export class UsageBillingController {
   @Post("reconcile") @RequireAdminPermissions("billing.manage")
   reconcile(@Param("tenantId") tenantId: string, @Req() request: { adminPrincipal: AdminPrincipal }, @Body() body: unknown) {
     return this.lifecycle.reconcile(tenantId, request.adminPrincipal, body);
+  }
+
+  @Post("milestones/production-deployment/accept") @RequireAdminPermissions("billing.manage")
+  acceptProductionDeployment(@Param("tenantId") tenantId: string,
+    @Req() request: { adminPrincipal: AdminPrincipal }, @Body() body: unknown) {
+    return this.commercialMilestones.acceptProductionDeployment(tenantId, request.adminPrincipal, body);
   }
 }

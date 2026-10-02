@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { runtimeConfig } from "../../config/runtime-config.js";
@@ -18,6 +18,7 @@ import { BillingPeriodLedgerService } from "./billing-period-ledger.service.js";
 import { BillingMeterOutboxService } from "./billing-meter-outbox.service.js";
 import { BillingInvoiceAdjustmentOutboxService } from "./billing-invoice-adjustment-outbox.service.js";
 import { BillingInvoiceAdjustmentRecoveryService } from "./billing-invoice-adjustment-recovery.service.js";
+import { BillingCommercialMilestoneService } from "./billing-commercial-milestone.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 const checkoutMeteredRateSchema = z.object({
@@ -43,6 +44,8 @@ export class BillingLifecycleService {
     private readonly invoiceAdjustments: BillingInvoiceAdjustmentOutboxService,
     @Inject(BillingInvoiceAdjustmentRecoveryService)
     private readonly invoiceAdjustmentRecovery: BillingInvoiceAdjustmentRecoveryService,
+    @Optional() @Inject(BillingCommercialMilestoneService)
+    private readonly commercialMilestones?: BillingCommercialMilestoneService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -264,6 +267,7 @@ export class BillingLifecycleService {
       return { received: true, duplicate: false };
     });
     let invoiceAdjustmentReconciliation = null;
+    let commercialMilestoneReconciliation = null;
     if (event.invoice && (event.eventType === "invoice.finalized" || event.eventType === "invoice.paid")) {
       const [current, recovery] = await Promise.all([
         this.invoiceAdjustments.reconcileInvoice(tenantId, event.providerKey, event.environment,
@@ -275,9 +279,13 @@ export class BillingLifecycleService {
         invoiceAdjustmentReconciliation = { current: current.status === "idle" ? null : current,
           recovery: recovery.status === "idle" ? null : recovery };
       }
+      commercialMilestoneReconciliation = await this.commercialMilestones?.reconcileInvoice(
+        tenantId, event.providerKey, event.environment, event.providerAccountKey, event.invoice.externalRef) ?? null;
+      if (commercialMilestoneReconciliation?.status === "idle") commercialMilestoneReconciliation = null;
     }
     if (!event.draftRenewalInvoice || !event.customerRef) {
-      return invoiceAdjustmentReconciliation ? { ...response, invoiceAdjustmentReconciliation } : response;
+      return invoiceAdjustmentReconciliation || commercialMilestoneReconciliation
+        ? { ...response, invoiceAdjustmentReconciliation, commercialMilestoneReconciliation } : response;
     }
     const periodLedger = event.environment === "sandbox"
       ? await this.periodLedgers.finaliseSandboxTestClock(

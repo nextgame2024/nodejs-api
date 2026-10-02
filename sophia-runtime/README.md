@@ -64,6 +64,7 @@ SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
 SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS={"commercial-plan-version-uuid":{"commencement":"price_..."}}
+SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS={"commercial-plan-version-uuid":{"production-deployment":"price_..."}}
 SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_METER_BINDINGS={"active-overage-minutes":"sophia_active_overage_minutes"}
@@ -75,7 +76,10 @@ SOPHIA_BILLING_PORTAL_RETURN_URL=https://admin.example/sophia-admin/usage-billin
 The base mapping is a recurring licensed Price. Initial mappings are optional,
 plan-version and component-key scoped one-time Prices that appear only on the
 initial subscription invoice; a plan without immutable initial charge
-components ignores this mapping. The overage mapping is a
+components ignores this mapping. Milestone mappings are separate approved
+one-time Prices used only after a recent-MFA billing administrator records
+immutable acceptance evidence; submission and exact finalized-line
+reconciliation remain sandbox-only. The overage mapping is a
 separate one-time Price used only by the sandbox-proven draft-renewal invoice
 adjustment path; Meter-backed mappings remain independent usage-delivery
 evidence. Live overage adjustment stays disabled even when live observation is

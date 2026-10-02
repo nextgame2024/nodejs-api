@@ -124,6 +124,7 @@ function config(): RuntimeConfig["billing"] {
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaBase123" },
     stripeInitialPriceMappings: {},
+    stripeMilestonePriceMappings: {},
     stripeMeteredPriceMappings: { [planVersionId]: "price_sophiaMetered123" },
     stripeOveragePriceMappings: { [planVersionId]: "price_sophiaOverage123" },
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };

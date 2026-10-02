@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.71",
+    "version": "2.1.72",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,25 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-02-FOUNDING-MILESTONE-INVOICE-EVIDENCE",
+      "taskId": "P6-A06C3B0D2",
+      "reason": "Repository implementation showed that the production-deployment obligation needs its own explicit invoice lifecycle rather than the existing subscription-renewal overage adjustment path. Creating an invoice, attaching its approved Price and finalizing it are distinct provider writes whose uncertain outcome must never be retried as though no provider effect occurred.",
+      "changes": [
+        "Store recent-MFA operator acceptance and its deployment evidence as an immutable tenant record with one accepted obligation per plan charge component.",
+        "Use a dedicated digest-bound milestone outbox and provider adapter; never reuse the usage-ledger adjustment outbox or infer acceptance from deployment or subscription webhooks.",
+        "In Stripe sandbox, create the invoice, attach the exact approved one-time Price and finalize using stable per-outbox idempotency keys. Quarantine transport-ambiguous outcomes for reconciliation rather than blind resubmission.",
+        "After committing provider acceptance, immediately read back and reconcile the finalized exact Customer/invoice/metadata line whose Price, quantity, currency, amount and provider invoice-item identity equal the immutable accepted operation; signed webhooks remain an idempotent secondary path.",
+        "Keep all milestone submission and reconciliation disabled in live mode independently of Checkout configuration."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/database/migrations/053_billing_commercial_milestone_outbox.sql",
+        "sophia-runtime/src/admin/billing/billing-commercial-milestone.service.ts",
+        "sophia-runtime/src/admin/billing/stripe-billing-commercial-milestone.dispatcher.ts"
+      ],
+      "approvedBy": "Standing user instruction to evaluate and amend the plan when implementation identifies a safer or more accurate boundary",
+      "recordedAt": "2026-10-02T22:15:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-02-FOUNDING-PLAN-MILESTONES-AND-TERM",
       "taskId": "P6-A06C3B0D",
@@ -6232,12 +6251,12 @@
                             },
                             {
                               "id": "P6-A06C3B0D2",
-                              "status": "ready",
+                              "status": "complete",
                               "scope": "Add authorised production-deployment acceptance evidence plus a durable idempotent AUD 950 milestone invoice outbox and exact provider invoice-line reconciliation, with live submission disabled."
                             },
                             {
                               "id": "P6-A06C3B0D3",
-                              "status": "pending",
+                              "status": "ready",
                               "scope": "Persist the twelve-month commitment boundary from subscription commencement and enforce plan-aware pre-term and post-term cancellation/portal behavior."
                             },
                             {
