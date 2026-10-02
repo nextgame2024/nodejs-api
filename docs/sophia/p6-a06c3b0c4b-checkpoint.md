@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated; migration 051, deployment and a fresh isolated sandbox recovery lifecycle remain before C4B3 completes.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated. Migration 051 is applied and a fresh recovery fixture is prepared, but the first miss stage stopped on an unproven Stripe invoice-selection assumption; plan 2.1.66 adds read-only diagnostics before resumption.
 
 ## Deployed sandbox preparation
 
@@ -56,6 +56,8 @@ The operator selected the recommended missed-window policy: carry the exact miss
 
 Migration 051 implements forced-RLS recovery attempts plus immutable reconciliation evidence. Signed sandbox `invoice.created` processing attaches every eligible recovery before returning success, and finalized/paid events reconcile both current and carried lines. The Stripe adapter uses the unique recovery delivery identity for idempotency and metadata, validates the later invoice period independently, and preserves the original period on the invoice line. Live recovery remains disabled. The compiled sandbox harness adds `prepare-recovery`, `miss-recovery`, `recover` and `finalize-recovery` stages using a fresh unbound test-clock Customer to prove the original draft window was genuinely missed before the next renewal is used.
 
+Migration 051 was applied and fresh tenant `31e3a703-cd4e-463a-b286-010bfe5243c1` completed `prepare-recovery`, creating isolated clock `clock_1UM2wpGcz4GrZOEB6EMg1ZET`, Customer `cus_VMmVC7mMUj6Dvm` and Voice subscription `sub_1UM2wtGcz4GrZOEBKK3a6TLC` for period `2026-10-02T09:40:10Z` through `2026-11-02T09:40:10Z`. The Customer was deliberately unbound. The first `miss-recovery` advanced the clock but stopped before adjustment enqueue/dispatch because the assumed `subscription_cycle` plus exact top-level invoice-period tuple did not identify exactly one finalized invoice. Plan 2.1.66 adds `diagnose-recovery`, returning only bounded invoice/line identities and timing plus aggregate local evidence counts. The same fixture must be diagnosed and resumed; it must not be recreated or blindly rerun.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -88,6 +90,6 @@ Migration 051 implements forced-RLS recovery attempts plus immutable reconciliat
 
 The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is to deploy plan 2.1.65, apply migration 051 with the owner connection and run the four recovery stages on a fresh isolated Sophia Voice tenant. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. The old negative and successful adjustment fixtures must not be reused.
+The remaining work is to deploy plan 2.1.66, run `diagnose-recovery` on the existing fresh fixture, correct the invoice predicate from actual provider evidence, then resume the miss, recover and finalize stages. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. The fixture must not be recreated, and the old negative and successful adjustment fixtures must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.

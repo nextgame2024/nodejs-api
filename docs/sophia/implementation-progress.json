@@ -2144,6 +2144,20 @@
       "node": "22.23.3",
       "result": "pass-with-sandbox-follow-up",
       "detail": "Plan 2.1.65 implements the approved next-renewal missed-window policy without rewriting the original adjustment. Migration 051 adds tenant-isolated immutable recovery attempts and finalized-line evidence, permits a new target only after an earlier recovery explicitly missed its draft window, blocks concurrent or uncertain duplicate carry-forwards, and enforces at most one reconciled recovery. The sandbox adapter preserves the original service period on the line while separately validating the later target invoice period, Customer, subscription, provider account, Price, quantity, rate and currency. Signed draft-renewal handling attaches all eligible carry-forwards before acknowledgement; live recovery and out-of-cycle invoice creation remain unavailable. A gated four-stage fresh-fixture harness now proves the missed invoice, next-renewal attachment and exact finalized recovery. Runtime passed 120 suites/433 tests, both typechecks, build and contracts; boundary scan passed 233 files and protected real-estate passed 8 suites/38 tests. Migration 051, deployment and the fresh isolated Stripe sandbox recovery lifecycle remain required before C4B3 completes."
+    },
+    {
+      "command": "apply migration 051; provision fresh recovery tenant; prepare-recovery; miss-recovery",
+      "repository": "deployed backend + Neon + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "stopped-for-read-only-provider-diagnosis",
+      "detail": "Migration 051 applied and fresh tenant 31e3a703-cd4e-463a-b286-010bfe5243c1 prepared one isolated unbound test-clock Customer, Voice subscription and positive-overage usage fixture. The miss-recovery stage advanced the clock and then stopped before adjustment enqueue/dispatch because its exact billing_reason/top-level-period predicate did not identify one finalized renewal invoice. Plan 2.1.66 adds a bounded read-only diagnose-recovery stage and preserves the existing fixture for resumption; no invoice adjustment or recovery item was intentionally submitted by the stopped stage, and live billing remains disabled."
+    },
+    {
+      "command": "npm run typecheck; npm test; npm run build; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.66 adds only the gated read-only diagnose-recovery operator path and evidence updates. Runtime passed 120 suites/433 tests, typecheck and build; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests; edited JSON parsed and the diff had no whitespace errors. No Stripe or database mutation was performed during repository validation."
     }
   ],
   "blockers": [

@@ -23,8 +23,8 @@ const tenantId = process.env.SOPHIA_C4B_TENANT_ID;
 if (!tenantId || !/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error("SOPHIA_C4B_TENANT_ID must be the approved synthetic tenant UUID.");
 if (process.env.SOPHIA_C4B_CONFIRM !== PROOF_CONFIRMATION) throw new Error(`Set SOPHIA_C4B_CONFIRM=${PROOF_CONFIRMATION}.`);
 if (!new Set(["prepare", "close", "finalize", "diagnose", "status",
-  "prepare-recovery", "miss-recovery", "recover", "finalize-recovery"]).has(stage ?? "")) {
-  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|diagnose|status|prepare-recovery|miss-recovery|recover|finalize-recovery");
+  "prepare-recovery", "diagnose-recovery", "miss-recovery", "recover", "finalize-recovery"]).has(stage ?? "")) {
+  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|diagnose|status|prepare-recovery|diagnose-recovery|miss-recovery|recover|finalize-recovery");
 }
 
 const config = runtimeConfig();
@@ -55,6 +55,7 @@ try {
   if (stage === "diagnose") await diagnoseInvoice();
   if (stage === "status") await printStatus();
   if (stage === "prepare-recovery") await prepareRecovery();
+  if (stage === "diagnose-recovery") await diagnoseRecovery();
   if (stage === "miss-recovery") await missRecovery();
   if (stage === "recover") await recoverMissedAdjustment();
   if (stage === "finalize-recovery") await finalizeRecovery();
@@ -182,6 +183,60 @@ async function missRecovery() {
   print({ stage: "recovery_window_missed", observed, finalised, enqueued, dispatched, missedAdjustment,
     missedInvoiceId: state.missedInvoiceId, recoveryPeriodStart: state.recoveryPeriodStart,
     recoveryPeriodEnd: state.recoveryPeriodEnd });
+}
+
+async function diagnoseRecovery() {
+  const state = await requiredRecoveryState();
+  const [clock, subscription, invoices, local] = await Promise.all([
+    stripe.testHelpers.testClocks.retrieve(state.clockId!),
+    stripe.subscriptions.retrieve(state.subscriptionId!),
+    stripe.invoices.list({ customer: state.customerId!, limit: 100 }),
+    database.tenantReadTransaction(tenantId!, async (client) => client.query(
+      `SELECT
+         (SELECT count(*)::int FROM ${config.schema}.billing_provider_customers
+           WHERE customer_id=$1) AS provider_bindings,
+         (SELECT count(*)::int FROM ${config.schema}.billing_subscription_periods
+           WHERE customer_id=$1) AS observed_periods,
+         (SELECT count(*)::int FROM ${config.schema}.billing_usage_period_ledgers
+           WHERE customer_id=$1) AS usage_ledgers,
+         (SELECT count(*)::int FROM ${config.schema}.billing_invoice_adjustment_outbox
+           WHERE customer_id=$1) AS invoice_adjustments`, [tenantId],
+    )),
+  ]);
+  const invoiceDiagnostics = [];
+  for (const invoice of invoices.data) {
+    if (!invoice.id) {
+      invoiceDiagnostics.push({ id: null, status: invoice.status, stableIdentity: false });
+      continue;
+    }
+    const lines = await stripe.invoices.listLineItems(invoice.id, { limit: 100 });
+    invoiceDiagnostics.push({
+      id: invoice.id,
+      status: invoice.status,
+      billingReason: invoice.billing_reason,
+      subscriptionRef: typeof invoice.parent?.subscription_details?.subscription === "string"
+        ? invoice.parent.subscription_details.subscription
+        : invoice.parent?.subscription_details?.subscription?.id ?? null,
+      periodStart: unixIso(invoice.period_start),
+      periodEnd: unixIso(invoice.period_end),
+      createdAt: unixIso(invoice.created),
+      amountDueMinor: invoice.amount_due,
+      amountPaidMinor: invoice.amount_paid,
+      linesHasMore: lines.has_more,
+      lines: lines.data.map((line) => ({
+        id: line.id,
+        priceRef: line.pricing?.price_details?.price ?? null,
+        quantity: line.quantity,
+        amountMinor: line.amount,
+        periodStart: unixIso(line.period.start),
+        periodEnd: unixIso(line.period.end),
+      })),
+    });
+  }
+  print({ stage: "recovery_diagnostic", state, clock: { id: clock.id, status: clock.status,
+    frozenTime: unixIso(clock.frozen_time) }, subscription: { id: subscription.id, status: subscription.status,
+    ...subscriptionPeriod(subscription) }, local: local.rows[0] ?? null,
+    invoicesHasMore: invoices.has_more, invoices: invoiceDiagnostics });
 }
 
 async function recoverMissedAdjustment() {
