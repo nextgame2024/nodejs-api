@@ -19,6 +19,9 @@ describe("Founding full-lifecycle sandbox proof", () => {
     expect(source).toContain("periods_observed !== 12");
     expect(source).toContain("exactFirstPeriodLedger");
     expect(source).toContain('row.included_active_seconds !== "60000"');
+    expect(source).toContain("exactFirstPeriodAdjustment");
+    expect(source).toContain('row.amount_minor !== "20"');
+    expect(source).toContain('status: "existing" as const');
   });
 
   it("requires restricted cancellation before and standard cancellation after the provider boundary", () => {

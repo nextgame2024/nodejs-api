@@ -140,18 +140,27 @@ async function closeFirstPeriod() {
     throw new Error(`The Founding first-period ledger did not finalise: ${JSON.stringify(finalised)}`);
   }
   const ledgerEvidence = await exactFirstPeriodLedger(state);
+  const existingAdjustment = await firstPeriodAdjustment(state);
   const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
   const renewal = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
     && invoice.period_start === unixSecond(state.periodStart!) && invoice.period_end === unixSecond(state.periodEnd!));
-  if (renewal.length !== 1 || renewal[0].status !== "draft") {
-    throw new Error("The exact first Founding renewal invoice is not uniquely available as a draft.");
+  if (renewal.length !== 1) {
+    throw new Error("The exact first Founding renewal invoice is not uniquely available.");
   }
   const renewalInvoiceId = renewal[0].id;
   if (!renewalInvoiceId) throw new Error("The Founding renewal invoice has no stable provider identity.");
-  const enqueued = await adjustments.enqueueDraftInvoice(tenantId, { providerKey: PROVIDER_KEY,
-    providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
-    externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
-    externalInvoiceRef: renewalInvoiceId, periodStart: state.periodStart!, periodEnd: state.periodEnd! });
+  if (existingAdjustment && existingAdjustment.external_invoice_ref !== renewalInvoiceId) {
+    throw new Error("The persisted Founding adjustment targets a conflicting renewal invoice.");
+  }
+  if (!existingAdjustment && renewal[0].status !== "draft") {
+    throw new Error("The exact first Founding renewal invoice passed its draft window before adjustment enqueue.");
+  }
+  const enqueued = existingAdjustment
+    ? { status: "existing" as const, adjustmentId: existingAdjustment.adjustment_id }
+    : await adjustments.enqueueDraftInvoice(tenantId, { providerKey: PROVIDER_KEY,
+      providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
+      externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
+      externalInvoiceRef: renewalInvoiceId, periodStart: state.periodStart!, periodEnd: state.periodEnd! });
   if (!new Set(["enqueued", "existing"]).has(enqueued.status)) {
     throw new Error(`The Founding overage adjustment was not enqueued: ${JSON.stringify(enqueued)}`);
   }
@@ -169,11 +178,11 @@ async function closeFirstPeriod() {
     if (["reconciled", "mismatch"].includes(reconciliation.status)) break;
     await delay(5_000);
   }
-  if (reconciliation?.status !== "reconciled") throw new Error("The Founding first-period overage did not reconcile.");
+  const reconciliationEvidence = await exactFirstPeriodAdjustment(state, renewalInvoiceId);
   await saveState({ ...state, stage: "first_period_closed", overageInvoiceId: renewalInvoiceId });
   print({ stage: "founding_first_period_closed", expected: { includedActiveSeconds: 60_000,
     billableOverageMinutes: 2, amountMinor: 20, overagePrice }, observed, finalised,
-  ledgerEvidence, enqueued, dispatched, reconciliation });
+  ledgerEvidence, enqueued, dispatched, reconciliation, reconciliationEvidence });
 }
 
 async function acceptMilestone() {
@@ -287,6 +296,59 @@ async function exactFirstPeriodLedger(state: ProofState) {
     throw new Error(`The Founding first-period ledger differs from approved evidence: ${JSON.stringify(row)}`);
   }
   return row;
+}
+
+async function firstPeriodAdjustment(state: ProofState) {
+  const result = await database.tenantReadTransaction(tenantId, (client) => client.query<{
+    adjustment_id: string; external_invoice_ref: string;
+  }>(`SELECT adjustment.billing_invoice_adjustment_outbox_id::text AS adjustment_id,
+             adjustment.external_invoice_ref
+      FROM ${config.schema}.billing_invoice_adjustment_outbox adjustment
+      JOIN ${config.schema}.billing_usage_period_ledgers ledger
+        ON ledger.billing_usage_period_ledger_id=adjustment.billing_usage_period_ledger_id
+       AND ledger.customer_id=adjustment.customer_id
+      WHERE adjustment.customer_id=$1
+        AND ledger.period_start=$2::timestamptz AND ledger.period_end=$3::timestamptz`,
+    [tenantId, state.periodStart, state.periodEnd]));
+  if (result.rows.length > 1) throw new Error("The Founding first-period adjustment is ambiguous.");
+  return result.rows[0] ?? null;
+}
+
+async function exactFirstPeriodAdjustment(state: ProofState, invoiceId: string) {
+  const result = await database.tenantReadTransaction(tenantId, (client) => client.query<{
+    adjustment_id: string; status: string; external_invoice_ref: string; one_time_price_ref: string;
+    period_start: Date | string; period_end: Date | string; quantity: string; unit_price_minor: string;
+    currency: string; provider_invoice_item_ref: string; provider_invoice_line_ref: string;
+    amount_minor: string; invoice_status: string;
+  }>(`SELECT adjustment.billing_invoice_adjustment_outbox_id::text AS adjustment_id,
+             adjustment.status,adjustment.external_invoice_ref,adjustment.one_time_price_ref,
+             adjustment.period_start,adjustment.period_end,adjustment.quantity::text,
+             adjustment.unit_price_minor::text,adjustment.currency,
+             evidence.provider_invoice_item_ref,evidence.provider_invoice_line_ref,
+             evidence.amount_minor::text,evidence.invoice_status
+      FROM ${config.schema}.billing_invoice_adjustment_outbox adjustment
+      JOIN ${config.schema}.billing_invoice_adjustment_reconciliations evidence
+        ON evidence.billing_invoice_adjustment_outbox_id=adjustment.billing_invoice_adjustment_outbox_id
+       AND evidence.customer_id=adjustment.customer_id
+      JOIN ${config.schema}.billing_usage_period_ledgers ledger
+        ON ledger.billing_usage_period_ledger_id=adjustment.billing_usage_period_ledger_id
+       AND ledger.customer_id=adjustment.customer_id
+      WHERE adjustment.customer_id=$1
+        AND ledger.period_start=$2::timestamptz AND ledger.period_end=$3::timestamptz`,
+    [tenantId, state.periodStart, state.periodEnd]));
+  if (result.rows.length !== 1) {
+    throw new Error("The Founding first-period overage has no unique immutable reconciliation evidence.");
+  }
+  const row = result.rows[0];
+  if (row.status !== "reconciled" || row.external_invoice_ref !== invoiceId
+    || row.one_time_price_ref !== overagePrice || iso(row.period_start) !== state.periodStart
+    || iso(row.period_end) !== state.periodEnd || row.quantity !== "2" || row.unit_price_minor !== "10"
+    || row.amount_minor !== "20" || row.currency !== "AUD"
+    || !new Set(["open", "paid"]).has(row.invoice_status)
+    || !row.provider_invoice_item_ref || !row.provider_invoice_line_ref) {
+    throw new Error(`The Founding first-period reconciliation differs from approved evidence: ${JSON.stringify(row)}`);
+  }
+  return { ...row, period_start: iso(row.period_start), period_end: iso(row.period_end) };
 }
 
 async function assertFixtureAuthority() {

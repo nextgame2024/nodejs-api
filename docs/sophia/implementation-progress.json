@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0D4-PREPARED",
-  "updatedAt": "2026-10-03T09:12:00+10:00",
+  "checkpoint": "P6-A06C3B0D4-SANDBOX-PROVING",
+  "updatedAt": "2026-10-03T09:28:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2277,6 +2277,13 @@
       "node": "22.23.3",
       "result": "exact-ledger-proven-webhook-race-corrected",
       "detail": "Replacement tenant faa7c7c6-9193-4fb4-825c-8c52a74a2986 proved the paid AUD 1140 initial invoice and restricted portal. During close, the signed invoice webhook finalized the ledger before the synchronous shell finalizer, so the latter correctly returned zero newly eligible periods and the harness stopped before manual enqueue/dispatch. Read-only Neon evidence proves the first period ledger exactly: 60061000000 active microseconds, 60000 included seconds, 61000000 overage microseconds, two billable minutes and a 10-cent unit rate. Plan 2.1.77 validates this immutable existing ledger before idempotently resuming adjustment handling. Runtime passed both typechecks, build and 129 suites/470 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. D4 remains in progress and no live mutation is authorized."
+    },
+    {
+      "command": "replacement billing:founding-sandbox close; npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; JSON parse; git diff --check; plan amendment 2.1.78",
+      "repository": "deployed backend + Neon + Stripe sandbox + backend/sophia-runtime",
+      "node": "22.23.3",
+      "result": "adjustment-reconciliation-resume-corrected",
+      "detail": "The replacement close progressed beyond exact ledger validation and crossed the renewal invoice boundary, but the active reconciler returned no reconciled result and the harness emitted an ambiguous failure. Plan 2.1.78 now resumes an existing exact-ledger adjustment after the invoice leaves draft and refuses to infer success from an idle reconciler. It requires immutable persisted evidence for reconciled state, exact renewal identity and period, Founding overage Price, quantity two, ten-cent unit rate, AUD 0.20 amount, finalized invoice status and stable provider item/line identities. Runtime passed both typechecks, build and 129 suites/470 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. D4 remains in progress pending deployed readback; no migration or live mutation is required."
     }
   ],
   "blockers": [
