@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached and finalized in Stripe sandbox. Exact reconciliation exposed and locally corrected one canonical Stripe invoice-line field assumption; redeployment and deterministic read-back recovery are pending.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached and finalized in Stripe sandbox. Canonical line read-back now matches, but the deployed database trigger exposed a missing evidence-backed recovery transition; forward migration 050 and deterministic read-back recovery are pending.
 
 ## Deployed sandbox preparation
 
@@ -44,6 +44,8 @@ The operator approved sandbox one-time Price `price_1ULyegGcz4GrZOEBwDHdpzPW` fo
 
 Migration 049 was applied with the database owner connection, and a new isolated tenant `2a7f6a09-3f9d-4f7e-aeaf-925baa1120c5` completed `prepare` and `close`. Stripe accepted invoice item adjustment `a940cf44-2899-405e-9683-2557ca14a2d8` on draft renewal invoice `in_1ULzSOGcz4GrZOEBwnUz3FH4`; the immutable ledger contains two overage minutes and the independent Meter event was accepted. Finalization then produced a false local mismatch: API 2025-08-27.basil carries the invoice-item line's subscription under `parent.invoice_item_details.subscription`, while the compatibility top-level `line.subscription` can be null. Plan 2.1.62 corrects the canonical read-back field and permits the `reconciliation_failed` row to be revalidated without redispatch or a second invoice item.
 
+The first finalize-only recovery on revision `907660a` matched the provider line and inserted the immutable reconciliation row, then migration 049's trigger rejected the final local status update because it did not permit `reconciliation_failed` to `reconciled`. The transaction rolled back both local writes and made no Stripe request. Plan 2.1.63 adds forward migration 050: that transition is allowed only when unchanged-attempt, same-tenant immutable reconciliation evidence already exists. The row remains permanently excluded from dispatch claims.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -58,6 +60,7 @@ Migration 049 was applied with the database owner connection, and a new isolated
 - The Stripe sandbox adjustment adapter validates the exact draft invoice, Customer, subscription, provider period, one-time Price, currency, unit amount and non-GST tax behavior before one idempotent write. Live dispatch and reconciliation remain disabled.
 - Finalized-line read-back requires exactly one adjustment line matching the adjustment and ledger metadata, Price, quantity, unit amount, total amount, currency and exact inclusive line period before the outbox becomes `reconciled`.
 - Invoice-item line subscription identity is read from Stripe's canonical `parent.invoice_item_details.subscription`; a prior local `reconciliation_failed` result may be revalidated, but it is never eligible for dispatch.
+- Migration 050 permits failed-read-back recovery only after the exact immutable evidence row exists in the same transaction; it does not relax any dispatch transition.
 - An exact finalized zero-overage ledger is a successful no-adjustment outcome and releases the draft invoice; only a genuinely missing ledger or an unresolved positive adjustment applies webhook retry backpressure.
 
 ## Evidence
@@ -65,13 +68,13 @@ Migration 049 was applied with the database owner connection, and a new isolated
 - Migration `047_billing_meter_reconciliation_evidence.sql` was applied to Neon.
 - The rollback-only Neon probe verified forced RLS for the outbox and reconciliation evidence, cross-tenant hiding, immutable evidence, least-privilege `SELECT, INSERT` access to evidence, fenced claims, stale-token denial and permanent quarantine of ambiguous submissions. All probe rows were rolled back.
 - Runtime portability typecheck, typecheck, build and generated-contract drift check pass.
-- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Both Runtime typechecks, build and generated-contract drift check pass.
+- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Plan 2.1.63 Runtime tests: 118 suites, 424 tests. Both Runtime typechecks, build and generated-contract drift check pass.
 - Backend boundary scan: 231 files. Protected real-estate characterization: 8 suites, 38 tests.
 
 ## Remaining C4B external proof
 
 The deployed mappings, migration 049, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event and attached one-time invoice adjustment are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is P6-A06C3B0C4B3 deployed proof: deploy plan 2.1.62, rerun only `finalize` on the fresh fixture to recover exact finalized-line evidence without resubmission, then prove real duplicate webhook behavior and missed-window recovery. The old negative fixture must not be reused.
+The remaining work is P6-A06C3B0C4B3 deployed proof: deploy plan 2.1.63, apply migration 050 with the owner connection, rerun only `finalize` on the fresh fixture to recover exact finalized-line evidence without resubmission, then prove real duplicate webhook behavior and missed-window recovery. The old negative fixture must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.
