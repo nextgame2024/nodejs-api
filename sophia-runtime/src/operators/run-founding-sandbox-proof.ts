@@ -171,6 +171,13 @@ async function closeFirstPeriod() {
   }
   const closeTarget = Math.floor(new Date(state.periodEnd!).getTime() / 1_000) + 3 * 60 * 60;
   await advanceClock(state.clockId!, closeTarget);
+  let finalizedInvoice = await stripe.invoices.retrieve(renewalInvoiceId);
+  if (finalizedInvoice.status === "draft") {
+    finalizedInvoice = await stripe.invoices.finalizeInvoice(renewalInvoiceId, { auto_advance: true });
+  }
+  if (!new Set(["open", "paid"]).has(finalizedInvoice.status ?? "")) {
+    throw new Error(`The Founding renewal invoice did not reach a finalized billable state (${finalizedInvoice.status}).`);
+  }
   let reconciliation: Awaited<ReturnType<BillingInvoiceAdjustmentOutboxService["reconcileInvoice"]>> | null = null;
   for (let attempt = 0; attempt < 24; attempt += 1) {
     reconciliation = await adjustments.reconcileInvoice(tenantId, PROVIDER_KEY, "sandbox",
@@ -182,7 +189,8 @@ async function closeFirstPeriod() {
   await saveState({ ...state, stage: "first_period_closed", overageInvoiceId: renewalInvoiceId });
   print({ stage: "founding_first_period_closed", expected: { includedActiveSeconds: 60_000,
     billableOverageMinutes: 2, amountMinor: 20, overagePrice }, observed, finalised,
-  ledgerEvidence, enqueued, dispatched, reconciliation, reconciliationEvidence });
+  ledgerEvidence, enqueued, dispatched, renewalInvoiceStatus: finalizedInvoice.status,
+  reconciliation, reconciliationEvidence });
 }
 
 async function acceptMilestone() {

@@ -3,7 +3,7 @@
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C3B0D4-SANDBOX-PROVING",
-  "updatedAt": "2026-10-03T09:28:00+10:00",
+  "updatedAt": "2026-10-03T09:49:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2284,6 +2284,13 @@
       "node": "22.23.3",
       "result": "adjustment-reconciliation-resume-corrected",
       "detail": "The replacement close progressed beyond exact ledger validation and crossed the renewal invoice boundary, but the active reconciler returned no reconciled result and the harness emitted an ambiguous failure. Plan 2.1.78 now resumes an existing exact-ledger adjustment after the invoice leaves draft and refuses to infer success from an idle reconciler. It requires immutable persisted evidence for reconciled state, exact renewal identity and period, Founding overage Price, quantity two, ten-cent unit rate, AUD 0.20 amount, finalized invoice status and stable provider item/line identities. Runtime passed both typechecks, build and 129 suites/470 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. D4 remains in progress pending deployed readback; no migration or live mutation is required."
+    },
+    {
+      "command": "read-only Founding invoice-adjustment outbox inspection; npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; JSON parse; git diff --check; plan amendment 2.1.79",
+      "repository": "deployed backend + Neon + Stripe sandbox + backend/sophia-runtime",
+      "node": "22.23.3",
+      "result": "provider-accepted-deterministic-finalization-ready",
+      "detail": "Read-only Neon evidence proves exactly one Founding adjustment remains provider_accepted with quantity two, a ten-cent unit price, AUD, the approved overage Price and a stable provider invoice-item identity; no reconciliation evidence exists. Plan 2.1.79 reuses this accepted item, explicitly finalizes the exact renewal invoice only if it remains draft, requires an open or paid billable state, and still requires exact immutable line reconciliation before success. Runtime passed both typechecks, build and 129 suites/470 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. D4 remains in progress; no migration, duplicate item or live mutation is required."
     }
   ],
   "blockers": [

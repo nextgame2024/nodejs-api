@@ -22,6 +22,7 @@ describe("Founding full-lifecycle sandbox proof", () => {
     expect(source).toContain("exactFirstPeriodAdjustment");
     expect(source).toContain('row.amount_minor !== "20"');
     expect(source).toContain('status: "existing" as const');
+    expect(source).toContain("stripe.invoices.finalizeInvoice(renewalInvoiceId, { auto_advance: true })");
   });
 
   it("requires restricted cancellation before and standard cancellation after the provider boundary", () => {
