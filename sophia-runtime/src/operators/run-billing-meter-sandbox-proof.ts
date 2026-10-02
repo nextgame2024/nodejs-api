@@ -161,15 +161,29 @@ async function missRecovery() {
     tenantId!, PROVIDER_KEY, config.billing.providerAccountKey, new Date(target * 1_000).toISOString());
   const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
   const start = unixSecond(state.periodStart!); const end = unixSecond(state.periodEnd!);
-  const missed = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
+  const originals = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
     && invoice.period_start === start && invoice.period_end === end);
-  if (missed.length !== 1 || !missed[0].id || missed[0].status === "draft") {
-    throw new Error("The proof requires exactly one already-finalized original renewal invoice.");
+  if (originals.length !== 1) {
+    throw new Error("The proof requires exactly one original renewal invoice for the immutable period.");
   }
+  let original = originals[0];
+  const originalInvoiceId = original.id;
+  if (!originalInvoiceId) {
+    throw new Error("The original renewal invoice has no stable provider identity.");
+  }
+  if (original.status === "draft") {
+    original = await stripe.invoices.finalizeInvoice(originalInvoiceId, { auto_advance: false });
+  }
+  if (!original.id || !["open", "paid"].includes(original.status ?? "")) {
+    throw new Error(`The original renewal invoice did not reach a finalized billable state (${original.status}).`);
+  }
+  state = await saveState({ ...state, recoveryPeriodStart: recoveryPeriod.start,
+    recoveryPeriodEnd: recoveryPeriod.end, missedInvoiceId: original.id,
+    stage: "recovery_original_invoice_finalized" });
   const enqueued = await invoiceAdjustments.enqueueDraftInvoice(tenantId!, {
     providerKey: PROVIDER_KEY, providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
     externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
-    externalInvoiceRef: missed[0].id, periodStart: state.periodStart!, periodEnd: state.periodEnd!,
+    externalInvoiceRef: original.id, periodStart: state.periodStart!, periodEnd: state.periodEnd!,
   });
   const dispatched = await invoiceAdjustments.dispatchNext(tenantId!, PROVIDER_KEY, "sandbox",
     config.billing.providerAccountKey, `c4b-missed-window:${randomUUID()}`);
@@ -178,8 +192,7 @@ async function missRecovery() {
   if (missedAdjustment?.status !== "missed_window") {
     throw new Error("The original adjustment did not prove a missed draft window.");
   }
-  state = await saveState({ ...state, recoveryPeriodStart: recoveryPeriod.start,
-    recoveryPeriodEnd: recoveryPeriod.end, missedInvoiceId: missed[0].id, stage: "recovery_window_missed" });
+  state = await saveState({ ...state, stage: "recovery_window_missed" });
   print({ stage: "recovery_window_missed", observed, finalised, enqueued, dispatched, missedAdjustment,
     missedInvoiceId: state.missedInvoiceId, recoveryPeriodStart: state.recoveryPeriodStart,
     recoveryPeriodEnd: state.recoveryPeriodEnd });
