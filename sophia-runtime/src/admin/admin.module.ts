@@ -61,6 +61,7 @@ import { BILLING_METER_EVENT_DISPATCHER, BILLING_METER_EVENT_RECONCILER } from "
 import { DisabledBillingMeterEventDispatcher } from "./billing/disabled-billing-meter-event.dispatcher.js";
 import { StripeBillingMeterEventDispatcher } from "./billing/stripe-billing-meter-event.dispatcher.js";
 import { BillingInvoiceAdjustmentOutboxService } from "./billing/billing-invoice-adjustment-outbox.service.js";
+import { BillingInvoiceAdjustmentRecoveryService } from "./billing/billing-invoice-adjustment-recovery.service.js";
 import { BILLING_INVOICE_ADJUSTMENT_DISPATCHER } from "./billing/billing-invoice-adjustment.port.js";
 import { DisabledBillingInvoiceAdjustmentDispatcher } from "./billing/disabled-billing-invoice-adjustment.dispatcher.js";
 import { StripeBillingInvoiceAdjustmentDispatcher } from "./billing/stripe-billing-invoice-adjustment.dispatcher.js";
@@ -119,6 +120,7 @@ import { runtimeConfig } from "../config/runtime-config.js";
     BillingPeriodLedgerService,
     BillingMeterOutboxService,
     BillingInvoiceAdjustmentOutboxService,
+    BillingInvoiceAdjustmentRecoveryService,
     DisabledBillingMeterEventDispatcher,
     DisabledBillingInvoiceAdjustmentDispatcher,
     DisabledBillingProvider,

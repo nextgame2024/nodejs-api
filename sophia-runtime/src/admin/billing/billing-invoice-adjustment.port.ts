@@ -2,6 +2,7 @@ export const BILLING_INVOICE_ADJUSTMENT_DISPATCHER = Symbol("BILLING_INVOICE_ADJ
 
 export type BillingInvoiceAdjustmentInput = {
   adjustmentId: string;
+  deliveryId: string;
   ledgerId: string;
   planVersionId: string;
   providerKey: string;
@@ -13,6 +14,8 @@ export type BillingInvoiceAdjustmentInput = {
   oneTimePriceRef: string;
   periodStart: string;
   periodEnd: string;
+  targetPeriodStart: string;
+  targetPeriodEnd: string;
   quantity: string;
   unitPriceMinor: string;
   currency: string;

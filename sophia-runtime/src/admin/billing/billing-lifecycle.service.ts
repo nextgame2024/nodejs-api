@@ -17,6 +17,7 @@ import { STRIPE_BILLING_OBSERVATION_EVENT_TYPES, STRIPE_BILLING_PROVIDER_KEY } f
 import { BillingPeriodLedgerService } from "./billing-period-ledger.service.js";
 import { BillingMeterOutboxService } from "./billing-meter-outbox.service.js";
 import { BillingInvoiceAdjustmentOutboxService } from "./billing-invoice-adjustment-outbox.service.js";
+import { BillingInvoiceAdjustmentRecoveryService } from "./billing-invoice-adjustment-recovery.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 const checkoutMeteredRateSchema = z.object({
@@ -36,6 +37,8 @@ export class BillingLifecycleService {
     @Inject(BillingMeterOutboxService) private readonly meterOutbox: BillingMeterOutboxService,
     @Inject(BillingInvoiceAdjustmentOutboxService)
     private readonly invoiceAdjustments: BillingInvoiceAdjustmentOutboxService,
+    @Inject(BillingInvoiceAdjustmentRecoveryService)
+    private readonly invoiceAdjustmentRecovery: BillingInvoiceAdjustmentRecoveryService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -255,12 +258,19 @@ export class BillingLifecycleService {
           supported ? "provider_observation_applied" : "unsupported_event_type", event.eventId]);
       return { received: true, duplicate: false };
     });
-    const reconciliationResult = event.invoice
-      && (event.eventType === "invoice.finalized" || event.eventType === "invoice.paid")
-      ? await this.invoiceAdjustments.reconcileInvoice(tenantId, event.providerKey, event.environment,
-        event.providerAccountKey, event.invoice.externalRef)
-      : null;
-    const invoiceAdjustmentReconciliation = reconciliationResult?.status === "idle" ? null : reconciliationResult;
+    let invoiceAdjustmentReconciliation = null;
+    if (event.invoice && (event.eventType === "invoice.finalized" || event.eventType === "invoice.paid")) {
+      const [current, recovery] = await Promise.all([
+        this.invoiceAdjustments.reconcileInvoice(tenantId, event.providerKey, event.environment,
+          event.providerAccountKey, event.invoice.externalRef),
+        this.invoiceAdjustmentRecovery.reconcileInvoice(tenantId, event.providerKey, event.environment,
+          event.providerAccountKey, event.invoice.externalRef),
+      ]);
+      if (current.status !== "idle" || recovery.status !== "idle") {
+        invoiceAdjustmentReconciliation = { current: current.status === "idle" ? null : current,
+          recovery: recovery.status === "idle" ? null : recovery };
+      }
+    }
     if (!event.draftRenewalInvoice || !event.customerRef) {
       return invoiceAdjustmentReconciliation ? { ...response, invoiceAdjustmentReconciliation } : response;
     }
@@ -284,9 +294,25 @@ export class BillingLifecycleService {
         "The exact immutable overage ledger is not ready for this draft renewal invoice; Stripe must retry the signed event.",
       );
     }
+    const recovery = await this.invoiceAdjustmentRecovery.enqueueAndDispatch(tenantId, {
+      providerKey: event.providerKey,
+      providerEnvironment: event.environment,
+      providerAccountKey: event.providerAccountKey,
+      externalCustomerRef: event.customerRef,
+      externalSubscriptionRef: event.draftRenewalInvoice.externalSubscriptionRef,
+      externalInvoiceRef: event.draftRenewalInvoice.externalInvoiceRef,
+      periodStart: event.draftRenewalInvoice.periodStart,
+      periodEnd: event.draftRenewalInvoice.periodEnd,
+    }, `invoice-created-recovery:${event.eventId}`);
+    if (event.environment === "sandbox" && recovery.status === "incomplete") {
+      throw new ServiceUnavailableException(
+        "A missed-window carry-forward is not authoritatively attached to the draft renewal invoice; Stripe must retry the signed event.",
+      );
+    }
     if (enqueued.status === "not_required") {
       return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued,
-        invoiceAdjustment: { status: "not_required" as const }, invoiceAdjustmentReconciliation };
+        invoiceAdjustment: { status: "not_required" as const }, invoiceAdjustmentRecovery: recovery,
+        invoiceAdjustmentReconciliation };
     }
     let adjustment = event.environment === "sandbox"
       ? await this.invoiceAdjustments.dispatchNext(tenantId, event.providerKey, event.environment,
@@ -303,6 +329,7 @@ export class BillingLifecycleService {
       );
     }
     return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued, invoiceAdjustment: adjustment,
+      invoiceAdjustmentRecovery: recovery,
       invoiceAdjustmentReconciliation };
   }
 

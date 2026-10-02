@@ -346,7 +346,10 @@ function toInput(row: AdjustmentRow): BillingInvoiceAdjustmentInput {
   const payload = payloadFromRow(row);
   return {
     adjustmentId: row.billing_invoice_adjustment_outbox_id,
+    deliveryId: row.billing_invoice_adjustment_outbox_id,
     ...payload,
+    targetPeriodStart: payload.periodStart,
+    targetPeriodEnd: payload.periodEnd,
     payloadDigest: row.payload_digest,
   };
 }

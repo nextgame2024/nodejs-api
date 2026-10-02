@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. Only missed-draft-window recovery remains before C4B3 completes.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated; migration 051, deployment and a fresh isolated sandbox recovery lifecycle remain before C4B3 completes.
 
 ## Deployed sandbox preparation
 
@@ -52,6 +52,10 @@ Review before the required signed replay found that the duplicate-delivery unit 
 
 After deploying revision `28efd1d`, the operator manually replayed the exact signed `invoice.created` event several times. Every delivery returned HTTP 200 with `duplicate=true`, enqueue status `existing`, authoritative existing status `reconciled`, the same adjustment identity and the same provider invoice-item reference. A final read-only diagnostic found exactly one overage line on paid renewal invoice `in_1ULzSOGcz4GrZOEBwnUz3FH4`: Price `price_1ULyegGcz4GrZOEBwDHdpzPW`, quantity `2`, amount AUD `0.20`, period `2026-10-02T05:54:56Z` through inclusive `2026-11-02T05:54:55Z`. The invoice also contains exactly one AUD 750 base renewal line. No replay created another line.
 
+The operator selected the recommended missed-window policy: carry the exact missed adjustment to the next eligible draft renewal invoice. Plan 2.1.65 preserves the original `missed_window` row and adds a separate immutable recovery delivery rather than retargeting it. The carried line retains the original service period, ledger, plan, quantity, unit rate and currency, while the recovery record separately binds the later invoice and target period. No out-of-cycle invoice API is used. An unknown, accepted or failed-reconciliation recovery blocks any later delivery; only an explicitly missed recovery window becomes eligible for another later renewal. Database uniqueness also permits at most one non-missed delivery and one reconciled recovery per source.
+
+Migration 051 implements forced-RLS recovery attempts plus immutable reconciliation evidence. Signed sandbox `invoice.created` processing attaches every eligible recovery before returning success, and finalized/paid events reconcile both current and carried lines. The Stripe adapter uses the unique recovery delivery identity for idempotency and metadata, validates the later invoice period independently, and preserves the original period on the invoice line. Live recovery remains disabled. The compiled sandbox harness adds `prepare-recovery`, `miss-recovery`, `recover` and `finalize-recovery` stages using a fresh unbound test-clock Customer to prove the original draft window was genuinely missed before the next renewal is used.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -69,19 +73,21 @@ After deploying revision `28efd1d`, the operator manually replayed the exact sig
 - Migration 050 permits failed-read-back recovery only after the exact immutable evidence row exists in the same transaction; it does not relax any dispatch transition.
 - Duplicate signed draft-invoice delivery treats an idle claim as successful only after exact authoritative acceptance read-back; it cannot resubmit an accepted adjustment.
 - An exact finalized zero-overage ledger is a successful no-adjustment outcome and releases the draft invoice; only a genuinely missing ledger or an unresolved positive adjustment applies webhook retry backpressure.
+- Migration 051 preserves every missed original and recovery attempt, blocks ambiguous double delivery, and carries the exact immutable line only on a later existing draft renewal for the same sandbox Customer and subscription.
+- Current-period and recovered prior-period lines remain independent. Each keeps its own ledger and service period and must reconcile exactly; no out-of-cycle invoice is created.
 
 ## Evidence
 
 - Migration `047_billing_meter_reconciliation_evidence.sql` was applied to Neon.
 - The rollback-only Neon probe verified forced RLS for the outbox and reconciliation evidence, cross-tenant hiding, immutable evidence, least-privilege `SELECT, INSERT` access to evidence, fenced claims, stale-token denial and permanent quarantine of ambiguous submissions. All probe rows were rolled back.
 - Runtime portability typecheck, typecheck, build and generated-contract drift check pass.
-- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Plan 2.1.63 Runtime tests: 118 suites, 424 tests. Plan 2.1.64 Runtime tests: 118 suites, 425 tests. Both Runtime typechecks, build and generated-contract drift check pass.
-- Backend boundary scan: 231 files. Protected real-estate characterization: 8 suites, 38 tests.
+- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Plan 2.1.63 Runtime tests: 118 suites, 424 tests. Plan 2.1.64 Runtime tests: 118 suites, 425 tests. Plan 2.1.65 Runtime tests: 120 suites, 433 tests. Both Runtime typechecks, build and generated-contract drift check pass.
+- Backend boundary scan: 233 files. Protected real-estate characterization: 8 suites, 38 tests.
 
 ## Remaining C4B external proof
 
 The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is P6-A06C3B0C4B3 missed-window resilience: define and sandbox-prove what happens when the exact renewal invoice is already finalized before the immutable adjustment can be attached. The recovery must preserve the original ledger, period, quantity and unit rate, and must not silently choose an out-of-cycle or next-cycle customer charge policy. The old negative fixture must not be reused.
+The remaining work is to deploy plan 2.1.65, apply migration 051 with the owner connection and run the four recovery stages on a fresh isolated Sophia Voice tenant. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. The old negative and successful adjustment fixtures must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.

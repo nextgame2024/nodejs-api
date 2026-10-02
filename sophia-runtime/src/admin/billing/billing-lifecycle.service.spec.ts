@@ -53,7 +53,7 @@ describe("BillingLifecycleService", () => {
     const audit = { record: jest.fn() };
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
     const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
     const customerRef = "cus_liveSophia123";
     await expect(service.bindCustomer(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333", customerRef,
@@ -138,7 +138,7 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: true });
     expect(clientQuery.mock.calls.some((call) => String(call[0]).includes("billing_invoice_references"))).toBe(false);
@@ -156,7 +156,7 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
@@ -184,7 +184,7 @@ describe("BillingLifecycleService", () => {
       existingStatus: "reconciled" as const,
       adjustmentId: "adjustment-1", providerInvoiceItemRef: "ii_1" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      periods as never, meterOutbox() as never, adjustments as never);
+      periods as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toMatchObject({ received: true, duplicate: true,
         invoiceAdjustment: { status: "provider_accepted", existingStatus: "reconciled",
@@ -214,7 +214,7 @@ describe("BillingLifecycleService", () => {
     adjustments.dispatchNext = jest.fn(async () => ({ status: "retry_scheduled" as const,
       adjustmentId: "adjustment-1", detail: "Stripe unavailable" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .rejects.toThrow("not authoritatively attached");
   });
@@ -231,10 +231,29 @@ describe("BillingLifecycleService", () => {
     adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "not_required" as const,
       detail: "no overage" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toMatchObject({ received: true, invoiceAdjustment: { status: "not_required" } });
     expect(adjustments.dispatchNext).not.toHaveBeenCalled();
+  });
+
+  it("withholds draft acknowledgement when a prior-period carry-forward is unresolved", async () => {
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
+    const clientQuery = jest.fn(async (sql: string) => sql.includes("billing_webhook_events") && sql.includes("INSERT")
+      ? { rows: [{ billing_webhook_event_id: "event-row" }], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const database = { query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })) };
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "not_required" as const }));
+    const recovery = invoiceAdjustmentRecovery();
+    recovery.enqueueAndDispatch = jest.fn(async () => ({ status: "incomplete" as const,
+      attempts: [{ status: "outcome_unknown" }] }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .rejects.toThrow("carry-forward is not authoritatively attached");
   });
 
   it("never dispatches a live Meter event from the read-only live reconciliation path", async () => {
@@ -254,7 +273,8 @@ describe("BillingLifecycleService", () => {
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
     const outbox = meterOutbox();
     const service = new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-      provider, { record: jest.fn() } as never, ledger() as never, outbox as never, invoiceAdjustments() as never);
+      provider, { record: jest.fn() } as never, ledger() as never, outbox as never, invoiceAdjustments() as never,
+      invoiceAdjustmentRecovery() as never);
     await expect(service.reconcile(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333",
     })).resolves.toMatchObject({ meterEventDispatch: { status: "disabled" }, liveEntitlementMutation: false });
@@ -266,7 +286,8 @@ describe("BillingLifecycleService", () => {
 function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) {
   const run = jest.fn(async (_id: string, work: (client: { query: jest.Mock }) => unknown) => work({ query }));
   return new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-    provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
+    provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never, invoiceAdjustments() as never,
+    invoiceAdjustmentRecovery() as never);
 }
 function ledger() {
   const result = { observedPeriods: 1, finalised: 1, existing: 0, blocked: [] };
@@ -281,6 +302,10 @@ function invoiceAdjustments() {
     dispatchNext: jest.fn(async () => ({ status: "idle" })),
     authoritativeAcceptance: jest.fn(async () => null),
     reconcileInvoice: jest.fn(async () => ({ status: "idle" })) };
+}
+function invoiceAdjustmentRecovery() {
+  return { enqueueAndDispatch: jest.fn(async () => ({ status: "not_required", attempts: [] })),
+    reconcileInvoice: jest.fn(async () => ({ status: "idle", attempts: [] })) };
 }
 function providerMock() {
   return {

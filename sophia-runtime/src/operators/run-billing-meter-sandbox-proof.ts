@@ -5,6 +5,7 @@ import Stripe from "stripe";
 import { AppModule } from "../app.module.js";
 import { BillingLifecycleService } from "../admin/billing/billing-lifecycle.service.js";
 import { BillingInvoiceAdjustmentOutboxService } from "../admin/billing/billing-invoice-adjustment-outbox.service.js";
+import { BillingInvoiceAdjustmentRecoveryService } from "../admin/billing/billing-invoice-adjustment-recovery.service.js";
 import { BillingMeterOutboxService } from "../admin/billing/billing-meter-outbox.service.js";
 import { BillingPeriodLedgerService } from "../admin/billing/billing-period-ledger.service.js";
 import type { AdminPrincipal } from "../admin/contracts/admin-contracts.js";
@@ -15,13 +16,15 @@ const VOICE_PLAN_ID = "112e2d08-9e8b-4748-a89a-954a28ad43c9";
 const PROVIDER_KEY = "stripe-sophia";
 const PROOF_CONFIRMATION = "I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS";
 const PROOF_VARIANT = "draft-invoice-adjustment-v1";
+const RECOVERY_PROOF_VARIANT = "missed-window-carry-forward-v1";
 const stage = process.argv[2];
 const tenantId = process.env.SOPHIA_C4B_TENANT_ID;
 
 if (!tenantId || !/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error("SOPHIA_C4B_TENANT_ID must be the approved synthetic tenant UUID.");
 if (process.env.SOPHIA_C4B_CONFIRM !== PROOF_CONFIRMATION) throw new Error(`Set SOPHIA_C4B_CONFIRM=${PROOF_CONFIRMATION}.`);
-if (!new Set(["prepare", "close", "finalize", "diagnose", "status"]).has(stage ?? "")) {
-  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|diagnose|status");
+if (!new Set(["prepare", "close", "finalize", "diagnose", "status",
+  "prepare-recovery", "miss-recovery", "recover", "finalize-recovery"]).has(stage ?? "")) {
+  throw new Error("Usage: npm run billing:c4b-sandbox -- prepare|close|finalize|diagnose|status|prepare-recovery|miss-recovery|recover|finalize-recovery");
 }
 
 const config = runtimeConfig();
@@ -41,6 +44,7 @@ const lifecycle = app.get(BillingLifecycleService);
 const ledgers = app.get(BillingPeriodLedgerService);
 const outbox = app.get(BillingMeterOutboxService);
 const invoiceAdjustments = app.get(BillingInvoiceAdjustmentOutboxService);
+const invoiceAdjustmentRecovery = app.get(BillingInvoiceAdjustmentRecoveryService);
 const stripe = new Stripe(config.billing.stripeSecretKey, { apiVersion: "2025-08-27.basil", maxNetworkRetries: 2 });
 
 try {
@@ -50,6 +54,10 @@ try {
   if (stage === "finalize") await finalizeInvoice();
   if (stage === "diagnose") await diagnoseInvoice();
   if (stage === "status") await printStatus();
+  if (stage === "prepare-recovery") await prepareRecovery();
+  if (stage === "miss-recovery") await missRecovery();
+  if (stage === "recover") await recoverMissedAdjustment();
+  if (stage === "finalize-recovery") await finalizeRecovery();
 } finally {
   await app.close();
 }
@@ -62,9 +70,153 @@ type ProofState = {
   paymentMethodId?: string;
   periodStart?: string;
   periodEnd?: string;
+  recoveryPeriodStart?: string;
+  recoveryPeriodEnd?: string;
+  missedInvoiceId?: string;
+  recoveryInvoiceId?: string;
   fixtureSessionId?: string;
   stage?: string;
 };
+
+async function prepareRecovery() {
+  let state = await readState();
+  if (Object.keys(state).length > 0 && state.proofVariant !== RECOVERY_PROOF_VARIANT) {
+    throw new Error("Use a fresh isolated synthetic tenant for missed-window recovery proof.");
+  }
+  if (!state.clockId) {
+    const clock = await stripe.testHelpers.testClocks.create({
+      frozen_time: Math.floor(Date.now() / 1_000), name: `Sophia C4B recovery ${tenantId}`,
+    });
+    state = await saveState({ ...state, proofVariant: RECOVERY_PROOF_VARIANT,
+      clockId: clock.id, stage: "recovery_clock_created" });
+  }
+  if (!state.customerId) {
+    const customer = await stripe.customers.create({ test_clock: state.clockId,
+      name: "Sophia C4B missed-window synthetic tenant", metadata: providerMetadata() });
+    state = await saveState({ ...state, customerId: customer.id, stage: "recovery_customer_created" });
+  }
+  let paymentMethodId = state.paymentMethodId;
+  if (!paymentMethodId) {
+    paymentMethodId = (await stripe.paymentMethods.attach("pm_card_visa", { customer: state.customerId! })).id;
+    state = await saveState({ ...state, paymentMethodId, stage: "recovery_payment_method_attached" });
+  }
+  await stripe.customers.update(state.customerId!, { invoice_settings: { default_payment_method: paymentMethodId } });
+  if (!state.subscriptionId) {
+    const subscription = await stripe.subscriptions.create({ customer: state.customerId!,
+      items: [{ price: basePrice, quantity: 1 }], collection_method: "charge_automatically",
+      payment_behavior: "error_if_incomplete", metadata: providerMetadata() });
+    const period = subscriptionPeriod(subscription);
+    state = await saveState({ ...state, subscriptionId: subscription.id,
+      periodStart: period.start, periodEnd: period.end, stage: "recovery_subscription_created" });
+  }
+  if (!state.fixtureSessionId) {
+    const start = new Date(state.periodStart!);
+    const end = new Date(start.getTime() + (120_000 + 61) * 1_000);
+    const sessionId = randomUUID();
+    await database.tenantTransaction(tenantId!, async (client) => {
+      await client.query(
+        `INSERT INTO ${config.schema}.sessions
+         (session_id,customer_id,ai_provider,avatar_provider,status,started_at,ended_at,metadata)
+         VALUES ($1,$2,'synthetic-c4b','synthetic-c4b','closed',$3,$4,'{"sandboxRecoveryProof":true}'::jsonb)`,
+        [sessionId, tenantId, start, end]);
+      await client.query(
+        `INSERT INTO ${config.schema}.session_activity_intervals
+         (customer_id,session_id,connection_id,status,started_at,last_confirmed_at,ended_at,end_reason)
+         VALUES ($1,$2,$3,'finalised',$4,$5,$5,'session_close')`,
+        [tenantId, sessionId, randomUUID(), start, end]);
+    });
+    state = await saveState({ ...state, fixtureSessionId: sessionId, stage: "recovery_usage_fixture_created" });
+  }
+  print({ stage: "recovery_prepared_unbound", clockId: state.clockId, customerId: state.customerId,
+    subscriptionId: state.subscriptionId, periodStart: state.periodStart, periodEnd: state.periodEnd,
+    providerCustomerBound: false });
+}
+
+async function missRecovery() {
+  let state = await requiredRecoveryState();
+  const target = Math.floor(new Date(state.periodEnd!).getTime() / 1_000) + 3 * 60 * 60;
+  await advanceClock(state.clockId!, target);
+  const subscription = await stripe.subscriptions.retrieve(state.subscriptionId!);
+  const recoveryPeriod = subscriptionPeriod(subscription);
+  await database.tenantTransaction(tenantId!, async (client) => {
+    await client.query(
+      `INSERT INTO ${config.schema}.billing_provider_customers
+       (customer_id,provider_key,provider_environment,provider_account_key,external_customer_ref,observed_at)
+       VALUES ($1,$2,'sandbox',$3,$4,now()) ON CONFLICT DO NOTHING`,
+      [tenantId, PROVIDER_KEY, config.billing.providerAccountKey, state.customerId]);
+    await client.query(
+      `INSERT INTO ${config.schema}.billing_subscription_references
+       (customer_id,provider_key,provider_environment,provider_account_key,external_subscription_ref,status,
+        current_period_start,current_period_end,observed_at)
+       VALUES ($1,$2,'sandbox',$3,$4,'active',$5,$6,$6)
+       ON CONFLICT (provider_key,provider_environment,provider_account_key,external_subscription_ref) DO UPDATE SET
+         customer_id=EXCLUDED.customer_id,status=EXCLUDED.status,current_period_start=EXCLUDED.current_period_start,
+         current_period_end=EXCLUDED.current_period_end,observed_at=EXCLUDED.observed_at`,
+      [tenantId, PROVIDER_KEY, config.billing.providerAccountKey, state.subscriptionId,
+        state.periodStart, state.periodEnd]);
+  });
+  const observed = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
+  const finalised = await ledgers.finaliseSandboxTestClock(
+    tenantId!, PROVIDER_KEY, config.billing.providerAccountKey, new Date(target * 1_000).toISOString());
+  const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
+  const start = unixSecond(state.periodStart!); const end = unixSecond(state.periodEnd!);
+  const missed = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
+    && invoice.period_start === start && invoice.period_end === end);
+  if (missed.length !== 1 || !missed[0].id || missed[0].status === "draft") {
+    throw new Error("The proof requires exactly one already-finalized original renewal invoice.");
+  }
+  const enqueued = await invoiceAdjustments.enqueueDraftInvoice(tenantId!, {
+    providerKey: PROVIDER_KEY, providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
+    externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
+    externalInvoiceRef: missed[0].id, periodStart: state.periodStart!, periodEnd: state.periodEnd!,
+  });
+  const dispatched = await invoiceAdjustments.dispatchNext(tenantId!, PROVIDER_KEY, "sandbox",
+    config.billing.providerAccountKey, `c4b-missed-window:${randomUUID()}`);
+  const missedAdjustment = dispatched.status === "missed_window" ? dispatched
+    : await waitForAdjustment(["missed_window", "provider_accepted", "reconciled", "terminal_failed"]);
+  if (missedAdjustment?.status !== "missed_window") {
+    throw new Error("The original adjustment did not prove a missed draft window.");
+  }
+  state = await saveState({ ...state, recoveryPeriodStart: recoveryPeriod.start,
+    recoveryPeriodEnd: recoveryPeriod.end, missedInvoiceId: missed[0].id, stage: "recovery_window_missed" });
+  print({ stage: "recovery_window_missed", observed, finalised, enqueued, dispatched, missedAdjustment,
+    missedInvoiceId: state.missedInvoiceId, recoveryPeriodStart: state.recoveryPeriodStart,
+    recoveryPeriodEnd: state.recoveryPeriodEnd });
+}
+
+async function recoverMissedAdjustment() {
+  let state = await requiredRecoveryState();
+  if (!state.recoveryPeriodEnd) throw new Error("Run miss-recovery first.");
+  const target = Math.floor(new Date(state.recoveryPeriodEnd).getTime() / 1_000) + 60;
+  await advanceClock(state.clockId!, target);
+  const recovery = await waitForRecovery(["provider_accepted", "reconciled", "reconciliation_failed",
+    "missed_window", "terminal_failed"]);
+  if (!recovery || !["provider_accepted", "reconciled"].includes(recovery.status)) {
+    throw new Error("The missed adjustment was not authoritatively attached to the next draft renewal invoice.");
+  }
+  state = await saveState({ ...state, recoveryInvoiceId: recovery.target_external_invoice_ref,
+    stage: "recovery_attached" });
+  print({ stage: "recovery_attached", recovery });
+}
+
+async function finalizeRecovery() {
+  const state = await requiredRecoveryState();
+  if (!state.recoveryPeriodEnd || !state.recoveryInvoiceId) throw new Error("Run recover first.");
+  const target = Math.floor(new Date(state.recoveryPeriodEnd).getTime() / 1_000) + 3 * 60 * 60;
+  await advanceClock(state.clockId!, target);
+  let reconciliation: Awaited<ReturnType<BillingInvoiceAdjustmentRecoveryService["reconcileInvoice"]>> | null = null;
+  for (let attempt = 1; attempt <= 24; attempt += 1) {
+    reconciliation = await invoiceAdjustmentRecovery.reconcileInvoice(tenantId!, PROVIDER_KEY, "sandbox",
+      config.billing.providerAccountKey, state.recoveryInvoiceId);
+    if (reconciliation.status === "reconciled" || reconciliation.status === "mismatch") break;
+    await delay(5_000);
+  }
+  await saveState({ ...state, stage: reconciliation?.status === "reconciled" ? "recovery_complete" : "recovery_pending" });
+  print({ stage: "recovery_finalized", expected: { originalPeriodStart: state.periodStart,
+    originalPeriodEnd: state.periodEnd, quantity: 2, amountMinor: 20, oneTimeOveragePrice: overagePrice },
+    reconciliation });
+  if (reconciliation?.status !== "reconciled") process.exitCode = 2;
+}
 
 async function assertFixtureAuthority() {
   const row = await database.tenantReadTransaction(tenantId!, async (client) => client.query<{
@@ -286,8 +438,22 @@ async function printStatus() {
        ON e.billing_invoice_adjustment_outbox_id=o.billing_invoice_adjustment_outbox_id
      WHERE o.customer_id=$1 ORDER BY o.created_at`, [tenantId],
   ));
+  const recoveries = await database.tenantReadTransaction(tenantId!, async (client) => client.query(
+    `SELECT recovery.status,recovery.target_external_invoice_ref,recovery.target_period_start,
+            recovery.target_period_end,recovery.provider_invoice_item_ref,recovery.provider_accepted_at,
+            recovery.reconciled_at,source.period_start AS original_period_start,
+            source.period_end AS original_period_end,source.quantity,source.unit_price_minor,source.currency,
+            evidence.provider_invoice_line_ref,evidence.amount_minor,evidence.invoice_status,evidence.observed_at
+     FROM ${config.schema}.billing_invoice_adjustment_recovery_attempts recovery
+     JOIN ${config.schema}.billing_invoice_adjustment_outbox source
+       ON source.billing_invoice_adjustment_outbox_id=recovery.source_billing_invoice_adjustment_outbox_id
+      AND source.customer_id=recovery.customer_id
+     LEFT JOIN ${config.schema}.billing_invoice_adjustment_recovery_reconciliations evidence
+       ON evidence.billing_invoice_adjustment_recovery_attempt_id=recovery.billing_invoice_adjustment_recovery_attempt_id
+     WHERE recovery.customer_id=$1 ORDER BY recovery.created_at`, [tenantId],
+  ));
   print({ stage: state.stage ?? "not_started", state, meterEvidence: evidence.rows,
-    invoiceAdjustmentEvidence: adjustments.rows });
+    invoiceAdjustmentEvidence: adjustments.rows, invoiceAdjustmentRecoveryEvidence: recoveries.rows });
 }
 
 async function waitForAdjustment(statuses: string[]) {
@@ -305,12 +471,46 @@ async function waitForAdjustment(statuses: string[]) {
   return null;
 }
 
+async function waitForRecovery(statuses: string[]) {
+  for (let attempt = 1; attempt <= 24; attempt += 1) {
+    const result = await database.tenantReadTransaction(tenantId!, async (client) => client.query<{
+      status: string; target_external_invoice_ref: string; provider_invoice_item_ref: string | null;
+      original_period_start: Date | string; original_period_end: Date | string;
+      target_period_start: Date | string; target_period_end: Date | string;
+    }>(
+      `SELECT recovery.status,recovery.target_external_invoice_ref,recovery.provider_invoice_item_ref,
+              source.period_start AS original_period_start,source.period_end AS original_period_end,
+              recovery.target_period_start,recovery.target_period_end
+       FROM ${config.schema}.billing_invoice_adjustment_recovery_attempts recovery
+       JOIN ${config.schema}.billing_invoice_adjustment_outbox source
+         ON source.billing_invoice_adjustment_outbox_id=recovery.source_billing_invoice_adjustment_outbox_id
+        AND source.customer_id=recovery.customer_id
+       WHERE recovery.customer_id=$1 ORDER BY recovery.created_at DESC LIMIT 1`, [tenantId],
+    ));
+    const row = result.rows[0];
+    if (row && statuses.includes(row.status)) return row;
+    await delay(5_000);
+  }
+  return null;
+}
+
 async function requiredState() {
   const state = await readState();
   if (!state.clockId || !state.customerId || !state.subscriptionId || !state.periodStart || !state.periodEnd) {
     throw new Error("Run the prepare stage first.");
   }
   if (state.proofVariant !== PROOF_VARIANT) throw new Error("Use a fresh isolated C4B3 tenant; legacy evidence cannot be reused.");
+  return state;
+}
+
+async function requiredRecoveryState() {
+  const state = await readState();
+  if (!state.clockId || !state.customerId || !state.subscriptionId || !state.periodStart || !state.periodEnd) {
+    throw new Error("Run the prepare-recovery stage first.");
+  }
+  if (state.proofVariant !== RECOVERY_PROOF_VARIANT) {
+    throw new Error("Use a fresh isolated missed-window recovery tenant; other evidence cannot be reused.");
+  }
   return state;
 }
 

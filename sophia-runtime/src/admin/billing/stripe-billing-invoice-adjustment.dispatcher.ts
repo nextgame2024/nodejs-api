@@ -53,8 +53,13 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
     const unitAmount = safePositiveInteger(input.unitPriceMinor);
     const periodStart = unixSecond(input.periodStart);
     const exclusivePeriodEnd = unixSecond(input.periodEnd);
+    const targetPeriodStart = unixSecond(input.targetPeriodStart);
+    const targetPeriodEnd = unixSecond(input.targetPeriodEnd);
     if (quantity === null || unitAmount === null || periodStart === null || exclusivePeriodEnd === null
-      || exclusivePeriodEnd <= periodStart || input.currency !== input.currency.toUpperCase()) {
+      || targetPeriodStart === null || targetPeriodEnd === null || targetPeriodEnd <= targetPeriodStart
+      || exclusivePeriodEnd <= periodStart
+      || (input.deliveryId !== input.adjustmentId && targetPeriodStart < exclusivePeriodEnd)
+      || input.currency !== input.currency.toUpperCase()) {
       return failure(false, "invoice_adjustment_invalid", "The immutable invoice adjustment is invalid.");
     }
     try {
@@ -70,8 +75,8 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
           "The approved one-time overage Price no longer matches the immutable rate.");
       }
       if (invoice.livemode || invoice.status !== "draft" || reference(invoice.customer) !== input.externalCustomerRef
-        || subscriptionRef !== input.externalSubscriptionRef || invoice.period_start !== periodStart
-        || invoice.period_end !== exclusivePeriodEnd) {
+        || subscriptionRef !== input.externalSubscriptionRef || invoice.period_start !== targetPeriodStart
+        || invoice.period_end !== targetPeriodEnd) {
         return failure(false, "invoice_adjustment_window_missed",
           "The target renewal invoice is not the exact open draft for this immutable provider period.");
       }
@@ -86,10 +91,11 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
         metadata: {
           sophiaNamespace: "subscription-v1",
           sophiaBillingAdjustmentId: input.adjustmentId,
+          sophiaBillingDeliveryId: input.deliveryId,
           sophiaUsageLedgerId: input.ledgerId,
           sophiaProviderAccountKey: input.providerAccountKey,
         },
-      }, { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:invoice-adjustment:${input.adjustmentId}` });
+      }, { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:invoice-adjustment:${input.deliveryId}` });
       return { outcome: "accepted", providerInvoiceItemRef: item.id, acceptedAt: new Date().toISOString() };
     } catch (error) {
       if (isStripeResponseError(error)) {
@@ -113,7 +119,12 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
     const unitAmount = safePositiveInteger(input.unitPriceMinor);
     const periodStart = unixSecond(input.periodStart);
     const exclusivePeriodEnd = unixSecond(input.periodEnd);
-    if (quantity === null || unitAmount === null || periodStart === null || exclusivePeriodEnd === null) {
+    const targetPeriodStart = unixSecond(input.targetPeriodStart);
+    const targetPeriodEnd = unixSecond(input.targetPeriodEnd);
+    if (quantity === null || unitAmount === null || periodStart === null || exclusivePeriodEnd === null
+      || targetPeriodStart === null || targetPeriodEnd === null || exclusivePeriodEnd <= periodStart
+      || targetPeriodEnd <= targetPeriodStart
+      || (input.deliveryId !== input.adjustmentId && targetPeriodStart < exclusivePeriodEnd)) {
       return { outcome: "mismatch", detail: "The immutable reconciliation payload is invalid." };
     }
     try {
@@ -127,10 +138,13 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
       if (invoice.livemode || !invoice.status_transitions?.finalized_at || lines.has_more
         || reference(invoice.customer) !== input.externalCustomerRef
         || invoiceSubscriptionRef(invoice) !== input.externalSubscriptionRef
-        || invoice.period_start !== periodStart || invoice.period_end !== exclusivePeriodEnd) {
+        || invoice.period_start !== targetPeriodStart || invoice.period_end !== targetPeriodEnd) {
         return { outcome: "mismatch", detail: "The finalized invoice identity, period, or complete line set does not match." };
       }
-      const candidates = lines.data.filter((line) => line.metadata.sophiaBillingAdjustmentId === input.adjustmentId);
+      const candidates = lines.data.filter((line) => line.metadata.sophiaBillingAdjustmentId === input.adjustmentId
+        && (input.deliveryId === input.adjustmentId
+          ? !line.metadata.sophiaBillingDeliveryId || line.metadata.sophiaBillingDeliveryId === input.deliveryId
+          : line.metadata.sophiaBillingDeliveryId === input.deliveryId));
       if (candidates.length !== 1) {
         return { outcome: "mismatch", detail: "The finalized invoice does not contain exactly one Sophia adjustment line." };
       }
