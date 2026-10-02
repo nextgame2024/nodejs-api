@@ -7,7 +7,7 @@ import { DatabaseService } from "../../database/database.service.js";
 
 const activeRateSchema = z.object({
   dimension: z.literal("active-seconds"),
-  includedQuantity: z.literal("120000"),
+  includedQuantity: z.string().regex(/^\d+$/),
   unitQuantity: z.literal("60"),
   unitPriceMinor: z.string().regex(/^\d+$/),
 }).strict();
@@ -149,7 +149,7 @@ export class BillingPeriodLedgerService {
     const parsedRate = dimensions.length === 1 && activeRates.length === 1
       ? activeRateSchema.safeParse(activeRates[0]) : null;
     if (!parsedRate?.success) {
-      return "The plan does not contain exactly one approved 120000-second/60-second active-usage rate.";
+      return "The plan does not contain exactly one approved included-seconds/60-second active-usage rate.";
     }
     const open = await client.query(
       `SELECT 1 FROM ${schema}.session_activity_intervals
@@ -167,7 +167,7 @@ export class BillingPeriodLedgerService {
       [tenantId, periodStart, periodEnd],
     );
     const activeMicroseconds = BigInt(measured.rows[0]?.active_microseconds ?? "0");
-    const includedSeconds = 120000n;
+    const includedSeconds = BigInt(parsedRate.data.includedQuantity);
     const overageMicroseconds = maxBigInt(0n, activeMicroseconds - includedSeconds * 1_000_000n);
     const billableMinutes = ceilDiv(overageMicroseconds, 60_000_000n);
     if (billableMinutes > 0n && (!period.billing_provider_customer_id || !period.external_customer_ref)) {

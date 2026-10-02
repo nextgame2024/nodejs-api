@@ -3,7 +3,7 @@
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C3B0D4-PREPARED",
-  "updatedAt": "2026-10-03T07:19:00+10:00",
+  "updatedAt": "2026-10-03T08:22:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2263,6 +2263,13 @@
       "node": "22.23.3",
       "result": "migrations-applied-compiled-publisher-ready",
       "detail": "The authorised operator applied migrations 052, 053 and 054 successfully. The first catalog command stopped before database connection because the production image omits the tsx development executable; its supplied value was also only a plan object rather than the required legal catalog envelope, so no plan row was created. Plan 2.1.75 replaces that fragile production path with a compiled, explicit-confirmation Founding-only publisher that resolves exactly one already-approved active seller through the configured sandbox provider account and publishes the exact immutable definition without re-entering legal identity or ABN. Runtime passed both typechecks, build and 129 suites/469 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. Founding publication and all Stripe resources remain pending."
+    },
+    {
+      "command": "publish Founding plan; provision Founding sandbox resources; deploy merged mappings; create isolated tenant; billing:founding-sandbox prepare/close; read-only adjustment inspection; npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:generate; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate",
+      "repository": "deployed backend + Neon + Stripe sandbox + backend/sophia-runtime",
+      "node": "22.23.3",
+      "result": "founding-prepared-ledger-constant-corrected",
+      "detail": "Founding plan cbfebc94-7bb8-43f9-b114-496eebf332fa was published with 60000 included seconds and twelve months. Stripe sandbox Product prod_VMxvfLaV71vtXh, five exact Prices and committed portal bpc_1UMDzsGcz4GrZOEB5PhFCq5m were provisioned and their merged mappings deployed. Tenant e9c17e94-35b0-4a2c-a114-932e0c59f9b2 proved the exact paid AUD 1140 initial invoice and pre-boundary restricted portal. Its close attempt correctly created no ledger or invoice adjustment because BillingPeriodLedgerService still required the former 120000-second constant; read-only Neon inspection confirmed zero adjustment rows, so no duplicate item or charge risk exists. Plan 2.1.76 makes ledger validation/arithmetic plan-aware, adds explicit prerequisite failure evidence, and reserves fresh tenant faa7c7c6-9193-4fb4-825c-8c52a74a2986 for the corrected proof. Runtime passed both typechecks, build and 129 suites/470 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. D4 remains in progress."
     }
   ],
   "blockers": [

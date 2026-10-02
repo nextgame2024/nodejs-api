@@ -136,6 +136,9 @@ async function closeFirstPeriod() {
   const observed = await lifecycle.reconcile(tenantId, principal(), { requestId: randomUUID() });
   const finalised = await ledgers.finaliseSandboxTestClock(tenantId, PROVIDER_KEY,
     config.billing.providerAccountKey, new Date(cutoff * 1_000).toISOString());
+  if (finalised.finalised !== 1 || finalised.blocked.length) {
+    throw new Error(`The Founding first-period ledger did not finalise: ${JSON.stringify(finalised)}`);
+  }
   const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
   const renewal = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
     && invoice.period_start === unixSecond(state.periodStart!) && invoice.period_end === unixSecond(state.periodEnd!));
@@ -148,8 +151,14 @@ async function closeFirstPeriod() {
     providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
     externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
     externalInvoiceRef: renewalInvoiceId, periodStart: state.periodStart!, periodEnd: state.periodEnd! });
+  if (!new Set(["enqueued", "existing"]).has(enqueued.status)) {
+    throw new Error(`The Founding overage adjustment was not enqueued: ${JSON.stringify(enqueued)}`);
+  }
   const dispatched = await adjustments.dispatchNext(tenantId, PROVIDER_KEY, "sandbox",
     config.billing.providerAccountKey, `founding-overage:${randomUUID()}`);
+  if (!new Set(["provider_accepted", "idle"]).has(dispatched.status)) {
+    throw new Error(`The Founding overage adjustment was not accepted: ${JSON.stringify(dispatched)}`);
+  }
   const closeTarget = Math.floor(new Date(state.periodEnd!).getTime() / 1_000) + 3 * 60 * 60;
   await advanceClock(state.clockId!, closeTarget);
   let reconciliation: Awaited<ReturnType<BillingInvoiceAdjustmentOutboxService["reconcileInvoice"]>> | null = null;

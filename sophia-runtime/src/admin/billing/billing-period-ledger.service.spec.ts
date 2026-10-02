@@ -60,6 +60,37 @@ describe("BillingPeriodLedgerService", () => {
     expect(outbox?.[1]?.[10]).toBe("2");
   });
 
+  it("snapshots and applies the immutable plan-specific included allowance", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.billing_subscription_periods")) return { rows: [{
+        billing_subscription_period_id: periodId,
+        provider_key: "stripe-sophia", provider_environment: "sandbox", provider_account_key: "legacy-primary",
+        billing_provider_customer_id: "77777777-7777-4777-8777-777777777777", external_customer_ref: "cus_sandbox",
+        period_start: "2026-08-15T00:00:00.000Z", period_end: "2026-09-15T00:00:00.000Z",
+      }], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.tenant_commercial_assignments")) return { rows: [{
+        ...baseCommercial().rows[0], rate_card: { dimensions: [{ dimension: "active-seconds",
+          includedQuantity: "60000", unitQuantity: "60", unitPriceMinor: "10" }] },
+      }], rowCount: 1 };
+      if (sql.includes("status='open'")) return { rows: [], rowCount: 0 };
+      if (sql.includes("AS active_microseconds")) return { rows: [{ active_microseconds: "60061000000" }], rowCount: 1 };
+      if (sql.includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers")) {
+        return { rows: [{ billing_usage_period_ledger_id: "founding-ledger" }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO sophia_runtime.billing_meter_event_outbox")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.billing_meter_event_outbox")) {
+        const insert = query.mock.calls.find(([text]) => String(text).includes("INSERT INTO sophia_runtime.billing_meter_event_outbox"));
+        return { rows: [{ payload_digest: insert?.[1]?.[11] }], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "sandbox", "legacy-primary");
+    expect(result).toEqual({ observedPeriods: 1, finalised: 1, existing: 0, blocked: [] });
+    const insert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO sophia_runtime.billing_usage_period_ledgers"));
+    expect(insert?.[1]?.slice(11, 16)).toEqual(["60061000000", "60000", "61000000", "2", "10"]);
+  });
+
   it("fails closed while an interval overlapping the ended period remains open", async () => {
     const query = baseQuery({ open: true });
     const result = await service(query).finaliseEligible(tenantId, "stripe-sophia", "live", "legacy-primary");
