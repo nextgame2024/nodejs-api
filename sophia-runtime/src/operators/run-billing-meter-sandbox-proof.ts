@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import Stripe from "stripe";
 import { AppModule } from "../app.module.js";
 import { BillingLifecycleService } from "../admin/billing/billing-lifecycle.service.js";
+import { BillingInvoiceAdjustmentOutboxService } from "../admin/billing/billing-invoice-adjustment-outbox.service.js";
 import { BillingMeterOutboxService } from "../admin/billing/billing-meter-outbox.service.js";
 import { BillingPeriodLedgerService } from "../admin/billing/billing-period-ledger.service.js";
 import type { AdminPrincipal } from "../admin/contracts/admin-contracts.js";
@@ -13,6 +14,7 @@ import { DatabaseService } from "../database/database.service.js";
 const VOICE_PLAN_ID = "112e2d08-9e8b-4748-a89a-954a28ad43c9";
 const PROVIDER_KEY = "stripe-sophia";
 const PROOF_CONFIRMATION = "I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS";
+const PROOF_VARIANT = "draft-invoice-adjustment-v1";
 const stage = process.argv[2];
 const tenantId = process.env.SOPHIA_C4B_TENANT_ID;
 
@@ -28,8 +30,9 @@ if (config.billing.provider !== "stripe_sandbox" || !config.billing.stripeSecret
 }
 const basePrice = config.billing.stripePriceMappings[VOICE_PLAN_ID];
 const meteredPrice = config.billing.stripeMeteredPriceMappings[VOICE_PLAN_ID];
-if (!basePrice || !meteredPrice || !config.billing.stripeMeterBindings["active-overage-minutes"]) {
-  throw new Error("The approved Sophia Voice base Price, metered Price and Meter binding must all be configured.");
+const overagePrice = config.billing.stripeOveragePriceMappings[VOICE_PLAN_ID];
+if (!basePrice || !meteredPrice || !overagePrice || !config.billing.stripeMeterBindings["active-overage-minutes"]) {
+  throw new Error("The approved Sophia Voice base, Meter-evidence, one-time overage Price and Meter binding must all be configured.");
 }
 
 const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
@@ -37,6 +40,7 @@ const database = app.get(DatabaseService);
 const lifecycle = app.get(BillingLifecycleService);
 const ledgers = app.get(BillingPeriodLedgerService);
 const outbox = app.get(BillingMeterOutboxService);
+const invoiceAdjustments = app.get(BillingInvoiceAdjustmentOutboxService);
 const stripe = new Stripe(config.billing.stripeSecretKey, { apiVersion: "2025-08-27.basil", maxNetworkRetries: 2 });
 
 try {
@@ -51,6 +55,7 @@ try {
 }
 
 type ProofState = {
+  proofVariant?: string;
   clockId?: string;
   customerId?: string;
   subscriptionId?: string;
@@ -78,11 +83,14 @@ async function assertFixtureAuthority() {
 
 async function prepare() {
   let state = await readState();
+  if (Object.keys(state).length > 0 && state.proofVariant !== PROOF_VARIANT) {
+    throw new Error("This tenant contains legacy C4B evidence. Use a fresh isolated synthetic tenant for C4B3.");
+  }
   if (!state.clockId) {
     const clock = await stripe.testHelpers.testClocks.create({
       frozen_time: Math.floor(Date.now() / 1_000), name: `Sophia C4B ${tenantId}`,
     });
-    state = await saveState({ ...state, clockId: clock.id, stage: "clock_created" });
+    state = await saveState({ ...state, proofVariant: PROOF_VARIANT, clockId: clock.id, stage: "clock_created" });
   }
   if (!state.customerId) {
     const customer = await stripe.customers.create({
@@ -119,7 +127,7 @@ async function prepare() {
     await stripe.customers.update(state.customerId!, { invoice_settings: { default_payment_method: paymentMethodId } });
     const subscription = await stripe.subscriptions.create({
       customer: state.customerId!,
-      items: [{ price: basePrice, quantity: 1 }, { price: meteredPrice }],
+      items: [{ price: basePrice, quantity: 1 }],
       collection_method: "charge_automatically",
       payment_behavior: "error_if_incomplete",
       metadata: providerMetadata(),
@@ -159,31 +167,39 @@ async function closePeriod() {
   const state = await requiredState();
   const target = Math.floor(new Date(state.periodEnd!).getTime() / 1_000) + 60;
   await advanceClock(state.clockId!, target);
-  const observed = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
   const finalised = await ledgers.finaliseSandboxTestClock(
     tenantId!, PROVIDER_KEY, config.billing.providerAccountKey, new Date(target * 1_000).toISOString(),
   );
+  const observed = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
   const dispatched = await outbox.dispatchNext(
     tenantId!, PROVIDER_KEY, "sandbox", config.billing.providerAccountKey, `c4b-proof:${randomUUID()}`,
   );
   const reconciliation = await outbox.reconcileNext(tenantId!, PROVIDER_KEY, "sandbox", config.billing.providerAccountKey);
-  await saveState({ ...state, stage: "meter_dispatched" });
-  print({ stage: "meter_dispatched", observed, finalised, dispatched, reconciliation });
+  const adjustment = await waitForAdjustment(["provider_accepted", "reconciled", "reconciliation_failed", "missed_window", "terminal_failed"]);
+  await saveState({ ...state, stage: adjustment?.status === "provider_accepted" || adjustment?.status === "reconciled"
+    ? "adjustment_attached" : "adjustment_incomplete" });
+  print({ stage: "adjustment_attached", observed, finalised, meterEvidence: { dispatched, reconciliation }, adjustment });
+  if (!adjustment || !["provider_accepted", "reconciled"].includes(adjustment.status)) process.exitCode = 2;
 }
 
 async function finalizeInvoice() {
   const state = await requiredState();
   const target = Math.floor(new Date(state.periodEnd!).getTime() / 1_000) + 3 * 60 * 60;
   await advanceClock(state.clockId!, target);
-  let result: Awaited<ReturnType<BillingLifecycleService["reconcile"]>> | null = null;
+  const adjustment = await waitForAdjustment(["provider_accepted", "reconciled", "reconciliation_failed"]);
+  if (!adjustment) throw new Error("No C4B3 invoice adjustment exists for the fresh fixture.");
+  let invoiceReconciliation: Awaited<ReturnType<BillingInvoiceAdjustmentOutboxService["reconcileInvoice"]>> | null = null;
   for (let attempt = 1; attempt <= 24; attempt += 1) {
-    result = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
-    if (result.meterEventReconciliation.status === "reconciled" || result.meterEventReconciliation.status === "mismatch") break;
+    invoiceReconciliation = await invoiceAdjustments.reconcileInvoice(tenantId!, PROVIDER_KEY, "sandbox",
+      config.billing.providerAccountKey, adjustment.external_invoice_ref);
+    if (invoiceReconciliation.status === "reconciled" || invoiceReconciliation.status === "mismatch") break;
     await delay(5_000);
   }
-  await saveState({ ...state, stage: result?.meterEventReconciliation.status === "reconciled" ? "complete" : "finalize_pending" });
-  print({ stage: "invoice_finalized", result });
-  if (result?.meterEventReconciliation.status !== "reconciled") process.exitCode = 2;
+  const meterEvidence = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
+  await saveState({ ...state, stage: invoiceReconciliation?.status === "reconciled" ? "complete" : "finalize_pending" });
+  print({ stage: "invoice_finalized", expected: { oneTimeOveragePrice: overagePrice },
+    invoiceReconciliation, meterEvidence });
+  if (invoiceReconciliation?.status !== "reconciled") process.exitCode = 2;
 }
 
 async function diagnoseInvoice() {
@@ -255,13 +271,38 @@ async function printStatus() {
   const state = await readState();
   const evidence = await database.tenantReadTransaction(tenantId!, async (client) => client.query(
     `SELECT o.status,o.quantity,o.provider_event_ref,o.provider_accepted_at,o.reconciled_at,
-            e.meter_ref,e.meter_summary_ref,e.invoice_ref,e.invoice_line_ref,e.observed_at
+            e.meter_ref,e.meter_summary_ref,e.external_invoice_ref,e.external_invoice_line_ref,e.observed_at
      FROM ${config.schema}.billing_meter_event_outbox o
      LEFT JOIN ${config.schema}.billing_meter_event_reconciliations e
        ON e.billing_meter_event_outbox_id=o.billing_meter_event_outbox_id
      WHERE o.customer_id=$1 ORDER BY o.created_at`, [tenantId],
   ));
-  print({ stage: state.stage ?? "not_started", state, evidence: evidence.rows });
+  const adjustments = await database.tenantReadTransaction(tenantId!, async (client) => client.query(
+    `SELECT o.status,o.external_invoice_ref,o.one_time_price_ref,o.quantity,o.unit_price_minor,o.currency,
+            o.provider_invoice_item_ref,o.provider_accepted_at,o.reconciled_at,
+            e.provider_invoice_line_ref,e.amount_minor,e.invoice_status,e.observed_at
+     FROM ${config.schema}.billing_invoice_adjustment_outbox o
+     LEFT JOIN ${config.schema}.billing_invoice_adjustment_reconciliations e
+       ON e.billing_invoice_adjustment_outbox_id=o.billing_invoice_adjustment_outbox_id
+     WHERE o.customer_id=$1 ORDER BY o.created_at`, [tenantId],
+  ));
+  print({ stage: state.stage ?? "not_started", state, meterEvidence: evidence.rows,
+    invoiceAdjustmentEvidence: adjustments.rows });
+}
+
+async function waitForAdjustment(statuses: string[]) {
+  for (let attempt = 1; attempt <= 24; attempt += 1) {
+    const result = await database.tenantReadTransaction(tenantId!, async (client) => client.query<{
+      status: string; external_invoice_ref: string;
+    }>(
+      `SELECT status,external_invoice_ref FROM ${config.schema}.billing_invoice_adjustment_outbox
+       WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 1`, [tenantId],
+    ));
+    const row = result.rows[0];
+    if (row && statuses.includes(row.status)) return row;
+    await delay(5_000);
+  }
+  return null;
 }
 
 async function requiredState() {
@@ -269,6 +310,7 @@ async function requiredState() {
   if (!state.clockId || !state.customerId || !state.subscriptionId || !state.periodStart || !state.periodEnd) {
     throw new Error("Run the prepare stage first.");
   }
+  if (state.proofVariant !== PROOF_VARIANT) throw new Error("Use a fresh isolated C4B3 tenant; legacy evidence cannot be reused.");
   return state;
 }
 

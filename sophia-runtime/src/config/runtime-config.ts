@@ -121,6 +121,7 @@ export type RuntimeConfig = {
     portalReturnUrl?: string;
     stripePriceMappings: Record<string, string>;
     stripeMeteredPriceMappings: Record<string, string>;
+    stripeOveragePriceMappings: Record<string, string>;
     stripeMeterBindings: Record<string, string>;
   };
 };
@@ -349,8 +350,18 @@ function billingConfig(): RuntimeConfig["billing"] {
     checkoutSuccessUrl: hostedUrl(process.env.SOPHIA_BILLING_CHECKOUT_SUCCESS_URL),
     checkoutCancelUrl: hostedUrl(process.env.SOPHIA_BILLING_CHECKOUT_CANCEL_URL),
     portalReturnUrl: hostedUrl(process.env.SOPHIA_BILLING_PORTAL_RETURN_URL),
-    stripePriceMappings: stripePriceMappings(process.env.SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS),
-    stripeMeteredPriceMappings: stripePriceMappings(process.env.SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS),
+    stripePriceMappings: stripePriceMappings(
+      process.env.SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS,
+      "SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS",
+    ),
+    stripeMeteredPriceMappings: stripePriceMappings(
+      process.env.SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS,
+      "SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS",
+    ),
+    stripeOveragePriceMappings: stripePriceMappings(
+      process.env.SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS,
+      "SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS",
+    ),
     stripeMeterBindings: stripeMeterBindings(process.env.SOPHIA_BILLING_STRIPE_METER_BINDINGS),
   };
 }
@@ -364,12 +375,12 @@ function hostedUrl(value: string | undefined): string | undefined {
   return parsed.toString();
 }
 
-function stripePriceMappings(value: string | undefined): Record<string, string> {
+function stripePriceMappings(value: string | undefined, variableName: string): Record<string, string> {
   if (!value?.trim()) return {};
   let parsed: unknown;
-  try { parsed = JSON.parse(value); } catch { throw new Error("SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS must be valid JSON."); }
+  try { parsed = JSON.parse(value); } catch { throw new Error(`${variableName} must be valid JSON.`); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS must be an object keyed by commercial plan version UUID.");
+    throw new Error(`${variableName} must be an object keyed by commercial plan version UUID.`);
   }
   const entries = Object.entries(parsed as Record<string, unknown>);
   if (entries.some(([id, price]) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)

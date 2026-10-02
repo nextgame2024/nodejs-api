@@ -16,6 +16,7 @@ import { hostedActionSchema, hostedCheckoutSchema, liveCustomerBindingSchema } f
 import { STRIPE_BILLING_OBSERVATION_EVENT_TYPES, STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 import { BillingPeriodLedgerService } from "./billing-period-ledger.service.js";
 import { BillingMeterOutboxService } from "./billing-meter-outbox.service.js";
+import { BillingInvoiceAdjustmentOutboxService } from "./billing-invoice-adjustment-outbox.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 const checkoutMeteredRateSchema = z.object({
@@ -33,6 +34,8 @@ export class BillingLifecycleService {
     @Inject(AdminAuditService) private readonly audit: AdminAuditService,
     @Inject(BillingPeriodLedgerService) private readonly periodLedgers: BillingPeriodLedgerService,
     @Inject(BillingMeterOutboxService) private readonly meterOutbox: BillingMeterOutboxService,
+    @Inject(BillingInvoiceAdjustmentOutboxService)
+    private readonly invoiceAdjustments: BillingInvoiceAdjustmentOutboxService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -252,7 +255,50 @@ export class BillingLifecycleService {
           supported ? "provider_observation_applied" : "unsupported_event_type", event.eventId]);
       return { received: true, duplicate: false };
     });
-    return response;
+    const reconciliationResult = event.invoice
+      && (event.eventType === "invoice.finalized" || event.eventType === "invoice.paid")
+      ? await this.invoiceAdjustments.reconcileInvoice(tenantId, event.providerKey, event.environment,
+        event.providerAccountKey, event.invoice.externalRef)
+      : null;
+    const invoiceAdjustmentReconciliation = reconciliationResult?.status === "idle" ? null : reconciliationResult;
+    if (!event.draftRenewalInvoice || !event.customerRef) {
+      return invoiceAdjustmentReconciliation ? { ...response, invoiceAdjustmentReconciliation } : response;
+    }
+    const periodLedger = event.environment === "sandbox"
+      ? await this.periodLedgers.finaliseSandboxTestClock(
+        tenantId, event.providerKey, event.providerAccountKey, event.occurredAt)
+      : await this.periodLedgers.finaliseEligible(
+        tenantId, event.providerKey, event.environment, event.providerAccountKey);
+    const enqueued = await this.invoiceAdjustments.enqueueDraftInvoice(tenantId, {
+      providerKey: event.providerKey,
+      providerEnvironment: event.environment,
+      providerAccountKey: event.providerAccountKey,
+      externalCustomerRef: event.customerRef,
+      externalSubscriptionRef: event.draftRenewalInvoice.externalSubscriptionRef,
+      externalInvoiceRef: event.draftRenewalInvoice.externalInvoiceRef,
+      periodStart: event.draftRenewalInvoice.periodStart,
+      periodEnd: event.draftRenewalInvoice.periodEnd,
+    });
+    if (event.environment === "sandbox" && enqueued.status === "not_eligible") {
+      throw new ServiceUnavailableException(
+        "The exact immutable overage ledger is not ready for this draft renewal invoice; Stripe must retry the signed event.",
+      );
+    }
+    if (enqueued.status === "not_required") {
+      return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued,
+        invoiceAdjustment: { status: "not_required" as const }, invoiceAdjustmentReconciliation };
+    }
+    const adjustment = event.environment === "sandbox"
+      ? await this.invoiceAdjustments.dispatchNext(tenantId, event.providerKey, event.environment,
+        event.providerAccountKey, `invoice-created:${event.eventId}`)
+      : { status: "disabled" as const, detail: "Live overage invoice adjustment is not authorized." };
+    if (event.environment === "sandbox" && adjustment.status !== "provider_accepted") {
+      throw new ServiceUnavailableException(
+        "The sandbox overage adjustment is not authoritatively attached to the draft invoice; Stripe must retry the signed event.",
+      );
+    }
+    return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued, invoiceAdjustment: adjustment,
+      invoiceAdjustmentReconciliation };
   }
 
   private async billingContext(tenantId: string, environment: "sandbox" | "live", accountKey: string) {

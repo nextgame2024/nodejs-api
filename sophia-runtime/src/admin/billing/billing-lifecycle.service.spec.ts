@@ -53,7 +53,7 @@ describe("BillingLifecycleService", () => {
     const audit = { record: jest.fn() };
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
     const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never,
-      ledger() as never, meterOutbox() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
     const customerRef = "cus_liveSophia123";
     await expect(service.bindCustomer(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333", customerRef,
@@ -138,7 +138,7 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: true });
     expect(clientQuery.mock.calls.some((call) => String(call[0]).includes("billing_invoice_references"))).toBe(false);
@@ -156,13 +156,80 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
     expect(invoiceSql).toContain("WHERE EXCLUDED.observed_at>=billing_invoice_references.observed_at");
     expect(invoiceSql).toContain("provider_environment");
     expect(invoiceSql).toContain("ON CONFLICT (provider_key,provider_environment,provider_account_key,external_invoice_ref)");
+  });
+
+  it("re-enters duplicate signed draft-invoice delivery and acknowledges only after provider acceptance", async () => {
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
+    const clientQuery = jest.fn(async (sql: string) => {
+      if (sql.includes("billing_webhook_events") && sql.includes("INSERT")) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 0 };
+    });
+    const database = {
+      query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
+    };
+    const periods = ledger();
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "existing" as const, adjustmentId: "adjustment-1" }));
+    adjustments.dispatchNext = jest.fn(async () => ({ status: "provider_accepted" as const,
+      adjustmentId: "adjustment-1", providerInvoiceItemRef: "ii_1" }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      periods as never, meterOutbox() as never, adjustments as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .resolves.toMatchObject({ received: true, duplicate: true,
+        invoiceAdjustment: { status: "provider_accepted", providerInvoiceItemRef: "ii_1" } });
+    expect(periods.finaliseSandboxTestClock).toHaveBeenCalledWith(tenantId, "stripe-sophia", "legacy-primary",
+      "2026-10-28T08:51:05.000Z");
+    expect(adjustments.enqueueDraftInvoice).toHaveBeenCalledWith(tenantId, expect.objectContaining({
+      externalInvoiceRef: "in_draft_1", externalSubscriptionRef: "sub_1",
+      periodStart: "2026-09-28T08:51:05.000Z", periodEnd: "2026-10-28T08:51:05.000Z",
+    }));
+  });
+
+  it("returns a retryable webhook failure while the exact draft-invoice adjustment is not accepted", async () => {
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
+    const clientQuery = jest.fn(async (sql: string) => sql.includes("billing_webhook_events") && sql.includes("INSERT")
+      ? { rows: [{ billing_webhook_event_id: "event-row" }], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const database = {
+      query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })),
+    };
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "enqueued" as const, adjustmentId: "adjustment-1" }));
+    adjustments.dispatchNext = jest.fn(async () => ({ status: "retry_scheduled" as const,
+      adjustmentId: "adjustment-1", detail: "Stripe unavailable" }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never, adjustments as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .rejects.toThrow("not authoritatively attached");
+  });
+
+  it("acknowledges a draft renewal with an exact zero-overage ledger without dispatch", async () => {
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
+    const clientQuery = jest.fn(async (sql: string) => sql.includes("billing_webhook_events") && sql.includes("INSERT")
+      ? { rows: [{ billing_webhook_event_id: "event-row" }], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const database = { query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })) };
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "not_required" as const,
+      detail: "no overage" }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never, adjustments as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .resolves.toMatchObject({ received: true, invoiceAdjustment: { status: "not_required" } });
+    expect(adjustments.dispatchNext).not.toHaveBeenCalled();
   });
 
   it("never dispatches a live Meter event from the read-only live reconciliation path", async () => {
@@ -182,7 +249,7 @@ describe("BillingLifecycleService", () => {
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
     const outbox = meterOutbox();
     const service = new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-      provider, { record: jest.fn() } as never, ledger() as never, outbox as never);
+      provider, { record: jest.fn() } as never, ledger() as never, outbox as never, invoiceAdjustments() as never);
     await expect(service.reconcile(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333",
     })).resolves.toMatchObject({ meterEventDispatch: { status: "disabled" }, liveEntitlementMutation: false });
@@ -194,14 +261,20 @@ describe("BillingLifecycleService", () => {
 function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) {
   const run = jest.fn(async (_id: string, work: (client: { query: jest.Mock }) => unknown) => work({ query }));
   return new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
-    provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never);
+    provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never, invoiceAdjustments() as never);
 }
 function ledger() {
-  return { finaliseEligible: jest.fn(async () => ({ observedPeriods: 0, finalised: 0, existing: 0, blocked: [] })) };
+  const result = { observedPeriods: 1, finalised: 1, existing: 0, blocked: [] };
+  return { finaliseEligible: jest.fn(async () => result), finaliseSandboxTestClock: jest.fn(async () => result) };
 }
 function meterOutbox() {
   return { dispatchNext: jest.fn(async () => ({ status: "idle" })),
     reconcileNext: jest.fn(async () => ({ status: "idle" })) };
+}
+function invoiceAdjustments() {
+  return { enqueueDraftInvoice: jest.fn(async () => ({ status: "not_eligible" })),
+    dispatchNext: jest.fn(async () => ({ status: "idle" })),
+    reconcileInvoice: jest.fn(async () => ({ status: "idle" })) };
 }
 function providerMock() {
   return {
@@ -217,7 +290,16 @@ function invoiceEvent(): BillingWebhookEvidence {
     environment: "sandbox", eventId: "evt_1", eventType: "invoice.paid",
     occurredAt: "2026-09-26T00:00:00.000Z", payloadDigest: "a".repeat(64), customerRef: "cus_1",
     checkoutRef: null, tenantHint: null, planVersionHint: null, subscription: null,
+    draftRenewalInvoice: null,
     invoice: { externalRef: "in_1", status: "paid", currency: "AUD", amountDueMinor: "100",
       amountPaidMinor: "100", hostedInvoiceUrl: "https://invoice.test/in_1", dueAt: null,
       observedAt: "2026-09-26T00:00:00.000Z" } };
+}
+function draftInvoiceEvent(): BillingWebhookEvidence {
+  return { ...invoiceEvent(), eventId: "evt_draft_1", eventType: "invoice.created",
+    occurredAt: "2026-10-28T08:51:05.000Z",
+    invoice: { externalRef: "in_draft_1", status: "draft", currency: "AUD", amountDueMinor: "75000",
+      amountPaidMinor: "0", hostedInvoiceUrl: null, dueAt: null, observedAt: "2026-10-28T08:51:05.000Z" },
+    draftRenewalInvoice: { externalInvoiceRef: "in_draft_1", externalSubscriptionRef: "sub_1",
+      periodStart: "2026-09-28T08:51:05.000Z", periodEnd: "2026-10-28T08:51:05.000Z" } };
 }

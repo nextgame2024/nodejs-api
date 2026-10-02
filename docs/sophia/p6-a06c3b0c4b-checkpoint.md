@@ -1,8 +1,8 @@
 # P6-A06C3B0C4B implementation checkpoint
 
-Date: 2026-09-28 (Australia/Brisbane)
+Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The real sandbox lifecycle disproved the post-period Meter invoice-line assumption; the corrected draft-renewal invoice-adjustment proof is pending.
+Status: in progress. The real sandbox lifecycle disproved the post-period Meter invoice-line assumption; the corrected draft-renewal invoice-adjustment implementation is complete locally and its fresh deployed sandbox proof is pending.
 
 ## Deployed sandbox preparation
 
@@ -40,6 +40,8 @@ The diagnostic completed the investigation. Stripe reports one exact aligned Met
 
 Plan 2.1.60 therefore invalidates the Meter-backed subscription line as the charging mechanism for Sophia's post-period aggregate-once rule. The existing outbox row remains honest `provider_accepted` evidence and must never be redispatched or marked reconciled. The corrected path will preserve the Meter summary as independent usage-delivery evidence, then add the immutable whole-minute quantity and unit rate idempotently to the matching draft renewal invoice using a separately approved one-time overage Price. That path needs a fresh isolated fixture, duplicate `invoice.created` proof, missed-draft-window recovery and exact finalized invoice-line evidence before any live usage charge is possible.
 
+The operator approved sandbox one-time Price `price_1ULyegGcz4GrZOEBwDHdpzPW` for Sophia Voice at AUD 0.10, tax-exclusive. Plan 2.1.61 records a timing correction found during implementation: a signed `invoice.created` observation must not be acknowledged successfully until the exact immutable ledger exists and Stripe has authoritatively accepted the digest-bound invoice item. Duplicate signed deliveries re-enter adjustment processing even though provider observations remain deduplicated. This preserves deterministic idempotency and lets Stripe retry rather than silently finalizing an unadjusted draft.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -49,19 +51,24 @@ Plan 2.1.60 therefore invalidates the Meter-backed subscription line as the char
 - A missing summary or invoice line remains `pending` because Stripe aggregation and invoice production are asynchronous. Any conflict remains `mismatch`; neither state claims billing correctness.
 - The Checkout billing-context query now actually selects the rate card it validates and passes to the adapter.
 - The existing recent-MFA billing reconciliation action finalizes eligible periods, dispatches at most one sandbox outbox item, and then attempts reconciliation. Its live path is read-only and explicitly refuses Meter dispatch pending a later live usage-billing activation decision.
+- New Checkout composition contains only the licensed recurring base Price. It validates the separately mapped one-time overage Price but does not add the disproved recurring Meter-backed Price as a subscription item.
+- Migration 049 adds the tenant-isolated digest-bound invoice-adjustment outbox, fenced retry/ambiguity states, missed-window state and immutable finalized-line reconciliation evidence.
+- The Stripe sandbox adjustment adapter validates the exact draft invoice, Customer, subscription, provider period, one-time Price, currency, unit amount and non-GST tax behavior before one idempotent write. Live dispatch and reconciliation remain disabled.
+- Finalized-line read-back requires exactly one adjustment line matching the adjustment and ledger metadata, Price, quantity, unit amount, total amount, currency and exact inclusive line period before the outbox becomes `reconciled`.
+- An exact finalized zero-overage ledger is a successful no-adjustment outcome and releases the draft invoice; only a genuinely missing ledger or an unresolved positive adjustment applies webhook retry backpressure.
 
 ## Evidence
 
 - Migration `047_billing_meter_reconciliation_evidence.sql` was applied to Neon.
 - The rollback-only Neon probe verified forced RLS for the outbox and reconciliation evidence, cross-tenant hiding, immutable evidence, least-privilege `SELECT, INSERT` access to evidence, fenced claims, stale-token denial and permanent quarantine of ambiguous submissions. All probe rows were rolled back.
 - Runtime portability typecheck, typecheck, build and generated-contract drift check pass.
-- Runtime tests: 113 suites, 398 tests.
-- Backend boundary scan: 225 files. Protected real-estate characterization: 8 suites, 38 tests.
+- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Both Runtime typechecks, build and generated-contract drift check pass.
+- Backend boundary scan: 231 files. Protected real-estate characterization: 8 suites, 38 tests.
 
 ## Remaining C4B external proof
 
 The deployed mappings, Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event and exact quantity-two Meter summary are complete. The current paid invoice's zero-quantity line is preserved as negative provider evidence; `close` and `finalize` must not be rerun on this fixture.
 
-The remaining work is P6-A06C3B0C4B3: define and configure a sandbox one-time overage Price, implement the idempotent draft-renewal invoice-item outbox, run a fresh isolated clock fixture, prove duplicate webhook behavior and missed-window recovery, then reconcile the finalized adjustment line to the immutable ledger.
+The remaining work is P6-A06C3B0C4B3 deployed proof: configure `SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS` for Voice, deploy and apply migration 049, run a fresh isolated clock fixture, prove real duplicate webhook behavior and missed-window recovery, then reconcile the finalized adjustment line to the immutable ledger. The old negative fixture must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.

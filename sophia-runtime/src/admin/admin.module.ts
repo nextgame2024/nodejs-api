@@ -60,6 +60,10 @@ import { BillingMeterOutboxService } from "./billing/billing-meter-outbox.servic
 import { BILLING_METER_EVENT_DISPATCHER, BILLING_METER_EVENT_RECONCILER } from "./billing/billing-meter-event.port.js";
 import { DisabledBillingMeterEventDispatcher } from "./billing/disabled-billing-meter-event.dispatcher.js";
 import { StripeBillingMeterEventDispatcher } from "./billing/stripe-billing-meter-event.dispatcher.js";
+import { BillingInvoiceAdjustmentOutboxService } from "./billing/billing-invoice-adjustment-outbox.service.js";
+import { BILLING_INVOICE_ADJUSTMENT_DISPATCHER } from "./billing/billing-invoice-adjustment.port.js";
+import { DisabledBillingInvoiceAdjustmentDispatcher } from "./billing/disabled-billing-invoice-adjustment.dispatcher.js";
+import { StripeBillingInvoiceAdjustmentDispatcher } from "./billing/stripe-billing-invoice-adjustment.dispatcher.js";
 import { BillingWebhookController } from "./billing/billing-webhook.controller.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { runtimeConfig } from "../config/runtime-config.js";
@@ -114,12 +118,16 @@ import { runtimeConfig } from "../config/runtime-config.js";
     BillingLifecycleService,
     BillingPeriodLedgerService,
     BillingMeterOutboxService,
+    BillingInvoiceAdjustmentOutboxService,
     DisabledBillingMeterEventDispatcher,
+    DisabledBillingInvoiceAdjustmentDispatcher,
     DisabledBillingProvider,
     { provide: StripeBillingProvider,
       useFactory: () => new StripeBillingProvider(runtimeConfig().billing) },
     { provide: StripeBillingMeterEventDispatcher,
       useFactory: () => new StripeBillingMeterEventDispatcher(runtimeConfig().billing) },
+    { provide: StripeBillingInvoiceAdjustmentDispatcher,
+      useFactory: () => new StripeBillingInvoiceAdjustmentDispatcher(runtimeConfig().billing) },
     { provide: BILLING_PROVIDER, inject: [DisabledBillingProvider, StripeBillingProvider],
       useFactory: (disabled: DisabledBillingProvider, stripe: StripeBillingProvider) =>
         runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
@@ -131,6 +139,11 @@ import { runtimeConfig } from "../config/runtime-config.js";
       inject: [DisabledBillingMeterEventDispatcher, StripeBillingMeterEventDispatcher],
       useFactory: (disabled: DisabledBillingMeterEventDispatcher, stripe: StripeBillingMeterEventDispatcher) =>
         runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
+    { provide: BILLING_INVOICE_ADJUSTMENT_DISPATCHER,
+      inject: [DisabledBillingInvoiceAdjustmentDispatcher, StripeBillingInvoiceAdjustmentDispatcher],
+      useFactory: (disabled: DisabledBillingInvoiceAdjustmentDispatcher,
+        stripe: StripeBillingInvoiceAdjustmentDispatcher) =>
+        runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
     { provide: APP_INTERCEPTOR, useClass: AdminAuditInterceptor },
     { provide: KNOWLEDGE_OBJECT_STORAGE, useExisting: PrivateS3KnowledgeStorageService },
     { provide: KNOWLEDGE_MALWARE_SCANNER, useExisting: HttpMalwareScannerService },

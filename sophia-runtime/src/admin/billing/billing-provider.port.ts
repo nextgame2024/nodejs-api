@@ -26,6 +26,14 @@ export type BillingWebhookEvidence = {
   planVersionHint: string | null;
   subscription: BillingSubscriptionObservation | null;
   invoice: BillingInvoiceObservation | null;
+  draftRenewalInvoice: BillingDraftRenewalInvoice | null;
+};
+
+export type BillingDraftRenewalInvoice = {
+  externalInvoiceRef: string;
+  externalSubscriptionRef: string;
+  periodStart: string;
+  periodEnd: string;
 };
 
 export type BillingSubscriptionObservation = {

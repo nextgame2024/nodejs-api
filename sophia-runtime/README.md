@@ -53,8 +53,8 @@ Sophia subscriptions use an independently configured Stripe adapter. It never
 falls back to the legacy Business Manager `STRIPE_*` variables used by Toolkit
 and video purchases. `stripe_sandbox` is charge-safe test mode; `stripe_live`
 keeps Checkout disabled unless `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED=true` is
-separately authorised. The adapter remains disabled unless every required value
-is present:
+separately authorised. Required values are validated for each enabled path; a
+base-plus-overage sandbox deployment uses:
 
 ```bash
 SOPHIA_BILLING_PROVIDER=stripe_sandbox
@@ -64,11 +64,19 @@ SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
 SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
+SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_METER_BINDINGS={"active-overage-minutes":"sophia_active_overage_minutes"}
 SOPHIA_BILLING_CHECKOUT_SUCCESS_URL=https://admin.example/sophia-admin/usage-billing?checkout=success
 SOPHIA_BILLING_CHECKOUT_CANCEL_URL=https://admin.example/sophia-admin/usage-billing?checkout=cancelled
 SOPHIA_BILLING_PORTAL_RETURN_URL=https://admin.example/sophia-admin/usage-billing
 ```
+
+The base mapping is a recurring licensed Price. The overage mapping is a
+separate one-time Price used only by the sandbox-proven draft-renewal invoice
+adjustment path; Meter-backed mappings remain independent usage-delivery
+evidence. Live overage adjustment stays disabled even when live observation is
+configured, and an absent live overage mapping does not disable live portal,
+signed-webhook, or read-only reconciliation support.
 
 Commercial plan entitlements remain provider-neutral. Runtime safety/capacity
 controls can only lower those ceilings and are configured independently:

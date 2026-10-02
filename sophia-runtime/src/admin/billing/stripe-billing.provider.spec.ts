@@ -30,20 +30,37 @@ describe("StripeBillingProvider", () => {
     expect(JSON.stringify(create.mock.calls[0])).not.toMatch(/card|payment_method/i);
   });
 
-  it("verifies and attaches separate fixed and metered recurring Prices", async () => {
+  it("verifies a fixed recurring base and separate one-time overage Price but attaches only the base", async () => {
     const create = jest.fn(async () => ({ id: "cs_test_metered", url: "https://checkout.stripe.com/c/pay/metered",
       expires_at: 2_000_000_000 }));
     const retrieve = jest.fn(async (id: string) => id === "price_sophiaSandbox123"
       ? recurringPrice({ unitAmount: 1000, usageType: "licensed", meter: null })
-      : recurringPrice({ unitAmount: 50, usageType: "metered", meter: "mtr_sophia" }));
+      : oneTimePrice({ unitAmount: 50 }));
     const provider = new StripeBillingProvider(config(), client({ checkoutCreate: create, pricesRetrieve: retrieve }));
     await provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
       commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000",
         meteredOverage: { unitPriceMinor: "50", meterBindingKey: "active-overage-minutes" } } });
-    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["price_sophiaSandbox123", "price_sophiaMetered123"]);
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ line_items: [
-      { price: "price_sophiaSandbox123", quantity: 1 }, { price: "price_sophiaMetered123" },
-    ] }), expect.any(Object));
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["price_sophiaSandbox123", "price_sophiaOverage123"]);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      line_items: [{ price: "price_sophiaSandbox123", quantity: 1 }],
+    }), expect.any(Object));
+  });
+
+  it("extracts an exact draft renewal-invoice window only from a signed invoice.created event", async () => {
+    const secret = "whsec_sophia_test_secret";
+    const body = JSON.stringify({ id: "evt_invoice_created_1", type: "invoice.created", created: 2_000_000_000,
+      livemode: false, data: { object: { id: "in_draft_1", customer: "cus_1", status: "draft",
+        billing_reason: "subscription_cycle", period_start: 1_999_999_000, period_end: 2_000_099_000,
+        parent: { subscription_details: { subscription: "sub_1" } }, currency: "aud",
+        amount_due: 75000, amount_paid: 0 } } });
+    const signature = Stripe.webhooks.generateTestHeaderString({ payload: body, secret,
+      timestamp: Math.floor(Date.now() / 1000) });
+    const provider = new StripeBillingProvider({ ...config(), stripeWebhookSecret: secret });
+    await expect(provider.verifyWebhook({ "stripe-signature": signature }, Buffer.from(body)))
+      .resolves.toMatchObject({ draftRenewalInvoice: {
+        externalInvoiceRef: "in_draft_1", externalSubscriptionRef: "sub_1",
+        periodStart: "2033-05-18T03:16:40.000Z", periodEnd: "2033-05-19T07:03:20.000Z",
+      } });
   });
 
   it("verifies a real Stripe signature locally and rejects live-mode payloads", async () => {
@@ -71,6 +88,13 @@ describe("StripeBillingProvider", () => {
       commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000", meteredOverage: null } }))
       .rejects.toThrow("explicit charge activation");
     expect(checkoutCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not require an unauthorized live overage mapping for read-only live observation", () => {
+    const provider = new StripeBillingProvider({ ...config(), provider: "stripe_live", liveCheckoutEnabled: false,
+      stripeSecretKey: "sk_live_sophia", stripeOveragePriceMappings: {} }, client({ liveMode: true }));
+    expect(provider.status()).toMatchObject({ availability: "live", checkout: false,
+      signedWebhooks: true, reconciliation: true });
   });
 
   it("rejects sandbox webhook payloads in live mode", async () => {
@@ -128,6 +152,7 @@ function config(): RuntimeConfig["billing"] {
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" },
     stripeMeteredPriceMappings: { [planVersionId]: "price_sophiaMetered123" },
+    stripeOveragePriceMappings: { [planVersionId]: "price_sophiaOverage123" },
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };
 }
 function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; customersRetrieve?: jest.Mock;
@@ -145,4 +170,8 @@ function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; custome
 function recurringPrice(input: { unitAmount: number; usageType: "licensed" | "metered"; meter: string | null; liveMode?: boolean }) {
   return { livemode: input.liveMode ?? false, active: true, type: "recurring", currency: "aud",
     unit_amount: input.unitAmount, recurring: { interval: "month", usage_type: input.usageType, meter: input.meter } };
+}
+function oneTimePrice(input: { unitAmount: number; liveMode?: boolean }) {
+  return { livemode: input.liveMode ?? false, active: true, type: "one_time", currency: "aud",
+    unit_amount: input.unitAmount, recurring: null, tax_behavior: "exclusive" };
 }

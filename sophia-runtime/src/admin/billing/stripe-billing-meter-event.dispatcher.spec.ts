@@ -69,7 +69,8 @@ describe("StripeBillingMeterEventDispatcher", () => {
       },
     };
     const dispatcher = new StripeBillingMeterEventDispatcher({ ...config(),
-      stripeMeteredPriceMappings: { "22222222-2222-4222-8222-222222222222": "price_metered_1" } }, stripe as never);
+      stripeMeteredPriceMappings: { "22222222-2222-4222-8222-222222222222": "price_metered_1" },
+      stripeOveragePriceMappings: {} }, stripe as never);
     await expect(dispatcher.reconcile({
       providerKey: "stripe-sophia", providerEnvironment: "sandbox", providerAccountKey: "legacy-primary",
       planVersionId: "22222222-2222-4222-8222-222222222222", externalCustomerRef: "cus_sandbox",
@@ -94,7 +95,8 @@ describe("StripeBillingMeterEventDispatcher", () => {
       invoices: { list: jest.fn(), listLineItems: jest.fn() },
     };
     const dispatcher = new StripeBillingMeterEventDispatcher({ ...config(),
-      stripeMeteredPriceMappings: { "22222222-2222-4222-8222-222222222222": "price_metered_1" } }, stripe as never);
+      stripeMeteredPriceMappings: { "22222222-2222-4222-8222-222222222222": "price_metered_1" },
+      stripeOveragePriceMappings: {} }, stripe as never);
     await expect(dispatcher.reconcile({
       providerKey: "stripe-sophia", providerEnvironment: "sandbox", providerAccountKey: "legacy-primary",
       planVersionId: "22222222-2222-4222-8222-222222222222", externalCustomerRef: "cus_sandbox",
@@ -119,6 +121,7 @@ function config() {
     portalReturnUrl: "https://example.com/return",
     stripePriceMappings: {},
     stripeMeteredPriceMappings: {},
+    stripeOveragePriceMappings: {},
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" },
   };
 }

@@ -76,14 +76,14 @@ export class StripeBillingProvider implements BillingProvider {
     const environment = this.availableEnvironment();
     const basePrice = this.config.stripePriceMappings[input.planVersionId];
     if (!basePrice) throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} base Price mapping.`);
-    const meteredPrice = input.commercial.meteredOverage
-      ? this.config.stripeMeteredPriceMappings[input.planVersionId] : null;
-    if (input.commercial.meteredOverage && !meteredPrice) {
-      throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} metered Price mapping.`);
+    const overagePrice = input.commercial.meteredOverage
+      ? this.config.stripeOveragePriceMappings[input.planVersionId] : null;
+    if (input.commercial.meteredOverage && !overagePrice) {
+      throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} one-time overage Price mapping.`);
     }
-    const [providerBasePrice, providerMeteredPrice] = await Promise.all([
+    const [providerBasePrice, providerOveragePrice] = await Promise.all([
       client.prices.retrieve(basePrice),
-      meteredPrice ? client.prices.retrieve(meteredPrice) : Promise.resolve(null),
+      overagePrice ? client.prices.retrieve(overagePrice) : Promise.resolve(null),
     ]);
     if (providerBasePrice.livemode !== (environment === "live") || !providerBasePrice.active
       || providerBasePrice.type !== "recurring" || providerBasePrice.currency.toUpperCase() !== input.commercial.currency
@@ -92,18 +92,15 @@ export class StripeBillingProvider implements BillingProvider {
       || providerBasePrice.recurring?.usage_type !== "licensed" || providerBasePrice.recurring.meter !== null) {
       throw unavailable(`The Stripe ${environment} Price does not exactly match the approved fixed recurring plan currency, amount and interval.`);
     }
-    if (providerMeteredPrice && input.commercial.meteredOverage
-      && (providerMeteredPrice.livemode !== (environment === "live") || !providerMeteredPrice.active
-        || providerMeteredPrice.type !== "recurring" || providerMeteredPrice.currency.toUpperCase() !== input.commercial.currency
-        || providerMeteredPrice.unit_amount === null
-        || String(providerMeteredPrice.unit_amount) !== input.commercial.meteredOverage.unitPriceMinor
-        || providerMeteredPrice.recurring?.interval !== input.commercial.interval
-        || providerMeteredPrice.recurring?.usage_type !== "metered" || !providerMeteredPrice.recurring.meter
-        || this.config.stripeMeterBindings[input.commercial.meteredOverage.meterBindingKey] === undefined)) {
-      throw unavailable(`The Stripe ${environment} metered Price does not exactly match the approved overage rate, interval and Meter binding.`);
+    if (providerOveragePrice && input.commercial.meteredOverage
+      && (providerOveragePrice.livemode !== (environment === "live") || !providerOveragePrice.active
+        || providerOveragePrice.type !== "one_time" || providerOveragePrice.currency.toUpperCase() !== input.commercial.currency
+        || providerOveragePrice.unit_amount === null
+        || String(providerOveragePrice.unit_amount) !== input.commercial.meteredOverage.unitPriceMinor
+        || providerOveragePrice.recurring !== null || providerOveragePrice.tax_behavior !== "exclusive")) {
+      throw unavailable(`The Stripe ${environment} one-time overage Price does not exactly match the approved rate, currency and non-GST tax behavior.`);
     }
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [{ price: basePrice, quantity: 1 }];
-    if (meteredPrice) lineItems.push({ price: meteredPrice });
     const session = await client.checkout.sessions.create({
       mode: "subscription",
       ui_mode: "hosted",
@@ -166,6 +163,7 @@ export class StripeBillingProvider implements BillingProvider {
     const customerRef = event.type === "customer.updated" ? reference(object.id) : reference(object.customer);
     const subscription = subscriptionObservation(event.type, object, occurredAt);
     const invoice = invoiceObservation(event.type, object, occurredAt);
+    const draftRenewalInvoice = draftRenewalInvoiceObservation(event.type, object);
     return {
       providerKey: STRIPE_BILLING_PROVIDER_KEY, providerAccountKey: this.config.providerAccountKey,
       environment, eventId: event.id, eventType: event.type,
@@ -175,7 +173,7 @@ export class StripeBillingProvider implements BillingProvider {
         ? String(metadataValue?.sophiaTenantId) : null,
       planVersionHint: metadataMatchesEnvironment && uuid.safeParse(metadataValue?.sophiaPlanVersionId).success
         ? String(metadataValue?.sophiaPlanVersionId) : null,
-      subscription, invoice,
+      subscription, invoice, draftRenewalInvoice,
     };
   }
 
@@ -273,6 +271,17 @@ function subscriptionStatus(value: unknown): BillingSubscriptionObservation["sta
 }
 function invoiceObservation(type: string, object: Record<string, unknown>, observedAt: string): BillingInvoiceObservation | null {
   return type.startsWith("invoice.") ? invoiceFromObject(object, observedAt) : null;
+}
+function draftRenewalInvoiceObservation(type: string, object: Record<string, unknown>) {
+  if (type !== "invoice.created" || object.status !== "draft" || object.billing_reason !== "subscription_cycle") return null;
+  const parent = record(object.parent);
+  const subscriptionDetails = record(parent?.subscription_details);
+  const externalSubscriptionRef = reference(subscriptionDetails?.subscription);
+  const periodStart = timestamp(object.period_start);
+  const periodEnd = timestamp(object.period_end);
+  const externalInvoiceRef = reference(object.id);
+  return externalInvoiceRef && externalSubscriptionRef && periodStart && periodEnd
+    ? { externalInvoiceRef, externalSubscriptionRef, periodStart, periodEnd } : null;
 }
 function invoiceFromStripe(value: Stripe.Invoice, observedAt: string) {
   return invoiceFromObject(value as unknown as Record<string, unknown>, observedAt);
