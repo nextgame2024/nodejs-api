@@ -17,6 +17,8 @@ describe("Founding full-lifecycle sandbox proof", () => {
     expect(source).toContain("billableOverageMinutes: 2");
     expect(source).toContain("acceptProductionDeployment");
     expect(source).toContain("periods_observed !== 12");
+    expect(source).toContain("exactFirstPeriodLedger");
+    expect(source).toContain('row.included_active_seconds !== "60000"');
   });
 
   it("requires restricted cancellation before and standard cancellation after the provider boundary", () => {

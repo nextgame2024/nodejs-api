@@ -136,9 +136,10 @@ async function closeFirstPeriod() {
   const observed = await lifecycle.reconcile(tenantId, principal(), { requestId: randomUUID() });
   const finalised = await ledgers.finaliseSandboxTestClock(tenantId, PROVIDER_KEY,
     config.billing.providerAccountKey, new Date(cutoff * 1_000).toISOString());
-  if (finalised.finalised !== 1 || finalised.blocked.length) {
+  if (finalised.blocked.length) {
     throw new Error(`The Founding first-period ledger did not finalise: ${JSON.stringify(finalised)}`);
   }
+  const ledgerEvidence = await exactFirstPeriodLedger(state);
   const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
   const renewal = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
     && invoice.period_start === unixSecond(state.periodStart!) && invoice.period_end === unixSecond(state.periodEnd!));
@@ -172,7 +173,7 @@ async function closeFirstPeriod() {
   await saveState({ ...state, stage: "first_period_closed", overageInvoiceId: renewalInvoiceId });
   print({ stage: "founding_first_period_closed", expected: { includedActiveSeconds: 60_000,
     billableOverageMinutes: 2, amountMinor: 20, overagePrice }, observed, finalised,
-  enqueued, dispatched, reconciliation });
+  ledgerEvidence, enqueued, dispatched, reconciliation });
 }
 
 async function acceptMilestone() {
@@ -267,6 +268,25 @@ async function commitmentEvidence() {
   return { required_periods: row.required_periods, periods_observed: row.periods_observed,
     commitment_end: row.commitment_end ? iso(row.commitment_end) : null,
     current_period_start: iso(row.current_period_start) };
+}
+
+async function exactFirstPeriodLedger(state: ProofState) {
+  const result = await database.tenantReadTransaction(tenantId, (client) => client.query<{
+    active_microseconds: string; included_active_seconds: string; overage_microseconds: string;
+    billable_overage_minutes: string; overage_unit_price_minor: string; currency: string;
+  }>(`SELECT active_microseconds::text,included_active_seconds::text,overage_microseconds::text,
+             billable_overage_minutes::text,overage_unit_price_minor::text,currency
+      FROM ${config.schema}.billing_usage_period_ledgers
+      WHERE customer_id=$1 AND period_start=$2::timestamptz AND period_end=$3::timestamptz`,
+    [tenantId, state.periodStart, state.periodEnd]));
+  if (result.rows.length !== 1) throw new Error("The exact Founding first-period ledger is missing or ambiguous.");
+  const row = result.rows[0];
+  if (row.active_microseconds !== "60061000000" || row.included_active_seconds !== "60000"
+    || row.overage_microseconds !== "61000000" || row.billable_overage_minutes !== "2"
+    || row.overage_unit_price_minor !== "10" || row.currency !== "AUD") {
+    throw new Error(`The Founding first-period ledger differs from approved evidence: ${JSON.stringify(row)}`);
+  }
+  return row;
 }
 
 async function assertFixtureAuthority() {

@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.76",
+    "version": "2.1.77",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,22 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-03-FOUNDING-WEBHOOK-LEDGER-RACE",
+      "taskId": "P6-A06C3B0D4",
+      "reason": "The corrected replacement close proved the signed Stripe invoice webhook can finalize the exact immutable ledger before the synchronous sandbox harness calls finaliseSandboxTestClock. That call then honestly reports zero newly eligible periods even though the required ledger already exists.",
+      "changes": [
+        "Treat ledger creation as an idempotent multi-entry-point operation rather than requiring the shell path itself to insert one new row.",
+        "Read back exactly one ledger for the stored first provider period and require 60061000000 active microseconds, 60000 included seconds, 61000000 overage microseconds, two billable minutes, a 10-cent unit price and AUD before invoice adjustment processing.",
+        "Resume the same replacement fixture because the close stage stopped before its manual enqueue/dispatch and the draft invoice window remains open; existing signed-webhook enqueue or dispatch evidence remains idempotently acceptable."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/operators/run-founding-sandbox-proof.ts",
+        "sophia-runtime/src/operators/run-founding-sandbox-proof.spec.ts"
+      ],
+      "approvedBy": "Standing user instruction to evaluate and amend the plan when implementation identifies a safer or more accurate boundary",
+      "recordedAt": "2026-10-03T08:45:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-03-FOUNDING-PLAN-AWARE-LEDGER",
       "taskId": "P6-A06C3B0D4",
