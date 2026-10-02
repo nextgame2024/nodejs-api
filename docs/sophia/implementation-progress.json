@@ -2186,6 +2186,20 @@
       "node": "22.23.3",
       "result": "pass",
       "detail": "Plan 2.1.68 passed runtime typecheck, build and 120 suites/433 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The database monotonicity guard is unchanged; only the gated proof bootstrap now preserves an existing lifecycle-owned subscription reference on conflict."
+    },
+    {
+      "command": "npm run billing:c4b-sandbox -- miss-recovery; npm run billing:c4b-sandbox -- status",
+      "repository": "deployed backend + Neon + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "fixture-reclassified-as-positive-adjustment-evidence",
+      "detail": "The verified plan 2.1.68 artifact resumed without a monotonic-reference error, but lifecycle reconciliation ran while the source invoice remained draft and correctly attached the original two-minute AUD 0.20 adjustment. Status then proved invoice adjustment ii_1UM3txGcz4GrZOEBOqbJrrSG and line il_1UXKX0Gcz4GrZOEBJCQbdR5v reconciled on open invoice in_1UM2yJGcz4GrZOEB7N75f6Tx. No recovery attempt exists. Plan 2.1.69 reorders the isolated proof to close and checkpoint the exact invoice while unbound, then bind/reconcile/finalize/dispatch, and refuses any fixture with an existing adjustment. The current fixture is preserved as positive evidence and a new synthetic recovery fixture is required."
+    },
+    {
+      "command": "npm run typecheck; npm test; npm run build; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.69 passed runtime typecheck, build and 120 suites/433 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The gated proof now enforces zero prior adjustment evidence, closes and checkpoints the exact source invoice before binding, and preserves resumability only from that verified unbound checkpoint. Production billing behavior is unchanged."
     }
   ],
   "blockers": [

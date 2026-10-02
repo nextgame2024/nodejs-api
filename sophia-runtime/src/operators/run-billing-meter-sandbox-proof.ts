@@ -139,6 +139,52 @@ async function missRecovery() {
   await advanceClock(state.clockId!, target);
   const subscription = await stripe.subscriptions.retrieve(state.subscriptionId!);
   const recoveryPeriod = subscriptionPeriod(subscription);
+  const existing = await database.tenantReadTransaction(tenantId!, async (client) => client.query<{
+    provider_bindings: number; invoice_adjustments: number;
+  }>(
+    `SELECT
+       (SELECT count(*)::int FROM ${config.schema}.billing_provider_customers
+         WHERE customer_id=$1) AS provider_bindings,
+       (SELECT count(*)::int FROM ${config.schema}.billing_invoice_adjustment_outbox
+         WHERE customer_id=$1) AS invoice_adjustments`,
+    [tenantId],
+  ));
+  const existingEvidence = existing.rows[0];
+  if (!existingEvidence || existingEvidence.invoice_adjustments !== 0) {
+    throw new Error("The recovery proof requires a fresh fixture with no existing invoice adjustment.");
+  }
+  const sourceCheckpointed = state.stage === "recovery_original_invoice_finalized_unbound"
+    && Boolean(state.missedInvoiceId);
+  if (existingEvidence.provider_bindings !== 0 && !sourceCheckpointed) {
+    throw new Error("The recovery proof must start unbound and close its source invoice before reconciliation.");
+  }
+  const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
+  const start = unixSecond(state.periodStart!); const end = unixSecond(state.periodEnd!);
+  const originals = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
+    && invoice.period_start === start && invoice.period_end === end);
+  if (originals.length !== 1) {
+    throw new Error("The proof requires exactly one original renewal invoice for the immutable period.");
+  }
+  let original = originals[0];
+  const originalInvoiceId = original.id;
+  if (!originalInvoiceId) {
+    throw new Error("The original renewal invoice has no stable provider identity.");
+  }
+  if (state.missedInvoiceId && state.missedInvoiceId !== originalInvoiceId) {
+    throw new Error("The finalized source invoice does not match the saved recovery checkpoint.");
+  }
+  if (original.status === "draft") {
+    if (existingEvidence.provider_bindings !== 0) {
+      throw new Error("The recovery proof must close the original invoice before provider-customer binding.");
+    }
+    original = await stripe.invoices.finalizeInvoice(originalInvoiceId, { auto_advance: false });
+  }
+  if (!["open", "paid"].includes(original.status ?? "")) {
+    throw new Error(`The original renewal invoice did not reach a finalized billable state (${original.status}).`);
+  }
+  state = await saveState({ ...state, recoveryPeriodStart: recoveryPeriod.start,
+    recoveryPeriodEnd: recoveryPeriod.end, missedInvoiceId: originalInvoiceId,
+    stage: "recovery_original_invoice_finalized_unbound" });
   await database.tenantTransaction(tenantId!, async (client) => {
     await client.query(
       `INSERT INTO ${config.schema}.billing_provider_customers
@@ -157,31 +203,10 @@ async function missRecovery() {
   const observed = await lifecycle.reconcile(tenantId!, principal(), { requestId: randomUUID() });
   const finalised = await ledgers.finaliseSandboxTestClock(
     tenantId!, PROVIDER_KEY, config.billing.providerAccountKey, new Date(target * 1_000).toISOString());
-  const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
-  const start = unixSecond(state.periodStart!); const end = unixSecond(state.periodEnd!);
-  const originals = invoices.data.filter((invoice) => invoice.billing_reason === "subscription_cycle"
-    && invoice.period_start === start && invoice.period_end === end);
-  if (originals.length !== 1) {
-    throw new Error("The proof requires exactly one original renewal invoice for the immutable period.");
-  }
-  let original = originals[0];
-  const originalInvoiceId = original.id;
-  if (!originalInvoiceId) {
-    throw new Error("The original renewal invoice has no stable provider identity.");
-  }
-  if (original.status === "draft") {
-    original = await stripe.invoices.finalizeInvoice(originalInvoiceId, { auto_advance: false });
-  }
-  if (!original.id || !["open", "paid"].includes(original.status ?? "")) {
-    throw new Error(`The original renewal invoice did not reach a finalized billable state (${original.status}).`);
-  }
-  state = await saveState({ ...state, recoveryPeriodStart: recoveryPeriod.start,
-    recoveryPeriodEnd: recoveryPeriod.end, missedInvoiceId: original.id,
-    stage: "recovery_original_invoice_finalized" });
   const enqueued = await invoiceAdjustments.enqueueDraftInvoice(tenantId!, {
     providerKey: PROVIDER_KEY, providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
     externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
-    externalInvoiceRef: original.id, periodStart: state.periodStart!, periodEnd: state.periodEnd!,
+    externalInvoiceRef: originalInvoiceId, periodStart: state.periodStart!, periodEnd: state.periodEnd!,
   });
   const dispatched = await invoiceAdjustments.dispatchNext(tenantId!, PROVIDER_KEY, "sandbox",
     config.billing.providerAccountKey, `c4b-missed-window:${randomUUID()}`);
