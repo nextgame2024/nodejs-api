@@ -66,6 +66,7 @@ import { BILLING_INVOICE_ADJUSTMENT_DISPATCHER } from "./billing/billing-invoice
 import { DisabledBillingInvoiceAdjustmentDispatcher } from "./billing/disabled-billing-invoice-adjustment.dispatcher.js";
 import { StripeBillingInvoiceAdjustmentDispatcher } from "./billing/stripe-billing-invoice-adjustment.dispatcher.js";
 import { BillingCommercialMilestoneService } from "./billing/billing-commercial-milestone.service.js";
+import { BillingSubscriptionCommitmentService } from "./billing/billing-subscription-commitment.service.js";
 import { BILLING_COMMERCIAL_MILESTONE_DISPATCHER } from "./billing/billing-commercial-milestone.port.js";
 import { DisabledBillingCommercialMilestoneDispatcher } from "./billing/disabled-billing-commercial-milestone.dispatcher.js";
 import { StripeBillingCommercialMilestoneDispatcher } from "./billing/stripe-billing-commercial-milestone.dispatcher.js";
@@ -126,6 +127,7 @@ import { runtimeConfig } from "../config/runtime-config.js";
     BillingInvoiceAdjustmentOutboxService,
     BillingInvoiceAdjustmentRecoveryService,
     BillingCommercialMilestoneService,
+    BillingSubscriptionCommitmentService,
     DisabledBillingMeterEventDispatcher,
     DisabledBillingInvoiceAdjustmentDispatcher,
     DisabledBillingCommercialMilestoneDispatcher,

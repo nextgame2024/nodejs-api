@@ -42,6 +42,8 @@ export type BillingSubscriptionObservation = {
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
   observedAt: string;
+  planVersionId?: string | null;
+  billingAnchor?: string | null;
 };
 
 export type BillingInvoiceObservation = {
@@ -53,6 +55,8 @@ export type BillingInvoiceObservation = {
   hostedInvoiceUrl: string | null;
   dueAt: string | null;
   observedAt: string;
+  externalSubscriptionRef?: string | null;
+  billingReason?: string | null;
 };
 
 export type BillingReconciliation = {
@@ -71,7 +75,8 @@ export interface BillingProvider {
       meteredOverage: { unitPriceMinor: string; meterBindingKey: string } | null } }): Promise<{
       url: string; expiresAt: string | null; externalCheckoutRef: string;
     }>;
-  createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string }): Promise<{ url: string; expiresAt: string | null }>;
+  createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string;
+    cancellationMode: "standard" | "commitment_restricted" }): Promise<{ url: string; expiresAt: string | null }>;
   verifyCustomerBinding(input: { tenantId: string; customerRef: string }): Promise<{ observedAt: string }>;
   verifyWebhook(headers: Readonly<Record<string, string | undefined>>, rawBody: Uint8Array): Promise<BillingWebhookEvidence>;
   reconcileTenant(input: { tenantId: string; customerRef: string }): Promise<BillingReconciliation>;

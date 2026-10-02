@@ -87,14 +87,31 @@ describe("StripeBillingProvider", () => {
     const body = JSON.stringify({ id: "evt_sophia_1", type: "customer.subscription.updated", created: 2_000_000_000,
       livemode: false, data: { object: { id: "sub_1", customer: "cus_1", status: "active",
         metadata: { sophiaNamespace: "subscription-v1", sophiaTenantId: tenantId, sophiaPlanVersionId: planVersionId },
+        billing_cycle_anchor: 1_999_999_000,
         current_period_start: 1_999_999_000, current_period_end: 2_000_099_000 } } });
     const signature = Stripe.webhooks.generateTestHeaderString({ payload: body, secret, timestamp: Math.floor(Date.now() / 1000) });
     const provider = new StripeBillingProvider({ ...config(), stripeWebhookSecret: secret });
     const evidence = await provider.verifyWebhook({ "stripe-signature": signature }, Buffer.from(body));
     expect(evidence).toMatchObject({ environment: "sandbox", eventId: "evt_sophia_1", customerRef: "cus_1",
-      subscription: { externalRef: "sub_1", status: "active" } });
+      subscription: { externalRef: "sub_1", status: "active", planVersionId,
+        billingAnchor: "2033-05-18T03:16:40.000Z" } });
     expect(evidence.payloadDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(evidence)).not.toContain(body);
+  });
+
+  it("extracts the paid commencement invoice subscription identity and billing reason", async () => {
+    const secret = "whsec_sophia_test_secret";
+    const body = JSON.stringify({ id: "evt_initial_paid_1", type: "invoice.paid", created: 2_000_000_000,
+      livemode: false, data: { object: { id: "in_initial_1", customer: "cus_1", status: "paid",
+        billing_reason: "subscription_create", currency: "aud", amount_due: 114000, amount_paid: 114000,
+        parent: { subscription_details: { subscription: "sub_founding_1" } } } } });
+    const signature = Stripe.webhooks.generateTestHeaderString({ payload: body, secret,
+      timestamp: Math.floor(Date.now() / 1000) });
+    const provider = new StripeBillingProvider({ ...config(), stripeWebhookSecret: secret });
+    await expect(provider.verifyWebhook({ "stripe-signature": signature }, Buffer.from(body)))
+      .resolves.toMatchObject({ invoice: { externalRef: "in_initial_1", status: "paid",
+        externalSubscriptionRef: "sub_founding_1", billingReason: "subscription_create",
+        currency: "AUD", amountDueMinor: "114000", amountPaidMinor: "114000" } });
   });
 
   it("configures live observation paths while keeping real Checkout disabled", async () => {
@@ -108,6 +125,45 @@ describe("StripeBillingProvider", () => {
         initialCharges: [], meteredOverage: null } }))
       .rejects.toThrow("explicit charge activation");
     expect(checkoutCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses an active cancellation-disabled portal during the minimum commitment", async () => {
+    const portalCreate = jest.fn(async () => ({ url: "https://billing.stripe.com/p/session/restricted" }));
+    const portalRetrieve = jest.fn(async () => ({ id: "bpc_sophiaCommitted123", active: true, livemode: false,
+      features: { subscription_cancel: { enabled: false } } }));
+    const provider = new StripeBillingProvider(config(), client({ portalCreate, portalRetrieve }));
+    await expect(provider.createHostedPortal({ tenantId, requestId, customerRef: "cus_sophia_1",
+      cancellationMode: "commitment_restricted" })).resolves.toEqual({
+      url: "https://billing.stripe.com/p/session/restricted", expiresAt: null });
+    expect(portalRetrieve).toHaveBeenCalledWith("bpc_sophiaCommitted123");
+    expect(portalCreate).toHaveBeenCalledWith({ customer: "cus_sophia_1",
+      configuration: "bpc_sophiaCommitted123", return_url: "https://example.test/return" },
+    { idempotencyKey: `sophia:sandbox:legacy-primary:portal:commitment_restricted:${tenantId}:${requestId}` });
+  });
+
+  it("uses the cancellation-enabled standard portal after the commitment", async () => {
+    const portalCreate = jest.fn(async () => ({ url: "https://billing.stripe.com/p/session/standard" }));
+    const portalRetrieve = jest.fn(async () => ({ id: "bpc_sophiaSandbox123", active: true, livemode: false,
+      features: { subscription_cancel: { enabled: true } } }));
+    const provider = new StripeBillingProvider(config(), client({ portalCreate, portalRetrieve }));
+    await provider.createHostedPortal({ tenantId, requestId, customerRef: "cus_sophia_1",
+      cancellationMode: "standard" });
+    expect(portalRetrieve).toHaveBeenCalledWith("bpc_sophiaSandbox123");
+    expect(portalCreate).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: "bpc_sophiaSandbox123",
+    }), expect.objectContaining({
+      idempotencyKey: `sophia:sandbox:legacy-primary:portal:standard:${tenantId}:${requestId}`,
+    }));
+  });
+
+  it("refuses a committed portal configuration that permits cancellation", async () => {
+    const portalCreate = jest.fn();
+    const portalRetrieve = jest.fn(async () => ({ id: "bpc_sophiaCommitted123", active: true, livemode: false,
+      features: { subscription_cancel: { enabled: true } } }));
+    const provider = new StripeBillingProvider(config(), client({ portalCreate, portalRetrieve }));
+    await expect(provider.createHostedPortal({ tenantId, requestId, customerRef: "cus_sophia_1",
+      cancellationMode: "commitment_restricted" })).rejects.toThrow("cancellation-disabled");
+    expect(portalCreate).not.toHaveBeenCalled();
   });
 
   it("does not require an unauthorized live overage mapping for read-only live observation", () => {
@@ -169,6 +225,7 @@ function config(): RuntimeConfig["billing"] {
     liveCheckoutEnabled: false, stripeSecretKey: "sk_test_sophia",
     stripeWebhookSecret: "whsec_sophia", checkoutSuccessUrl: "https://example.test/success",
     stripePortalConfigurationId: "bpc_sophiaSandbox123",
+    stripeCommittedPortalConfigurationId: "bpc_sophiaCommitted123",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" },
     stripeInitialPriceMappings: {},
@@ -177,10 +234,11 @@ function config(): RuntimeConfig["billing"] {
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };
 }
 function client(input: { checkoutCreate?: jest.Mock; liveMode?: boolean; customersRetrieve?: jest.Mock;
-  pricesRetrieve?: jest.Mock } = {}) {
+  pricesRetrieve?: jest.Mock; portalCreate?: jest.Mock; portalRetrieve?: jest.Mock } = {}) {
   return {
     checkout: { sessions: { create: input.checkoutCreate ?? jest.fn() } },
-    billingPortal: { sessions: { create: jest.fn() } },
+    billingPortal: { sessions: { create: input.portalCreate ?? jest.fn() },
+      configurations: { retrieve: input.portalRetrieve ?? jest.fn() } },
     webhooks: { constructEvent: jest.fn() }, subscriptions: { list: jest.fn() }, invoices: { list: jest.fn() },
     prices: { retrieve: input.pricesRetrieve ?? jest.fn(async () => recurringPrice({
       unitAmount: 1000, usageType: "licensed", meter: null, liveMode: input.liveMode })) },

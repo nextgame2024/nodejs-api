@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0D2",
-  "updatedAt": "2026-10-02T22:15:00+10:00",
+  "checkpoint": "P6-A06C3B0D3",
+  "updatedAt": "2026-10-02T22:40:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2242,6 +2242,13 @@
       "node": "22.23.3",
       "result": "pass-d2-complete",
       "detail": "P6-A06C3B0D2 adds unapplied migration 053 with immutable recent-MFA production-deployment acceptance, a tenant-isolated digest-bound commercial milestone invoice outbox and immutable exact-line reconciliation evidence. The billing.manage endpoint accepts one explicit deployment obligation, audits its evidence, maps a separate plan/component milestone Price and dispatches only through a sandbox Stripe adapter using stable invoice, item and finalize idempotency keys. It immediately reads back the committed provider acceptance, while finalized/paid webhooks remain an idempotent secondary path; both require the exact accepted invoice-item identity, Price, quantity one, AUD amount and metadata before reconciliation. Live milestone submission and reconciliation remain disabled. Runtime passed both typechecks, build and 123 suites/444 tests; contract generation plus 15 contract tests passed; the boundary scan passed 238 files; protected real-estate passed 8 suites/38 tests. Migrations 052-053 remain unapplied and no Stripe or database mutation occurred."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:generate; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass-d3-complete",
+      "detail": "P6-A06C3B0D3 adds unapplied migration 054 with an immutable signed-provider subscription plan pin and tenant-isolated commitment evidence. A paid initial subscription invoice anchors the first exact provider period; only twelve contiguous immutable provider periods establish the commitment end. Before that boundary, the runtime validates and uses a separate cancellation-disabled Stripe portal configuration; at or after it, the validated standard cancellation-enabled portal is used. Conflicting provider plan metadata fails closed, the enforcement services are required dependencies and no local future-cancellation scheduler or collection guarantee is inferred. Runtime passed both typechecks, build and 125 suites/456 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. Migrations 052-054 remain unapplied and no database, Stripe object, invoice or charge mutation occurred."
     }
   ],
   "blockers": [
@@ -2284,9 +2291,9 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and the standard-plan P6-A06C3B0A-C sandbox work are complete. Newly approved P6-A06C3B0D must add and sandbox-prove the separate Sophia Essential Founding plan, two AUD 950 milestone obligations, AUD 190 monthly membership, 1000 included active minutes, AUD 0.10 overage and twelve-month minimum-term cancellation controls before live resources are configured. C3B1/C3C still require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and the standard-plan P6-A06C3B0A-C sandbox work are complete. P6-A06C3B0D1-D3 implement the separate Sophia Essential Founding commercial facts, deployment milestone path and exact-period minimum-term portal enforcement. D4 must still apply migrations 052-054, publish and assign the immutable Founding plan, configure approved sandbox Prices and the cancellation-disabled portal, then prove the initial invoice, milestone invoice, monthly overage and both cancellation boundaries before live resources are configured. C3B1/C3C still require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": "P6-A06C3B0D3",
+  "nextReadyTask": "P6-A06C3B0D4",
   "nextBlockedTask": "P6-A06C3B1",
   "stopAfterCheckpoint": true
 }

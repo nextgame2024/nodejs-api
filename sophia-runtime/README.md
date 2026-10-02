@@ -62,6 +62,7 @@ SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY=legacy-primary
 SOPHIA_BILLING_STRIPE_SECRET_KEY=sk_test_...
 SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
+SOPHIA_BILLING_STRIPE_COMMITTED_PORTAL_CONFIGURATION_ID=bpc_...
 SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS={"commercial-plan-version-uuid":"price_..."}
 SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS={"commercial-plan-version-uuid":{"commencement":"price_..."}}
 SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS={"commercial-plan-version-uuid":{"production-deployment":"price_..."}}
@@ -85,6 +86,16 @@ adjustment path; Meter-backed mappings remain independent usage-delivery
 evidence. Live overage adjustment stays disabled even when live observation is
 configured, and an absent live overage mapping does not disable live portal,
 signed-webhook, or read-only reconciliation support.
+
+The committed portal configuration must be active in the same Stripe mode and
+must disable subscription cancellation. A paid initial subscription invoice
+anchors any minimum commitment to the exact first provider billing period. The
+runtime counts contiguous observed provider periods and uses the committed
+portal before the exact final-period boundary; at or after that boundary it uses
+the standard active portal configuration, which must enable cancellation. The
+provider subscription metadata must pin the same immutable commercial plan.
+This does not create a local cancellation scheduler or claim that Stripe
+guarantees collection of the contractual term.
 
 Commercial plan entitlements remain provider-neutral. Runtime safety/capacity
 controls can only lower those ceilings and are configured independently:

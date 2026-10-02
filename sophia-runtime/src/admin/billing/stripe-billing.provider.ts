@@ -15,7 +15,10 @@ import { STRIPE_BILLING_API_VERSION, STRIPE_BILLING_PROVIDER_KEY } from "./strip
 
 type StripeClient = {
   checkout: { sessions: { create(params: Stripe.Checkout.SessionCreateParams, options?: Stripe.RequestOptions): Promise<Stripe.Checkout.Session> } };
-  billingPortal: { sessions: { create(params: Stripe.BillingPortal.SessionCreateParams, options?: Stripe.RequestOptions): Promise<Stripe.BillingPortal.Session> } };
+  billingPortal: {
+    sessions: { create(params: Stripe.BillingPortal.SessionCreateParams, options?: Stripe.RequestOptions): Promise<Stripe.BillingPortal.Session> };
+    configurations: { retrieve(id: string): Promise<Stripe.BillingPortal.Configuration> };
+  };
   webhooks: { constructEvent(payload: Buffer, signature: string | string[], secret: string): Stripe.Event };
   subscriptions: { list(params: Stripe.SubscriptionListParams): Promise<Stripe.ApiList<Stripe.Subscription>> };
   invoices: { list(params: Stripe.InvoiceListParams): Promise<Stripe.ApiList<Stripe.Invoice>> };
@@ -134,13 +137,27 @@ export class StripeBillingProvider implements BillingProvider {
       expiresAt: session.expires_at ? secondsIso(session.expires_at) : null, externalCheckoutRef: session.id };
   }
 
-  async createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string }) {
+  async createHostedPortal(input: { tenantId: string; requestId: string; customerRef: string;
+    cancellationMode: "standard" | "commitment_restricted" }) {
     const client = this.availableClient();
     const environment = this.availableEnvironment();
+    const configurationId = input.cancellationMode === "commitment_restricted"
+      ? this.config.stripeCommittedPortalConfigurationId : this.config.stripePortalConfigurationId;
+    if (!configurationId) throw unavailable(input.cancellationMode === "commitment_restricted"
+      ? "A cancellation-disabled Stripe portal configuration is required during the minimum commitment."
+      : "The standard Stripe portal configuration is unavailable.");
+    const configuration = await client.billingPortal.configurations.retrieve(configurationId);
+    const cancellationEnabled = configuration.features.subscription_cancel.enabled;
+    if (!configuration.active || configuration.livemode !== (environment === "live")
+      || cancellationEnabled !== (input.cancellationMode === "standard")) {
+      throw unavailable(input.cancellationMode === "commitment_restricted"
+        ? "The committed Stripe portal must be active, environment-matched and cancellation-disabled."
+        : "The standard Stripe portal must be active, environment-matched and cancellation-enabled.");
+    }
     const session = await client.billingPortal.sessions.create({
-      customer: input.customerRef, configuration: this.config.stripePortalConfigurationId,
+      customer: input.customerRef, configuration: configurationId,
       return_url: this.config.portalReturnUrl!,
-    }, { idempotencyKey: `sophia:${environment}:${this.config.providerAccountKey}:portal:${input.tenantId}:${input.requestId}` });
+    }, { idempotencyKey: `sophia:${environment}:${this.config.providerAccountKey}:portal:${input.cancellationMode}:${input.tenantId}:${input.requestId}` });
     return { url: hostedProviderUrl(session.url, "billing.stripe.com"), expiresAt: null };
   }
 
@@ -263,8 +280,11 @@ function reference(value: unknown): string | null {
 }
 function subscriptionObservation(type: string, object: Record<string, unknown>, observedAt: string): BillingSubscriptionObservation | null {
   if (type === "checkout.session.completed") {
-    const externalRef = reference(object.subscription); return externalRef
-      ? { externalRef, status: "pending", currentPeriodStart: null, currentPeriodEnd: null, observedAt } : null;
+    const externalRef = reference(object.subscription);
+    const metadataValue = record(object.metadata);
+    return externalRef ? { externalRef, status: "pending", currentPeriodStart: null, currentPeriodEnd: null, observedAt,
+      planVersionId: uuid.safeParse(metadataValue?.sophiaPlanVersionId).success
+        ? String(metadataValue?.sophiaPlanVersionId) : null, billingAnchor: null } : null;
   }
   if (!type.startsWith("customer.subscription.")) return null;
   return subscriptionFromObject(object, observedAt);
@@ -279,6 +299,9 @@ function subscriptionFromObject(object: Record<string, unknown>, observedAt: str
     externalRef: String(object.id), status: subscriptionStatus(object.status),
     currentPeriodStart: timestamp(object.current_period_start ?? item?.current_period_start),
     currentPeriodEnd: timestamp(object.current_period_end ?? item?.current_period_end), observedAt,
+    planVersionId: uuid.safeParse(record(object.metadata)?.sophiaPlanVersionId).success
+      ? String(record(object.metadata)?.sophiaPlanVersionId) : null,
+    billingAnchor: timestamp(object.billing_cycle_anchor),
   };
 }
 function subscriptionStatus(value: unknown): BillingSubscriptionObservation["status"] {
@@ -316,6 +339,8 @@ function invoiceFromObject(object: Record<string, unknown>, observedAt: string):
     amountDueMinor: amountsValid ? String(object.amount_due) : null,
     amountPaidMinor: amountsValid ? String(object.amount_paid) : null,
     hostedInvoiceUrl: hosted, dueAt: timestamp(object.due_date), observedAt,
+    externalSubscriptionRef: reference(record(record(object.parent)?.subscription_details)?.subscription),
+    billingReason: typeof object.billing_reason === "string" ? object.billing_reason.slice(0, 80) : null,
   };
 }
 function invoiceStatus(value: unknown): BillingInvoiceObservation["status"] {

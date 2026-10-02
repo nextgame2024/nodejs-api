@@ -10,6 +10,8 @@ const billingKeys = [
   "SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS",
   "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
   "SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS",
+  "SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID",
+  "SOPHIA_BILLING_STRIPE_COMMITTED_PORTAL_CONFIGURATION_ID",
 ] as const;
 const original = new Map<string, string | undefined>();
 
@@ -75,5 +77,11 @@ describe("runtime billing configuration", () => {
     expect(runtimeConfig().billing.stripeMilestonePriceMappings).toEqual({
       "112e2d08-9e8b-4748-a89a-954a28ad43c9": { "production-deployment": "price_1FoundingDeployment" },
     });
+  });
+
+  it("requires committed and standard portal configurations to be distinct", () => {
+    process.env.SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID = "bpc_sophiaPortal123";
+    process.env.SOPHIA_BILLING_STRIPE_COMMITTED_PORTAL_CONFIGURATION_ID = "bpc_sophiaPortal123";
+    expect(() => runtimeConfig()).toThrow("must be different");
   });
 });

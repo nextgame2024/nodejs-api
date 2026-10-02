@@ -116,6 +116,7 @@ export type RuntimeConfig = {
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
     stripePortalConfigurationId?: string;
+    stripeCommittedPortalConfigurationId?: string;
     checkoutSuccessUrl?: string;
     checkoutCancelUrl?: string;
     portalReturnUrl?: string;
@@ -342,6 +343,16 @@ function billingConfig(): RuntimeConfig["billing"] {
   if (stripePortalConfigurationId && !/^bpc_[A-Za-z0-9]{8,}$/.test(stripePortalConfigurationId)) {
     throw new Error("SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID must be a Stripe portal configuration ID.");
   }
+  const stripeCommittedPortalConfigurationId = emptyToUndefined(
+    process.env.SOPHIA_BILLING_STRIPE_COMMITTED_PORTAL_CONFIGURATION_ID,
+  );
+  if (stripeCommittedPortalConfigurationId
+    && !/^bpc_[A-Za-z0-9]{8,}$/.test(stripeCommittedPortalConfigurationId)) {
+    throw new Error("SOPHIA_BILLING_STRIPE_COMMITTED_PORTAL_CONFIGURATION_ID must be a Stripe portal configuration ID.");
+  }
+  if (stripeCommittedPortalConfigurationId && stripeCommittedPortalConfigurationId === stripePortalConfigurationId) {
+    throw new Error("Committed and standard Stripe portal configurations must be different.");
+  }
   return {
     provider,
     providerAccountKey,
@@ -349,6 +360,7 @@ function billingConfig(): RuntimeConfig["billing"] {
     stripeSecretKey,
     stripeWebhookSecret,
     stripePortalConfigurationId,
+    stripeCommittedPortalConfigurationId,
     checkoutSuccessUrl: hostedUrl(process.env.SOPHIA_BILLING_CHECKOUT_SUCCESS_URL),
     checkoutCancelUrl: hostedUrl(process.env.SOPHIA_BILLING_CHECKOUT_CANCEL_URL),
     portalReturnUrl: hostedUrl(process.env.SOPHIA_BILLING_PORTAL_RETURN_URL),

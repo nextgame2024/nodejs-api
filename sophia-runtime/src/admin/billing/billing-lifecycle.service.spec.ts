@@ -53,7 +53,8 @@ describe("BillingLifecycleService", () => {
     const audit = { record: jest.fn() };
     const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
     const service = new BillingLifecycleService({ query, tenantTransaction: run } as never, provider, audit as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     const customerRef = "cus_liveSophia123";
     await expect(service.bindCustomer(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333", customerRef,
@@ -65,6 +66,29 @@ describe("BillingLifecycleService", () => {
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ eventType: "billing.customer.bound",
       permission: "billing.manage", metadata: expect.objectContaining({ environment: "live" }) }));
     expect(JSON.stringify(audit.record.mock.calls)).not.toContain(customerRef);
+  });
+
+  it("routes a committed tenant only to the cancellation-disabled portal", async () => {
+    const provider = providerMock();
+    provider.createHostedPortal = jest.fn(async () => ({ url: "https://billing.stripe.com/p/session/restricted",
+      expiresAt: null }));
+    const query = jest.fn(async () => ({ rows: [{ commercial_plan_version_id: planVersionId,
+      external_customer_ref: "cus_sophia_1", pricing_status: "configured", billing_currency: "AUD",
+      billing_interval: "month", base_charge_minor: "19000", tax_mode: "not_applicable",
+      rate_card_dimensions: "1", initial_charges: [] }] }));
+    const run = async (_tenant: string, work: (client: { query: typeof query }) => unknown) => work({ query });
+    const commitments = { portalPolicy: jest.fn(async () => ({ mode: "commitment_restricted" as const,
+      commitmentEnd: "2027-10-02T00:00:00.000Z", requiredPeriods: 12, periodsObserved: 6 })) };
+    const service = new BillingLifecycleService({ tenantReadTransaction: run } as never, provider,
+      { record: jest.fn() } as never, ledger() as never, meterOutbox() as never, invoiceAdjustments() as never,
+      invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments as never);
+    await expect(service.portal(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333",
+    })).resolves.toMatchObject({ environment: "sandbox", liveCharge: false,
+      cancellation: { mode: "commitment_restricted", requiredPeriods: 12, periodsObserved: 6 } });
+    expect(provider.createHostedPortal).toHaveBeenCalledWith({ tenantId,
+      requestId: "33333333-3333-4333-8333-333333333333", customerRef: "cus_sophia_1",
+      cancellationMode: "commitment_restricted" });
   });
 
   it("refuses bootstrap binding outside dormant live mode before provider I/O", async () => {
@@ -168,7 +192,8 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: true });
     expect(clientQuery.mock.calls.some((call) => String(call[0]).includes("billing_invoice_references"))).toBe(false);
@@ -186,7 +211,8 @@ describe("BillingLifecycleService", () => {
       tenantReadTransaction: jest.fn(),
     };
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never);
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toEqual({ received: true, duplicate: false });
     const invoiceSql = String(clientQuery.mock.calls.find((call) => String(call[0]).includes("billing_invoice_references"))?.[0]);
@@ -214,7 +240,8 @@ describe("BillingLifecycleService", () => {
       existingStatus: "reconciled" as const,
       adjustmentId: "adjustment-1", providerInvoiceItemRef: "ii_1" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      periods as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
+      periods as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toMatchObject({ received: true, duplicate: true,
         invoiceAdjustment: { status: "provider_accepted", existingStatus: "reconciled",
@@ -244,7 +271,8 @@ describe("BillingLifecycleService", () => {
     adjustments.dispatchNext = jest.fn(async () => ({ status: "retry_scheduled" as const,
       adjustmentId: "adjustment-1", detail: "Stripe unavailable" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .rejects.toThrow("not authoritatively attached");
   });
@@ -261,7 +289,8 @@ describe("BillingLifecycleService", () => {
     adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "not_required" as const,
       detail: "no overage" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toMatchObject({ received: true, invoiceAdjustment: { status: "not_required" } });
     expect(adjustments.dispatchNext).not.toHaveBeenCalled();
@@ -281,7 +310,8 @@ describe("BillingLifecycleService", () => {
     recovery.enqueueAndDispatch = jest.fn(async () => ({ status: "incomplete" as const,
       attempts: [{ status: "outcome_unknown" }] }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .rejects.toThrow("carry-forward is not authoritatively attached");
   });
@@ -300,7 +330,8 @@ describe("BillingLifecycleService", () => {
     recovery.enqueueAndDispatch = jest.fn(async () => ({ status: "provider_accepted" as const,
       attempts: [{ status: "provider_accepted" }] }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
-      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never);
+      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never,
+      commercialMilestones() as never, commitments() as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .rejects.toThrow("immutable overage ledger is not ready");
     expect(recovery.enqueueAndDispatch).toHaveBeenCalledWith(tenantId, expect.objectContaining({
@@ -327,7 +358,7 @@ describe("BillingLifecycleService", () => {
     const outbox = meterOutbox();
     const service = new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
       provider, { record: jest.fn() } as never, ledger() as never, outbox as never, invoiceAdjustments() as never,
-      invoiceAdjustmentRecovery() as never);
+      invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments() as never);
     await expect(service.reconcile(tenantId, principal, {
       requestId: "33333333-3333-4333-8333-333333333333",
     })).resolves.toMatchObject({ meterEventDispatch: { status: "disabled" }, liveEntitlementMutation: false });
@@ -340,7 +371,7 @@ function lifecycle(provider: ReturnType<typeof providerMock>, query: jest.Mock) 
   const run = jest.fn(async (_id: string, work: (client: { query: jest.Mock }) => unknown) => work({ query }));
   return new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
     provider, { record: jest.fn() } as never, ledger() as never, meterOutbox() as never, invoiceAdjustments() as never,
-    invoiceAdjustmentRecovery() as never);
+    invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments() as never);
 }
 function ledger() {
   const result = { observedPeriods: 1, finalised: 1, existing: 0, blocked: [] };
@@ -359,6 +390,15 @@ function invoiceAdjustments() {
 function invoiceAdjustmentRecovery() {
   return { enqueueAndDispatch: jest.fn(async () => ({ status: "not_required", attempts: [] })),
     reconcileInvoice: jest.fn(async () => ({ status: "idle", attempts: [] })) };
+}
+function commitments() {
+  return { portalPolicy: jest.fn(async () => ({ mode: "standard" as const, commitmentEnd: null,
+    requiredPeriods: null, periodsObserved: null })),
+  observe: jest.fn(async () => ({ status: "awaiting_paid_commencement" as const })),
+  activateFromPaidInvoice: jest.fn(async () => ({ status: "not_commencement_payment" as const })) };
+}
+function commercialMilestones() {
+  return { reconcileInvoice: jest.fn(async () => ({ status: "idle" as const })) };
 }
 function providerMock() {
   return {

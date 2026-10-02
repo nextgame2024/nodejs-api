@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { runtimeConfig } from "../../config/runtime-config.js";
@@ -19,6 +19,7 @@ import { BillingMeterOutboxService } from "./billing-meter-outbox.service.js";
 import { BillingInvoiceAdjustmentOutboxService } from "./billing-invoice-adjustment-outbox.service.js";
 import { BillingInvoiceAdjustmentRecoveryService } from "./billing-invoice-adjustment-recovery.service.js";
 import { BillingCommercialMilestoneService } from "./billing-commercial-milestone.service.js";
+import { BillingSubscriptionCommitmentService } from "./billing-subscription-commitment.service.js";
 
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 const checkoutMeteredRateSchema = z.object({
@@ -44,8 +45,10 @@ export class BillingLifecycleService {
     private readonly invoiceAdjustments: BillingInvoiceAdjustmentOutboxService,
     @Inject(BillingInvoiceAdjustmentRecoveryService)
     private readonly invoiceAdjustmentRecovery: BillingInvoiceAdjustmentRecoveryService,
-    @Optional() @Inject(BillingCommercialMilestoneService)
-    private readonly commercialMilestones?: BillingCommercialMilestoneService,
+    @Inject(BillingCommercialMilestoneService)
+    private readonly commercialMilestones: BillingCommercialMilestoneService,
+    @Inject(BillingSubscriptionCommitmentService)
+    private readonly commitments: BillingSubscriptionCommitmentService,
   ) {}
 
   status() { return this.provider.status(); }
@@ -145,11 +148,16 @@ export class BillingLifecycleService {
     if (!status.portal) throw new ServiceUnavailableException("Hosted billing portal is not available.");
     const context = await this.billingContext(tenantId, environment, accountKey);
     if (!context.customerRef) throw new NotFoundException(`No Sophia ${environment} billing customer is linked to this tenant.`);
-    const result = await this.provider.createHostedPortal({ tenantId, requestId: input.requestId, customerRef: context.customerRef });
+    const cancellation = await this.commitments.portalPolicy(tenantId,
+      status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey);
+    const result = await this.provider.createHostedPortal({ tenantId, requestId: input.requestId,
+      customerRef: context.customerRef, cancellationMode: cancellation.mode });
     await this.audit.record({ tenantId, identityUserId: principal.identityUserId, eventType: "billing.portal.created",
       permission: "billing.manage", outcome: "allowed", resourceType: "billingCustomer",
-      metadata: { providerKey: status.providerKey, providerAccountKey: accountKey, environment, requestId: input.requestId } });
-    return { ...result, environment, liveCharge: false };
+      metadata: { providerKey: status.providerKey, providerAccountKey: accountKey, environment,
+        requestId: input.requestId, cancellationMode: cancellation.mode,
+        commitmentEnd: cancellation.commitmentEnd } });
+    return { ...result, environment, liveCharge: false, cancellation };
   }
 
   async bindCustomer(tenantId: string, principal: AdminPrincipal, body: unknown) {
@@ -211,10 +219,16 @@ export class BillingLifecycleService {
     if (!context.customerRef) throw new NotFoundException(`No Sophia ${environment} billing customer is linked to this tenant.`);
     const result = await this.provider.reconcileTenant({ tenantId, customerRef: context.customerRef });
     await this.database.tenantTransaction(tenantId, async (client) => {
-      for (const subscription of result.subscriptions) await upsertSubscription(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
-        environment, accountKey, subscription);
-      for (const invoice of result.invoices) await upsertInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
-        environment, accountKey, invoice);
+      for (const subscription of result.subscriptions) {
+        await upsertSubscription(client, tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, accountKey, subscription);
+        await this.commitments.observe(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
+          environment, accountKey, subscription);
+      }
+      for (const invoice of result.invoices) {
+        await upsertInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, accountKey, invoice);
+        await this.commitments.activateFromPaidInvoice(client, tenantId, STRIPE_BILLING_PROVIDER_KEY,
+          environment, accountKey, invoice);
+      }
     });
     const periodLedger = await this.periodLedgers.finaliseEligible(
       tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
@@ -254,10 +268,18 @@ export class BillingLifecycleService {
       if (inserted.rowCount === 0) return { received: true, duplicate: true };
       if (event.eventType === "checkout.session.completed") await this.bindCheckoutCustomer(client, tenantId, event);
       const supported = supportedWebhookTypes.has(event.eventType);
-      if (supported && event.subscription) await upsertSubscription(client, tenantId, event.providerKey,
-        event.environment, event.providerAccountKey, event.subscription);
-      if (supported && event.invoice) await upsertInvoice(client, tenantId, event.providerKey,
-        event.environment, event.providerAccountKey, event.invoice);
+      if (supported && event.subscription) {
+        await upsertSubscription(client, tenantId, event.providerKey,
+          event.environment, event.providerAccountKey, event.subscription);
+        await this.commitments.observe(client, tenantId, event.providerKey,
+          event.environment, event.providerAccountKey, event.subscription);
+      }
+      if (supported && event.invoice) {
+        await upsertInvoice(client, tenantId, event.providerKey,
+          event.environment, event.providerAccountKey, event.invoice);
+        await this.commitments.activateFromPaidInvoice(client, tenantId, event.providerKey,
+          event.environment, event.providerAccountKey, event.invoice);
+      }
       await client.query(
         `UPDATE ${runtimeConfig().schema}.billing_webhook_events
          SET processing_status=$4,processing_detail=$5,processed_at=now()
@@ -279,8 +301,8 @@ export class BillingLifecycleService {
         invoiceAdjustmentReconciliation = { current: current.status === "idle" ? null : current,
           recovery: recovery.status === "idle" ? null : recovery };
       }
-      commercialMilestoneReconciliation = await this.commercialMilestones?.reconcileInvoice(
-        tenantId, event.providerKey, event.environment, event.providerAccountKey, event.invoice.externalRef) ?? null;
+      commercialMilestoneReconciliation = await this.commercialMilestones.reconcileInvoice(
+        tenantId, event.providerKey, event.environment, event.providerAccountKey, event.invoice.externalRef);
       if (commercialMilestoneReconciliation?.status === "idle") commercialMilestoneReconciliation = null;
     }
     if (!event.draftRenewalInvoice || !event.customerRef) {
@@ -457,15 +479,20 @@ async function upsertSubscription(client: PoolClient, tenantId: string, provider
   const schema = runtimeConfig().schema;
   await client.query(
     `INSERT INTO ${schema}.billing_subscription_references
-      (customer_id,provider_key,provider_environment,provider_account_key,external_subscription_ref,status,current_period_start,current_period_end,observed_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      (customer_id,provider_key,provider_environment,provider_account_key,external_subscription_ref,status,
+       current_period_start,current_period_end,observed_at,commercial_plan_version_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (provider_key,provider_environment,provider_account_key,external_subscription_ref) DO UPDATE SET
        customer_id=EXCLUDED.customer_id,status=EXCLUDED.status,
        current_period_start=EXCLUDED.current_period_start,current_period_end=EXCLUDED.current_period_end,
-       observed_at=EXCLUDED.observed_at,revision=billing_subscription_references.revision+1
+       observed_at=EXCLUDED.observed_at,
+       commercial_plan_version_id=CASE WHEN EXCLUDED.commercial_plan_version_id IS NULL
+         THEN billing_subscription_references.commercial_plan_version_id
+         ELSE EXCLUDED.commercial_plan_version_id END,
+       revision=billing_subscription_references.revision+1
      WHERE EXCLUDED.observed_at>=billing_subscription_references.observed_at`,
     [tenantId, providerKey, environment, accountKey, value.externalRef, value.status,
-      value.currentPeriodStart, value.currentPeriodEnd, value.observedAt]);
+      value.currentPeriodStart, value.currentPeriodEnd, value.observedAt, value.planVersionId ?? null]);
 }
 async function upsertInvoice(client: PoolClient, tenantId: string, providerKey: string,
   environment: "sandbox" | "live", accountKey: string, value: BillingInvoiceObservation) {
