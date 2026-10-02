@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0C4B3",
-  "updatedAt": "2026-10-02T21:13:14+10:00",
+  "checkpoint": "P6-A06C3B0D",
+  "updatedAt": "2026-10-02T21:30:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2221,6 +2221,13 @@
       "node": "22.23.3",
       "result": "pass-c4b3-complete",
       "detail": "Replacement tenant a206dbbb-610b-4260-b3a6-113a3e4e3450 completed the missed-window carry-forward proof. Recovery attempt cfa23410-4744-477f-aa1c-a1ec57befe3f attached exactly one provider item ii_1UM4KYGcz4GrZOEBu9E2G8qd to next-renewal invoice in_1UM4A7Gcz4GrZOEBPcxEtoZA and finalized as reconciled. Immutable evidence retained the original 2026-10-02T10:55:58Z through 2026-11-02T10:55:58Z service period, quantity 2, amount AUD 0.20 and one-time Price price_1ULyegGcz4GrZOEBwDHdpzPW. The source adjustment remains missed_window, no duplicate item or out-of-cycle invoice was created, and no live resource, event or charge was authorized. P6-A06C3B0C4B3 and its sandbox parent hierarchy are complete."
+    },
+    {
+      "command": "commercial clarification and repository inspection; plan amendment 2.1.71",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "founding-plan-approved-implementation-pending",
+      "detail": "The operator approved a separate Sophia Essential Founding offer: AUD 950 commencement, AUD 950 after authorised production deployment, AUD 190 monthly, 1000 included active minutes, AUD 0.10 per aggregate whole excess minute and a twelve-month minimum term before month-to-month cancellation. Repository inspection proved the current commercial plan stores only a recurring base/rate card, Checkout attaches only the recurring base, and one global portal configuration cannot enforce this plan-specific commitment. Plan 2.1.71 adds P6-A06C3B0D for immutable charge components, an idempotent deployment-milestone invoice path, commitment/cancellation enforcement and sandbox proof. No Stripe object, invoice or charge was created and live Checkout remains disabled."
     }
   ],
   "blockers": [
@@ -2263,9 +2270,9 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A are complete. P6-A06C3B0 is complete: it covers commercial authority, provider-account isolation, canonical activity, immutable period ledgers, provider-neutral outbox delivery, negative Meter timing evidence, exact one-time draft-renewal adjustment, duplicate-delivery idempotency and missed-window carry-forward recovery. C3B1/C3C still require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and the standard-plan P6-A06C3B0A-C sandbox work are complete. Newly approved P6-A06C3B0D must add and sandbox-prove the separate Sophia Essential Founding plan, two AUD 950 milestone obligations, AUD 190 monthly membership, 1000 included active minutes, AUD 0.10 overage and twelve-month minimum-term cancellation controls before live resources are configured. C3B1/C3C still require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": null,
+  "nextReadyTask": "P6-A06C3B0D",
   "nextBlockedTask": "P6-A06C3B1",
   "stopAfterCheckpoint": true
 }
