@@ -179,19 +179,24 @@ describe("BillingLifecycleService", () => {
     const periods = ledger();
     const adjustments = invoiceAdjustments();
     adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "existing" as const, adjustmentId: "adjustment-1" }));
-    adjustments.dispatchNext = jest.fn(async () => ({ status: "provider_accepted" as const,
+    adjustments.dispatchNext = jest.fn(async () => ({ status: "idle" as const }));
+    adjustments.authoritativeAcceptance = jest.fn(async () => ({ status: "provider_accepted" as const,
+      existingStatus: "reconciled" as const,
       adjustmentId: "adjustment-1", providerInvoiceItemRef: "ii_1" }));
     const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
       periods as never, meterOutbox() as never, adjustments as never);
     await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
       .resolves.toMatchObject({ received: true, duplicate: true,
-        invoiceAdjustment: { status: "provider_accepted", providerInvoiceItemRef: "ii_1" } });
+        invoiceAdjustment: { status: "provider_accepted", existingStatus: "reconciled",
+          providerInvoiceItemRef: "ii_1" } });
     expect(periods.finaliseSandboxTestClock).toHaveBeenCalledWith(tenantId, "stripe-sophia", "legacy-primary",
       "2026-10-28T08:51:05.000Z");
     expect(adjustments.enqueueDraftInvoice).toHaveBeenCalledWith(tenantId, expect.objectContaining({
       externalInvoiceRef: "in_draft_1", externalSubscriptionRef: "sub_1",
       periodStart: "2026-09-28T08:51:05.000Z", periodEnd: "2026-10-28T08:51:05.000Z",
     }));
+    expect(adjustments.dispatchNext).toHaveBeenCalledTimes(1);
+    expect(adjustments.authoritativeAcceptance).toHaveBeenCalledWith(tenantId, "adjustment-1");
   });
 
   it("returns a retryable webhook failure while the exact draft-invoice adjustment is not accepted", async () => {
@@ -274,6 +279,7 @@ function meterOutbox() {
 function invoiceAdjustments() {
   return { enqueueDraftInvoice: jest.fn(async () => ({ status: "not_eligible" })),
     dispatchNext: jest.fn(async () => ({ status: "idle" })),
+    authoritativeAcceptance: jest.fn(async () => null),
     reconcileInvoice: jest.fn(async () => ({ status: "idle" })) };
 }
 function providerMock() {

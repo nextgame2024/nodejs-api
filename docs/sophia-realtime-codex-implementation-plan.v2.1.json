@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.63",
+    "version": "2.1.64",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof, table-specific outbox row locking, contiguous typed billing-period parameters, environment-specific Meter timestamp bounds, minute-aligned Stripe summary windows distinct from exact provider periods, bounded read-only sandbox invoice diagnostics, post-period Meter invoice-timing incompatibility, signed draft-invoice webhook backpressure, canonical invoice-item-parent reconciliation and evidence-backed failed-reconciliation recovery; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof, table-specific outbox row locking, contiguous typed billing-period parameters, environment-specific Meter timestamp bounds, minute-aligned Stripe summary windows distinct from exact provider periods, bounded read-only sandbox invoice diagnostics, post-period Meter invoice-timing incompatibility, signed draft-invoice webhook backpressure, canonical invoice-item-parent reconciliation, evidence-backed failed-reconciliation recovery and authoritative duplicate-delivery acknowledgement; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,25 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-02-C4B-AUTHORITATIVE-DUPLICATE-ACK",
+      "taskId": "P6-A06C3B0C4B3",
+      "reason": "Post-reconciliation review found that the duplicate invoice.created unit test mocked dispatchNext as provider_accepted. The real outbox correctly returns idle once an adjustment is already provider_accepted or reconciled, so a genuine signed replay would have received a false retryable failure despite authoritative acceptance. Duplicate handling must distinguish no pending claim from no accepted adjustment without making accepted rows dispatchable.",
+      "changes": [
+        "After a duplicate draft-invoice enqueue resolves the exact adjustment identity and dispatch has no pending claim, read the same tenant-scoped row for authoritative provider_accepted or reconciled state.",
+        "Acknowledge the signed replay only when an exact provider invoice-item reference is already persisted; otherwise preserve retry backpressure.",
+        "Do not broaden the dispatch candidate query: provider_accepted, reconciled and reconciliation_failed rows remain ineligible for submission.",
+        "Update the duplicate-delivery test to exercise the real idle-claim plus authoritative-read path instead of mocking a second provider acceptance."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
+        "sophia-runtime/src/admin/billing/billing-lifecycle.service.spec.ts",
+        "sophia-runtime/src/admin/billing/billing-invoice-adjustment-outbox.service.ts",
+        "sophia-runtime/src/admin/billing/billing-invoice-adjustment-outbox.service.spec.ts"
+      ],
+      "approvedBy": "Standing user instruction to evaluate and amend the plan when implementation evidence identifies a safer design",
+      "recordedAt": "2026-10-02T16:50:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-02-C4B-EVIDENCE-BACKED-RECOVERY-TRANSITION",
       "taskId": "P6-A06C3B0C4B3",

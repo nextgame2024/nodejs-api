@@ -147,6 +147,22 @@ describe("BillingInvoiceAdjustmentOutboxService", () => {
       .resolves.toEqual({ status: "reconciled", adjustmentId });
     expect(dispatcher.submit).not.toHaveBeenCalled();
   });
+
+  it("reads one authoritative accepted adjustment without making it dispatchable", async () => {
+    const query = jest.fn(async (sql: string, values?: unknown[]) => {
+      expect(sql).toContain("status IN ('provider_accepted','reconciled')");
+      expect(values).toEqual([tenantId, adjustmentId]);
+      return { rows: [{ status: "reconciled", provider_invoice_item_ref: "ii_1" }], rowCount: 1 };
+    });
+    const dispatcher = { status: () => ({ availability: "configured" as const, detail: "sandbox" }),
+      submit: jest.fn(), reconcile: jest.fn() };
+    await expect(new BillingInvoiceAdjustmentOutboxService(database(query), dispatcher)
+      .authoritativeAcceptance(tenantId, adjustmentId)).resolves.toEqual({
+        status: "provider_accepted", existingStatus: "reconciled",
+        adjustmentId, providerInvoiceItemRef: "ii_1",
+      });
+    expect(dispatcher.submit).not.toHaveBeenCalled();
+  });
 });
 
 function database(query: jest.Mock) {

@@ -235,6 +235,23 @@ export class BillingInvoiceAdjustmentOutboxService {
     }
   }
 
+  async authoritativeAcceptance(tenantId: string, adjustmentId: string) {
+    const result = await this.database.tenantReadTransaction(tenantId, (client) => client.query<{
+      status: "provider_accepted" | "reconciled";
+      provider_invoice_item_ref: string;
+    }>(
+      `SELECT status,provider_invoice_item_ref
+       FROM ${runtimeConfig().schema}.billing_invoice_adjustment_outbox
+       WHERE customer_id=$1 AND billing_invoice_adjustment_outbox_id=$2
+         AND status IN ('provider_accepted','reconciled')
+         AND provider_invoice_item_ref IS NOT NULL`,
+      [tenantId, adjustmentId],
+    ));
+    const row = result.rows.length === 1 ? result.rows[0] : null;
+    return row ? { status: "provider_accepted" as const, existingStatus: row.status,
+      adjustmentId, providerInvoiceItemRef: row.provider_invoice_item_ref } : null;
+  }
+
   async reconcileInvoice(
     tenantId: string,
     providerKey: string,

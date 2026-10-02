@@ -288,10 +288,15 @@ export class BillingLifecycleService {
       return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued,
         invoiceAdjustment: { status: "not_required" as const }, invoiceAdjustmentReconciliation };
     }
-    const adjustment = event.environment === "sandbox"
+    let adjustment = event.environment === "sandbox"
       ? await this.invoiceAdjustments.dispatchNext(tenantId, event.providerKey, event.environment,
         event.providerAccountKey, `invoice-created:${event.eventId}`)
       : { status: "disabled" as const, detail: "Live overage invoice adjustment is not authorized." };
+    if (event.environment === "sandbox" && adjustment.status === "idle"
+      && "adjustmentId" in enqueued && typeof enqueued.adjustmentId === "string") {
+      adjustment = await this.invoiceAdjustments.authoritativeAcceptance(tenantId, enqueued.adjustmentId)
+        ?? adjustment;
+    }
     if (event.environment === "sandbox" && adjustment.status !== "provider_accepted") {
       throw new ServiceUnavailableException(
         "The sandbox overage adjustment is not authoritatively attached to the draft invoice; Stripe must retry the signed event.",
