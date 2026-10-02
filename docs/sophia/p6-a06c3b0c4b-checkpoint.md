@@ -66,9 +66,11 @@ After the correct plan 2.1.68 artifact deployed, the stage revealed an ordering 
 
 Replacement tenant `a206dbbb-610b-4260-b3a6-113a3e4e3450` created isolated clock `clock_1UM48AGcz4GrZOEBkwjMD85g`, Customer `cus_VMnj80rW0clM58` and subscription `sub_1UM48EGcz4GrZOEBNC052pdH`. It finalized source invoice `in_1UM48rGcz4GrZOEBZjpgrQv1` while unbound and recorded adjustment `43b1add0-2e09-4800-b48c-9e66dce7b2e5` as `missed_window`. Stripe then created exact next draft `in_1UM4A7Gcz4GrZOEBPcxEtoZA`, but no recovery row appeared. The handler was applying current-ledger `not_eligible` backpressure before recovery enqueue, and bootstrap `observed_at=period_end` prevented later subscription observations from capturing periods normally. Plan 2.1.70 processes due recovery first, uses real observation time, explicitly resumes the same exact draft through the idempotent service, and safely finalizes only the validated saved target before reconciliation.
 
+The corrected recovery lifecycle then completed on that same replacement fixture. Recovery attempt `cfa23410-4744-477f-aa1c-a1ec57befe3f` attached exactly one Stripe invoice item `ii_1UM4KYGcz4GrZOEBu9E2G8qd` to next-renewal invoice `in_1UM4A7Gcz4GrZOEBPcxEtoZA`. `finalize-recovery` reconciled the line against the original immutable service period `2026-10-02T10:55:58Z` through `2026-11-02T10:55:58Z`, quantity `2`, amount AUD `0.20` and one-time Price `price_1ULyegGcz4GrZOEBwDHdpzPW`. The source remains `missed_window`; no duplicate recovery item or out-of-cycle invoice was created. C4B3 and the C4B sandbox checkpoint are complete.
+
 ## Delivered
 
-- The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
+- New active-minute Checkout composition uses the licensed fixed recurring base only. The sandbox proof invalidated the Meter-backed recurring Price as the charging mechanism for a post-period aggregate, and C4B3 validated the separate one-time overage Price and exact draft-renewal invoice adjustment.
 - The aggregate Meter event is timestamped one second before the exact provider-period end. Stripe Meter summaries use an inclusive start and exclusive end, so the prior period-end timestamp was outside the period being reconciled.
 - Reconciliation reads the exact full-period Meter summary and finalized `open` or `paid` invoice lines. It requires one summary and one line to match the immutable quantity, unit price, currency, metered Price, environment and period.
 - Migration 047 adds tenant-isolated immutable reconciliation evidence. The outbox cannot advance from `provider_accepted` or `outcome_unknown` to `reconciled` until that evidence is inserted in the same transaction.
@@ -91,13 +93,13 @@ Replacement tenant `a206dbbb-610b-4260-b3a6-113a3e4e3450` created isolated clock
 - Migration `047_billing_meter_reconciliation_evidence.sql` was applied to Neon.
 - The rollback-only Neon probe verified forced RLS for the outbox and reconciliation evidence, cross-tenant hiding, immutable evidence, least-privilege `SELECT, INSERT` access to evidence, fenced claims, stale-token denial and permanent quarantine of ambiguous submissions. All probe rows were rolled back.
 - Runtime portability typecheck, typecheck, build and generated-contract drift check pass.
-- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Plan 2.1.63 Runtime tests: 118 suites, 424 tests. Plan 2.1.64 Runtime tests: 118 suites, 425 tests. Plan 2.1.65 Runtime tests: 120 suites, 433 tests. Both Runtime typechecks, build and generated-contract drift check pass.
+- Plan 2.1.61 Runtime tests: 117 suites, 420 tests. Plan 2.1.62 Runtime tests: 117 suites, 422 tests. Plan 2.1.63 Runtime tests: 118 suites, 424 tests. Plan 2.1.64 Runtime tests: 118 suites, 425 tests. Plan 2.1.65 Runtime tests: 120 suites, 433 tests. Plan 2.1.70 Runtime tests: 120 suites, 434 tests. Both Runtime typechecks, build and generated-contract drift check pass.
 - Backend boundary scan: 233 files. Protected real-estate characterization: 8 suites, 38 tests.
 
-## Remaining C4B external proof
+## C4B completion
 
-The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
+The deployed mappings, migrations 049/050/051, fresh Sophia Voice assignments, isolated subscriptions, immutable ledgers, accepted Meter evidence, exact one-time draft-renewal adjustment, duplicate signed-delivery proof and missed-window recovery are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is to deploy plan 2.1.70 and resume `recover` then `finalize-recovery` on replacement tenant `a206dbbb-610b-4260-b3a6-113a3e4e3450`. Acceptance requires one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. All earlier fixtures remain immutable and must not be reused.
+There is no remaining C4B sandbox work. The final recovery acceptance evidence is one reconciled next-renewal attempt, exact finalized-line evidence for the original two-minute/AUD 0.20 period, and no duplicate or out-of-cycle invoice item. All proof fixtures remain immutable and must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.

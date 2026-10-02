@@ -6112,7 +6112,7 @@
                   "executionSlices": [
                     {
                       "id": "P6-A06C3B0",
-                      "status": "in_progress",
+                      "status": "complete",
                       "scope": "Implement the approved commercial definition without reusing the sandbox plan.",
                       "executionSlices": [
                         {
@@ -6127,7 +6127,7 @@
                         },
                         {
                           "id": "P6-A06C3B0C",
-                          "status": "in_progress",
+                          "status": "complete",
                           "scope": "Implement provider-account isolation, canonical active-second evidence and an immutable period-ledger/outbox design, then sandbox-verify base-plus-metered Stripe submission and reconciliation without rounding sessions or enabling live Checkout.",
                           "executionSlices": [
                             {
@@ -6164,7 +6164,7 @@
                             },
                             {
                               "id": "P6-A06C3B0C4",
-                              "status": "in_progress",
+                              "status": "complete",
                               "scope": "Deliver whole overage minutes through a durable idempotent provider outbox, preserve Meter summaries as usage-delivery evidence, and sandbox-prove an exact draft-renewal invoice adjustment before any live overage collection.",
                               "executionSlices": [
                                 {
@@ -6174,7 +6174,7 @@
                                 },
                                 {
                                   "id": "P6-A06C3B0C4B",
-                                  "status": "in_progress",
+                                  "status": "complete",
                                   "scope": "Use the isolated Sophia sandbox to validate provider timing, then replace the disproved post-period Meter invoice-line assumption with an idempotent draft-renewal invoice adjustment and exact finalized-line evidence.",
                                   "executionSlices": [
                                     {
@@ -6189,7 +6189,7 @@
                                     },
                                     {
                                       "id": "P6-A06C3B0C4B3",
-                                      "status": "in_progress_sandbox_fixture",
+                                      "status": "complete",
                                       "scope": "Implement an idempotent one-time overage Price/invoice-item outbox triggered for the matching draft renewal invoice, prove duplicate invoice.created handling and missed-window recovery in a fresh sandbox fixture, and persist exact finalized invoice-line evidence."
                                     }
                                   ]
