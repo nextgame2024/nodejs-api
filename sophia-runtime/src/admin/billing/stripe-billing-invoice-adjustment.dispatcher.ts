@@ -136,12 +136,15 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
       }
       const line = candidates[0];
       const priceRef = line.pricing?.price_details?.price ?? null;
-      const providerInvoiceItemRef = line.parent?.invoice_item_details?.invoice_item ?? null;
+      const invoiceItemDetails = line.parent?.type === "invoice_item_details"
+        ? line.parent.invoice_item_details : null;
+      const providerInvoiceItemRef = invoiceItemDetails?.invoice_item ?? null;
+      const lineSubscriptionRef = invoiceItemDetails?.subscription ?? reference(line.subscription);
       const amount = quantity * unitAmount;
       if (!Number.isSafeInteger(amount) || !providerInvoiceItemRef
         || line.metadata.sophiaUsageLedgerId !== input.ledgerId
         || line.invoice !== input.externalInvoiceRef || line.livemode
-        || reference(line.subscription) !== input.externalSubscriptionRef
+        || lineSubscriptionRef !== input.externalSubscriptionRef
         || priceRef !== input.oneTimePriceRef || line.quantity !== quantity || line.amount !== amount
         || line.currency.toUpperCase() !== input.currency
         || !sameIntegerDecimal(line.pricing?.unit_amount_decimal, unitAmount)

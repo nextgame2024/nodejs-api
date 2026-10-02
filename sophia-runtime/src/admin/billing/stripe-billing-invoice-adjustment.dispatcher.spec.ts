@@ -46,18 +46,35 @@ describe("StripeBillingInvoiceAdjustmentDispatcher", () => {
       status_transitions: { finalized_at: 2_000_099_010 } })) as never;
     stripe.invoices.listLineItems = jest.fn(async () => ({ has_more: false, data: [{
       id: "il_sophia_1", amount: 20, currency: "aud", livemode: false, invoice: "in_sophia_1",
-      subscription: "sub_sophia_1", quantity: 2, metadata: { sophiaBillingAdjustmentId: "adjustment-1",
+      subscription: null, quantity: 2, metadata: { sophiaBillingAdjustmentId: "adjustment-1",
         sophiaUsageLedgerId: "ledger-1" }, period: { start: 1_999_999_000, end: 2_000_098_999 },
       pricing: { type: "price_details", unit_amount_decimal: "10",
         price_details: { price: "price_sophiaOverage123", product: "prod_sophia" } },
       parent: { type: "invoice_item_details", invoice_item_details: { invoice_item: "ii_sophia_1",
-        proration: false, proration_details: null }, subscription_item_details: null },
+        proration: false, proration_details: null, subscription: "sub_sophia_1" }, subscription_item_details: null },
     }] })) as never;
     const dispatcher = new StripeBillingInvoiceAdjustmentDispatcher(config(), stripe as never);
     await expect(dispatcher.reconcile(input())).resolves.toMatchObject({ outcome: "matched", evidence: {
       providerInvoiceItemRef: "ii_sophia_1", providerInvoiceLineRef: "il_sophia_1", quantity: "2",
       unitPriceMinor: "10", amountMinor: "20", currency: "AUD", invoiceStatus: "paid",
     } });
+  });
+
+  it("rejects a finalized invoice-item line bound to a different parent subscription", async () => {
+    const stripe = client(jest.fn());
+    stripe.invoices.retrieve = jest.fn(async () => ({ ...invoice(), status: "paid",
+      status_transitions: { finalized_at: 2_000_099_010 } })) as never;
+    stripe.invoices.listLineItems = jest.fn(async () => ({ has_more: false, data: [{
+      id: "il_sophia_1", amount: 20, currency: "aud", livemode: false, invoice: "in_sophia_1",
+      subscription: null, quantity: 2, metadata: { sophiaBillingAdjustmentId: "adjustment-1",
+        sophiaUsageLedgerId: "ledger-1" }, period: { start: 1_999_999_000, end: 2_000_098_999 },
+      pricing: { type: "price_details", unit_amount_decimal: "10",
+        price_details: { price: "price_sophiaOverage123", product: "prod_sophia" } },
+      parent: { type: "invoice_item_details", invoice_item_details: { invoice_item: "ii_sophia_1",
+        proration: false, proration_details: null, subscription: "sub_other" }, subscription_item_details: null },
+    }] })) as never;
+    await expect(new StripeBillingInvoiceAdjustmentDispatcher(config(), stripe as never).reconcile(input()))
+      .resolves.toMatchObject({ outcome: "mismatch" });
   });
 });
 

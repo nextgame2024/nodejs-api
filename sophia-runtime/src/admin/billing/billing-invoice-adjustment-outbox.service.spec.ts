@@ -118,6 +118,34 @@ describe("BillingInvoiceAdjustmentOutboxService", () => {
       .resolves.toEqual({ status: "reconciled", adjustmentId });
     expect(query.mock.calls.some(([sql]) => String(sql).includes("billing_invoice_adjustment_reconciliations"))).toBe(true);
     expect(query.mock.calls.some(([sql]) => String(sql).includes("SET status='reconciled'"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("'reconciliation_failed'"))).toBe(true);
+  });
+
+  it("safely revalidates a previously failed read-back without resubmitting an invoice item", async () => {
+    const row = dispatchRow();
+    const query = jest.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.includes("SELECT * FROM sophia_runtime.billing_invoice_adjustment_outbox")) {
+        expect(sql).toContain("'reconciliation_failed'");
+        return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes("SELECT evidence_digest")) {
+        const insert = query.mock.calls.find(([text]) => String(text)
+          .includes("INSERT INTO sophia_runtime.billing_invoice_adjustment_reconciliations"));
+        return { rows: [{ evidence_digest: insert?.[1]?.[14] }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const dispatcher = { status: () => ({ availability: "configured" as const, detail: "sandbox" }),
+      submit: jest.fn(), reconcile: jest.fn(async () => ({ outcome: "matched" as const, evidence: {
+        providerInvoiceItemRef: "ii_1", providerInvoiceLineRef: "il_1",
+        oneTimePriceRef: "price_sophiaOverage123", periodStart: row.period_start, periodEnd: row.period_end,
+        quantity: "2", unitPriceMinor: "10", amountMinor: "20", currency: "AUD", invoiceStatus: "paid",
+        observedAt: "2026-10-28T08:52:00.000Z",
+      } })) };
+    await expect(new BillingInvoiceAdjustmentOutboxService(database(query), dispatcher)
+      .reconcileInvoice(tenantId, "stripe-sophia", "sandbox", "legacy-primary", "in_sophia_1"))
+      .resolves.toEqual({ status: "reconciled", adjustmentId });
+    expect(dispatcher.submit).not.toHaveBeenCalled();
   });
 });
 

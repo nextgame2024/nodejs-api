@@ -250,7 +250,8 @@ export class BillingInvoiceAdjustmentOutboxService {
       const result = await client.query<AdjustmentRow>(
         `SELECT * FROM ${schema}.billing_invoice_adjustment_outbox
          WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3 AND provider_account_key=$4
-           AND external_invoice_ref=$5 AND status IN ('outcome_unknown','provider_accepted') LIMIT 2`,
+           AND external_invoice_ref=$5
+           AND status IN ('outcome_unknown','provider_accepted','reconciliation_failed') LIMIT 2`,
         [tenantId, providerKey, environment, providerAccountKey, externalInvoiceRef],
       );
       return result.rows.length === 1 ? result.rows[0] : null;
@@ -267,7 +268,7 @@ export class BillingInvoiceAdjustmentOutboxService {
           `UPDATE ${schema}.billing_invoice_adjustment_outbox
            SET status='reconciliation_failed',last_error_code='invoice_line_mismatch',last_error_detail=$3,updated_at=now()
            WHERE customer_id=$1 AND billing_invoice_adjustment_outbox_id=$2
-             AND status IN ('outcome_unknown','provider_accepted')`,
+             AND status IN ('outcome_unknown','provider_accepted','reconciliation_failed')`,
           [tenantId, row.billing_invoice_adjustment_outbox_id, outcome.detail],
         ));
       }
@@ -306,7 +307,7 @@ export class BillingInvoiceAdjustmentOutboxService {
          SET status='reconciled',provider_invoice_item_ref=$3,provider_accepted_at=COALESCE(provider_accepted_at,$4),
              reconciled_at=$4,last_error_code=NULL,last_error_detail=NULL,updated_at=now()
          WHERE customer_id=$1 AND billing_invoice_adjustment_outbox_id=$2
-           AND status IN ('outcome_unknown','provider_accepted')`,
+           AND status IN ('outcome_unknown','provider_accepted','reconciliation_failed')`,
         [tenantId, row.billing_invoice_adjustment_outbox_id, outcome.evidence.providerInvoiceItemRef,
           outcome.evidence.observedAt],
       );
