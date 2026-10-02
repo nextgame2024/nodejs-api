@@ -47,13 +47,13 @@ Hosted Checkout now reads initial-only components from the active immutable plan
 
 Repository validation passed both Runtime typechecks, build and 121 suites/439 tests. Contract generation and 15 contract tests passed, the boundary scan passed 233 files, and protected real-estate passed 8 suites/38 tests.
 
-Migrations 052, 053 and 054 remain unapplied. D2 provides immutable recent-MFA production-deployment acceptance, a dedicated digest-bound milestone invoice outbox, stable sandbox provider idempotency and exact finalized-line reconciliation. D3 anchors the commitment to the paid initial invoice and twelve contiguous provider periods, then selects distinct validated pre-term and post-term portal configurations. Live milestone submission/reconciliation and live Checkout remain disabled.
+Migrations 052, 053 and 054 were applied by the authorised operator on 2026-10-03. D2 provides immutable recent-MFA production-deployment acceptance, a dedicated digest-bound milestone invoice outbox, stable sandbox provider idempotency and exact finalized-line reconciliation. D3 anchors the commitment to the paid initial invoice and twelve contiguous provider periods, then selects distinct validated pre-term and post-term portal configurations. Live milestone submission/reconciliation and live Checkout remain disabled.
 
 ## D4 operational preparation
 
 The publisher now supports plan-specific included seconds, minimum terms and immutable charge components. New plans are authored as draft, receive their components and become published in one owner transaction. Legacy catalog manifests remain unchanged when these fields are omitted. Migration 052 also replaces the old `included_active_seconds = 120000` ledger constraint with a non-negative immutable plan snapshot constraint; otherwise the approved 60,000-second Founding allowance could never be finalized.
 
-The approved plan entry is [founding-plan-catalog-entry.json](./founding-plan-catalog-entry.json). Add that exact object to the previously approved commercial catalog input and run `npm run commercial:publish` with the owner connection only after migrations 052–054 have been applied.
+The approved plan entry is [founding-plan-catalog-entry.json](./founding-plan-catalog-entry.json). Production images intentionally omit the `tsx` development executable, and the legal catalog input is one-time operational data rather than a persistent environment value. The compiled `npm run commercial:publish-founding` command therefore derives the already-approved seller from the configured active sandbox provider account and publishes only the exact hard-coded Founding definition. It requires the owner connection and explicit commercial-publication confirmation.
 
 `npm run billing:founding-provision` is an explicitly confirmed, test-key-only provisioner. It idempotently creates or validates the sandbox Product, recurring membership Price, commencement Price, deployment Price, one-time overage Price, Meter-evidence Price and cancellation-disabled portal configuration. It prints mapping entries for merging into Render; it never overwrites the existing standard mappings.
 

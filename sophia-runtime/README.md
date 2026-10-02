@@ -100,6 +100,9 @@ guarantees collection of the contractual term.
 Founding sandbox resources and proof fixtures are operator-only workflows:
 
 ```bash
+SOPHIA_FOUNDING_CATALOG_CONFIRM=I_UNDERSTAND_THIS_PUBLISHES_A_COMMERCIAL_PLAN \
+npm run commercial:publish-founding
+
 SOPHIA_FOUNDING_PLAN_VERSION_ID=<published-plan-uuid> \
 SOPHIA_FOUNDING_CONFIRM=I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS \
 npm run billing:founding-provision
@@ -110,7 +113,11 @@ SOPHIA_FOUNDING_CONFIRM=I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS \
 npm run billing:founding-sandbox -- prepare
 ```
 
-Provisioning is idempotent by immutable Product metadata and Price lookup keys,
+The compiled Founding publisher derives the already-approved seller identity
+from the configured sandbox provider account, so it does not require the legal
+catalog JSON to be reconstructed in a production shell. Publication and
+provisioning are idempotent by immutable database identity, Product metadata
+and Price lookup keys. Stripe provisioning
 refuses non-test keys, and prints mapping entries to merge with existing Render
 JSON values. The proof stages are `prepare`, `close`, `milestone`,
 `advance-commitment`, and `status`; they create Stripe sandbox objects and must

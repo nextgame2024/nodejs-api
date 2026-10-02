@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.74",
+    "version": "2.1.75",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,23 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-03-FOUNDING-COMPILED-PUBLISHER",
+      "taskId": "P6-A06C3B0D4",
+      "reason": "The first deployed publication attempt proved that production dependencies omit the tsx development executable and that asking an operator to reconstruct the full legal catalog envelope is both error-prone and unnecessary for adding one immutable plan.",
+      "changes": [
+        "Keep the generic full-catalog publisher as a development/operator source utility, but do not use it from the production image.",
+        "Provide a compiled Founding-only publisher that requires explicit confirmation and the owner connection, resolves exactly one active seller through the configured sandbox provider-account identity, and contains the approved immutable Founding facts directly.",
+        "Create components while the plan is draft, publish atomically, and validate the exact digest, commitment and components on every idempotent rerun without re-entering the seller legal identity or ABN."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/operators/publish-founding-commercial-plan.ts",
+        "sophia-runtime/src/operators/publish-founding-commercial-plan.spec.ts",
+        "sophia-runtime/package.json"
+      ],
+      "approvedBy": "Standing user instruction to evaluate and amend the plan when implementation identifies a safer or more accurate boundary",
+      "recordedAt": "2026-10-03T07:25:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-03-FOUNDING-PUBLISH-AND-LEDGER-COMPATIBILITY",
       "taskId": "P6-A06C3B0D4",
