@@ -22,10 +22,14 @@ import { BillingInvoiceAdjustmentRecoveryService } from "./billing-invoice-adjus
 const supportedWebhookTypes = new Set<string>(STRIPE_BILLING_OBSERVATION_EVENT_TYPES);
 const checkoutMeteredRateSchema = z.object({
   dimensions: z.tuple([z.object({
-    dimension: z.literal("active-seconds"), includedQuantity: z.literal("120000"),
+    dimension: z.literal("active-seconds"), includedQuantity: z.string().regex(/^\d+$/),
     unitQuantity: z.literal("60"), unitPriceMinor: z.string().regex(/^\d+$/),
   }).strict()]),
 }).strict();
+const checkoutInitialChargesSchema = z.array(z.object({
+  componentKey: z.string().regex(/^[a-z][a-z0-9-]{1,79}$/), amountMinor: z.string().regex(/^[1-9]\d*$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+}).strict()).max(10);
 
 @Injectable()
 export class BillingLifecycleService {
@@ -63,6 +67,7 @@ export class BillingLifecycleService {
       || context.taxMode !== "not_applicable" || (context.rateCardDimensions > 0 && !meteredOverage)) {
       throw new ConflictException("Hosted Checkout requires an approved fixed base and optional exact active-minute overage rate card with tax marked not applicable.");
     }
+    const initialCharges = checkoutInitialCharges(context.initialCharges, context.currency);
     const schema = runtimeConfig().schema;
     try {
       await this.database.tenantTransaction(tenantId, async (client) => {
@@ -95,7 +100,7 @@ export class BillingLifecycleService {
       result = await this.provider.createHostedCheckout({ tenantId, planVersionId: input.planVersionId,
         requestId: input.requestId, customerRef: context.customerRef,
         commercial: { currency: context.currency, interval: context.interval, baseChargeMinor: context.baseChargeMinor,
-          meteredOverage } });
+          initialCharges, meteredOverage } });
       if (!result.expiresAt || Date.parse(result.expiresAt) <= Date.now()) {
         throw new ConflictException("Stripe did not return a usable future Checkout expiry.");
       }
@@ -338,9 +343,16 @@ export class BillingLifecycleService {
     return this.database.tenantReadTransaction(tenantId, async (client) => {
       const result = await client.query<{ commercial_plan_version_id: string | null; external_customer_ref: string | null;
         pricing_status: string | null; billing_currency: string | null; billing_interval: "month" | "year" | null;
-        base_charge_minor: string | null; tax_mode: string | null; rate_card: unknown; rate_card_dimensions: string }>(
+        base_charge_minor: string | null; tax_mode: string | null; rate_card: unknown; rate_card_dimensions: string;
+        initial_charges: unknown }>(
         `SELECT plan.commercial_plan_version_id,plan.pricing_status,plan.billing_currency,plan.billing_interval,
-                plan.base_charge_minor::text,plan.tax_mode,plan.rate_card,plan.rate_card_dimensions::text,customer.external_customer_ref
+                plan.base_charge_minor::text,plan.tax_mode,plan.rate_card,plan.rate_card_dimensions::text,
+                COALESCE((SELECT jsonb_agg(jsonb_build_object('componentKey',component_key,
+                  'amountMinor',amount_minor::text,'currency',currency) ORDER BY component_key)
+                  FROM ${schema}.commercial_plan_charge_components component
+                  WHERE component.commercial_plan_version_id=plan.commercial_plan_version_id
+                    AND component.charge_timing='initial_checkout'),'[]'::jsonb) AS initial_charges,
+                customer.external_customer_ref
          FROM ${schema}.customers c
          LEFT JOIN LATERAL (
            SELECT p.commercial_plan_version_id,p.pricing_status,p.billing_currency,p.billing_interval,p.base_charge_minor,
@@ -360,7 +372,7 @@ export class BillingLifecycleService {
       return { planVersionId: row.commercial_plan_version_id, customerRef: row.external_customer_ref,
         pricingStatus: row.pricing_status, currency: row.billing_currency, interval: row.billing_interval,
         baseChargeMinor: row.base_charge_minor, taxMode: row.tax_mode, rateCard: row.rate_card,
-        rateCardDimensions: Number(row.rate_card_dimensions ?? 0) };
+        rateCardDimensions: Number(row.rate_card_dimensions ?? 0), initialCharges: row.initial_charges };
     });
   }
 
@@ -410,6 +422,14 @@ export class BillingLifecycleService {
        WHERE customer_id=$1 AND provider_key=$2 AND provider_environment=$3 AND provider_account_key=$4 AND external_checkout_ref=$5`,
       [tenantId, event.providerKey, event.environment, event.providerAccountKey, event.checkoutRef]);
   }
+}
+
+function checkoutInitialCharges(value: unknown, currency: string) {
+  const parsed = checkoutInitialChargesSchema.parse(value ?? []);
+  if (parsed.some((charge) => charge.currency !== currency)) {
+    throw new ConflictException("Hosted Checkout initial charge currency must match the recurring plan currency.");
+  }
+  return parsed.map(({ componentKey, amountMinor }) => ({ componentKey, amountMinor }));
 }
 
 function checkoutMeteredOverage(rateCard: unknown, dimensions: number) {

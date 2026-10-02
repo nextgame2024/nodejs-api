@@ -38,3 +38,13 @@ Before that boundary, a cancellation request may be recorded but cannot end serv
 - Add plan-aware portal/cancellation behavior for pre-commitment and post-commitment states.
 - Sandbox-prove initial AUD 1,140 invoicing, duplicate Checkout/webhook handling, one later AUD 950 milestone invoice, twelve monthly boundaries, overage isolation and cancellation timing.
 - Keep all live Founding Prices, invoices, Checkout and charges disabled until the sandbox proof is complete and separate live authority is granted.
+
+## D1 implementation evidence
+
+Migration `052_commercial_commitment_and_charge_components.sql` adds bounded immutable `minimum_commitment_months` and one-time plan charge components. Components can be authored only while their plan is draft and become immutable with the published plan. Runtime access is read-only.
+
+Hosted Checkout now reads initial-only components from the active immutable plan, accepts a plan-specific active-second allowance, and validates nested plan/component Stripe Price mappings. Each initial Price must be active, in the correct provider environment, one-time, AUD, tax-exclusive and exactly match the immutable amount. Standard plans with no initial component retain only their recurring Checkout line.
+
+Repository validation passed both Runtime typechecks, build and 121 suites/439 tests. Contract generation and 15 contract tests passed, the boundary scan passed 233 files, and protected real-estate passed 8 suites/38 tests.
+
+Migration 052 remains unapplied. No Founding plan record, Stripe Product/Price, invoice or charge was created. The next slice is the separate authorised production-deployment milestone evidence and invoice outbox; live submission remains disabled.

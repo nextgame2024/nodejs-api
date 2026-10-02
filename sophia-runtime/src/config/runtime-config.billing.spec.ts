@@ -8,6 +8,7 @@ const billingKeys = [
   "SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED",
   "SOPHIA_BILLING_STRIPE_SECRET_KEY",
   "SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS",
+  "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
 ] as const;
 const original = new Map<string, string | undefined>();
 
@@ -56,6 +57,14 @@ describe("runtime billing configuration", () => {
       '{"112e2d08-9e8b-4748-a89a-954a28ad43c9":"price_1ULyegGcz4GrZOEBwDHdpzPW"}';
     expect(runtimeConfig().billing.stripeOveragePriceMappings).toEqual({
       "112e2d08-9e8b-4748-a89a-954a28ad43c9": "price_1ULyegGcz4GrZOEBwDHdpzPW",
+    });
+  });
+
+  it("parses approved plan-version and initial charge-component Price mappings", () => {
+    process.env.SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS =
+      '{"112e2d08-9e8b-4748-a89a-954a28ad43c9":{"commencement":"price_1FoundingCommencement"}}';
+    expect(runtimeConfig().billing.stripeInitialPriceMappings).toEqual({
+      "112e2d08-9e8b-4748-a89a-954a28ad43c9": { commencement: "price_1FoundingCommencement" },
     });
   });
 });

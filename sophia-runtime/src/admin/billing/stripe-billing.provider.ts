@@ -67,6 +67,7 @@ export class StripeBillingProvider implements BillingProvider {
 
   async createHostedCheckout(input: { tenantId: string; planVersionId: string; requestId: string; customerRef: string | null;
     commercial: { currency: string; interval: "month" | "year"; baseChargeMinor: string;
+      initialCharges: Array<{ componentKey: string; amountMinor: string }>;
       meteredOverage: { unitPriceMinor: string; meterBindingKey: string } | null } }) {
     const status = this.status();
     if (!status.checkout) throw unavailable(status.availability === "live"
@@ -81,9 +82,16 @@ export class StripeBillingProvider implements BillingProvider {
     if (input.commercial.meteredOverage && !overagePrice) {
       throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} one-time overage Price mapping.`);
     }
-    const [providerBasePrice, providerOveragePrice] = await Promise.all([
+    const initialPriceMappings = this.config.stripeInitialPriceMappings[input.planVersionId] ?? {};
+    const initialPrices = input.commercial.initialCharges.map((charge) => {
+      const price = initialPriceMappings[charge.componentKey];
+      if (!price) throw unavailable(`The assigned Sophia plan has no approved Stripe ${environment} ${charge.componentKey} Price mapping.`);
+      return { ...charge, price };
+    });
+    const [providerBasePrice, providerOveragePrice, ...providerInitialPrices] = await Promise.all([
       client.prices.retrieve(basePrice),
       overagePrice ? client.prices.retrieve(overagePrice) : Promise.resolve(null),
+      ...initialPrices.map((charge) => client.prices.retrieve(charge.price)),
     ]);
     if (providerBasePrice.livemode !== (environment === "live") || !providerBasePrice.active
       || providerBasePrice.type !== "recurring" || providerBasePrice.currency.toUpperCase() !== input.commercial.currency
@@ -100,7 +108,18 @@ export class StripeBillingProvider implements BillingProvider {
         || providerOveragePrice.recurring !== null || providerOveragePrice.tax_behavior !== "exclusive")) {
       throw unavailable(`The Stripe ${environment} one-time overage Price does not exactly match the approved rate, currency and non-GST tax behavior.`);
     }
-    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [{ price: basePrice, quantity: 1 }];
+    providerInitialPrices.forEach((providerPrice, index) => {
+      const charge = initialPrices[index]!;
+      if (providerPrice.livemode !== (environment === "live") || !providerPrice.active
+        || providerPrice.type !== "one_time" || providerPrice.currency.toUpperCase() !== input.commercial.currency
+        || providerPrice.unit_amount === null || String(providerPrice.unit_amount) !== charge.amountMinor
+        || providerPrice.recurring !== null || providerPrice.tax_behavior !== "exclusive") {
+        throw unavailable(`The Stripe ${environment} ${charge.componentKey} Price does not exactly match the approved amount, currency and non-GST tax behavior.`);
+      }
+    });
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [
+      { price: basePrice, quantity: 1 }, ...initialPrices.map((charge) => ({ price: charge.price, quantity: 1 })),
+    ];
     const session = await client.checkout.sessions.create({
       mode: "subscription",
       ui_mode: "hosted",

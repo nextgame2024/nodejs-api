@@ -120,6 +120,7 @@ export type RuntimeConfig = {
     checkoutCancelUrl?: string;
     portalReturnUrl?: string;
     stripePriceMappings: Record<string, string>;
+    stripeInitialPriceMappings: Record<string, Record<string, string>>;
     stripeMeteredPriceMappings: Record<string, string>;
     stripeOveragePriceMappings: Record<string, string>;
     stripeMeterBindings: Record<string, string>;
@@ -354,6 +355,10 @@ function billingConfig(): RuntimeConfig["billing"] {
       process.env.SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS,
       "SOPHIA_BILLING_STRIPE_PRICE_MAPPINGS",
     ),
+    stripeInitialPriceMappings: stripeComponentPriceMappings(
+      process.env.SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS,
+      "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
+    ),
     stripeMeteredPriceMappings: stripePriceMappings(
       process.env.SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS,
       "SOPHIA_BILLING_STRIPE_METERED_PRICE_MAPPINGS",
@@ -388,6 +393,27 @@ function stripePriceMappings(value: string | undefined, variableName: string): R
     throw new Error("Sophia Stripe mappings must map plan-version UUIDs to Stripe Price IDs.");
   }
   return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function stripeComponentPriceMappings(value: string | undefined, variableName: string): Record<string, Record<string, string>> {
+  if (!value?.trim()) return {};
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error(`${variableName} must be valid JSON.`); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${variableName} must be an object keyed by commercial plan version UUID.`);
+  }
+  const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const validKey = /^[a-z][a-z0-9-]{1,79}$/;
+  const validPrice = /^price_[A-Za-z0-9]{8,}$/;
+  for (const [planId, components] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!validUuid.test(planId) || !components || typeof components !== "object" || Array.isArray(components)
+      || Object.keys(components as object).length === 0
+      || Object.entries(components as Record<string, unknown>).some(([key, price]) =>
+        !validKey.test(key) || typeof price !== "string" || !validPrice.test(price))) {
+      throw new Error(`${variableName} must map plan-version UUIDs and component keys to Stripe Price IDs.`);
+    }
+  }
+  return parsed as Record<string, Record<string, string>>;
 }
 
 function stripeMeterBindings(value: string | undefined): Record<string, string> {

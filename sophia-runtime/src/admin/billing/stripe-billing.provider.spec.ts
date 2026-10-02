@@ -18,7 +18,8 @@ describe("StripeBillingProvider", () => {
     const create = jest.fn(async () => ({ id: "cs_test_sophia", url: "https://checkout.stripe.com/c/pay/test", expires_at: 2_000_000_000 }));
     const provider = new StripeBillingProvider(config(), client({ checkoutCreate: create }));
     await expect(provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000", meteredOverage: null } })).resolves.toMatchObject({
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000",
+        initialCharges: [], meteredOverage: null } })).resolves.toMatchObject({
       url: "https://checkout.stripe.com/c/pay/test", externalCheckoutRef: "cs_test_sophia",
     });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ mode: "subscription", client_reference_id: tenantId,
@@ -39,11 +40,29 @@ describe("StripeBillingProvider", () => {
     const provider = new StripeBillingProvider(config(), client({ checkoutCreate: create, pricesRetrieve: retrieve }));
     await provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
       commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000",
-        meteredOverage: { unitPriceMinor: "50", meterBindingKey: "active-overage-minutes" } } });
+        initialCharges: [], meteredOverage: { unitPriceMinor: "50", meterBindingKey: "active-overage-minutes" } } });
     expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["price_sophiaSandbox123", "price_sophiaOverage123"]);
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       line_items: [{ price: "price_sophiaSandbox123", quantity: 1 }],
     }), expect.any(Object));
+  });
+
+  it("validates and adds a required commencement Price only to the initial subscription invoice", async () => {
+    const create = jest.fn(async () => ({ id: "cs_test_founding", url: "https://checkout.stripe.com/c/pay/founding",
+      expires_at: 2_000_000_000 }));
+    const retrieve = jest.fn(async (id: string) => id === "price_sophiaSandbox123"
+      ? recurringPrice({ unitAmount: 19_000, usageType: "licensed", meter: null })
+      : oneTimePrice({ unitAmount: 95_000 }));
+    const provider = new StripeBillingProvider({ ...config(),
+      stripeInitialPriceMappings: { [planVersionId]: { commencement: "price_foundingCommencement123" } } },
+    client({ checkoutCreate: create, pricesRetrieve: retrieve }));
+    await provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "19000",
+        initialCharges: [{ componentKey: "commencement", amountMinor: "95000" }], meteredOverage: null } });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ mode: "subscription", line_items: [
+      { price: "price_sophiaSandbox123", quantity: 1 },
+      { price: "price_foundingCommencement123", quantity: 1 },
+    ] }), expect.any(Object));
   });
 
   it("extracts an exact draft renewal-invoice window only from a signed invoice.created event", async () => {
@@ -85,7 +104,8 @@ describe("StripeBillingProvider", () => {
     expect(provider.status()).toMatchObject({ availability: "live", checkout: false,
       portal: true, signedWebhooks: true, reconciliation: true });
     await expect(provider.createHostedCheckout({ tenantId, planVersionId, requestId, customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000", meteredOverage: null } }))
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "1000",
+        initialCharges: [], meteredOverage: null } }))
       .rejects.toThrow("explicit charge activation");
     expect(checkoutCreate).not.toHaveBeenCalled();
   });
@@ -151,6 +171,7 @@ function config(): RuntimeConfig["billing"] {
     stripePortalConfigurationId: "bpc_sophiaSandbox123",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaSandbox123" },
+    stripeInitialPriceMappings: {},
     stripeMeteredPriceMappings: { [planVersionId]: "price_sophiaMetered123" },
     stripeOveragePriceMappings: { [planVersionId]: "price_sophiaOverage123" },
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };

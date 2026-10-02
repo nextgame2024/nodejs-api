@@ -6222,8 +6222,30 @@
                         },
                         {
                           "id": "P6-A06C3B0D",
-                          "status": "ready",
-                          "scope": "Implement and sandbox-prove the immutable Sophia Essential Founding plan: AUD 950 at commencement, AUD 950 at authorised production deployment, AUD 190 monthly for a twelve-month minimum term, 1000 included active minutes and AUD 0.10 per aggregate whole overage minute, with plan-aware cancellation enforcement and no live charge activation."
+                          "status": "in_progress",
+                          "scope": "Implement and sandbox-prove the immutable Sophia Essential Founding plan: AUD 950 at commencement, AUD 950 at authorised production deployment, AUD 190 monthly for a twelve-month minimum term, 1000 included active minutes and AUD 0.10 per aggregate whole overage minute, with plan-aware cancellation enforcement and no live charge activation.",
+                          "executionSlices": [
+                            {
+                              "id": "P6-A06C3B0D1",
+                              "status": "complete",
+                              "scope": "Add immutable minimum-commitment and one-time charge-component commercial facts, support plan-specific included-minute allowances, and validate a mapped commencement Price as an initial-only subscription Checkout line without affecting standard plans."
+                            },
+                            {
+                              "id": "P6-A06C3B0D2",
+                              "status": "ready",
+                              "scope": "Add authorised production-deployment acceptance evidence plus a durable idempotent AUD 950 milestone invoice outbox and exact provider invoice-line reconciliation, with live submission disabled."
+                            },
+                            {
+                              "id": "P6-A06C3B0D3",
+                              "status": "pending",
+                              "scope": "Persist the twelve-month commitment boundary from subscription commencement and enforce plan-aware pre-term and post-term cancellation/portal behavior."
+                            },
+                            {
+                              "id": "P6-A06C3B0D4",
+                              "status": "pending",
+                              "scope": "Apply the migration, publish the immutable Founding plan, configure approved sandbox Prices and prove the initial invoice, milestone invoice, monthly overage and cancellation boundaries without enabling live Checkout."
+                            }
+                          ]
                         }
                       ]
                     },

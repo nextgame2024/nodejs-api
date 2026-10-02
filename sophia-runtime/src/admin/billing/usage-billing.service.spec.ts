@@ -157,7 +157,8 @@ describe("UsageBillingService", () => {
   it("keeps every provider mutation disabled", async () => {
     const provider = new DisabledBillingProvider();
     await expect(provider.createHostedCheckout({ tenantId, planVersionId: "plan-1", requestId: "request-1", customerRef: null,
-      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "100", meteredOverage: null } }))
+      commercial: { currency: "AUD", interval: "month", baseChargeMinor: "100",
+        initialCharges: [], meteredOverage: null } }))
       .rejects.toThrow("billing integration is disabled");
     await expect(provider.createHostedPortal({ tenantId, requestId: "request-1", customerRef: "customer-1" })).rejects.toThrow("billing integration is disabled");
     await expect(provider.verifyWebhook({}, new Uint8Array())).rejects.toThrow("billing integration is disabled");

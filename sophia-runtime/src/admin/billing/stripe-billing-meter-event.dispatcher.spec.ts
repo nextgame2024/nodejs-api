@@ -120,6 +120,7 @@ function config() {
     checkoutCancelUrl: "https://example.com/cancel",
     portalReturnUrl: "https://example.com/return",
     stripePriceMappings: {},
+    stripeInitialPriceMappings: {},
     stripeMeteredPriceMappings: {},
     stripeOveragePriceMappings: {},
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" },

@@ -123,6 +123,7 @@ function config(): RuntimeConfig["billing"] {
     stripePortalConfigurationId: "bpc_sophiaSandbox123", checkoutSuccessUrl: "https://example.test/success",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",
     stripePriceMappings: { [planVersionId]: "price_sophiaBase123" },
+    stripeInitialPriceMappings: {},
     stripeMeteredPriceMappings: { [planVersionId]: "price_sophiaMetered123" },
     stripeOveragePriceMappings: { [planVersionId]: "price_sophiaOverage123" },
     stripeMeterBindings: { "active-overage-minutes": "sophia_active_overage_minutes" } };

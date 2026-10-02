@@ -122,6 +122,36 @@ describe("BillingLifecycleService", () => {
     });
     expect(provider.createHostedCheckout).toHaveBeenCalledWith(expect.objectContaining({ commercial: {
       currency: "AUD", interval: "month", baseChargeMinor: "75000",
+      initialCharges: [],
+      meteredOverage: { unitPriceMinor: "10", meterBindingKey: "active-overage-minutes" },
+    } }));
+  });
+
+  it("passes immutable initial Checkout charges separately from monthly and overage prices", async () => {
+    const provider = providerMock();
+    provider.createHostedCheckout = jest.fn(async () => ({ url: "https://checkout.stripe.com/c/pay/founding",
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(), externalCheckoutRef: "cs_test_founding" }));
+    let intentStatus = "allocating";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM sophia_runtime.customers")) return { rows: [{ commercial_plan_version_id: planVersionId,
+        external_customer_ref: null, pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "19000", tax_mode: "not_applicable", rate_card_dimensions: "1",
+        initial_charges: [{ componentKey: "commencement", amountMinor: "95000", currency: "AUD" }],
+        rate_card: { dimensions: [{ dimension: "active-seconds", includedQuantity: "60000",
+          unitQuantity: "60", unitPriceMinor: "10" }] } }] };
+      if (sql.includes("SET status='created'")) { intentStatus = "created"; return { rows: [], rowCount: 1 }; }
+      if (sql.includes("SELECT commercial_plan_version_id") && sql.includes("billing_checkout_intents")) {
+        return { rows: [{ commercial_plan_version_id: planVersionId,
+          external_checkout_ref: intentStatus === "created" ? "cs_test_founding" : null, status: intentStatus }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    await lifecycle(provider, query).checkout(tenantId, principal, {
+      requestId: "33333333-3333-4333-8333-333333333333", planVersionId,
+    });
+    expect(provider.createHostedCheckout).toHaveBeenCalledWith(expect.objectContaining({ commercial: {
+      currency: "AUD", interval: "month", baseChargeMinor: "19000",
+      initialCharges: [{ componentKey: "commencement", amountMinor: "95000" }],
       meteredOverage: { unitPriceMinor: "10", meterBindingKey: "active-overage-minutes" },
     } }));
   });

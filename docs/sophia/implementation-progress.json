@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0D",
-  "updatedAt": "2026-10-02T21:30:00+10:00",
+  "checkpoint": "P6-A06C3B0D1",
+  "updatedAt": "2026-10-02T21:56:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2228,6 +2228,13 @@
       "node": "22.23.3",
       "result": "founding-plan-approved-implementation-pending",
       "detail": "The operator approved a separate Sophia Essential Founding offer: AUD 950 commencement, AUD 950 after authorised production deployment, AUD 190 monthly, 1000 included active minutes, AUD 0.10 per aggregate whole excess minute and a twelve-month minimum term before month-to-month cancellation. Repository inspection proved the current commercial plan stores only a recurring base/rate card, Checkout attaches only the recurring base, and one global portal configuration cannot enforce this plan-specific commitment. Plan 2.1.71 adds P6-A06C3B0D for immutable charge components, an idempotent deployment-milestone invoice path, commitment/cancellation enforcement and sandbox proof. No Stripe object, invoice or charge was created and live Checkout remains disabled."
+    },
+    {
+      "command": "npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass-d1-complete",
+      "detail": "P6-A06C3B0D1 adds unapplied migration 052 with bounded immutable minimum-commitment months and draft-authored/published-immutable one-time plan charge components. Checkout now reads initial-only components, accepts plan-specific included active seconds rather than hardcoding 2000 minutes, validates nested plan/component Stripe Price mappings, verifies each one-time Price against amount/currency/non-GST behavior and adds it only to the initial subscription invoice. Existing plans retain a single recurring line. Runtime passed both typechecks, build and 121 suites/439 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. Migration 052 is not applied, no Founding plan or Stripe Price exists, and no external billing mutation occurred."
     }
   ],
   "blockers": [
@@ -2272,7 +2279,7 @@
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
     "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and the standard-plan P6-A06C3B0A-C sandbox work are complete. Newly approved P6-A06C3B0D must add and sandbox-prove the separate Sophia Essential Founding plan, two AUD 950 milestone obligations, AUD 190 monthly membership, 1000 included active minutes, AUD 0.10 overage and twelve-month minimum-term cancellation controls before live resources are configured. C3B1/C3C still require live resources/secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": "P6-A06C3B0D",
+  "nextReadyTask": "P6-A06C3B0D2",
   "nextBlockedTask": "P6-A06C3B1",
   "stopAfterCheckpoint": true
 }

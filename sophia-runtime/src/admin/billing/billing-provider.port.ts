@@ -67,6 +67,7 @@ export interface BillingProvider {
   mappedPlanVersionIds(): ReadonlySet<string>;
   createHostedCheckout(input: { tenantId: string; planVersionId: string; requestId: string; customerRef: string | null;
     commercial: { currency: string; interval: "month" | "year"; baseChargeMinor: string;
+      initialCharges: Array<{ componentKey: string; amountMinor: string }>;
       meteredOverage: { unitPriceMinor: string; meterBindingKey: string } | null } }): Promise<{
       url: string; expiresAt: string | null; externalCheckoutRef: string;
     }>;
