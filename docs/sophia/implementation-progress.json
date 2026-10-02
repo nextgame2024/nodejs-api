@@ -2200,6 +2200,20 @@
       "node": "22.23.3",
       "result": "pass",
       "detail": "Plan 2.1.69 passed runtime typecheck, build and 120 suites/433 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The gated proof now enforces zero prior adjustment evidence, closes and checkpoints the exact source invoice before binding, and preserves resumability only from that verified unbound checkpoint. Production billing behavior is unchanged."
+    },
+    {
+      "command": "prepare-recovery; miss-recovery; recover; status; diagnose-recovery",
+      "repository": "deployed backend + Neon + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "missed-window-proven-recovery-enqueue-gap-diagnosed",
+      "detail": "Replacement tenant a206dbbb-610b-4260-b3a6-113a3e4e3450 proved source adjustment 43b1add0-2e09-4800-b48c-9e66dce7b2e5 as missed_window on closed invoice in_1UM48rGcz4GrZOEBZjpgrQv1. At the next boundary Stripe created exact draft invoice in_1UM4A7Gcz4GrZOEBPcxEtoZA for 2026-11-02T10:55:58Z through 2026-12-02T10:55:58Z, but no recovery row existed. Plan 2.1.70 diagnoses two causes: the signed handler applied current-ledger not_eligible backpressure before recovery enqueue, and fixture bootstrap used the future period end as observed_at. Recovery must run first and the gated harness now idempotently resumes the existing exact draft."
+    },
+    {
+      "command": "npm run typecheck; npm test; npm run build; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.70 passed runtime typecheck, build and 120 suites/434 tests, including new recovery-before-current-ledger-backpressure coverage; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The existing replacement fixture remains resumable against its exact draft invoice and no migration is required."
     }
   ],
   "blockers": [

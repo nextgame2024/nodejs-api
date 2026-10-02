@@ -195,7 +195,7 @@ async function missRecovery() {
       `INSERT INTO ${config.schema}.billing_subscription_references
        (customer_id,provider_key,provider_environment,provider_account_key,external_subscription_ref,status,
         current_period_start,current_period_end,observed_at)
-       VALUES ($1,$2,'sandbox',$3,$4,'active',$5,$6,$6)
+       VALUES ($1,$2,'sandbox',$3,$4,'active',$5,$6,now())
        ON CONFLICT (provider_key,provider_environment,provider_account_key,external_subscription_ref) DO NOTHING`,
       [tenantId, PROVIDER_KEY, config.billing.providerAccountKey, state.subscriptionId,
         state.periodStart, state.periodEnd]);
@@ -280,6 +280,20 @@ async function recoverMissedAdjustment() {
   if (!state.recoveryPeriodEnd) throw new Error("Run miss-recovery first.");
   const target = Math.floor(new Date(state.recoveryPeriodEnd).getTime() / 1_000) + 60;
   await advanceClock(state.clockId!, target);
+  const invoices = await stripe.invoices.list({ customer: state.customerId!, limit: 100 });
+  const start = unixSecond(state.recoveryPeriodStart!); const end = unixSecond(state.recoveryPeriodEnd);
+  const targets = invoices.data.filter((invoice) => invoice.status === "draft"
+    && invoice.billing_reason === "subscription_cycle"
+    && invoice.period_start === start && invoice.period_end === end);
+  if (targets.length !== 1 || !targets[0].id) {
+    throw new Error("The recovery proof requires exactly one open draft renewal for the target period.");
+  }
+  const explicitRecovery = await invoiceAdjustmentRecovery.enqueueAndDispatch(tenantId!, {
+    providerKey: PROVIDER_KEY, providerEnvironment: "sandbox", providerAccountKey: config.billing.providerAccountKey,
+    externalCustomerRef: state.customerId!, externalSubscriptionRef: state.subscriptionId!,
+    externalInvoiceRef: targets[0].id, periodStart: state.recoveryPeriodStart!,
+    periodEnd: state.recoveryPeriodEnd,
+  }, `c4b-recovery:${randomUUID()}`);
   const recovery = await waitForRecovery(["provider_accepted", "reconciled", "reconciliation_failed",
     "missed_window", "terminal_failed"]);
   if (!recovery || !["provider_accepted", "reconciled"].includes(recovery.status)) {
@@ -287,7 +301,7 @@ async function recoverMissedAdjustment() {
   }
   state = await saveState({ ...state, recoveryInvoiceId: recovery.target_external_invoice_ref,
     stage: "recovery_attached" });
-  print({ stage: "recovery_attached", recovery });
+  print({ stage: "recovery_attached", explicitRecovery, recovery });
 }
 
 async function finalizeRecovery() {
@@ -295,6 +309,23 @@ async function finalizeRecovery() {
   if (!state.recoveryPeriodEnd || !state.recoveryInvoiceId) throw new Error("Run recover first.");
   const target = Math.floor(new Date(state.recoveryPeriodEnd).getTime() / 1_000) + 3 * 60 * 60;
   await advanceClock(state.clockId!, target);
+  let invoice = await stripe.invoices.retrieve(state.recoveryInvoiceId);
+  const expectedStart = unixSecond(state.recoveryPeriodStart!);
+  const expectedEnd = unixSecond(state.recoveryPeriodEnd);
+  const invoiceCustomer = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id ?? null;
+  const invoiceSubscription = typeof invoice.parent?.subscription_details?.subscription === "string"
+    ? invoice.parent.subscription_details.subscription
+    : invoice.parent?.subscription_details?.subscription?.id ?? null;
+  if (invoice.livemode || invoiceCustomer !== state.customerId || invoiceSubscription !== state.subscriptionId
+    || invoice.period_start !== expectedStart || invoice.period_end !== expectedEnd) {
+    throw new Error("The recovery invoice identity or period does not match the saved target checkpoint.");
+  }
+  if (invoice.status === "draft") {
+    invoice = await stripe.invoices.finalizeInvoice(state.recoveryInvoiceId, { auto_advance: false });
+  }
+  if (!["open", "paid"].includes(invoice.status ?? "")) {
+    throw new Error(`The recovery invoice did not reach a finalized billable state (${invoice.status}).`);
+  }
   let reconciliation: Awaited<ReturnType<BillingInvoiceAdjustmentRecoveryService["reconcileInvoice"]>> | null = null;
   for (let attempt = 1; attempt <= 24; attempt += 1) {
     reconciliation = await invoiceAdjustmentRecovery.reconcileInvoice(tenantId!, PROVIDER_KEY, "sandbox",

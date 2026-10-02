@@ -289,11 +289,6 @@ export class BillingLifecycleService {
       periodStart: event.draftRenewalInvoice.periodStart,
       periodEnd: event.draftRenewalInvoice.periodEnd,
     });
-    if (event.environment === "sandbox" && enqueued.status === "not_eligible") {
-      throw new ServiceUnavailableException(
-        "The exact immutable overage ledger is not ready for this draft renewal invoice; Stripe must retry the signed event.",
-      );
-    }
     const recovery = await this.invoiceAdjustmentRecovery.enqueueAndDispatch(tenantId, {
       providerKey: event.providerKey,
       providerEnvironment: event.environment,
@@ -307,6 +302,11 @@ export class BillingLifecycleService {
     if (event.environment === "sandbox" && recovery.status === "incomplete") {
       throw new ServiceUnavailableException(
         "A missed-window carry-forward is not authoritatively attached to the draft renewal invoice; Stripe must retry the signed event.",
+      );
+    }
+    if (event.environment === "sandbox" && enqueued.status === "not_eligible") {
+      throw new ServiceUnavailableException(
+        "The exact immutable overage ledger is not ready for this draft renewal invoice; Stripe must retry the signed event.",
       );
     }
     if (enqueued.status === "not_required") {

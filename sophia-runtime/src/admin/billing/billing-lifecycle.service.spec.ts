@@ -256,6 +256,29 @@ describe("BillingLifecycleService", () => {
       .rejects.toThrow("carry-forward is not authoritatively attached");
   });
 
+  it("attaches a due carry-forward before applying current-period ledger backpressure", async () => {
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
+    const clientQuery = jest.fn(async (sql: string) => sql.includes("billing_webhook_events") && sql.includes("INSERT")
+      ? { rows: [{ billing_webhook_event_id: "event-row" }], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const database = { query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) => work({ query: clientQuery })) };
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "not_eligible" as const }));
+    const recovery = invoiceAdjustmentRecovery();
+    recovery.enqueueAndDispatch = jest.fn(async () => ({ status: "provider_accepted" as const,
+      attempts: [{ status: "provider_accepted" }] }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      ledger() as never, meterOutbox() as never, adjustments as never, recovery as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .rejects.toThrow("immutable overage ledger is not ready");
+    expect(recovery.enqueueAndDispatch).toHaveBeenCalledWith(tenantId, expect.objectContaining({
+      externalInvoiceRef: "in_draft_1", periodStart: "2026-09-28T08:51:05.000Z",
+      periodEnd: "2026-10-28T08:51:05.000Z",
+    }), "invoice-created-recovery:evt_draft_1");
+  });
+
   it("never dispatches a live Meter event from the read-only live reconciliation path", async () => {
     const provider = providerMock();
     provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",

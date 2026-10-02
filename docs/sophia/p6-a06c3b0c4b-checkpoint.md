@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated. Migration 051 is applied. The first recovery fixture became additional positive adjustment evidence because lifecycle reconciliation attached the overage while the invoice was still draft. Plan 2.1.69 corrects the isolation order to close the source invoice while unbound, then bind and attempt the adjustment; one replacement recovery fixture is required.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. Migration 051 is applied. A replacement fixture now proves the original adjustment is durably `missed_window` and Stripe has created the exact next draft renewal. Recovery enqueue was blocked by current-ledger ordering and a future bootstrap observation timestamp; plan 2.1.70 corrects both and resumes the same fixture.
 
 ## Deployed sandbox preparation
 
@@ -64,6 +64,8 @@ The first resume on plan 2.1.67 stopped earlier than that provider action: its f
 
 After the correct plan 2.1.68 artifact deployed, the stage revealed an ordering flaw: it bound and reconciled the Customer before explicitly closing the source invoice. The lifecycle correctly attached and reconciled the two-minute/AUD 0.20 adjustment as `ii_1UM3txGcz4GrZOEBOqbJrrSG` / `il_1UXKX0Gcz4GrZOEBJCQbdR5v` on invoice `in_1UM2yJGcz4GrZOEB7N75f6Tx`; no recovery attempt exists. That immutable row cannot be converted to `missed_window`. Plan 2.1.69 requires zero bindings and adjustments, closes and checkpoints the exact source invoice while unbound, then binds/reconciles/finalizes/dispatches. The old fixture is retained as successful positive evidence and must not be reused for recovery.
 
+Replacement tenant `a206dbbb-610b-4260-b3a6-113a3e4e3450` created isolated clock `clock_1UM48AGcz4GrZOEBkwjMD85g`, Customer `cus_VMnj80rW0clM58` and subscription `sub_1UM48EGcz4GrZOEBNC052pdH`. It finalized source invoice `in_1UM48rGcz4GrZOEBZjpgrQv1` while unbound and recorded adjustment `43b1add0-2e09-4800-b48c-9e66dce7b2e5` as `missed_window`. Stripe then created exact next draft `in_1UM4A7Gcz4GrZOEBPcxEtoZA`, but no recovery row appeared. The handler was applying current-ledger `not_eligible` backpressure before recovery enqueue, and bootstrap `observed_at=period_end` prevented later subscription observations from capturing periods normally. Plan 2.1.70 processes due recovery first, uses real observation time, explicitly resumes the same exact draft through the idempotent service, and safely finalizes only the validated saved target before reconciliation.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -96,6 +98,6 @@ After the correct plan 2.1.68 artifact deployed, the stage revealed an ordering 
 
 The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is to deploy plan 2.1.69, provision one replacement unbound Sophia Voice recovery tenant, and run `prepare-recovery`, `miss-recovery`, `recover` and `finalize-recovery`. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. All earlier negative and successful adjustment fixtures must remain immutable and must not be reused.
+The remaining work is to deploy plan 2.1.70 and resume `recover` then `finalize-recovery` on replacement tenant `a206dbbb-610b-4260-b3a6-113a3e4e3450`. Acceptance requires one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. All earlier fixtures remain immutable and must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.
