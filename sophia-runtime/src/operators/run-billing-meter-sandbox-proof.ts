@@ -150,9 +150,7 @@ async function missRecovery() {
        (customer_id,provider_key,provider_environment,provider_account_key,external_subscription_ref,status,
         current_period_start,current_period_end,observed_at)
        VALUES ($1,$2,'sandbox',$3,$4,'active',$5,$6,$6)
-       ON CONFLICT (provider_key,provider_environment,provider_account_key,external_subscription_ref) DO UPDATE SET
-         customer_id=EXCLUDED.customer_id,status=EXCLUDED.status,current_period_start=EXCLUDED.current_period_start,
-         current_period_end=EXCLUDED.current_period_end,observed_at=EXCLUDED.observed_at`,
+       ON CONFLICT (provider_key,provider_environment,provider_account_key,external_subscription_ref) DO NOTHING`,
       [tenantId, PROVIDER_KEY, config.billing.providerAccountKey, state.subscriptionId,
         state.periodStart, state.periodEnd]);
   });

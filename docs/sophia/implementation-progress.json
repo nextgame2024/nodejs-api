@@ -2172,6 +2172,20 @@
       "node": "22.23.3",
       "result": "pass",
       "detail": "Plan 2.1.67 passed runtime typecheck, build and 120 suites/433 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The proof change is limited to deterministic closure and checkpointing of the uniquely identified Stripe sandbox source invoice; production billing paths are unchanged."
+    },
+    {
+      "command": "npm run billing:c4b-sandbox -- miss-recovery",
+      "repository": "deployed backend + Neon + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "stopped-by-monotonic-reference-guard",
+      "detail": "The resumed stage was rejected by protect_billing_reference_identity because its fixture bootstrap upsert attempted to replace the newer lifecycle-observed subscription period with the stored original period. The transaction rolled back before source-invoice finalization or adjustment enqueue. Plan 2.1.68 changes the bootstrap conflict path to preserve the existing reference and leaves all period advancement to BillingLifecycleService."
+    },
+    {
+      "command": "npm run typecheck; npm test; npm run build; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "pass",
+      "detail": "Plan 2.1.68 passed runtime typecheck, build and 120 suites/433 tests; contract generation plus 15 contract tests passed; the boundary scan passed 233 files; protected real-estate passed 8 suites/38 tests. The database monotonicity guard is unchanged; only the gated proof bootstrap now preserves an existing lifecycle-owned subscription reference on conflict."
     }
   ],
   "blockers": [

@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated. Migration 051 is applied and a fresh recovery fixture is prepared. Read-only diagnosis proved the exact original renewal invoice remained draft after the clock advance; plan 2.1.67 closes that exact sandbox invoice deterministically before proving the missed window.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. The approved next-renewal missed-window recovery is implemented and locally validated. Migration 051 is applied and a fresh recovery fixture is prepared. Read-only diagnosis proved the exact original renewal invoice remained draft after the clock advance. The next resume was safely rejected before provider mutation because the harness attempted to regress an already-advanced local billing reference; plan 2.1.68 preserves that reference and leaves advancement to the lifecycle reconciler.
 
 ## Deployed sandbox preparation
 
@@ -60,6 +60,8 @@ Migration 051 was applied and fresh tenant `31e3a703-cd4e-463a-b286-010bfe5243c1
 
 The diagnostic confirmed the identity predicate was correct: invoice `in_1UM2yJGcz4GrZOEB7N75f6Tx` is the sole `subscription_cycle` invoice for the exact original period and subscription. It remained `draft` at clock time `2026-11-02T12:40:10Z`; local evidence remained one binding, one period, one ledger and zero adjustments. Plan 2.1.67 therefore explicitly finalizes only that exact draft with `auto_advance=false`, accepts only `open` or `paid`, persists the source-invoice checkpoint, and then attempts the immutable adjustment to prove `missed_window`. This is a sandbox proof correction, not a production policy change.
 
+The first resume on plan 2.1.67 stopped earlier than that provider action: its fixture bootstrap upsert tried to rewrite the subscription reference from the newer lifecycle-observed period back to the original period. The database monotonicity trigger rejected the transaction, so the invoice was not finalized and no adjustment was enqueued. Plan 2.1.68 changes that bootstrap conflict to `DO NOTHING`; existing references remain authoritative and only `BillingLifecycleService` advances periods.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -92,6 +94,6 @@ The diagnostic confirmed the identity predicate was correct: invoice `in_1UM2yJG
 
 The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is to deploy plan 2.1.67 and resume `miss-recovery`, `recover` and `finalize-recovery` on the existing fixture. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. The fixture must not be recreated, and the old negative and successful adjustment fixtures must not be reused.
+The remaining work is to deploy plan 2.1.68 and resume `miss-recovery`, `recover` and `finalize-recovery` on the existing fixture. Acceptance requires an original `missed_window`, one accepted next-renewal recovery, exact finalized-line evidence for the original two-minute/AUD 0.20 period and no duplicate or out-of-cycle invoice item. The fixture must not be recreated, and the old negative and successful adjustment fixtures must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.
