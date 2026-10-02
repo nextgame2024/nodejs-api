@@ -2,7 +2,7 @@
 
 Date: 2026-10-02 (Australia/Brisbane)
 
-Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox. Duplicate signed-delivery evidence and missed-draft-window recovery remain before C4B3 completes.
+Status: in progress. The fresh draft-renewal invoice adjustment was attached, finalized and exactly reconciled in Stripe sandbox, and duplicate signed delivery is proven idempotent. Only missed-draft-window recovery remains before C4B3 completes.
 
 ## Deployed sandbox preparation
 
@@ -50,6 +50,8 @@ Migration 050 was applied with the owner connection. Finalize-only recovery on r
 
 Review before the required signed replay found that the duplicate-delivery unit test had mocked `dispatchNext` as a second provider acceptance. A real accepted/reconciled row is intentionally absent from the pending claim query, so it returns `idle`; the deployed webhook would then have emitted a false 503. Plan 2.1.64 adds an exact tenant/adjustment authoritative-acceptance read after an idle claim. It acknowledges only a persisted `provider_accepted` or `reconciled` row with an invoice-item reference and never makes that row dispatchable.
 
+After deploying revision `28efd1d`, the operator manually replayed the exact signed `invoice.created` event several times. Every delivery returned HTTP 200 with `duplicate=true`, enqueue status `existing`, authoritative existing status `reconciled`, the same adjustment identity and the same provider invoice-item reference. A final read-only diagnostic found exactly one overage line on paid renewal invoice `in_1ULzSOGcz4GrZOEBwnUz3FH4`: Price `price_1ULyegGcz4GrZOEBwDHdpzPW`, quantity `2`, amount AUD `0.20`, period `2026-10-02T05:54:56Z` through inclusive `2026-11-02T05:54:55Z`. The invoice also contains exactly one AUD 750 base renewal line. No replay created another line.
+
 ## Delivered
 
 - The currently deployed active-minute Checkout requires one licensed fixed recurring Price plus one Meter-backed recurring Price. The sandbox proof invalidated that second Price as the charging mechanism for a post-period aggregate; C4B3 must replace new Checkout composition with the fixed base only and validate a separate one-time overage Price before invoice adjustment.
@@ -80,6 +82,6 @@ Review before the required signed replay found that the duplicate-delivery unit 
 
 The deployed mappings, migrations 049/050, fresh Sophia Voice assignment, isolated subscription, immutable ledger, accepted Meter event, attached one-time invoice adjustment and exact finalized-line reconciliation are complete. The older fixture's paid zero-quantity Meter line remains preserved as negative provider evidence and must not be rerun.
 
-The remaining work is P6-A06C3B0C4B3 resilience proof: prove real duplicate signed `invoice.created` handling without another invoice item, and define/prove a missed-draft-window recovery that preserves the immutable original-period amount. The old negative fixture must not be reused.
+The remaining work is P6-A06C3B0C4B3 missed-window resilience: define and sandbox-prove what happens when the exact renewal invoice is already finalized before the immutable adjustment can be attached. The recovery must preserve the original ledger, period, quantity and unit rate, and must not silently choose an out-of-cycle or next-cycle customer charge policy. The old negative fixture must not be reused.
 
 Live mappings and live Meter events remain prohibited in C4B. Live Checkout remains disabled.
