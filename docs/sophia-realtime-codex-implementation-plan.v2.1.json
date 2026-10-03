@@ -6426,7 +6426,7 @@
                     },
                     {
                       "id": "P6-A06C3B1",
-                      "status": "in_progress",
+                      "status": "complete",
                       "scope": "Create and verify the approved live Product/Price, portal, thirteen-event webhook destination and secret-manager configuration."
                     }
                   ]
