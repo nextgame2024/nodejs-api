@@ -67,6 +67,23 @@
   },
   "validatedAmendments": [
     {
+      "id": "AMEND-2026-10-03-LIVE-READINESS-COMPILED-VERIFIER",
+      "taskId": "P6-A06C3B1",
+      "reason": "After the approved live catalog, webhook and Render configuration were installed, the remaining readiness command was found to be development-only and still required every plan to include 120000 active seconds, which incorrectly rejected the approved 60000-second Founding allowance.",
+      "changes": [
+        "Replace the development-only readiness command with a production-image compiled, read-only operator.",
+        "Validate all four exact immutable plans, including the Founding allowance, commitment, commencement and deployment Prices, plus both cancellation-policy portal configurations.",
+        "Verify the thirteen-event live webhook inventory and configured signing secret without creating a Customer, subscription, Checkout Session, invoice or charge."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/operators/verify-live-commercial-readiness.ts",
+        "sophia-runtime/src/operators/verify-live-commercial-readiness.spec.ts",
+        "sophia-runtime/package.json"
+      ],
+      "approvedBy": "Existing user authorization to continue P6-A06C3B1 under the stated no-charge boundary",
+      "recordedAt": "2026-10-03T18:45:00+10:00"
+    },
+    {
       "id": "AMEND-2026-10-03-LIVE-CATALOG-PROVISIONING-BOUNDARY",
       "taskId": "P6-A06C3B1",
       "reason": "After Founding sandbox completion, repository inspection found only a development-only read verifier and no idempotent production-image command for the four approved live plans. The verifier also retained the pre-Founding 120000-second assumption, and automatic webhook creation would expose its one-time signing secret in operator output.",
