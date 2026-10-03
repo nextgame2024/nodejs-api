@@ -61,4 +61,15 @@ After those mappings are deployed, run [founding-sandbox-fixture.sql](./founding
 
 On the replacement close, the signed invoice webhook won the ledger-finalisation race before the synchronous shell call. Read-only evidence proved the exact 60,061-second measurement, 60,000-second allowance, 61-second overage, two-minute quantity and 10-cent unit rate. The harness now accepts either entry point only after exact immutable ledger read-back, then resumes idempotent invoice adjustment handling on the same fixture.
 
-No Founding plan record, Stripe Product/Price, invoice or charge has been created by repository preparation. D4 remains incomplete until the owner migrations, publication, sandbox provisioning, Render mapping deployment and full proof outputs are captured.
+## D4 completion evidence
+
+The immutable Founding plan version is `cbfebc94-7bb8-43f9-b114-496eebf332fa`. The isolated replacement tenant completed the full Stripe sandbox lifecycle:
+
+- The initial invoice was paid at AUD 1,140, containing exactly the AUD 190 monthly base and AUD 950 commencement component.
+- The first-period ledger recorded `60061000000` active microseconds, `60000` included seconds, `61000000` overage microseconds and two billable minutes at ten cents each.
+- Adjustment `941976cf-d98a-4830-8f98-8f66100cf95d` reconciled on invoice `in_1UMEyIGcz4GrZOEBWCXz1qF8` as item `ii_1UMEyfGcz4GrZOEBlv22wFJW` and line `il_1UXTfgGcz4GrZOEBxXPhi85U` for AUD 0.20.
+- Production-deployment acceptance `af9ae83d-c99e-41b8-93f1-0fb8401f2e8b` reconciled through outbox `69126e1d-a191-4775-9276-ad26a68868f2`, invoice `in_1UMGYhGcz4GrZOEBfKWLUKp0` and item `ii_1UMGYhGcz4GrZOEBTh4Fe9vt` for AUD 950.
+- Exactly twelve contiguous provider periods established commitment end `2027-10-02T22:24:44Z`; the next current period began at the same instant and portal cancellation changed from `commitment_restricted` to `standard` only at that boundary.
+- Every proof result reported `liveMutation: false` or `liveCharge: false`.
+
+D4 is complete. The proof fixtures are synthetic sandbox artifacts and must not be reused as live customer state. P6-A06C3B1 and P6-A06C3C remain blocked on separate explicit authority for live Stripe resources, secret-manager configuration and signed live evidence. P6-A06C4 remains a later decision gate for real charge-creating Checkout; this checkpoint grants none of that authority.

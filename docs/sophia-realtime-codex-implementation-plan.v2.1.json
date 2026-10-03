@@ -6275,7 +6275,7 @@
                   "executionSlices": [
                     {
                       "id": "P6-A06C3B0",
-                      "status": "in_progress",
+                      "status": "complete",
                       "scope": "Implement the approved standard and Founding commercial definitions without reusing or mutating an existing published plan.",
                       "executionSlices": [
                         {
@@ -6363,7 +6363,7 @@
                         },
                         {
                           "id": "P6-A06C3B0D",
-                          "status": "in_progress",
+                          "status": "complete",
                           "scope": "Implement and sandbox-prove the immutable Sophia Essential Founding plan: AUD 950 at commencement, AUD 950 at authorised production deployment, AUD 190 monthly for a twelve-month minimum term, 1000 included active minutes and AUD 0.10 per aggregate whole overage minute, with plan-aware cancellation enforcement and no live charge activation.",
                           "executionSlices": [
                             {
@@ -6383,7 +6383,7 @@
                             },
                             {
                               "id": "P6-A06C3B0D4",
-                              "status": "in_progress",
+                              "status": "complete",
                               "scope": "Apply the migration, publish the immutable Founding plan, configure approved sandbox Prices and prove the initial invoice, milestone invoice, monthly overage and cancellation boundaries without enabling live Checkout."
                             }
                           ]
