@@ -9,6 +9,8 @@ describe("BillingInvoiceAdjustmentRecoveryService", () => {
   it("attaches a missed source to a later renewal while retaining its original service period", async () => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "legacy-primary";
     let recoveryDigest = "";
     const query = jest.fn(async (sql: string, values?: unknown[]) => {
       if (sql.includes("FROM sophia_runtime.billing_invoice_adjustment_outbox source") && sql.includes("LIMIT 51")) {
@@ -27,7 +29,8 @@ describe("BillingInvoiceAdjustmentRecoveryService", () => {
       if (sql.includes("FOR UPDATE OF recovery")) return { rows: [row(recoveryDigest)], rowCount: 1 };
       return { rows: [], rowCount: 1 };
     });
-    const dispatcher = { status: jest.fn(), reconcile: jest.fn(), submit: jest.fn(async (input) => {
+    const dispatcher = { status: jest.fn(() => ({ availability: "configured" as const, detail: "sandbox" })),
+      reconcile: jest.fn(), submit: jest.fn(async (input) => {
       expect(input).toMatchObject({ adjustmentId: sourceId, deliveryId: attemptId,
         periodStart: "2026-09-01T00:00:00.000Z", periodEnd: "2026-10-01T00:00:00.000Z",
         targetPeriodStart: "2026-10-01T00:00:00.000Z", targetPeriodEnd: "2026-11-01T00:00:00.000Z" });
@@ -43,10 +46,14 @@ describe("BillingInvoiceAdjustmentRecoveryService", () => {
   });
 
   it("does not create an out-of-cycle delivery when no missed source is eligible", async () => {
+    process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "legacy-primary";
     const query = jest.fn(async (sql: string) => sql.includes("LIMIT 51")
       || sql.includes("recovery.target_external_invoice_ref=$2")
       ? { rows: [], rowCount: 0 } : { rows: [], rowCount: 1 });
-    const dispatcher = { status: jest.fn(), submit: jest.fn(), reconcile: jest.fn() };
+    const dispatcher = { status: jest.fn(() => ({ availability: "configured" as const, detail: "sandbox" })),
+      submit: jest.fn(), reconcile: jest.fn() };
     await expect(new BillingInvoiceAdjustmentRecoveryService(database(query), dispatcher as never)
       .enqueueAndDispatch(tenantId, draft(), "worker-1"))
       .resolves.toEqual({ status: "not_required", attempts: [] });

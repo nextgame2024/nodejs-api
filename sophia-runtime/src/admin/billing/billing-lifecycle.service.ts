@@ -234,10 +234,11 @@ export class BillingLifecycleService {
       tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
     );
     const meterEventDispatch = environment === "sandbox"
+      || (environment === "live" && runtimeConfig().billing.liveOverageEnabled)
       ? await this.meterOutbox.dispatchNext(tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY,
         environment, accountKey, `billing-reconcile:${input.requestId}`)
       : { status: "disabled" as const,
-        detail: "Live Meter dispatch is disabled pending explicit live usage-billing activation." };
+        detail: "Live Meter dispatch is implemented but the independent live overage switch is disabled." };
     const meterEventReconciliation = await this.meterOutbox.reconcileNext(
       tenantId, status.providerKey ?? STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
     );
@@ -334,12 +335,14 @@ export class BillingLifecycleService {
       periodStart: event.draftRenewalInvoice.periodStart,
       periodEnd: event.draftRenewalInvoice.periodEnd,
     }, `invoice-created-recovery:${event.eventId}`);
-    if (event.environment === "sandbox" && recovery.status === "incomplete") {
+    const overageCollectionActive = event.environment === "sandbox"
+      || (event.environment === "live" && runtimeConfig().billing.liveOverageEnabled);
+    if (overageCollectionActive && recovery.status === "incomplete") {
       throw new ServiceUnavailableException(
         "A missed-window carry-forward is not authoritatively attached to the draft renewal invoice; Stripe must retry the signed event.",
       );
     }
-    if (event.environment === "sandbox" && enqueued.status === "not_eligible") {
+    if (overageCollectionActive && enqueued.status === "not_eligible") {
       throw new ServiceUnavailableException(
         "The exact immutable overage ledger is not ready for this draft renewal invoice; Stripe must retry the signed event.",
       );
@@ -349,18 +352,18 @@ export class BillingLifecycleService {
         invoiceAdjustment: { status: "not_required" as const }, invoiceAdjustmentRecovery: recovery,
         invoiceAdjustmentReconciliation };
     }
-    let adjustment = event.environment === "sandbox"
+    let adjustment = overageCollectionActive
       ? await this.invoiceAdjustments.dispatchNext(tenantId, event.providerKey, event.environment,
         event.providerAccountKey, `invoice-created:${event.eventId}`)
-      : { status: "disabled" as const, detail: "Live overage invoice adjustment is not authorized." };
-    if (event.environment === "sandbox" && adjustment.status === "idle"
+      : { status: "disabled" as const, detail: "Live overage invoice adjustment collection remains disabled." };
+    if (overageCollectionActive && adjustment.status === "idle"
       && "adjustmentId" in enqueued && typeof enqueued.adjustmentId === "string") {
       adjustment = await this.invoiceAdjustments.authoritativeAcceptance(tenantId, enqueued.adjustmentId)
         ?? adjustment;
     }
-    if (event.environment === "sandbox" && adjustment.status !== "provider_accepted") {
+    if (overageCollectionActive && adjustment.status !== "provider_accepted") {
       throw new ServiceUnavailableException(
-        "The sandbox overage adjustment is not authoritatively attached to the draft invoice; Stripe must retry the signed event.",
+        `The ${event.environment} overage adjustment is not authoritatively attached to the draft invoice; Stripe must retry the signed event.`,
       );
     }
     return { ...response, periodLedger, invoiceAdjustmentEnqueue: enqueued, invoiceAdjustment: adjustment,

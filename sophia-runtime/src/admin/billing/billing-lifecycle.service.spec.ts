@@ -10,6 +10,10 @@ describe("BillingLifecycleService", () => {
   beforeEach(() => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "legacy-primary";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_test_sophia";
+    delete process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED;
   });
 
   it("refuses checkout for anything except the active mapped plan", async () => {
@@ -277,6 +281,36 @@ describe("BillingLifecycleService", () => {
       .rejects.toThrow("not authoritatively attached");
   });
 
+  it("applies the same signed-invoice backpressure to explicitly enabled live overage collection", async () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "legacy-primary";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED = "true";
+    const provider = providerMock();
+    provider.verifyWebhook = jest.fn(async () => ({ ...draftInvoiceEvent(), environment: "live" as const }));
+    const clientQuery = jest.fn(async (sql: string) => sql.includes("billing_webhook_events") && sql.includes("INSERT")
+      ? { rows: [{ billing_webhook_event_id: "event-live" }], rowCount: 1 }
+      : { rows: [], rowCount: 1 });
+    const database = { query: jest.fn(async () => ({ rows: [{ tenant_id: tenantId }] })),
+      tenantTransaction: jest.fn(async (_id: string, work: (client: { query: typeof clientQuery }) => unknown) =>
+        work({ query: clientQuery })) };
+    const periods = ledger();
+    const adjustments = invoiceAdjustments();
+    adjustments.enqueueDraftInvoice = jest.fn(async () => ({ status: "enqueued" as const,
+      adjustmentId: "adjustment-live" }));
+    adjustments.dispatchNext = jest.fn(async () => ({ status: "provider_accepted" as const,
+      adjustmentId: "adjustment-live", providerInvoiceItemRef: "ii_live" }));
+    const service = new BillingLifecycleService(database as never, provider, { record: jest.fn() } as never,
+      periods as never, meterOutbox() as never, adjustments as never, invoiceAdjustmentRecovery() as never,
+      commercialMilestones() as never, commitments() as never);
+    await expect(service.webhook({ "stripe-signature": "signed" }, Buffer.from("{}")))
+      .resolves.toMatchObject({ received: true, invoiceAdjustment: { status: "provider_accepted",
+        providerInvoiceItemRef: "ii_live" } });
+    expect(periods.finaliseEligible).toHaveBeenCalledWith(tenantId, "stripe-sophia", "live", "legacy-primary");
+    expect(adjustments.dispatchNext).toHaveBeenCalledWith(tenantId, "stripe-sophia", "live", "legacy-primary",
+      "invoice-created:evt_draft_1");
+  });
+
   it("acknowledges a draft renewal with an exact zero-overage ledger without dispatch", async () => {
     const provider = providerMock();
     provider.verifyWebhook = jest.fn(async () => draftInvoiceEvent());
@@ -363,6 +397,36 @@ describe("BillingLifecycleService", () => {
       requestId: "33333333-3333-4333-8333-333333333333",
     })).resolves.toMatchObject({ meterEventDispatch: { status: "disabled" }, liveEntitlementMutation: false });
     expect(outbox.dispatchNext).not.toHaveBeenCalled();
+    expect(outbox.reconcileNext).toHaveBeenCalled();
+  });
+
+  it("dispatches live Meter evidence only when the independent overage switch is enabled", async () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED = "true";
+    const provider = providerMock();
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: false, portal: true, signedWebhooks: true,
+      reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
+    provider.reconcileTenant = jest.fn(async () => ({ status: "observed", observedAt: "2026-09-28T00:00:00.000Z",
+      subscriptions: [], invoices: [] }));
+    const query = jest.fn(async (sql: string) => sql.includes("FROM sophia_runtime.customers")
+      ? { rows: [{ commercial_plan_version_id: planVersionId, external_customer_ref: "cus_live",
+        pricing_status: "configured", billing_currency: "AUD", billing_interval: "month",
+        base_charge_minor: "75000", tax_mode: "not_applicable", rate_card_dimensions: "1",
+        rate_card: { dimensions: [{ dimension: "active-seconds", includedQuantity: "120000",
+          unitQuantity: "60", unitPriceMinor: "10" }] } }] }
+      : { rows: [], rowCount: 0 });
+    const run = jest.fn(async (_id: string, work: (client: { query: typeof query }) => unknown) => work({ query }));
+    const outbox = meterOutbox();
+    const service = new BillingLifecycleService({ tenantReadTransaction: run, tenantTransaction: run } as never,
+      provider, { record: jest.fn() } as never, ledger() as never, outbox as never, invoiceAdjustments() as never,
+      invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments() as never);
+    await expect(service.reconcile(tenantId, principal, {
+      requestId: "44444444-4444-4444-8444-444444444444",
+    })).resolves.toMatchObject({ meterEventDispatch: { status: "idle" }, liveEntitlementMutation: false });
+    expect(outbox.dispatchNext).toHaveBeenCalledWith(tenantId, "stripe-sophia", "live", "legacy-primary",
+      "billing-reconcile:44444444-4444-4444-8444-444444444444");
     expect(outbox.reconcileNext).toHaveBeenCalled();
   });
 });

@@ -14,7 +14,7 @@ describe("BillingCommercialMilestoneService", () => {
   beforeEach(() => {
     for (const key of ["SOPHIA_RUNTIME_DATABASE_URL", "SOPHIA_BILLING_PROVIDER",
       "SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY", "SOPHIA_BILLING_STRIPE_SECRET_KEY",
-      "SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS"] as const) {
+      "SOPHIA_BILLING_STRIPE_MILESTONE_PRICE_MAPPINGS", "SOPHIA_BILLING_LIVE_MILESTONE_ENABLED"] as const) {
       original.set(key, process.env[key]); delete process.env[key];
     }
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
@@ -82,6 +82,22 @@ describe("BillingCommercialMilestoneService", () => {
       eventType: "billing.commercial_milestone.accepted", permission: "billing.manage",
       metadata: expect.objectContaining({ evidenceRef: "render-deploy:53c5ed7", liveCharge: false }),
     }), expect.anything());
+  });
+
+  it("keeps live milestone acceptance disabled until its independent switch is enabled", async () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    const transaction = jest.fn();
+    const dispatcher = { status: jest.fn(() => ({ availability: "disabled" as const,
+      detail: "Live commercial milestone invoicing is implemented but disabled." })), submit: jest.fn(),
+      reconcile: jest.fn() };
+    const service = new BillingCommercialMilestoneService({ tenantTransaction: transaction } as never,
+      dispatcher as never, { record: jest.fn() } as never);
+    await expect(service.acceptProductionDeployment(tenantId, principal(), {
+      requestId: "66666666-6666-4666-8666-666666666666", evidenceRef: "render-deploy:pending",
+    })).rejects.toThrow("implemented but disabled");
+    expect(transaction).not.toHaveBeenCalled();
+    expect(dispatcher.submit).not.toHaveBeenCalled();
   });
 });
 

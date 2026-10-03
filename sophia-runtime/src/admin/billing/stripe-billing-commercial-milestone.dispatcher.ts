@@ -29,15 +29,19 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
   }
 
   status() {
-    const configured = this.config.provider === "stripe_sandbox" && this.client !== null
+    const environment = providerEnvironment(this.config.provider);
+    const authorized = environment === "sandbox" || (environment === "live" && this.config.liveMilestoneEnabled);
+    const configured = environment !== null && authorized && this.client !== null
       && Object.keys(this.config.stripeMilestonePriceMappings).length > 0;
     return { availability: configured ? "configured" as const : "disabled" as const,
-      detail: configured ? "Stripe sandbox commercial milestone invoicing is configured."
-        : "Commercial milestone invoicing remains sandbox-only and requires approved milestone Price mappings." };
+      detail: configured ? `Stripe ${environment} commercial milestone invoicing is configured.`
+        : environment === "live" && !this.config.liveMilestoneEnabled
+          ? "Live commercial milestone invoicing is implemented but its independent collection switch remains disabled."
+          : "Commercial milestone invoicing requires an approved environment, credential, and milestone Price mapping." };
   }
 
   async submit(input: BillingCommercialMilestoneInput): Promise<BillingCommercialMilestoneDispatchResult> {
-    if (!this.inScope(input) || !this.client) return failure(false, "commercial_milestone_scope_mismatch",
+    if (!this.inScope(input, true) || !this.client) return failure(false, "commercial_milestone_scope_mismatch",
       "The immutable commercial milestone does not match the configured sandbox adapter scope.");
     const amount = positiveInteger(input.unitPriceMinor);
     if (amount === null || input.quantity !== "1" || input.currency !== input.currency.toUpperCase()) {
@@ -45,7 +49,8 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
     }
     try {
       const price = await this.client.prices.retrieve(input.oneTimePriceRef);
-      if (!price.active || price.livemode || price.type !== "one_time" || price.recurring !== null
+      const live = input.providerEnvironment === "live";
+      if (!price.active || price.livemode !== live || price.type !== "one_time" || price.recurring !== null
         || price.currency.toUpperCase() !== input.currency || price.unit_amount !== amount
         || price.tax_behavior !== "exclusive") {
         return failure(false, "commercial_milestone_price_mismatch",
@@ -57,17 +62,17 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
       const invoice = await this.client.invoices.create({ customer: input.externalCustomerRef, auto_advance: false,
         collection_method: "charge_automatically", metadata,
         description: `Sophia commercial milestone: ${input.milestoneKey}` },
-      { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:milestone-invoice:${input.milestoneOutboxId}` });
+      { idempotencyKey: `sophia:${input.providerEnvironment}:${input.providerAccountKey}:milestone-invoice:${input.milestoneOutboxId}` });
       const invoiceId = invoice.id;
-      if (!invoiceId || invoice.livemode || reference(invoice.customer) !== input.externalCustomerRef || invoice.status !== "draft") {
-        return failure(false, "commercial_milestone_invoice_mismatch", "Stripe did not return the exact sandbox draft invoice.");
+      if (!invoiceId || invoice.livemode !== live || reference(invoice.customer) !== input.externalCustomerRef || invoice.status !== "draft") {
+        return failure(false, "commercial_milestone_invoice_mismatch", "Stripe did not return the exact environment-matched draft invoice.");
       }
       const item = await this.client.invoiceItems.create({ customer: input.externalCustomerRef, invoice: invoiceId,
         pricing: { price: input.oneTimePriceRef }, quantity: 1, discountable: false, metadata },
-      { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:milestone-item:${input.milestoneOutboxId}` });
+      { idempotencyKey: `sophia:${input.providerEnvironment}:${input.providerAccountKey}:milestone-item:${input.milestoneOutboxId}` });
       const finalized = await this.client.invoices.finalizeInvoice(invoiceId, {},
-        { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:milestone-finalize:${input.milestoneOutboxId}` });
-      if (finalized.livemode || finalized.status === "draft") {
+        { idempotencyKey: `sophia:${input.providerEnvironment}:${input.providerAccountKey}:milestone-finalize:${input.milestoneOutboxId}` });
+      if (finalized.livemode !== live || finalized.status === "draft") {
         return { outcome: "unknown", code: "commercial_milestone_finalize_unknown",
           detail: "Stripe did not provide authoritative finalized milestone invoice evidence." };
       }
@@ -86,13 +91,14 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
 
   async reconcile(input: BillingCommercialMilestoneInput & { externalInvoiceRef: string; providerInvoiceItemRef: string }):
     Promise<BillingCommercialMilestoneReconciliationResult> {
-    if (!this.inScope(input) || !this.client) return { outcome: "mismatch",
+    if (!this.inScope(input, false) || !this.client) return { outcome: "mismatch",
       detail: "The milestone reconciliation does not match the configured sandbox adapter scope." };
     try {
       const [invoice, lines] = await Promise.all([this.client.invoices.retrieve(input.externalInvoiceRef),
         this.client.invoices.listLineItems(input.externalInvoiceRef, { limit: 100 })]);
       if (invoice.status === "draft") return { outcome: "pending", detail: "The exact milestone invoice is still draft." };
-      if (invoice.livemode || !invoice.status_transitions?.finalized_at || lines.has_more
+      const live = input.providerEnvironment === "live";
+      if (invoice.livemode !== live || !invoice.status_transitions?.finalized_at || lines.has_more
         || reference(invoice.customer) !== input.externalCustomerRef
         || invoice.metadata?.sophiaCommercialMilestoneOutboxId !== input.milestoneOutboxId) {
         return { outcome: "mismatch", detail: "The finalized milestone invoice identity or complete line set does not match." };
@@ -107,7 +113,7 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
       const priceRef = line.pricing?.price_details?.price ?? null;
       const amount = positiveInteger(input.unitPriceMinor);
       if (!itemRef || itemRef !== input.providerInvoiceItemRef || amount === null
-        || line.invoice !== input.externalInvoiceRef || line.livemode
+        || line.invoice !== input.externalInvoiceRef || line.livemode !== live
         || priceRef !== input.oneTimePriceRef || line.quantity !== 1 || line.amount !== amount
         || line.currency.toUpperCase() !== input.currency) {
         return { outcome: "mismatch", detail: "The finalized Sophia milestone line does not match immutable values." };
@@ -121,9 +127,12 @@ export class StripeBillingCommercialMilestoneDispatcher implements BillingCommer
     }
   }
 
-  private inScope(input: BillingCommercialMilestoneInput) {
-    return this.status().availability === "configured" && input.providerKey === STRIPE_BILLING_PROVIDER_KEY
-      && input.providerEnvironment === "sandbox" && input.providerAccountKey === this.config.providerAccountKey
+  private inScope(input: BillingCommercialMilestoneInput, requireCollection: boolean) {
+    const environment = providerEnvironment(this.config.provider);
+    return (!requireCollection || this.status().availability === "configured") && this.client !== null
+      && environment !== null
+      && input.providerKey === STRIPE_BILLING_PROVIDER_KEY
+      && input.providerEnvironment === environment && input.providerAccountKey === this.config.providerAccountKey
       && this.config.stripeMilestonePriceMappings[input.planVersionId]?.[input.componentKey] === input.oneTimePriceRef;
   }
 }
@@ -142,3 +151,6 @@ function isStripeResponseError(error: unknown): error is { statusCode?: number; 
   return Boolean(error && typeof error === "object" && "message" in error && ("statusCode" in error || "type" in error));
 }
 function safeMessage(value: string) { return value.slice(0, 500) || "Stripe rejected the milestone invoice."; }
+function providerEnvironment(provider: RuntimeConfig["billing"]["provider"]): "sandbox" | "live" | null {
+  return provider === "stripe_sandbox" ? "sandbox" : provider === "stripe_live" ? "live" : null;
+}

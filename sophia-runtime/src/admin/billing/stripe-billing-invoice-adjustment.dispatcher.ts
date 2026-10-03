@@ -33,17 +33,22 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
   }
 
   status() {
-    const configured = this.config.provider === "stripe_sandbox" && this.client !== null
+    const environment = providerEnvironment(this.config.provider);
+    const authorized = environment === "sandbox" || (environment === "live" && this.config.liveOverageEnabled);
+    const configured = environment !== null && authorized && this.client !== null
       && Object.keys(this.config.stripeOveragePriceMappings).length > 0;
     return { availability: configured ? "configured" as const : "disabled" as const,
       detail: configured
-        ? "Stripe sandbox draft-invoice adjustment is configured for approved one-time Prices."
-        : "Draft-invoice adjustment remains sandbox-only and requires an approved one-time overage Price mapping." };
+        ? `Stripe ${environment} draft-invoice adjustment is configured for approved one-time Prices.`
+        : environment === "live" && !this.config.liveOverageEnabled
+          ? "Live draft-invoice adjustment is implemented but its independent collection switch remains disabled."
+          : "Draft-invoice adjustment requires an approved environment, credential, and one-time overage Price mapping." };
   }
 
   async submit(input: BillingInvoiceAdjustmentInput): Promise<BillingInvoiceAdjustmentDispatchResult> {
-    if (this.status().availability !== "configured" || !this.client
-      || input.providerKey !== STRIPE_BILLING_PROVIDER_KEY || input.providerEnvironment !== "sandbox"
+    const environment = providerEnvironment(this.config.provider);
+    if (this.status().availability !== "configured" || !this.client || !environment
+      || input.providerKey !== STRIPE_BILLING_PROVIDER_KEY || input.providerEnvironment !== environment
       || input.providerAccountKey !== this.config.providerAccountKey
       || this.config.stripeOveragePriceMappings[input.planVersionId] !== input.oneTimePriceRef) {
       return failure(false, "invoice_adjustment_scope_mismatch",
@@ -68,13 +73,14 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
         this.client.invoices.retrieve(input.externalInvoiceRef),
       ]);
       const subscriptionRef = invoiceSubscriptionRef(invoice);
-      if (!price.active || price.livemode || price.type !== "one_time" || price.recurring !== null
+      const live = environment === "live";
+      if (!price.active || price.livemode !== live || price.type !== "one_time" || price.recurring !== null
         || price.currency.toUpperCase() !== input.currency || price.unit_amount !== unitAmount
         || price.tax_behavior !== "exclusive") {
         return failure(false, "invoice_adjustment_price_mismatch",
           "The approved one-time overage Price no longer matches the immutable rate.");
       }
-      if (invoice.livemode || invoice.status !== "draft" || reference(invoice.customer) !== input.externalCustomerRef
+      if (invoice.livemode !== live || invoice.status !== "draft" || reference(invoice.customer) !== input.externalCustomerRef
         || subscriptionRef !== input.externalSubscriptionRef || invoice.period_start !== targetPeriodStart
         || invoice.period_end !== targetPeriodEnd) {
         return failure(false, "invoice_adjustment_window_missed",
@@ -95,7 +101,7 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
           sophiaUsageLedgerId: input.ledgerId,
           sophiaProviderAccountKey: input.providerAccountKey,
         },
-      }, { idempotencyKey: `sophia:sandbox:${input.providerAccountKey}:invoice-adjustment:${input.deliveryId}` });
+      }, { idempotencyKey: `sophia:${environment}:${input.providerAccountKey}:invoice-adjustment:${input.deliveryId}` });
       return { outcome: "accepted", providerInvoiceItemRef: item.id, acceptedAt: new Date().toISOString() };
     } catch (error) {
       if (isStripeResponseError(error)) {
@@ -109,8 +115,9 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
   }
 
   async reconcile(input: BillingInvoiceAdjustmentInput): Promise<BillingInvoiceAdjustmentReconciliationResult> {
-    if (this.status().availability !== "configured" || !this.client
-      || input.providerKey !== STRIPE_BILLING_PROVIDER_KEY || input.providerEnvironment !== "sandbox"
+    const environment = providerEnvironment(this.config.provider);
+    if (!this.client || !environment
+      || input.providerKey !== STRIPE_BILLING_PROVIDER_KEY || input.providerEnvironment !== environment
       || input.providerAccountKey !== this.config.providerAccountKey
       || this.config.stripeOveragePriceMappings[input.planVersionId] !== input.oneTimePriceRef) {
       return { outcome: "mismatch", detail: "The reconciliation request does not match the configured sandbox scope." };
@@ -135,7 +142,8 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
       if (invoice.status === "draft") {
         return { outcome: "pending", detail: "The exact invoice is still draft." };
       }
-      if (invoice.livemode || !invoice.status_transitions?.finalized_at || lines.has_more
+      const live = environment === "live";
+      if (invoice.livemode !== live || !invoice.status_transitions?.finalized_at || lines.has_more
         || reference(invoice.customer) !== input.externalCustomerRef
         || invoiceSubscriptionRef(invoice) !== input.externalSubscriptionRef
         || invoice.period_start !== targetPeriodStart || invoice.period_end !== targetPeriodEnd) {
@@ -157,7 +165,7 @@ export class StripeBillingInvoiceAdjustmentDispatcher implements BillingInvoiceA
       const amount = quantity * unitAmount;
       if (!Number.isSafeInteger(amount) || !providerInvoiceItemRef
         || line.metadata.sophiaUsageLedgerId !== input.ledgerId
-        || line.invoice !== input.externalInvoiceRef || line.livemode
+        || line.invoice !== input.externalInvoiceRef || line.livemode !== live
         || lineSubscriptionRef !== input.externalSubscriptionRef
         || priceRef !== input.oneTimePriceRef || line.quantity !== quantity || line.amount !== amount
         || line.currency.toUpperCase() !== input.currency
@@ -202,3 +210,7 @@ function isStripeResponseError(error: unknown): error is { statusCode?: number; 
     && ("statusCode" in error || "type" in error));
 }
 function safeMessage(value: string) { return value.slice(0, 500) || "Stripe rejected the invoice adjustment."; }
+
+function providerEnvironment(provider: RuntimeConfig["billing"]["provider"]): "sandbox" | "live" | null {
+  return provider === "stripe_sandbox" ? "sandbox" : provider === "stripe_live" ? "live" : null;
+}

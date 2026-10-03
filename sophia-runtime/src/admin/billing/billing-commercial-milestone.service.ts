@@ -47,9 +47,8 @@ export class BillingCommercialMilestoneService {
   async acceptProductionDeployment(tenantId: string, principal: AdminPrincipal, body: unknown) {
     const input = deploymentMilestoneAcceptanceSchema.parse(body);
     const config = runtimeConfig();
-    if (config.billing.provider !== "stripe_sandbox") {
-      throw new ServiceUnavailableException("Production-deployment milestone submission remains sandbox-only.");
-    }
+    const environment = providerEnvironment(config.billing.provider);
+    if (!environment) throw new ServiceUnavailableException("Production-deployment milestone submission is disabled.");
     if (this.dispatcher.status().availability !== "configured") {
       throw new ServiceUnavailableException(this.dispatcher.status().detail);
     }
@@ -98,17 +97,18 @@ export class BillingCommercialMilestoneService {
           AND component.component_key=$2 AND component.charge_timing='operator_milestone'
           AND component.milestone_key=$3
          JOIN ${config.schema}.billing_provider_customers customer ON customer.customer_id=assignment.customer_id
-          AND customer.provider_key=$4 AND customer.provider_environment='sandbox' AND customer.provider_account_key=$5
+          AND customer.provider_key=$4 AND customer.provider_environment=$5 AND customer.provider_account_key=$6
          WHERE assignment.customer_id=$1 AND assignment.status='active' AND assignment.effective_from<=now()
           AND (assignment.effective_to IS NULL OR assignment.effective_to>now()) AND plan.status IN ('published','retired')
          ORDER BY assignment.effective_from DESC LIMIT 2`,
-        [tenantId, COMPONENT_KEY, MILESTONE_KEY, STRIPE_BILLING_PROVIDER_KEY, accountKey],
+        [tenantId, COMPONENT_KEY, MILESTONE_KEY, STRIPE_BILLING_PROVIDER_KEY, environment, accountKey],
       );
       if (context.rows.length !== 1) throw new NotFoundException(
-        "The active plan does not expose one sandbox-bound production-deployment milestone.");
+        `The active plan does not expose one ${environment}-bound production-deployment milestone.`);
       const commercial = context.rows[0];
       const priceRef = config.billing.stripeMilestonePriceMappings[commercial.commercial_plan_version_id]?.[COMPONENT_KEY];
-      if (!priceRef) throw new ConflictException("The production-deployment milestone has no approved sandbox Price mapping.");
+      if (!priceRef) throw new ConflictException(
+        `The production-deployment milestone has no approved ${environment} Price mapping.`);
       const acceptance = await client.query<{ billing_commercial_milestone_acceptance_id: string }>(
         `INSERT INTO ${config.schema}.billing_commercial_milestone_acceptances
           (customer_id,commercial_plan_version_id,commercial_plan_charge_component_id,request_id,
@@ -120,7 +120,7 @@ export class BillingCommercialMilestoneService {
       const acceptanceId = acceptance.rows[0].billing_commercial_milestone_acceptance_id;
       const payload = { acceptanceId, planVersionId: commercial.commercial_plan_version_id,
         componentKey: COMPONENT_KEY, milestoneKey: MILESTONE_KEY, providerKey: STRIPE_BILLING_PROVIDER_KEY,
-        providerEnvironment: "sandbox" as const, providerAccountKey: accountKey,
+        providerEnvironment: environment, providerAccountKey: accountKey,
         externalCustomerRef: commercial.external_customer_ref, oneTimePriceRef: priceRef,
         quantity: "1" as const, unitPriceMinor: commercial.amount_minor, currency: commercial.currency };
       const digest = digestOf(payload);
@@ -129,9 +129,9 @@ export class BillingCommercialMilestoneService {
           (customer_id,billing_commercial_milestone_acceptance_id,commercial_plan_version_id,component_key,
            milestone_key,provider_key,provider_environment,provider_account_key,external_customer_ref,
            one_time_price_ref,quantity,unit_price_minor,currency,payload_digest)
-         VALUES ($1,$2,$3,$4,$5,$6,'sandbox',$7,$8,$9,1,$10,$11,$12) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,$12,$13) RETURNING *`,
         [tenantId, acceptanceId, commercial.commercial_plan_version_id, COMPONENT_KEY, MILESTONE_KEY,
-          STRIPE_BILLING_PROVIDER_KEY, accountKey, commercial.external_customer_ref, priceRef,
+          STRIPE_BILLING_PROVIDER_KEY, environment, accountKey, commercial.external_customer_ref, priceRef,
           commercial.amount_minor, commercial.currency, digest],
       );
       await this.audit.record({ tenantId, identityUserId: principal.identityUserId,
@@ -139,24 +139,22 @@ export class BillingCommercialMilestoneService {
         correlationId: input.requestId, resourceType: "commercialPlanChargeComponent",
         resourceId: commercial.commercial_plan_charge_component_id,
         metadata: { componentKey: COMPONENT_KEY, milestoneKey: MILESTONE_KEY, evidenceRef: input.evidenceRef,
-          providerEnvironment: "sandbox", liveCharge: false } }, client);
+          providerEnvironment: environment, liveCharge: environment === "live" } }, client);
       return { row: outbox.rows[0], existing: false };
     });
     const dispatched = await this.dispatch(tenantId, created.row);
     const reconciliation = dispatched.status === "provider_accepted" && dispatched.externalInvoiceRef
-      ? await this.reconcileInvoice(tenantId, STRIPE_BILLING_PROVIDER_KEY, "sandbox", accountKey,
+      ? await this.reconcileInvoice(tenantId, STRIPE_BILLING_PROVIDER_KEY, environment, accountKey,
         dispatched.externalInvoiceRef) : null;
     return { stage: reconciliation?.status === "reconciled" ? "milestone_invoice_reconciled"
       : dispatched.status === "provider_accepted" ? "milestone_invoice_submitted" : "milestone_accepted",
       acceptanceId: created.row.billing_commercial_milestone_acceptance_id,
       milestoneOutboxId: created.row.billing_commercial_milestone_outbox_id,
-      existing: created.existing, dispatch: dispatched, reconciliation, liveCharge: false };
+      existing: created.existing, dispatch: dispatched, reconciliation, liveCharge: environment === "live" };
   }
 
   async reconcileInvoice(tenantId: string, providerKey: string, environment: "sandbox" | "live",
     providerAccountKey: string, externalInvoiceRef: string) {
-    if (environment === "live") return { status: "disabled" as const,
-      detail: "Live commercial milestone reconciliation is not authorized." };
     const schema = runtimeConfig().schema;
     const result = await this.database.tenantReadTransaction(tenantId, (client) => client.query<MilestoneRow>(
       `SELECT * FROM ${schema}.billing_commercial_milestone_outbox
@@ -270,3 +268,6 @@ function toDispatcherInput(row: MilestoneRow): BillingCommercialMilestoneInput {
     payloadDigest: row.payload_digest };
 }
 function digestOf(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function providerEnvironment(provider: ReturnType<typeof runtimeConfig>["billing"]["provider"]): "sandbox" | "live" | null {
+  return provider === "stripe_sandbox" ? "sandbox" : provider === "stripe_live" ? "live" : null;
+}

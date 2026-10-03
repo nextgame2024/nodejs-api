@@ -7,6 +7,7 @@ import {
   type BillingInvoiceAdjustmentDispatcher,
   type BillingInvoiceAdjustmentInput,
 } from "./billing-invoice-adjustment.port.js";
+import { STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 
 export type DraftRenewalInvoice = {
   providerKey: string;
@@ -57,8 +58,9 @@ export class BillingInvoiceAdjustmentOutboxService {
   ) {}
 
   async enqueueDraftInvoice(tenantId: string, input: DraftRenewalInvoice) {
-    if (input.providerEnvironment === "live") {
-      return { status: "disabled" as const, detail: "Live overage invoice adjustment is not authorized." };
+    const scope = this.providerScope(input.providerKey, input.providerEnvironment, input.providerAccountKey, true);
+    if (!scope.enabled) {
+      return { status: "disabled" as const, detail: scope.detail };
     }
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (client) => {
@@ -151,11 +153,9 @@ export class BillingInvoiceAdjustmentOutboxService {
     providerAccountKey: string,
     workerId: string,
   ) {
-    if (environment === "live") {
-      return { status: "disabled" as const, detail: "Live overage invoice adjustment is not authorized." };
-    }
-    if (this.dispatcher.status().availability !== "configured") {
-      return { status: "disabled" as const, detail: this.dispatcher.status().detail };
+    const scope = this.providerScope(providerKey, environment, providerAccountKey, true);
+    if (!scope.enabled) {
+      return { status: "disabled" as const, detail: scope.detail };
     }
     const schema = runtimeConfig().schema;
     const claim = await this.database.tenantTransaction(tenantId, async (client) => {
@@ -259,8 +259,9 @@ export class BillingInvoiceAdjustmentOutboxService {
     providerAccountKey: string,
     externalInvoiceRef: string,
   ) {
-    if (environment === "live") {
-      return { status: "disabled" as const, detail: "Live overage invoice reconciliation is not authorized." };
+    const scope = this.providerScope(providerKey, environment, providerAccountKey, false);
+    if (!scope.enabled) {
+      return { status: "disabled" as const, detail: scope.detail };
     }
     const schema = runtimeConfig().schema;
     const row = await this.database.tenantReadTransaction(tenantId, async (client) => {
@@ -339,6 +340,19 @@ export class BillingInvoiceAdjustmentOutboxService {
        RETURNING billing_invoice_adjustment_outbox_id`,
       [tenantId, claim.billing_invoice_adjustment_outbox_id, claim.lease_token, ...values]));
     if (!result.rowCount) throw new Error("Billing invoice-adjustment lease was lost; reconciliation is required.");
+  }
+
+  private providerScope(providerKey: string, environment: "sandbox" | "live", providerAccountKey: string,
+    requireCollection: boolean) {
+    const config = runtimeConfig().billing;
+    const configuredEnvironment = config.provider === "stripe_sandbox" ? "sandbox"
+      : config.provider === "stripe_live" ? "live" : null;
+    const dispatcherStatus = this.dispatcher.status();
+    const enabled = providerKey === STRIPE_BILLING_PROVIDER_KEY && configuredEnvironment === environment
+      && providerAccountKey === config.providerAccountKey
+      && (!requireCollection || dispatcherStatus.availability === "configured");
+    return { enabled, detail: enabled ? dispatcherStatus.detail
+      : `Invoice adjustment is unavailable for this provider scope. ${dispatcherStatus.detail}` };
   }
 }
 

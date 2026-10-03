@@ -113,6 +113,8 @@ export type RuntimeConfig = {
     provider: "disabled" | "stripe_sandbox" | "stripe_live";
     providerAccountKey: string;
     liveCheckoutEnabled: boolean;
+    liveOverageEnabled: boolean;
+    liveMilestoneEnabled: boolean;
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
     stripePortalConfigurationId?: string;
@@ -322,6 +324,8 @@ function billingConfig(): RuntimeConfig["billing"] {
     throw new Error("SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY must be a stable lowercase account key.");
   }
   const liveCheckoutEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED, false);
+  const liveOverageEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED, false);
+  const liveMilestoneEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_MILESTONE_ENABLED, false);
   const stripeSecretKey = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY);
   if (stripeSecretKey && !/^sk_(?:test|live)_/.test(stripeSecretKey)) {
     throw new Error("SOPHIA_BILLING_STRIPE_SECRET_KEY must be a Stripe secret key.");
@@ -334,6 +338,9 @@ function billingConfig(): RuntimeConfig["billing"] {
   }
   if (provider !== "stripe_live" && liveCheckoutEnabled) {
     throw new Error("SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED may only be enabled with stripe_live.");
+  }
+  if (provider !== "stripe_live" && (liveOverageEnabled || liveMilestoneEnabled)) {
+    throw new Error("Live billing collection switches may only be enabled with stripe_live.");
   }
   if (provider === "stripe_live" && liveCheckoutEnabled) {
     throw new Error(
@@ -362,6 +369,8 @@ function billingConfig(): RuntimeConfig["billing"] {
     provider,
     providerAccountKey,
     liveCheckoutEnabled,
+    liveOverageEnabled,
+    liveMilestoneEnabled,
     stripeSecretKey,
     stripeWebhookSecret,
     stripePortalConfigurationId,

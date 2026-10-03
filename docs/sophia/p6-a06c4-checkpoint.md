@@ -14,9 +14,11 @@ with real payment-method details.
 The no-charge activation audit found that the current system must not be enabled
 merely by changing `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED`:
 
-- recurring base and Founding commencement Checkout are implemented, but the
-  authoritative one-time overage adjustment remains sandbox-only;
-- Founding production-deployment milestone invoicing remains sandbox-only;
+- recurring base and Founding commencement Checkout are implemented;
+- live overage adjustment, missed-window recovery, Meter evidence and Founding
+  production-deployment invoicing are implemented behind independent default-off
+  collection switches and covered by environment-aware mocked regression tests,
+  but have not been invoked against live Stripe;
 - `billing.manage` correctly requires recent MFA, while the current Business
   Manager `/user` response supplies no verified `mfaVerifiedAt` evidence;
 - the stored seller policy is intentionally business-only and non-GST, but the
@@ -42,6 +44,11 @@ This checkpoint is an implementation boundary, not tax or legal advice.
 
 - Runtime configuration now rejects `stripe_live` with live Checkout enabled
   until the incomplete gates are implemented and verified.
+- Live overage collection and live Founding milestone invoicing use independent
+  default-off switches. Their provider writes validate the exact live mode,
+  account, immutable plan/Price mapping and environment-specific idempotency
+  identity. Turning a collection switch off does not prevent read-only exact
+  reconciliation of an already submitted obligation.
 - `npm run billing:audit-live-activation` is a compiled, read-only production
   command. It reads the effective seller policy and reports every gate; it makes
   no Stripe request and creates no Customer, Checkout Session, invoice or charge.
@@ -55,10 +62,11 @@ This checkpoint is an implementation boundary, not tax or legal advice.
    display obligations; publish a new immutable policy/version if facts changed.
 3. Implement a trustworthy Business Manager MFA/step-up flow that supplies a
    recent server-verified timestamp to Sophia Admin.
-4. Implement and sandbox/regression-prove environment-safe live overage invoice
-   adjustment, including missed-window recovery and exact reconciliation.
-5. Implement and prove live Founding milestone dispatch/reconciliation, if the
-   first customer's plan is Founding.
+4. Run the final production-readiness audit for the environment-safe live
+   overage path; keep its switch off until the genuine tenant is approved.
+5. Run the final production-readiness audit for the live Founding milestone
+   path, if the first customer's plan is Founding; keep its switch off until the
+   milestone is actually accepted by an authorised recent-MFA administrator.
 6. Replace the standard Stripe key with a verified least-privilege restricted
    key where feasible, or document required permissions; apply IP restrictions
    if Render provides stable egress suitable for allowlisting.

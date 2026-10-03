@@ -10,6 +10,10 @@ describe("BillingInvoiceAdjustmentOutboxService", () => {
   beforeEach(() => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
+    process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "legacy-primary";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_test_sophia";
+    delete process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED;
     process.env.SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS =
       JSON.stringify({ [planVersionId]: "price_sophiaOverage123" });
   });
@@ -38,6 +42,20 @@ describe("BillingInvoiceAdjustmentOutboxService", () => {
       quantity: "2", unitPriceMinor: "10", currency: "AUD",
     }));
     expect(query.mock.calls.some(([sql]) => String(sql).includes("status='provider_accepted'"))).toBe(true);
+  });
+
+  it("dispatches a live adjustment only with the independent live overage switch", async () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED = "true";
+    const query = dispatchQuery(undefined, "live");
+    const dispatcher = { status: () => ({ availability: "configured" as const, detail: "live" }),
+      submit: jest.fn(async () => ({ outcome: "accepted" as const, providerInvoiceItemRef: "ii_live_1",
+        acceptedAt: "2026-10-28T08:51:06.000Z" })), reconcile: jest.fn() };
+    await expect(new BillingInvoiceAdjustmentOutboxService(database(query), dispatcher)
+      .dispatchNext(tenantId, "stripe-sophia", "live", "legacy-primary", "worker-live"))
+      .resolves.toMatchObject({ status: "provider_accepted", providerInvoiceItemRef: "ii_live_1" });
+    expect(dispatcher.submit).toHaveBeenCalledWith(expect.objectContaining({ providerEnvironment: "live" }));
   });
 
   it("fails a corrupted durable payload before making any Stripe call", async () => {
@@ -177,8 +195,8 @@ function draftInvoice() {
     periodStart: "2026-09-28T08:51:05.000Z", periodEnd: "2026-10-28T08:51:05.000Z" };
 }
 
-function dispatchQuery(digestOverride?: string) {
-  const row = dispatchRow(digestOverride);
+function dispatchQuery(digestOverride?: string, environment: "sandbox" | "live" = "sandbox") {
+  const row = dispatchRow(digestOverride, environment);
   return jest.fn(async (sql: string) => {
     if (sql.includes("RETURNING o.*")) return { rows: [row], rowCount: 1 };
     if (sql.includes("RETURNING billing_invoice_adjustment_outbox_id")) {
@@ -188,11 +206,11 @@ function dispatchQuery(digestOverride?: string) {
   });
 }
 
-function dispatchRow(digestOverride?: string) {
+function dispatchRow(digestOverride?: string, environment: "sandbox" | "live" = "sandbox") {
   const row = {
     billing_invoice_adjustment_outbox_id: adjustmentId, billing_usage_period_ledger_id: "ledger-1",
     commercial_plan_version_id: planVersionId, provider_key: "stripe-sophia",
-    provider_environment: "sandbox", provider_account_key: "legacy-primary",
+    provider_environment: environment, provider_account_key: "legacy-primary",
     external_customer_ref: "cus_sophia_1", external_subscription_ref: "sub_sophia_1",
     external_invoice_ref: "in_sophia_1", one_time_price_ref: "price_sophiaOverage123",
     period_start: "2026-09-28T08:51:05.000Z", period_end: "2026-10-28T08:51:05.000Z",

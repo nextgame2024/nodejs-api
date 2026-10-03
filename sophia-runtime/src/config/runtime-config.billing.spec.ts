@@ -6,6 +6,8 @@ const billingKeys = [
   "SOPHIA_BILLING_PROVIDER",
   "SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY",
   "SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED",
+  "SOPHIA_BILLING_LIVE_OVERAGE_ENABLED",
+  "SOPHIA_BILLING_LIVE_MILESTONE_ENABLED",
   "SOPHIA_BILLING_STRIPE_SECRET_KEY",
   "SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS",
   "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
@@ -35,7 +37,8 @@ describe("runtime billing configuration", () => {
   it("keeps live Checkout disabled by default in live mode", () => {
     process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
     process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
-    expect(runtimeConfig().billing).toMatchObject({ provider: "stripe_live", liveCheckoutEnabled: false });
+    expect(runtimeConfig().billing).toMatchObject({ provider: "stripe_live", liveCheckoutEnabled: false,
+      liveOverageEnabled: false, liveMilestoneEnabled: false });
   });
 
   it("rejects a live secret in sandbox mode", () => {
@@ -62,6 +65,12 @@ describe("runtime billing configuration", () => {
   it("requires a stable lowercase provider account key", () => {
     process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "Stripe Account";
     expect(() => runtimeConfig()).toThrow("stable lowercase account key");
+  });
+
+  it("rejects live collection switches outside live mode", () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
+    process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED = "true";
+    expect(() => runtimeConfig()).toThrow("Live billing collection switches may only be enabled with stripe_live");
   });
 
   it("parses an approved plan-version to one-time overage Price mapping", () => {

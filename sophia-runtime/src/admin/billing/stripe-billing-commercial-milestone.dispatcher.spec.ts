@@ -31,6 +31,20 @@ describe("StripeBillingCommercialMilestoneDispatcher", () => {
     expect(stripe.invoices.create).not.toHaveBeenCalled();
   });
 
+  it("creates the live milestone only when its independent switch is enabled", async () => {
+    const stripe = client(true);
+    const dispatcher = new StripeBillingCommercialMilestoneDispatcher({ ...config(), provider: "stripe_live",
+      liveMilestoneEnabled: true, stripeSecretKey: "sk_live_sophia" }, stripe as never);
+    await expect(dispatcher.submit({ ...input(), providerEnvironment: "live" }))
+      .resolves.toMatchObject({ outcome: "accepted", externalInvoiceRef: "in_milestone_1" });
+    expect(stripe.invoices.create).toHaveBeenCalledWith(expect.objectContaining({ customer: "cus_sophia_1" }),
+      { idempotencyKey: "sophia:live:legacy-primary:milestone-invoice:outbox-1" });
+    expect(stripe.invoiceItems.create).toHaveBeenCalledWith(expect.anything(),
+      { idempotencyKey: "sophia:live:legacy-primary:milestone-item:outbox-1" });
+    expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledWith("in_milestone_1", {},
+      { idempotencyKey: "sophia:live:legacy-primary:milestone-finalize:outbox-1" });
+  });
+
   it("reconciles exactly one finalized digest-bound milestone line", async () => {
     const stripe = client();
     stripe.invoices.retrieve = jest.fn(async () => ({ ...invoice(), status: "paid",
@@ -50,31 +64,52 @@ describe("StripeBillingCommercialMilestoneDispatcher", () => {
       .resolves.toMatchObject({ outcome: "matched", evidence: { amountMinor: "95000", quantity: "1",
         providerInvoiceLineRef: "il_milestone_1", invoiceStatus: "paid" } });
   });
+
+  it("keeps live milestone reconciliation available after submission is disabled", async () => {
+    const stripe = client(true);
+    stripe.invoices.retrieve = jest.fn(async () => ({ ...invoice(true), status: "paid",
+      metadata: { sophiaCommercialMilestoneOutboxId: "outbox-1" },
+      status_transitions: { finalized_at: 2_000_000_000 } }));
+    stripe.invoices.listLineItems = jest.fn(async () => ({ has_more: false, data: [{
+      id: "il_live_milestone", amount: 95000, currency: "aud", livemode: true, invoice: "in_milestone_1",
+      quantity: 1, metadata: { sophiaCommercialMilestoneOutboxId: "outbox-1" },
+      pricing: { type: "price_details", unit_amount_decimal: "95000",
+        price_details: { price: "price_foundingDeployment123", product: "prod_sophia" } },
+      parent: { type: "invoice_item_details", invoice_item_details: { invoice_item: "ii_milestone_1",
+        proration: false, proration_details: null, subscription: null }, subscription_item_details: null },
+    }] }));
+    const dispatcher = new StripeBillingCommercialMilestoneDispatcher({ ...config(), provider: "stripe_live",
+      liveMilestoneEnabled: false, stripeSecretKey: "sk_live_sophia" }, stripe as never);
+    await expect(dispatcher.reconcile({ ...input(), providerEnvironment: "live",
+      externalInvoiceRef: "in_milestone_1", providerInvoiceItemRef: "ii_milestone_1" }))
+      .resolves.toMatchObject({ outcome: "matched", evidence: { providerInvoiceLineRef: "il_live_milestone" } });
+  });
 });
 
 function config(): RuntimeConfig["billing"] {
   return { provider: "stripe_sandbox", providerAccountKey: "legacy-primary", liveCheckoutEnabled: false,
+    liveOverageEnabled: false, liveMilestoneEnabled: false,
     stripeSecretKey: "sk_test_sophia", stripeWebhookSecret: "whsec_sophia",
     stripePriceMappings: {}, stripeInitialPriceMappings: {},
     stripeMilestonePriceMappings: { [planVersionId]: { "production-deployment": "price_foundingDeployment123" } },
     stripeMeteredPriceMappings: {}, stripeOveragePriceMappings: {}, stripeMeterBindings: {} };
 }
 
-function client() {
+function client(live = false) {
   return {
-    prices: { retrieve: jest.fn(async () => ({ id: "price_foundingDeployment123", active: true, livemode: false,
+    prices: { retrieve: jest.fn(async () => ({ id: "price_foundingDeployment123", active: true, livemode: live,
       type: "one_time", recurring: null, currency: "aud", unit_amount: 95000, tax_behavior: "exclusive" })) },
     invoices: {
-      create: jest.fn(async () => invoice()),
-      finalizeInvoice: jest.fn(async () => ({ ...invoice(), status: "open" })),
-      retrieve: jest.fn(async () => invoice()),
+      create: jest.fn(async () => invoice(live)),
+      finalizeInvoice: jest.fn(async () => ({ ...invoice(live), status: "open" })),
+      retrieve: jest.fn(async () => invoice(live)),
       listLineItems: jest.fn(async () => ({ has_more: false, data: [] })),
     },
     invoiceItems: { create: jest.fn(async () => ({ id: "ii_milestone_1" })) },
   };
 }
-function invoice() {
-  return { id: "in_milestone_1", livemode: false, status: "draft", customer: "cus_sophia_1",
+function invoice(live = false) {
+  return { id: "in_milestone_1", livemode: live, status: "draft", customer: "cus_sophia_1",
     metadata: {}, status_transitions: { finalized_at: null } };
 }
 function input(): BillingCommercialMilestoneInput {

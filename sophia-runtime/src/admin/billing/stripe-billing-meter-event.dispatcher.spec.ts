@@ -34,6 +34,27 @@ describe("StripeBillingMeterEventDispatcher", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("keeps live Meter submission disabled until the independent overage switch is enabled", async () => {
+    const create = jest.fn();
+    const dispatcher = new StripeBillingMeterEventDispatcher({ ...config(), provider: "stripe_live",
+      stripeSecretKey: "sk_live_example", liveOverageEnabled: false }, client(create));
+    expect(dispatcher.status()).toMatchObject({ availability: "disabled" });
+    await expect(dispatcher.submit({ ...event(), providerEnvironment: "live" }))
+      .resolves.toMatchObject({ outcome: "definite_failure", code: "meter_dispatch_disabled" });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("submits live Meter evidence only with the independent overage switch enabled", async () => {
+    const create = jest.fn(async () => ({ identifier: "accepted" }));
+    const dispatcher = new StripeBillingMeterEventDispatcher({ ...config(), provider: "stripe_live",
+      stripeSecretKey: "sk_live_example", liveOverageEnabled: true }, client(create));
+    await expect(dispatcher.submit({ ...event(), providerEnvironment: "live", externalCustomerRef: "cus_live" }))
+      .resolves.toMatchObject({ outcome: "accepted" });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      payload: { stripe_customer_id: "cus_live", value: "2" },
+    }));
+  });
+
   it("quarantines transport ambiguity instead of claiming a safe retry", async () => {
     const dispatcher = new StripeBillingMeterEventDispatcher(config(), client(jest.fn(async () => {
       throw new Error("socket closed after write");
@@ -113,6 +134,8 @@ function config() {
     provider: "stripe_sandbox" as const,
     providerAccountKey: "legacy-primary",
     liveCheckoutEnabled: false,
+    liveOverageEnabled: false,
+    liveMilestoneEnabled: false,
     stripeSecretKey: "sk_test_example",
     stripeWebhookSecret: "whsec_example",
     stripePortalConfigurationId: "bpc_example123",

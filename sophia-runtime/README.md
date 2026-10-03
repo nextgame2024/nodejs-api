@@ -53,12 +53,17 @@ Sophia subscriptions use an independently configured Stripe adapter. It never
 falls back to the legacy Business Manager `STRIPE_*` variables used by Toolkit
 and video purchases. `stripe_sandbox` is charge-safe test mode; `stripe_live`
 keeps Checkout disabled unless `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED=true` is
-separately authorised. Required values are validated for each enabled path; a
-base-plus-overage sandbox deployment uses:
+separately authorised. Live overage collection and Founding milestone invoicing
+have distinct default-off switches so enabling one path cannot implicitly enable
+another. Required values are validated for each enabled path; a base-plus-overage
+sandbox deployment uses:
 
 ```bash
 SOPHIA_BILLING_PROVIDER=stripe_sandbox
 SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY=legacy-primary
+SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED=false
+SOPHIA_BILLING_LIVE_OVERAGE_ENABLED=false
+SOPHIA_BILLING_LIVE_MILESTONE_ENABLED=false
 SOPHIA_BILLING_STRIPE_SECRET_KEY=sk_test_...
 SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET=whsec_...
 SOPHIA_BILLING_STRIPE_PORTAL_CONFIGURATION_ID=bpc_...
@@ -80,12 +85,15 @@ initial subscription invoice; a plan without immutable initial charge
 components ignores this mapping. Milestone mappings are separate approved
 one-time Prices used only after a recent-MFA billing administrator records
 immutable acceptance evidence; submission and exact finalized-line
-reconciliation remain sandbox-only. The overage mapping is a
-separate one-time Price used only by the sandbox-proven draft-renewal invoice
-adjustment path; Meter-backed mappings remain independent usage-delivery
-evidence. Live overage adjustment stays disabled even when live observation is
-configured, and an absent live overage mapping does not disable live portal,
-signed-webhook, or read-only reconciliation support.
+reconciliation are environment-scoped and idempotent. The overage mapping is a
+separate one-time Price used by the draft-renewal invoice-adjustment and
+missed-window carry-forward paths; Meter-backed mappings remain independent
+usage-delivery evidence. In live mode, overage invoice adjustment, recovery and
+Meter submission require `SOPHIA_BILLING_LIVE_OVERAGE_ENABLED=true`, while a
+Founding production-deployment invoice requires
+`SOPHIA_BILLING_LIVE_MILESTONE_ENABLED=true`. Both default to false and neither
+enables Checkout. Exact reconciliation remains available after either collection
+switch is turned off so in-flight obligations can be resolved safely.
 
 The committed portal configuration must be active in the same Stripe mode and
 must disable subscription cancellation. A paid initial subscription invoice

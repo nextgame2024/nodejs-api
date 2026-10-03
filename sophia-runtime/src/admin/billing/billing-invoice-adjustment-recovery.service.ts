@@ -8,6 +8,7 @@ import {
   type BillingInvoiceAdjustmentInput,
 } from "./billing-invoice-adjustment.port.js";
 import type { DraftRenewalInvoice } from "./billing-invoice-adjustment-outbox.service.js";
+import { STRIPE_BILLING_PROVIDER_KEY } from "./stripe-billing.constants.js";
 
 type RecoveryRow = {
   billing_invoice_adjustment_recovery_attempt_id: string;
@@ -45,8 +46,9 @@ export class BillingInvoiceAdjustmentRecoveryService {
   ) {}
 
   async enqueueAndDispatch(tenantId: string, invoice: DraftRenewalInvoice, workerId: string) {
-    if (invoice.providerEnvironment === "live") {
-      return { status: "disabled" as const, detail: "Live missed-window carry-forward is not authorized." };
+    const scope = this.providerScope(invoice.providerKey, invoice.providerEnvironment, invoice.providerAccountKey, true);
+    if (!scope.enabled) {
+      return { status: "disabled" as const, detail: scope.detail };
     }
     const schema = runtimeConfig().schema;
     const attempts = await this.database.tenantTransaction(tenantId, async (client) => {
@@ -124,7 +126,8 @@ export class BillingInvoiceAdjustmentRecoveryService {
 
   async reconcileInvoice(tenantId: string, providerKey: string, environment: "sandbox" | "live",
     providerAccountKey: string, externalInvoiceRef: string) {
-    if (environment === "live") return { status: "disabled" as const, attempts: [] };
+    const scope = this.providerScope(providerKey, environment, providerAccountKey, false);
+    if (!scope.enabled) return { status: "disabled" as const, attempts: [], detail: scope.detail };
     const rows = await this.database.tenantReadTransaction(tenantId, (client) => client.query<RecoveryRow>(
       `${recoverySelect(runtimeConfig().schema)}
        WHERE recovery.customer_id=$1 AND source.provider_key=$2 AND source.provider_environment=$3
@@ -266,6 +269,19 @@ export class BillingInvoiceAdjustmentRecoveryService {
        WHERE customer_id=$1 AND billing_invoice_adjustment_recovery_attempt_id=$2 AND status='submitting'`,
       [tenantId, attemptId, status, code, detail],
     ));
+  }
+
+  private providerScope(providerKey: string, environment: "sandbox" | "live", providerAccountKey: string,
+    requireCollection: boolean) {
+    const config = runtimeConfig().billing;
+    const configuredEnvironment = config.provider === "stripe_sandbox" ? "sandbox"
+      : config.provider === "stripe_live" ? "live" : null;
+    const dispatcherStatus = this.dispatcher.status();
+    const enabled = providerKey === STRIPE_BILLING_PROVIDER_KEY && configuredEnvironment === environment
+      && providerAccountKey === config.providerAccountKey
+      && (!requireCollection || dispatcherStatus.availability === "configured");
+    return { enabled, detail: enabled ? dispatcherStatus.detail
+      : `Invoice-adjustment recovery is unavailable for this provider scope. ${dispatcherStatus.detail}` };
   }
 }
 

@@ -56,6 +56,20 @@ describe("StripeBillingInvoiceAdjustmentDispatcher", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("submits an exact live adjustment only when its independent switch is enabled", async () => {
+    const create = jest.fn(async () => ({ id: "ii_live_1" }));
+    const stripe = client(create);
+    stripe.prices.retrieve = jest.fn(async () => ({ id: "price_sophiaOverage123", active: true, livemode: true,
+      type: "one_time", recurring: null, currency: "aud", unit_amount: 10, tax_behavior: "exclusive" })) as never;
+    stripe.invoices.retrieve = jest.fn(async () => ({ ...invoice(), livemode: true })) as never;
+    const dispatcher = new StripeBillingInvoiceAdjustmentDispatcher({ ...config(), provider: "stripe_live",
+      liveOverageEnabled: true, stripeSecretKey: "sk_live_sophia" }, stripe as never);
+    await expect(dispatcher.submit({ ...input(), providerEnvironment: "live" }))
+      .resolves.toMatchObject({ outcome: "accepted", providerInvoiceItemRef: "ii_live_1" });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ invoice: "in_sophia_1", quantity: 2 }),
+      { idempotencyKey: "sophia:live:legacy-primary:invoice-adjustment:adjustment-1" });
+  });
+
   it("reads back one exact finalized invoice line before reporting reconciliation", async () => {
     const create = jest.fn();
     const stripe = client(create);
@@ -75,6 +89,25 @@ describe("StripeBillingInvoiceAdjustmentDispatcher", () => {
       providerInvoiceItemRef: "ii_sophia_1", providerInvoiceLineRef: "il_sophia_1", quantity: "2",
       unitPriceMinor: "10", amountMinor: "20", currency: "AUD", invoiceStatus: "paid",
     } });
+  });
+
+  it("keeps live reconciliation available after the live submission switch is turned off", async () => {
+    const stripe = client(jest.fn());
+    stripe.invoices.retrieve = jest.fn(async () => ({ ...invoice(), livemode: true, status: "paid",
+      status_transitions: { finalized_at: 2_000_099_010 } })) as never;
+    stripe.invoices.listLineItems = jest.fn(async () => ({ has_more: false, data: [{
+      id: "il_live_1", amount: 20, currency: "aud", livemode: true, invoice: "in_sophia_1",
+      subscription: null, quantity: 2, metadata: { sophiaBillingAdjustmentId: "adjustment-1",
+        sophiaUsageLedgerId: "ledger-1" }, period: { start: 1_999_999_000, end: 2_000_098_999 },
+      pricing: { type: "price_details", unit_amount_decimal: "10",
+        price_details: { price: "price_sophiaOverage123", product: "prod_sophia" } },
+      parent: { type: "invoice_item_details", invoice_item_details: { invoice_item: "ii_live_1",
+        proration: false, proration_details: null, subscription: "sub_sophia_1" }, subscription_item_details: null },
+    }] })) as never;
+    await expect(new StripeBillingInvoiceAdjustmentDispatcher({ ...config(), provider: "stripe_live",
+      liveOverageEnabled: false, stripeSecretKey: "sk_live_sophia" }, stripe as never)
+      .reconcile({ ...input(), providerEnvironment: "live" }))
+      .resolves.toMatchObject({ outcome: "matched", evidence: { providerInvoiceItemRef: "ii_live_1" } });
   });
 
   it("reconciles a later renewal while requiring the carried line to retain its original period", async () => {
@@ -119,6 +152,7 @@ describe("StripeBillingInvoiceAdjustmentDispatcher", () => {
 
 function config(): RuntimeConfig["billing"] {
   return { provider: "stripe_sandbox", providerAccountKey: "legacy-primary", liveCheckoutEnabled: false,
+    liveOverageEnabled: false, liveMilestoneEnabled: false,
     stripeSecretKey: "sk_test_sophia", stripeWebhookSecret: "whsec_sophia",
     stripePortalConfigurationId: "bpc_sophiaSandbox123", checkoutSuccessUrl: "https://example.test/success",
     checkoutCancelUrl: "https://example.test/cancel", portalReturnUrl: "https://example.test/return",

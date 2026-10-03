@@ -49,13 +49,16 @@ export class StripeBillingMeterEventDispatcher implements BillingMeterEventDispa
 
   status() {
     const environment = providerEnvironment(this.config.provider);
-    const configured = environment !== null && this.client !== null
+    const authorized = environment === "sandbox" || (environment === "live" && this.config.liveOverageEnabled);
+    const configured = environment !== null && authorized && this.client !== null
       && Object.keys(this.config.stripeMeterBindings).length > 0;
     return {
       availability: configured ? "configured" as const : "disabled" as const,
       detail: configured
         ? `Stripe ${environment} Meter dispatch is configured for approved semantic bindings.`
-        : "Stripe Meter dispatch requires test/live credentials and at least one approved Meter binding.",
+        : environment === "live" && !this.config.liveOverageEnabled
+          ? "Live Stripe Meter dispatch is implemented but the independent live overage switch remains disabled."
+          : "Stripe Meter dispatch requires test/live credentials and at least one approved Meter binding.",
     };
   }
 
