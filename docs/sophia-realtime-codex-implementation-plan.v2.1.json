@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.80",
+    "version": "2.1.81",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -25,7 +25,7 @@
     },
     "evidenceBoundary": "The attached architecture JSON was reviewed in full. Repository files, branches, live services, databases, SDK versions, credentials and production behavior were not accessed or executed. Current-state findings below are baseline-reported, not independently code-verified. Codex must inspect the actual working trees first.",
     "scope": "Incremental evolution of the existing Angular frontend, NestJS runtime, Express Business Manager and existing workers. Preserve real estate as an optional business pack. Exclude the existing migration/student-agency implementation from the new product. Explicit Sophia Admin control plane covering all sixteen requested modules, with separately gated commercial billing.",
-    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof, table-specific outbox row locking, contiguous typed billing-period parameters, environment-specific Meter timestamp bounds, minute-aligned Stripe summary windows distinct from exact provider periods, bounded read-only sandbox invoice diagnostics, post-period Meter invoice-timing incompatibility, signed draft-invoice webhook backpressure, canonical invoice-item-parent reconciliation, evidence-backed failed-reconciliation recovery, authoritative duplicate-delivery acknowledgement, immutable next-renewal missed-window carry-forward, resumable missed-window invoice-selection diagnostics, deterministic sandbox source-invoice closure, monotonic recovery-fixture resume, close-before-bind missed-window isolation, recovery-first draft handling, Founding-plan milestone/commitment terms, exact-period cancellation enforcement, plan-specific immutable allowance snapshots, plan-aware ledger arithmetic, persisted adjustment-reconciliation resume and deterministic Founding draft finalization; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
+    "revisionNote": "Source-based scope correction: v2 included foundations and a minimal operator surface, not a complete Sophia Admin product. Repository validation through P6-A06A and subsequent operator clarification further corrected tool-provenance, knowledge-upload security, connector review context, optional-pack composition, presentation-port, provider-catalog, connector-revocation, delivery-evidence, workflow-run version-pin, browser-bootstrap, browser-adapter-descriptor, Admin tenant-context, browser-presentation, platform-organisation, MFA-readiness, agent-authoring dependency, connector-credential/tool-binding, workflow-step/retry/handoff, shared-kiosk reload/text fallback, stateless reasoning/tool-name, provider-retention, Gemini step-history/schema-subset, bounded-turn speech, backend-media, avatar-audio, Live async-tool, resumption, ZDR, cross-capability resource-scope, greenfield-onboarding, generic-retry, unconfigured-budget-alert, evaluation-evidence, audit-retention/export, privacy-store ownership, cached-report, retention-execution, conversation-content availability, sensitive-export-storage, analytics-outcome/aggregation, mutable-analytics-export, tenant-commercial-authority, concurrent-admission, session-total tool-limit, billing-sandbox isolation, Stripe credential-isolation, provider-account scoping, no-charge live-customer bootstrap/signing-evidence, production-commercial-definition, seller-legal-version, GST-registration, commercial-audience, aggregate-active-minute, canonical-connected-activity, provider-period/proration assumptions, transactional meter-event dispatch, provider-neutral capacity and tool-class safety admission, base-plus-metered Checkout composition, dual-source Meter reconciliation evidence, isolated Stripe test-clock proof, table-specific outbox row locking, contiguous typed billing-period parameters, environment-specific Meter timestamp bounds, minute-aligned Stripe summary windows distinct from exact provider periods, bounded read-only sandbox invoice diagnostics, post-period Meter invoice-timing incompatibility, signed draft-invoice webhook backpressure, canonical invoice-item-parent reconciliation, evidence-backed failed-reconciliation recovery, authoritative duplicate-delivery acknowledgement, immutable next-renewal missed-window carry-forward, resumable missed-window invoice-selection diagnostics, deterministic sandbox source-invoice closure, monotonic recovery-fixture resume, close-before-bind missed-window isolation, recovery-first draft handling, Founding-plan milestone/commitment terms, exact-period cancellation enforcement, plan-specific immutable allowance snapshots, plan-aware ledger arithmetic, persisted adjustment-reconciliation resume, deterministic Founding draft finalization and fail-closed live-activation auditing; see validatedAmendments. Implementation evidence remains in the separate progress artifact.",
     "supersedes": {
       "fileName": "sophia-realtime-codex-implementation-plan.v2.json",
       "version": "2.0.0",
@@ -66,6 +66,23 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-03-LIVE-ACTIVATION-FAIL-CLOSED-AUDIT",
+      "taskId": "P6-A06C4",
+      "reason": "The user chose to wait for the first genuine customer rather than create a synthetic live charge. Source inspection then proved that enabling the single live Checkout flag would allow base and commencement collection while live overage adjustment, Founding deployment-milestone invoicing and the recent-MFA administration path remain unavailable.",
+      "changes": [
+        "Reject live Checkout activation at configuration load until live overage, commercial milestone, recent-MFA, current tax attestation and key-scope gates are implemented and verified.",
+        "Add a compiled read-only activation audit that reports the effective non-GST business-only seller policy and every unresolved first-customer gate without making a Stripe request or external mutation.",
+        "Keep P6-A06C4 blocked until the genuine customer is known, the seller/accountant reconfirms current GST status, Business Manager supplies trustworthy recent-MFA evidence, both live collection paths are proven and the live key scope is reviewed. A later explicit authority decision is still required."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/config/runtime-config.ts",
+        "sophia-runtime/src/operators/audit-live-commercial-activation.ts",
+        "docs/sophia/p6-a06c4-checkpoint.md"
+      ],
+      "approvedBy": "User instructed continuation while waiting for the first genuine customer; no charge or external mutation was authorized",
+      "recordedAt": "2026-10-03T20:30:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-03-LIVE-CUSTOMER-PROOF-OPERATOR",
       "taskId": "P6-A06C3C",
@@ -6457,8 +6474,9 @@
             },
             {
               "id": "P6-A06C4",
-              "status": "decision_required",
-              "scope": "After commercial, tax, MFA and security gates pass, obtain explicit authority either to keep live Checkout disabled or to enable real charge-creating Checkout."
+              "status": "blocked",
+              "scope": "After commercial, tax, MFA and security gates pass, obtain explicit authority either to keep live Checkout disabled or to enable real charge-creating Checkout.",
+              "detail": "The no-charge source audit found live overage invoice adjustment and Founding deployment-milestone invoicing remain sandbox-only, Business Manager supplies no trustworthy recent-MFA timestamp, current GST status needs operator/accountant re-attestation, and the standard live key needs a least-privilege/IP-scope review. Runtime now rejects activation until these gates are implemented and verified."
             }
           ]
         }

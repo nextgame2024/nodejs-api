@@ -50,6 +50,15 @@ describe("runtime billing configuration", () => {
     expect(() => runtimeConfig()).toThrow("may only be enabled with stripe_live");
   });
 
+  it("rejects live charge activation while the launch gates remain incomplete", () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED = "true";
+    expect(() => runtimeConfig()).toThrow(
+      "cannot be enabled until live overage, commercial milestone, recent-MFA, tax-attestation, and key-scope gates",
+    );
+  });
+
   it("requires a stable lowercase provider account key", () => {
     process.env.SOPHIA_BILLING_PROVIDER_ACCOUNT_KEY = "Stripe Account";
     expect(() => runtimeConfig()).toThrow("stable lowercase account key");

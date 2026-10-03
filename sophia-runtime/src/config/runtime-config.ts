@@ -335,6 +335,11 @@ function billingConfig(): RuntimeConfig["billing"] {
   if (provider !== "stripe_live" && liveCheckoutEnabled) {
     throw new Error("SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED may only be enabled with stripe_live.");
   }
+  if (provider === "stripe_live" && liveCheckoutEnabled) {
+    throw new Error(
+      "Stripe live Checkout cannot be enabled until live overage, commercial milestone, recent-MFA, tax-attestation, and key-scope gates are implemented and verified.",
+    );
+  }
   const stripeWebhookSecret = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET);
   if (stripeWebhookSecret && !stripeWebhookSecret.startsWith("whsec_")) {
     throw new Error("SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret.");
