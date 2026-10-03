@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B1-LIVE-READINESS-VERIFIED",
-  "updatedAt": "2026-10-03T18:52:00+10:00",
+  "checkpoint": "P6-A06C3C-LIVE-CUSTOMER-PROOF-PREPARED",
+  "updatedAt": "2026-10-03T19:00:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -715,6 +715,7 @@
         "../../sophia-runtime/src/admin/billing/stripe-live-readiness.ts",
         "../../sophia-runtime/src/operators/provision-live-commercial-resources.ts",
         "../../sophia-runtime/src/operators/verify-live-commercial-readiness.ts",
+        "../../sophia-runtime/src/operators/run-live-customer-proof.ts",
         "../../sophia-runtime/src/admin/billing/billing-lifecycle.service.ts",
         "../../sophia-runtime/src/admin/billing/billing-webhook.controller.ts",
         "../../sophia-runtime/scripts/verify-commercial-read-model.mts",
@@ -2335,6 +2336,13 @@
       "node": "22.23.3",
       "result": "pass-p6-a06c3b1-complete",
       "detail": "The deployed read-only verifier proved the exact live commercial configuration: four approved recurring and Meter-backed plan mappings, all six one-time Prices, active standard cancellation portal, active commitment portal with cancellation disabled, one enabled webhook destination on API version 2025-08-27.basil with all thirteen required events, and local verification of the configured signing secret without exposure. Checkout remained disabled; the verifier made no charge request and created no Customer, subscription or invoice. P6-A06C3B1 is complete. P6-A06C3C remains separately gated on explicit authority for one live Customer binding and harmless signed customer.updated evidence."
+    },
+    {
+      "command": "implement compiled billing:live-customer-proof; npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "live-no-charge-customer-proof-prepared",
+      "detail": "After explicit user authorization, P6-A06C3C is in progress for dedicated synthetic tenant 14b33855-c12a-48bd-98ea-0a78b478d2bf. The compiled resumable operator separates owner-only empty-tenant creation, bounded discovery/idempotent creation and exact live Customer binding, one harmless customer.updated signal, and final signed-delivery plus zero-subscription/zero-invoice reconciliation. It requires live mode, disabled Checkout and explicit confirmation, and contains no payment-method, subscription, invoice, Checkout Session or charge creation call. Runtime passed both typechecks, build and 132 suites/479 tests; contract generation plus 15 contract tests passed; the boundary scan and protected real-estate checks passed. No database or Stripe mutation occurred during repository validation."
     }
   ],
   "blockers": [
@@ -2379,7 +2387,7 @@
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
     "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A, P6-A06C3B0 and P6-A06C3B1 are complete, including the standard and Founding commercial definitions, exact sandbox billing lifecycle, live catalog, both portal policies, thirteen-event webhook and deployed signing-secret verification. Live Checkout remains disabled. C3C still requires separately approved live Customer binding and harmless signed delivery; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": null,
-  "nextBlockedTask": "P6-A06C3C",
+  "nextReadyTask": "P6-A06C3C",
+  "nextBlockedTask": "P6-A06C4",
   "stopAfterCheckpoint": true
 }

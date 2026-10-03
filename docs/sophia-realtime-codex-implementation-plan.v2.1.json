@@ -67,6 +67,23 @@
   },
   "validatedAmendments": [
     {
+      "id": "AMEND-2026-10-03-LIVE-CUSTOMER-PROOF-OPERATOR",
+      "taskId": "P6-A06C3C",
+      "reason": "After live catalog readiness completed, the user separately authorized a dedicated synthetic Neon tenant and one no-charge live Stripe Customer for signed delivery and bounded reconciliation evidence. The production image had no resumable operator for that narrow workflow, while the Admin binding path depends on an unavailable Business Manager recent-MFA signal.",
+      "changes": [
+        "Add an explicit-confirmation compiled operator with separate owner-only tenant preparation, idempotent Customer binding, harmless customer.updated signalling, status and read-only verification stages.",
+        "Require an empty purpose-marked synthetic tenant, live mode, an exact tenant/account metadata binding and disabled Checkout; reject an existing commercial assignment or session.",
+        "Complete only after the deployed endpoint persists a signed live customer.updated event and bounded Stripe reads prove zero subscriptions and zero invoices."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/operators/run-live-customer-proof.ts",
+        "sophia-runtime/src/operators/run-live-customer-proof.spec.ts",
+        "sophia-runtime/package.json"
+      ],
+      "approvedBy": "User explicitly authorized the dedicated Neon verification tenant and no-charge live Customer proof",
+      "recordedAt": "2026-10-03T19:00:00+10:00"
+    },
+    {
       "id": "AMEND-2026-10-03-LIVE-READINESS-COMPILED-VERIFIER",
       "taskId": "P6-A06C3B1",
       "reason": "After the approved live catalog, webhook and Render configuration were installed, the remaining readiness command was found to be development-only and still required every plan to include 120000 active seconds, which incorrectly rejected the approved 60000-second Founding allowance.",
@@ -6433,7 +6450,7 @@
                 },
                 {
                   "id": "P6-A06C3C",
-                  "status": "blocked_on_live_evidence",
+                  "status": "in_progress",
                   "scope": "Bind the approved live Customer, record a harmless signed customer.updated delivery through the deployed endpoint, and run bounded read-only reconciliation."
                 }
               ]

@@ -21,6 +21,7 @@
     "providers:reconcile": "tsx scripts/provider-operations.mts reconcile",
     "knowledge:file-worker": "tsx scripts/knowledge-file-worker.mts",
     "billing:verify-live": "node dist/operators/verify-live-commercial-readiness.js",
+    "billing:live-customer-proof": "node dist/operators/run-live-customer-proof.js",
     "billing:provision-live": "node dist/operators/provision-live-commercial-resources.js",
     "commercial:publish": "tsx scripts/publish-commercial-catalog.mts",
     "commercial:publish-founding": "node dist/operators/publish-founding-commercial-plan.js",
