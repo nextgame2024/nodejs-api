@@ -63,7 +63,7 @@ async function prepareTenant(): Promise<void> {
     await client.query(
       `INSERT INTO ${config.schema}.customers
         (customer_id,name,external_company_id,status,metadata)
-       VALUES ($1,$2,$1,'active',$3::jsonb)
+       VALUES ($1::uuid,$2,$1::uuid::text,'active',$3::jsonb)
        ON CONFLICT (customer_id) DO NOTHING`,
       [tenantId, CUSTOMER_NAME, JSON.stringify({ syntheticLiveBillingVerification: true, purpose: PURPOSE })],
     );

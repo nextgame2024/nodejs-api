@@ -12,6 +12,7 @@ describe("live no-charge Customer proof operator", () => {
   });
 
   it("creates only one metadata-bound Customer and one harmless update", () => {
+    expect(source).toContain("$1::uuid::text");
     expect(source).toContain("stripe.customers.create");
     expect(source).toContain("stripe.customers.update");
     expect(source).toContain('expectedWebhookEvent: "customer.updated"');
