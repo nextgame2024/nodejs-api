@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.84",
+    "version": "2.1.85",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -67,13 +67,33 @@
   },
   "validatedAmendments": [
     {
+      "id": "AMEND-2026-10-04-MFA-ABSOLUTE-SESSION",
+      "taskId": "P6-A06C4",
+      "reason": "Deployed operator review showed that recent-MFA evidence only protected selected privileged routes and left a password-only session usable after factor activation. The intended AWS-style experience requires MFA to protect the whole authenticated session and a clear absolute reauthentication boundary.",
+      "changes": [
+        "Resolve active-factor state authoritatively on every protected Business Manager request; never trust a pre-enrollment password-only token after a factor becomes active.",
+        "Require active-factor application tokens to carry a non-future MFA verification timestamp no older than twelve hours; ordinary activity does not extend it.",
+        "End the current session immediately after activation and require a fresh password-plus-authenticator login.",
+        "Remove routine Settings-page step-up controls and explain that expiry returns the user to full sign-in."
+      ],
+      "repositoryEvidence": [
+        "src/middlewares/authJwt.js",
+        "tests/bm.mfaBoundary.test.js",
+        "../../../frontend/src/app/settings/components/settings/settings.component.ts",
+        "../../../frontend/src/app/auth/components/login/login.component.ts",
+        "docs/sophia/p6-a06c4-mfa-checkpoint.md"
+      ],
+      "approvedBy": "User requested MFA on every login and AWS-style full reauthentication after session expiry",
+      "recordedAt": "2026-10-04T08:48:48+10:00"
+    },
+    {
       "id": "AMEND-2026-10-04-MFA-LOGIN-AND-QR-UX",
       "taskId": "P6-A06C4",
       "reason": "Operator review correctly identified that the enrollment URI was implementation data rather than user-facing content and that an active MFA factor should protect sign-in, not require the operator to discover a separate Settings step before privileged work.",
       "changes": [
         "Render the otpauth payload locally as a QR image and remove the raw URI from the page; retain only a collapsed manual setup-key fallback.",
         "For an active factor, make password verification return only a five-minute purpose-bound challenge, then require a replay-protected authenticator code before issuing an application token.",
-        "Treat successful MFA login as the recent-MFA event so sensitive actions work immediately; keep explicit re-verification available after the twelve-hour evidence window expires.",
+        "Treat successful MFA login as the recent-MFA event so sensitive actions work immediately; plan 2.1.85 subsequently replaces separate re-verification with absolute full-session reauthentication after twelve hours.",
         "Continue to keep all live billing collection switches disabled and require rotation of any enrollment secret exposed outside the intended setup screen."
       ],
       "repositoryEvidence": [

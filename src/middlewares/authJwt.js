@@ -2,6 +2,8 @@ import jwt from "jsonwebtoken";
 import { config } from "../config/index.js";
 import pool from "../config/db.js";
 
+const MFA_SESSION_MS = 12 * 60 * 60 * 1000;
+
 function parseAuthHeader(req) {
   const header = req.headers.authorization || "";
   const m = header.match(/^\s*(Bearer|Token)\s+(.+)\s*$/i);
@@ -26,9 +28,19 @@ export async function authRequired(req, res, next) {
     if (!user?.id)
       return res.status(401).json({ error: "Invalid token payload" });
 
-    // Load company_id from DB (authoritative tenancy)
+    // Load company and MFA state from the database so activating MFA also
+    // invalidates password-only tokens that were issued earlier.
     const { rows } = await pool.query(
-      `SELECT company_id,status FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT users.company_id, users.status,
+              EXISTS (
+                SELECT 1
+                FROM user_mfa_factors factor
+                WHERE factor.user_id = users.id
+                  AND factor.status = 'active'
+              ) AS mfa_enabled
+       FROM users
+       WHERE users.id = $1
+       LIMIT 1`,
       [user.id]
     );
 
@@ -43,6 +55,12 @@ export async function authRequired(req, res, next) {
     }
 
     const mfaVerifiedAt = validMfaTimestamp(user.mfaVerifiedAt);
+    if (rows[0]?.mfa_enabled && !mfaVerifiedAt) {
+      return res.status(401).json({
+        error: "MFA authentication required",
+        code: "MFA_AUTHENTICATION_REQUIRED",
+      });
+    }
     req.user = { id: user.id, email: user.email, username: user.username, companyId,
       ...(mfaVerifiedAt ? { mfaVerifiedAt } : {}) };
     return next();
@@ -54,5 +72,8 @@ export async function authRequired(req, res, next) {
 function validMfaTimestamp(value) {
   if (typeof value !== "string") return null;
   const time = Date.parse(value);
-  return Number.isFinite(time) && time <= Date.now() + 30_000 ? new Date(time).toISOString() : null;
+  const now = Date.now();
+  return Number.isFinite(time) && time <= now + 30_000 && time >= now - MFA_SESSION_MS
+    ? new Date(time).toISOString()
+    : null;
 }

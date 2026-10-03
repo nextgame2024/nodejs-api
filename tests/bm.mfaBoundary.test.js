@@ -41,8 +41,16 @@ describe("Business Manager MFA security boundary", () => {
   });
 
   test("rejects future MFA timestamps at both identity boundaries", () => {
-    expect(read("src/middlewares/authJwt.js")).toContain("time <= Date.now() + 30_000");
+    expect(read("src/middlewares/authJwt.js")).toContain("time <= now + 30_000");
     expect(read("sophia-runtime/src/admin/authorization/admin-auth.guard.ts"))
       .toContain("verifiedAt <= Date.now() + 30_000");
+  });
+
+  test("requires an unexpired MFA login session for every protected request", () => {
+    const middleware = read("src/middlewares/authJwt.js");
+    expect(middleware).toContain("factor.status = 'active'");
+    expect(middleware).toContain("12 * 60 * 60 * 1000");
+    expect(middleware).toContain("time >= now - MFA_SESSION_MS");
+    expect(middleware).toContain('code: "MFA_AUTHENTICATION_REQUIRED"');
   });
 });

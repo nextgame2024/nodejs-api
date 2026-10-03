@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C4-MFA-LOGIN-UX-IMPLEMENTED-DEPLOYMENT-PENDING",
-  "updatedAt": "2026-10-04T07:25:00+10:00",
+  "checkpoint": "P6-A06C4-MFA-ABSOLUTE-SESSION-IMPLEMENTED-DEPLOYMENT-PENDING",
+  "updatedAt": "2026-10-04T08:48:48+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2377,7 +2377,14 @@
       "repository": "backend + frontend",
       "node": "22.23.2",
       "result": "mfa-login-and-qr-ux-implemented",
-      "detail": "Active-factor accounts now receive only a five-minute purpose-bound challenge after valid password verification; no application token is issued until a fresh replay-protected TOTP code succeeds. The resulting login token carries the authoritative server MFA timestamp, so the user can perform sensitive actions immediately and needs step-up again only after the existing twelve-hour window expires. Enrollment renders the otpauth payload locally as a QR image, does not display the URI, and keeps the secret in a collapsed manual fallback. Backend release passed 21 suites/88 tests, the 241-file boundary passed, and protected real estate passed 8 suites/38 tests. Angular typecheck and production build passed, the targeted auth/MFA client passed 3 Chrome tests, and all 84 Sophia/Admin Chrome tests passed. The QR dependency had no production audit advisory; npm audit reported one unrelated pre-existing Angular Router SSR denial-of-service advisory affecting 21.2.22. No database or Stripe mutation occurred and every live billing switch remains false."
+      "detail": "Active-factor accounts now receive only a five-minute purpose-bound challenge after valid password verification; no application token is issued until a fresh replay-protected TOTP code succeeds. The resulting login token carries the authoritative server MFA timestamp, so the user can perform sensitive actions immediately. Plan 2.1.85 subsequently makes that timestamp an absolute whole-session boundary rather than a Settings step-up prompt. Enrollment renders the otpauth payload locally as a QR image, does not display the URI, and keeps the secret in a collapsed manual fallback. Backend release passed 21 suites/88 tests, the 241-file boundary passed, and protected real estate passed 8 suites/38 tests. Angular typecheck and production build passed, the targeted auth/MFA client passed 3 Chrome tests, and all 84 Sophia/Admin Chrome tests passed. The QR dependency had no production audit advisory; npm audit reported one unrelated pre-existing Angular Router SSR denial-of-service advisory affecting 21.2.22. No database or Stripe mutation occurred and every live billing switch remains false."
+    },
+    {
+      "command": "enforce active-factor state and twelve-hour MFA lifetime in Business Manager auth middleware; sign out after activation; remove routine Settings step-up; npm run test:release; Angular typecheck and production build",
+      "repository": "backend + frontend",
+      "node": "20.19.1",
+      "result": "mfa-absolute-session-implemented",
+      "detail": "Every protected Business Manager request now resolves active-factor state from the database. Active-factor users must present a signed non-future MFA login timestamp no older than twelve hours, so pre-enrollment password-only tokens stop working immediately and ordinary requests cannot extend the session. Activation explicitly signs the browser out; the next and every later login requires password plus authenticator code. Angular Settings explains the twelve-hour absolute session and no longer asks for routine manual step-up. Backend release passed 22 suites/93 tests; the 241-file boundary passed. Angular typecheck, production build, 3 targeted authentication tests and all 84 Sophia/Admin tests passed. Deployment and fresh re-enrollment remain required. No database or Stripe mutation occurred and every live billing switch remains false."
     }
   ],
   "blockers": [

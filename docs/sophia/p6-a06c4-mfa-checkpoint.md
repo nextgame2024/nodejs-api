@@ -17,19 +17,25 @@ Status: implemented; deployment configuration and authenticated operator proof r
 - Six-digit codes accept a one-step clock window, are consumed monotonically to
   prevent replay, and lock activation or step-up verification for fifteen
   minutes after five failures.
-- Successful step-up issues a signed Business Manager token with the exact
-  server timestamp. `/api/user` preserves that timestamp without refreshing it.
+- Successful MFA login or explicit API step-up issues a signed Business Manager
+  token with the exact server timestamp. `/api/user` preserves that timestamp
+  without refreshing it.
 - Once a factor is active, password verification issues only a five-minute,
   purpose-bound login challenge. A replay-protected TOTP code must complete
   sign-in before an application token is issued, and that successful login
   establishes recent-MFA evidence for sensitive actions.
+- Every protected Business Manager request resolves active-factor state from
+  the database. An active factor requires a signed MFA timestamp no older than
+  twelve hours; password-only pre-enrollment tokens and expired MFA sessions
+  fail with HTTP 401. Ordinary activity never extends this absolute lifetime.
 - Sophia Runtime accepts the signed timestamp through its existing identity
   bridge. Both the bridge and the Admin guard reject future timestamps; existing
   privileged permissions continue to require a timestamp no older than twelve
   hours.
-- The Settings screen provides QR-first enrollment and activation. Routine MFA
-  occurs during sign-in; an explicit "Verify again now" control replaces the
-  stored bearer token only after authoritative step-up success.
+- The Settings screen provides QR-first enrollment and activation. Activation
+  ends the current session immediately. Every later sign-in requires password
+  and authenticator code, and expiry returns the browser to full sign-in rather
+  than presenting a separate routine step-up control.
 
 ## Deployment requirements
 
@@ -43,7 +49,7 @@ Status: implemented; deployment configuration and authenticated operator proof r
    a Stripe key or the Sophia connector secret.
 4. Optionally set `BM_MFA_TOTP_ISSUER`; the default label is `Sophia AI`.
 5. Deploy backend and frontend, then enroll the genuine operator from Settings.
-6. Prove that MFA login or step-up refreshes `/api/user.mfaVerifiedAt` and that a protected
+6. Prove that MFA login supplies `/api/user.mfaVerifiedAt` and that a protected
    Sophia `billing.manage` request passes while the same request without recent
    evidence fails closed.
 
