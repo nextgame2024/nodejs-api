@@ -54,6 +54,8 @@ const mapUserResponse = (u, token) => ({
 
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),
+  ...(typeof u.mfaEnabled === "boolean" ? { mfaEnabled: u.mfaEnabled } : {}),
+  mfaVerifiedAt: u.mfaVerifiedAt ?? null,
   token,
 });
 
@@ -331,10 +333,12 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   const user = await findById(id);
   if (!user) return res.status(404).json({ error: "User not found" });
 
+  user.mfaVerifiedAt = req.user.mfaVerifiedAt ?? null;
   const token = generateToken({
     id,
     email: user.email,
     username: user.username,
+    ...(user.mfaVerifiedAt ? { mfaVerifiedAt: user.mfaVerifiedAt } : {}),
   });
 
   return res.json({ user: mapUserResponse(user, token) });
@@ -375,10 +379,13 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
   try {
     const updated = await updateUserById(userId, next);
 
+    updated.mfaVerifiedAt = req.user.mfaVerifiedAt ?? null;
+
     const token = generateToken({
       id: updated.id,
       email: updated.email,
       username: updated.username,
+      ...(updated.mfaVerifiedAt ? { mfaVerifiedAt: updated.mfaVerifiedAt } : {}),
     });
 
     return res.json({ user: mapUserResponse(updated, token) });

@@ -30,14 +30,21 @@ export class BusinessManagerIdentityBridge {
     if (!userId || !companyId || status !== "active") {
       throw new UnauthorizedException("The Business Manager identity is not active and tenant-bound.");
     }
-    const mfaVerifiedAt = payload.user?.["mfaVerifiedAt"];
+    const mfaVerifiedAt = verifiedMfaTimestamp(payload.user?.["mfaVerifiedAt"]);
     const email = payload.user?.["email"];
     return {
       userId,
       companyId,
       status,
       ...(typeof email === "string" && email.trim() ? { email: email.trim().toLowerCase() } : {}),
-      ...(typeof mfaVerifiedAt === "string" ? { mfaVerifiedAt } : {}),
+      ...(mfaVerifiedAt ? { mfaVerifiedAt } : {}),
     };
   }
+}
+
+function verifiedMfaTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp <= Date.now() + 30_000
+    ? new Date(timestamp).toISOString() : undefined;
 }

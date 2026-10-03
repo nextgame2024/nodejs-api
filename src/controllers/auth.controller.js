@@ -31,6 +31,8 @@ const mapUserResponse = (u, token) => ({
 
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),
+  ...(typeof u.mfaEnabled === "boolean" ? { mfaEnabled: u.mfaEnabled } : {}),
+  mfaVerifiedAt: null,
   token,
 });
 
@@ -53,6 +55,9 @@ export const login = asyncHandler(async (req, res) => {
     String(found.password || ""),
   );
   if (!match) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  if (found.status !== "active") {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 

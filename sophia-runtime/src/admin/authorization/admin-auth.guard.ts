@@ -87,5 +87,6 @@ function header(request: AdminRequest, name: string): string | undefined {
 function recentMfa(value: string | undefined): boolean {
   if (!value) return false;
   const verifiedAt = Date.parse(value);
-  return Number.isFinite(verifiedAt) && verifiedAt >= Date.now() - 12 * 60 * 60 * 1000;
+  return Number.isFinite(verifiedAt) && verifiedAt <= Date.now() + 30_000
+    && verifiedAt >= Date.now() - 12 * 60 * 60 * 1000;
 }

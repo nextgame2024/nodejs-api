@@ -116,6 +116,13 @@ export async function findById(id) {
   return rows[0];
 }
 
+export async function findAuthById(id) {
+  await ensureUsersSiteSchema();
+  const { rows } = await pool.query(
+    `SELECT ${USER_SELECT},password FROM users WHERE id=$1 LIMIT 1`, [id]);
+  return rows[0] ?? null;
+}
+
 export async function createUser({
   email,
   username,

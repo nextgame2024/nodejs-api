@@ -10,6 +10,7 @@ import {
 } from "../controllers/user.controller.js";
 import { authRequired } from "../middlewares/authJwt.js";
 import { authOptional } from "../middlewares/authOptional.js";
+import { activateTotp, enrolTotp, getMfaStatus, stepUpTotp } from "../controllers/mfa.controller.js";
 
 const router = Router();
 
@@ -31,5 +32,11 @@ router.get("/user", authRequired, getCurrentUser);
 
 // Update current user (auth)
 router.put("/user", authRequired, updateCurrentUser);
+
+// Current-user TOTP enrollment and recent-MFA step-up.
+router.get("/user/mfa", authRequired, getMfaStatus);
+router.post("/user/mfa/totp/enrol", authRequired, enrolTotp);
+router.post("/user/mfa/totp/activate", authRequired, activateTotp);
+router.post("/user/mfa/totp/step-up", authRequired, stepUpTotp);
 
 export default router;

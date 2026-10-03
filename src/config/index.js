@@ -8,4 +8,8 @@ export const config = {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
+  mfa: {
+    encryptionKey: process.env.BM_MFA_ENCRYPTION_KEY,
+    issuer: process.env.BM_MFA_TOTP_ISSUER || "Sophia AI",
+  },
 };

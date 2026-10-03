@@ -1,6 +1,6 @@
 # P6-A06C4 — live charge activation gate
 
-Date: 2026-10-03 (Australia/Brisbane)
+Date: 2026-10-04 (Australia/Brisbane)
 
 Status: blocked; live Checkout remains disabled.
 
@@ -19,8 +19,10 @@ merely by changing `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED`:
   production-deployment invoicing are implemented behind independent default-off
   collection switches and covered by environment-aware mocked regression tests,
   but have not been invoked against live Stripe;
-- `billing.manage` correctly requires recent MFA, while the current Business
-  Manager `/user` response supplies no verified `mfaVerifiedAt` evidence;
+- `billing.manage` correctly requires recent MFA. Business Manager TOTP
+  enrollment and step-up are implemented, but production still needs the MFA
+  table, dedicated encryption key, genuine operator enrollment and an
+  authenticated privileged-request proof;
 - the stored seller policy is intentionally business-only and non-GST, but the
   seller/accountant must reconfirm actual current and projected GST turnover
   before the first invoice; and
@@ -53,6 +55,10 @@ This checkpoint is an implementation boundary, not tax or legal advice.
   command. It reads the effective seller policy and reports every gate; it makes
   no Stripe request and creates no Customer, Checkout Session, invoice or charge.
 - The audit does not print a legal name, ABN value, API key or webhook secret.
+- Business Manager now implements password-confirmed TOTP enrollment,
+  code-confirmed activation, encrypted-at-rest secrets, monotonic anti-replay,
+  bounded lockout and signed server-time step-up evidence. Sophia rejects
+  future timestamps and retains its existing twelve-hour freshness limit.
 
 ## Required before the first genuine Checkout
 
@@ -60,8 +66,9 @@ This checkpoint is an implementation boundary, not tax or legal advice.
    contact and authorised customer representative.
 2. Obtain current seller/accountant confirmation of GST registration and price
    display obligations; publish a new immutable policy/version if facts changed.
-3. Implement a trustworthy Business Manager MFA/step-up flow that supplies a
-   recent server-verified timestamp to Sophia Admin.
+3. Apply `scripts/sql/user_mfa_factors.sql`, install a dedicated 32-byte base64
+   `BM_MFA_ENCRYPTION_KEY`, deploy both applications, enroll the genuine
+   operator and prove a recent server-verified timestamp reaches Sophia Admin.
 4. Run the final production-readiness audit for the environment-safe live
    overage path; keep its switch off until the genuine tenant is approved.
 5. Run the final production-readiness audit for the live Founding milestone
@@ -73,5 +80,7 @@ This checkpoint is an implementation boundary, not tax or legal advice.
 7. Re-run `billing:verify-live` and `billing:audit-live-activation`, then obtain
    a fresh explicit authority decision before changing the activation flag.
 
-No database migration, Stripe request, Customer, subscription, invoice, Checkout
-Session or charge was created by this checkpoint.
+The MFA implementation did not apply its schema, configure a production key,
+enroll a factor or issue a production MFA token. No Stripe request, Customer,
+subscription, invoice, Checkout Session or charge was created by this
+checkpoint.

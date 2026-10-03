@@ -96,6 +96,14 @@ describe("AdminAuthGuard", () => {
     expect(request).toEqual(expect.objectContaining({ adminPrincipal: owner }));
   });
 
+  it("rejects future-dated MFA evidence", async () => {
+    const future = { ...principal, permissions: ["billing.manage"],
+      mfaVerifiedAt: new Date(Date.now() + 60_000).toISOString() } as AdminPrincipal;
+    const { guard, context } = harness({ headers: { authorization: "Bearer business-manager-jwt" },
+      required: ["billing.manage"], resolvedPrincipal: future });
+    await expect(guard.canActivate(context)).rejects.toThrow("Recent MFA verification is required");
+  });
+
   it("does not let an operations member administer users in its own organisation", async () => {
     const operator = {
       ...principal,
