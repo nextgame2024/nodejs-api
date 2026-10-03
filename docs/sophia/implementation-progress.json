@@ -3,7 +3,7 @@
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C3B0D4-SANDBOX-PROVING",
-  "updatedAt": "2026-10-03T10:11:00+10:00",
+  "updatedAt": "2026-10-03T10:13:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2298,6 +2298,13 @@
       "node": "22.23.3",
       "result": "founding-first-period-overage-reconciled",
       "detail": "The Founding first provider period is proven complete. Immutable ledger evidence records 60061000000 active microseconds, 60000 included seconds, 61000000 excess microseconds, two billable overage minutes and a ten-cent AUD unit rate. Existing adjustment 941976cf-d98a-4830-8f98-8f66100cf95d was reused without duplicate dispatch; renewal invoice in_1UMEyIGcz4GrZOEBWCXz1qF8 reached open status and reconciliation proved exactly one provider item ii_1UMEyfGcz4GrZOEBlv22wFJW and line il_1UXTfgGcz4GrZOEBxXPhi85U for AUD 0.20 using Price price_1UMDzrGcz4GrZOEBsfbN0qBR. Secondary Meter invoice-line evidence remains pending and is not substituted for the authoritative one-time adjustment proof. D4 continues with the production-deployment milestone and commitment-boundary stages; no live mutation is authorized."
+    },
+    {
+      "command": "deployed billing:founding-sandbox milestone on tenant faa7c7c6-9193-4fb4-825c-8c52a74a2986",
+      "repository": "deployed backend + Neon + Stripe sandbox",
+      "node": "22.23.3",
+      "result": "founding-production-deployment-milestone-reconciled",
+      "detail": "The authorised Founding production-deployment milestone proof passed. Acceptance af9ae83d-c99e-41b8-93f1-0fb8401f2e8b created exactly one durable outbox obligation 69126e1d-a191-4775-9276-ad26a68868f2; Stripe sandbox accepted invoice in_1UMGYhGcz4GrZOEBfKWLUKp0 and item ii_1UMGYhGcz4GrZOEBTh4Fe9vt for the approved AUD 950 Price price_1UMDzqGcz4GrZOEB7Nu1Mx1p, and immutable reconciliation completed. The result explicitly reports liveCharge false. D4 continues only with the twelve-period commitment and post-boundary portal proof; no live mutation is authorized."
     }
   ],
   "blockers": [
