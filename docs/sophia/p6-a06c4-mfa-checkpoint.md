@@ -8,6 +8,9 @@ Status: implemented; deployment configuration and authenticated operator proof r
 
 - Business Manager supports password-confirmed TOTP enrollment, code-confirmed
   activation and authenticated step-up.
+- Enrollment presents a locally rendered QR code. The raw `otpauth://` payload
+  is not displayed; a collapsed manual setup key remains available when a
+  camera cannot scan the code.
 - TOTP secrets are encrypted with AES-256-GCM using a deployment-owned key and
   the user identity as authenticated associated data. Plaintext is returned only
   in the no-store enrollment response and is never persisted.
@@ -16,23 +19,31 @@ Status: implemented; deployment configuration and authenticated operator proof r
   minutes after five failures.
 - Successful step-up issues a signed Business Manager token with the exact
   server timestamp. `/api/user` preserves that timestamp without refreshing it.
+- Once a factor is active, password verification issues only a five-minute,
+  purpose-bound login challenge. A replay-protected TOTP code must complete
+  sign-in before an application token is issued, and that successful login
+  establishes recent-MFA evidence for sensitive actions.
 - Sophia Runtime accepts the signed timestamp through its existing identity
   bridge. Both the bridge and the Admin guard reject future timestamps; existing
   privileged permissions continue to require a timestamp no older than twelve
   hours.
-- The Settings screen provides enrollment, activation and step-up controls. It
-  replaces the stored bearer token only after authoritative step-up success.
+- The Settings screen provides QR-first enrollment and activation. Routine MFA
+  occurs during sign-in; an explicit "Verify again now" control replaces the
+  stored bearer token only after authoritative step-up success.
 
 ## Deployment requirements
 
-1. Apply `scripts/sql/user_mfa_factors.sql` to the Business Manager database
+1. Invalidate and re-enroll any factor whose setup key or QR payload was copied
+   outside the intended enrollment screen. A TOTP setup key is an
+   authenticator secret, even though its six-digit outputs change.
+2. Apply `scripts/sql/user_mfa_factors.sql` to the Business Manager database
    using its authorised owner connection.
-2. Generate a dedicated 32-byte base64 key and install it only in the Business
+3. Generate a dedicated 32-byte base64 key and install it only in the Business
    Manager Render service as `BM_MFA_ENCRYPTION_KEY`. Do not reuse `JWT_SECRET`,
    a Stripe key or the Sophia connector secret.
-3. Optionally set `BM_MFA_TOTP_ISSUER`; the default label is `Sophia AI`.
-4. Deploy backend and frontend, then enroll the genuine operator from Settings.
-5. Prove that step-up refreshes `/api/user.mfaVerifiedAt` and that a protected
+4. Optionally set `BM_MFA_TOTP_ISSUER`; the default label is `Sophia AI`.
+5. Deploy backend and frontend, then enroll the genuine operator from Settings.
+6. Prove that MFA login or step-up refreshes `/api/user.mfaVerifiedAt` and that a protected
    Sophia `billing.manage` request passes while the same request without recent
    evidence fails closed.
 

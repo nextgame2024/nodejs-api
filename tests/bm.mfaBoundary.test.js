@@ -12,6 +12,16 @@ describe("Business Manager MFA security boundary", () => {
     }
   });
 
+  test("requires active factors during login through a bounded second-stage challenge", () => {
+    const routes = read("src/routes/auth.routes.js");
+    const controller = read("src/controllers/auth.controller.js");
+    expect(routes).toContain('router.post("/users/login/mfa", completeMfaLogin)');
+    expect(controller).toContain('factor?.status === "active"');
+    expect(controller).toContain("createMfaLoginChallenge(found.id)");
+    expect(controller).toContain("consumeMfaCounter(userId, counter)");
+    expect(controller).toContain("mfaVerifiedAt");
+  });
+
   test("requires password-confirmed enrollment and never sends the encryption payload", () => {
     const controller = read("src/controllers/mfa.controller.js");
     expect(controller).toContain("bcrypt.compare");

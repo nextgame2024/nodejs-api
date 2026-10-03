@@ -6,11 +6,19 @@ import {
   generateTotpEnrollment,
   verifyTotp,
 } from "../src/services/mfaTotp.service.js";
+import {
+  createMfaLoginChallenge,
+  verifyMfaLoginChallenge,
+} from "../src/services/mfaLoginChallenge.service.js";
 
 describe("Business Manager TOTP MFA", () => {
   const originalKey = config.mfa.encryptionKey;
+  const originalJwtSecret = config.jwt.secret;
 
-  afterEach(() => { config.mfa.encryptionKey = originalKey; });
+  afterEach(() => {
+    config.mfa.encryptionKey = originalKey;
+    config.jwt.secret = originalJwtSecret;
+  });
 
   test("matches the RFC 6238 SHA-1 vector with a six-digit authenticator code", () => {
     expect(verifyTotp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "287082", 59_000)).toBe(1);
@@ -37,5 +45,13 @@ describe("Business Manager TOTP MFA", () => {
     config.mfa.encryptionKey = "not-a-key";
     expect(() => encryptTotpSecret("user-1", "JBSWY3DPEHPK3PXP"))
       .toThrow("base64-encoded 32-byte key");
+  });
+
+  test("uses a short-lived purpose-bound login challenge rather than an application token", () => {
+    config.jwt.secret = "mfa-login-test-secret";
+    const challenge = createMfaLoginChallenge("user-1");
+    expect(challenge.expiresInSeconds).toBe(300);
+    expect(verifyMfaLoginChallenge(challenge.token)).toBe("user-1");
+    expect(verifyMfaLoginChallenge(`${challenge.token}x`)).toBeNull();
   });
 });

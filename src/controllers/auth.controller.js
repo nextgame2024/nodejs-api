@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { asyncHandler } from "../middlewares/asyncHandler.js";
-import { findByEmail, updateUserById } from "../models/user.model.js";
+import { findByEmail, findById, updateUserById } from "../models/user.model.js";
+import { consumeMfaCounter, findMfaFactor, recordMfaFailure } from "../models/userMfa.model.js";
 import {
   createPasswordResetToken,
   findValidPasswordResetToken,
@@ -8,6 +9,11 @@ import {
 } from "../models/passwordReset.model.js";
 import { sendPasswordResetEmail } from "../services/passwordResetEmail.service.js";
 import { generateToken } from "../utils/generateToken.js";
+import { decryptTotpSecret, mfaConfigured, verifyTotp } from "../services/mfaTotp.service.js";
+import {
+  createMfaLoginChallenge,
+  verifyMfaLoginChallenge,
+} from "../services/mfaLoginChallenge.service.js";
 
 const toISO = (v) => (v ? new Date(v).toISOString() : null);
 
@@ -32,7 +38,7 @@ const mapUserResponse = (u, token) => ({
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),
   ...(typeof u.mfaEnabled === "boolean" ? { mfaEnabled: u.mfaEnabled } : {}),
-  mfaVerifiedAt: null,
+  mfaVerifiedAt: u.mfaVerifiedAt ?? null,
   token,
 });
 
@@ -61,6 +67,14 @@ export const login = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
+  const factor = await findMfaFactor(found.id);
+  if (factor?.status === "active") {
+    const challenge = createMfaLoginChallenge(found.id);
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ mfaRequired: true, challengeToken: challenge.token,
+      expiresInSeconds: challenge.expiresInSeconds });
+  }
+
   const token = generateToken({
     id: found.id,
     email: found.email,
@@ -69,6 +83,44 @@ export const login = asyncHandler(async (req, res) => {
 
   return res.json({ user: mapUserResponse(found, token) });
 });
+
+export const completeMfaLogin = asyncHandler(async (req, res) => {
+  if (!mfaConfigured()) {
+    const error = new Error("MFA encryption is not configured"); error.status = 503; throw error;
+  }
+  const userId = verifyMfaLoginChallenge(req.body?.challengeToken);
+  if (!userId) return res.status(401).json({ error: "The sign-in challenge is invalid or expired" });
+  const factor = await findMfaFactor(userId);
+  if (!factor || factor.status !== "active") {
+    return res.status(401).json({ error: "The sign-in challenge is no longer valid" });
+  }
+  if (factor.lockedUntil && new Date(factor.lockedUntil).getTime() > Date.now()) {
+    return res.status(429).json({ error: "MFA verification is temporarily locked",
+      lockedUntil: toISO(factor.lockedUntil) });
+  }
+  const counter = verifyTotp(decryptTotpSecret(userId, factor), req.body?.code);
+  if (counter === null) return invalidMfaLogin(userId, res);
+  const consumed = await consumeMfaCounter(userId, counter);
+  if (!consumed) return invalidMfaLogin(userId, res);
+  const user = await findById(userId);
+  if (!user || user.status !== "active") return res.status(401).json({ error: "Invalid sign-in" });
+  const mfaVerifiedAt = toISO(consumed.verifiedAt);
+  user.mfaEnabled = true;
+  user.mfaVerifiedAt = mfaVerifiedAt;
+  const token = generateToken({ id: user.id, email: user.email, username: user.username,
+    mfaVerifiedAt });
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ user: mapUserResponse(user, token) });
+});
+
+async function invalidMfaLogin(userId, res) {
+  const failure = await recordMfaFailure(userId);
+  if (failure?.lockedUntil && new Date(failure.lockedUntil).getTime() > Date.now()) {
+    return res.status(429).json({ error: "MFA verification is temporarily locked",
+      lockedUntil: toISO(failure.lockedUntil) });
+  }
+  return res.status(401).json({ error: "Invalid or already-used authenticator code" });
+}
 
 export const requestPasswordReset = asyncHandler(async (req, res) => {
   const email = String(req.body?.email || req.body?.user?.email || "")
