@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C3B0D-COMPLETE",
-  "updatedAt": "2026-10-03T10:21:00+10:00",
+  "checkpoint": "P6-A06C3B1-LIVE-CATALOG-PREPARED",
+  "updatedAt": "2026-10-03T10:32:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2312,6 +2312,13 @@
       "node": "22.23.3",
       "result": "pass-d4-complete",
       "detail": "P6-A06C3B0D is complete. The isolated Stripe sandbox subscription observed exactly twelve contiguous provider periods, establishing the immutable commitment end at 2027-10-02T22:24:44Z. Its current period began at that exact boundary, and portal policy changed from commitment_restricted to standard only then. Together with the paid AUD 1140 initial invoice, exact AUD 0.20 first-period overage reconciliation and reconciled AUD 950 production-deployment milestone, this completes the approved Founding lifecycle proof. Migrations 052-054, immutable plan publication, sandbox resource configuration and cancellation enforcement are proven; liveMutation remains false and no live resource or real-charge authority is inferred."
+    },
+    {
+      "command": "implement compiled live commercial catalog provisioner; npm run typecheck:portability-core; npm run typecheck; npm test -- --runInBand; npm run build; npm run contracts:check; npm run test:p2:contracts; npm run test:p0:boundaries; npm run test:p0:real-estate; git diff --check; JSON parse",
+      "repository": "backend + sophia-runtime",
+      "node": "22.23.3",
+      "result": "live-catalog-provisioning-prepared",
+      "detail": "P6-A06C3B1 is explicitly authorised and in progress under the no-charge boundary. A compiled explicit-confirmation provisioner validates the exact immutable Voice, Live, Premium and Founding plan IDs, commercial values, plan-specific allowances, commitment and Founding components before creating only live Products, Prices, the aggregate-evidence Meter and distinct standard/commitment portal configurations. It requires stripe_live, an sk_live key and disabled live Checkout; it contains no Customer, subscription, Checkout, invoice, charge or webhook-create call. Webhook creation remains a separate Dashboard step so the one-time signing secret goes directly to Render. Runtime passed both typechecks, build and 130 suites/473 tests; contract generation plus 15 contract tests passed; the boundary scan passed 241 files; protected real-estate passed 8 suites/38 tests. No live Stripe call or external mutation occurred during preparation."
     }
   ],
   "blockers": [
@@ -2354,9 +2361,9 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. The current Business Manager identity has no verified MFA timestamp, so guardrail and hosted billing actions remain fail-closed until approved step-up supplies recent MFA.",
-    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and P6-A06C3B0 are complete, including the standard plans and the separate Sophia Essential Founding commercial definition, initial/milestone/overage invoices and exact twelve-period cancellation boundary. C3B1/C3C still require explicitly authorised live resources, secrets and signed live evidence. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
+    "P6-A06B completed the real Sophia recurring sandbox lifecycle with a provider-hosted Checkout, issued-intent-matched signed callback, sandbox customer binding, active subscription, paid AUD invoice, hosted portal and reconciliation evidence. P6-A06C1/C2/C3A and P6-A06C3B0 are complete, including the standard plans and the separate Sophia Essential Founding commercial definition, initial/milestone/overage invoices and exact twelve-period cancellation boundary. C3B1 live catalog provisioning is explicitly authorised and prepared but not yet executed; C3C still requires a separately approved live Customer binding and signed harmless delivery. Live Checkout remains independently disabled; real-charge authority remains P6-A06C4."
   ],
-  "nextReadyTask": null,
-  "nextBlockedTask": "P6-A06C3B1",
+  "nextReadyTask": "P6-A06C3B1",
+  "nextBlockedTask": "P6-A06C3C",
   "stopAfterCheckpoint": true
 }

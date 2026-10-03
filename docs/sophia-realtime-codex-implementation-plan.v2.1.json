@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.79",
+    "version": "2.1.80",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,23 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-03-LIVE-CATALOG-PROVISIONING-BOUNDARY",
+      "taskId": "P6-A06C3B1",
+      "reason": "After Founding sandbox completion, repository inspection found only a development-only read verifier and no idempotent production-image command for the four approved live plans. The verifier also retained the pre-Founding 120000-second assumption, and automatic webhook creation would expose its one-time signing secret in operator output.",
+      "changes": [
+        "Add an explicit-confirmation compiled live-only catalog provisioner that validates all four immutable database plans and their charge components before any Stripe mutation.",
+        "Limit the command to Products, Prices, one aggregate-evidence Meter and standard/commitment portal configurations; forbid Customer, subscription, invoice, Checkout Session and charge creation and require live Checkout to remain disabled.",
+        "Keep webhook destination creation as a separate Stripe Dashboard operation so its signing secret can be stored directly in Render without source-control, chat or deployment-log exposure."
+      ],
+      "repositoryEvidence": [
+        "sophia-runtime/src/operators/provision-live-commercial-resources.ts",
+        "sophia-runtime/src/operators/provision-live-commercial-resources.spec.ts",
+        "sophia-runtime/package.json"
+      ],
+      "approvedBy": "User instruction to proceed with P6-A06C3B1 after the explicit no-charge live-resource boundary was stated",
+      "recordedAt": "2026-10-03T10:32:00+10:00"
+    },
     {
       "id": "AMEND-2026-10-03-FOUNDING-DETERMINISTIC-INVOICE-FINALIZATION",
       "taskId": "P6-A06C3B0D4",
@@ -6392,7 +6409,7 @@
                     },
                     {
                       "id": "P6-A06C3B1",
-                      "status": "blocked_on_live_resources",
+                      "status": "in_progress",
                       "scope": "Create and verify the approved live Product/Price, portal, thirteen-event webhook destination and secret-manager configuration."
                     }
                   ]
