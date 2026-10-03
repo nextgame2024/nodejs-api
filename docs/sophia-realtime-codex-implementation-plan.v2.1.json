@@ -6450,7 +6450,7 @@
                 },
                 {
                   "id": "P6-A06C3C",
-                  "status": "in_progress",
+                  "status": "complete",
                   "scope": "Bind the approved live Customer, record a harmless signed customer.updated delivery through the deployed endpoint, and run bounded read-only reconciliation."
                 }
               ]
