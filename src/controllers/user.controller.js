@@ -207,6 +207,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       id: user.id,
       email: user.email,
       username: user.username,
+      authSessionVersion: user.authSessionVersion ?? 0,
     });
 
     try {
@@ -338,6 +339,7 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
     id,
     email: user.email,
     username: user.username,
+    authSessionVersion: user.authSessionVersion ?? 0,
     ...(user.mfaVerifiedAt ? { mfaVerifiedAt: user.mfaVerifiedAt } : {}),
   });
 
@@ -385,6 +387,7 @@ export const updateCurrentUser = asyncHandler(async (req, res) => {
       id: updated.id,
       email: updated.email,
       username: updated.username,
+      authSessionVersion: updated.authSessionVersion ?? 0,
       ...(updated.mfaVerifiedAt ? { mfaVerifiedAt: updated.mfaVerifiedAt } : {}),
     });
 

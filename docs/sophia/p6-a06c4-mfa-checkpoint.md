@@ -36,6 +36,14 @@ Status: implemented; deployment configuration and authenticated operator proof r
   ends the current session immediately. Every later sign-in requires password
   and authenticator code, and expiry returns the browser to full sign-in rather
   than presenting a separate routine step-up control.
+- Self-service deactivation requires the current password plus a fresh,
+  replay-protected authenticator code and an explicit warning acknowledgement.
+  One transaction consumes the code, erases the factor secret, increments the
+  user's signed session generation and appends an `mfa_disabled` security audit
+  event. Every existing bearer token is then rejected, the browser signs out,
+  and the account email receives an independent security notification.
+- Password-only factor removal is not an account-recovery path. Lost-device
+  recovery and organisation-enforced MFA remain separately governed work.
 
 ## Deployment requirements
 
@@ -43,7 +51,9 @@ Status: implemented; deployment configuration and authenticated operator proof r
    outside the intended enrollment screen. A TOTP setup key is an
    authenticator secret, even though its six-digit outputs change.
 2. Apply `scripts/sql/user_mfa_factors.sql` to the Business Manager database
-   using its authorised owner connection.
+   using its authorised owner connection. Existing deployments must rerun the
+   additive script for `auth_session_version` and the security-audit table, or
+   allow the normal startup schema synchronisation to apply them.
 3. Generate a dedicated 32-byte base64 key and install it only in the Business
    Manager Render service as `BM_MFA_ENCRYPTION_KEY`. Do not reuse `JWT_SECRET`,
    a Stripe key or the Sophia connector secret.

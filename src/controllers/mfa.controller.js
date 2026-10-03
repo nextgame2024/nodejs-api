@@ -5,6 +5,7 @@ import { findAuthById, findById } from "../models/user.model.js";
 import {
   activateMfaFactor,
   consumeMfaCounter,
+  disableMfaFactor,
   findMfaFactor,
   recordMfaFailure,
   savePendingMfaFactor,
@@ -15,6 +16,7 @@ import {
   mfaConfigured,
   verifyTotp,
 } from "../services/mfaTotp.service.js";
+import { sendMfaDisabledEmail } from "../services/mfaSecurityEmail.service.js";
 
 const toIso = (value) => value ? new Date(value).toISOString() : null;
 
@@ -74,9 +76,41 @@ export const stepUpTotp = asyncHandler(async (req, res) => {
   const user = await findById(req.user.id);
   if (!user || user.status !== "active") return res.status(401).json({ error: "User is not active" });
   const mfaVerifiedAt = toIso(consumed.verifiedAt);
-  const token = generateToken({ id: user.id, email: user.email, username: user.username, mfaVerifiedAt });
+  const token = generateToken({ id: user.id, email: user.email, username: user.username,
+    authSessionVersion: user.authSessionVersion ?? 0, mfaVerifiedAt });
   res.setHeader("Cache-Control", "no-store");
   return res.json({ user: { ...user, token, mfaEnabled: true, mfaVerifiedAt } });
+});
+
+export const disableTotp = asyncHandler(async (req, res) => {
+  requireConfigured();
+  const password = String(req.body?.password ?? "");
+  const user = await findAuthById(req.user.id);
+  if (!user || user.status !== "active" || !await bcrypt.compare(password, String(user.password ?? ""))) {
+    return res.status(401).json({ error: "Current password verification failed" });
+  }
+  const factor = await findMfaFactor(req.user.id);
+  if (!factor || factor.status !== "active") {
+    return res.status(409).json({ error: "TOTP MFA is not active" });
+  }
+  if (factor.lockedUntil && new Date(factor.lockedUntil).getTime() > Date.now()) {
+    return res.status(429).json({ error: "MFA verification is temporarily locked",
+      lockedUntil: toIso(factor.lockedUntil) });
+  }
+  const counter = verifyTotp(decryptTotpSecret(req.user.id, factor), req.body?.code);
+  if (counter === null) return invalidCode(req, res, "Invalid or already-used authenticator code");
+  const disabled = await disableMfaFactor(req.user.id, counter, {
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+  if (!disabled) return invalidCode(req, res, "Invalid or already-used authenticator code");
+  try {
+    await sendMfaDisabledEmail({ user });
+  } catch (error) {
+    console.error("MFA disabled notification failed:", error?.message || error);
+  }
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ mfa: { status: "not_enrolled", enabled: false }, sessionsRevoked: true });
 });
 
 async function invalidCode(req, res, message) {

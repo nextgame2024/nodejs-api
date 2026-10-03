@@ -55,6 +55,7 @@ const USER_SELECT = `
   contacts,
   type,
   status,
+  auth_session_version AS "authSessionVersion",
   email_subscription_status AS "emailSubscriptionStatus",
   site_id AS "siteId",
   (

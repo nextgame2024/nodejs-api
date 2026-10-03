@@ -7,7 +7,7 @@ describe("Business Manager MFA security boundary", () => {
   test("keeps every MFA operation behind the authenticated current-user route", () => {
     const routes = read("src/routes/user.routes.js");
     for (const path of ["/user/mfa", "/user/mfa/totp/enrol", "/user/mfa/totp/activate",
-      "/user/mfa/totp/step-up"]) {
+      "/user/mfa/totp/step-up", "/user/mfa/totp/disable"]) {
       expect(routes).toContain(`\"${path}\", authRequired`);
     }
   });
@@ -52,5 +52,16 @@ describe("Business Manager MFA security boundary", () => {
     expect(middleware).toContain("12 * 60 * 60 * 1000");
     expect(middleware).toContain("time >= now - MFA_SESSION_MS");
     expect(middleware).toContain('code: "MFA_AUTHENTICATION_REQUIRED"');
+  });
+
+  test("requires both credentials and atomically revokes sessions when MFA is disabled", () => {
+    const controller = read("src/controllers/mfa.controller.js");
+    const model = read("src/models/userMfa.model.js");
+    expect(controller).toContain("bcrypt.compare");
+    expect(controller).toContain("disableMfaFactor(req.user.id, counter");
+    expect(model).toContain("auth_session_version=auth_session_version+1");
+    expect(model).toContain("DELETE FROM user_mfa_factors");
+    expect(model).toContain("'mfa_disabled'");
+    expect(model).toContain('await client.query("COMMIT")');
   });
 });

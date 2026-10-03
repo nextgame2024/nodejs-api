@@ -79,6 +79,7 @@ export const login = asyncHandler(async (req, res) => {
     id: found.id,
     email: found.email,
     username: found.username,
+    authSessionVersion: found.authSessionVersion ?? 0,
   });
 
   return res.json({ user: mapUserResponse(found, token) });
@@ -108,7 +109,7 @@ export const completeMfaLogin = asyncHandler(async (req, res) => {
   user.mfaEnabled = true;
   user.mfaVerifiedAt = mfaVerifiedAt;
   const token = generateToken({ id: user.id, email: user.email, username: user.username,
-    mfaVerifiedAt });
+    authSessionVersion: user.authSessionVersion ?? 0, mfaVerifiedAt });
   res.setHeader("Cache-Control", "no-store");
   return res.json({ user: mapUserResponse(user, token) });
 });

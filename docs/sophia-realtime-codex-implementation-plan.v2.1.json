@@ -2,7 +2,7 @@
   "document": {
     "id": "sophia-realtime-codex-implementation-plan",
     "title": "Sophia Real-Time Platform — Provider-Neutral Core and Complete Sophia Admin Scope",
-    "version": "2.1.85",
+    "version": "2.1.86",
     "preparedOn": "2026-09-22",
     "timezone": "Australia/Brisbane",
     "status": "repository-validated-execution-specification-in-progress",
@@ -66,6 +66,32 @@
     "important": "A renamed provider enum, empty adapters, or a renamed property service do not demonstrate portability."
   },
   "validatedAmendments": [
+    {
+      "id": "AMEND-2026-10-04-MFA-SECURE-DEACTIVATION",
+      "taskId": "P6-A06C4",
+      "reason": "An enrolled user needs a safe self-service path to invalidate an authenticator without allowing a hijacked browser session to silently remove MFA or revive tokens issued before enrollment.",
+      "changes": [
+        "Require the current password and a fresh replay-protected authenticator code before self-service deactivation.",
+        "Atomically consume the code, erase the factor secret, increment a per-user session generation and append security audit evidence.",
+        "Reject every token whose signed session generation does not match the authoritative user record, then sign the browser out after deactivation.",
+        "Send an out-of-band account notification after the security mutation; delivery failure is reported operationally but cannot restore a compromised factor.",
+        "Keep organisation-enforced MFA policy and lost-device recovery as separate future controls rather than treating password-only deactivation as recovery."
+      ],
+      "repositoryEvidence": [
+        "src/controllers/mfa.controller.js",
+        "src/models/userMfa.model.js",
+        "src/middlewares/authJwt.js",
+        "src/services/mfaSecurityEmail.service.js",
+        "tests/bm.mfaDisable.test.js",
+        "../../../frontend/src/app/settings/components/settings/settings.component.ts"
+      ],
+      "externalEvidence": [
+        "https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html",
+        "https://pages.nist.gov/800-63-4/sp800-63b.html"
+      ],
+      "approvedBy": "User approved secure MFA deactivation as the next task",
+      "recordedAt": "2026-10-04T09:21:36+10:00"
+    },
     {
       "id": "AMEND-2026-10-04-MFA-ABSOLUTE-SESSION",
       "taskId": "P6-A06C4",

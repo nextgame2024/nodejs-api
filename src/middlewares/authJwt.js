@@ -31,7 +31,7 @@ export async function authRequired(req, res, next) {
     // Load company and MFA state from the database so activating MFA also
     // invalidates password-only tokens that were issued earlier.
     const { rows } = await pool.query(
-      `SELECT users.company_id, users.status,
+      `SELECT users.company_id, users.status, users.auth_session_version,
               EXISTS (
                 SELECT 1
                 FROM user_mfa_factors factor
@@ -52,6 +52,17 @@ export async function authRequired(req, res, next) {
       return res
         .status(403)
         .json({ error: "User is not assigned to a company" });
+    }
+
+    const currentSessionVersion = Number(rows[0]?.auth_session_version ?? 0);
+    const tokenSessionVersion = user.authSessionVersion === undefined
+      ? 0
+      : Number(user.authSessionVersion);
+    if (!Number.isInteger(tokenSessionVersion) || tokenSessionVersion !== currentSessionVersion) {
+      return res.status(401).json({
+        error: "Session is no longer valid",
+        code: "SESSION_REVOKED",
+      });
     }
 
     const mfaVerifiedAt = validMfaTimestamp(user.mfaVerifiedAt);

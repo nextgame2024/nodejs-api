@@ -68,6 +68,21 @@ describe("Business Manager MFA application-session boundary", () => {
     expect(next).toHaveBeenCalledTimes(1);
     expect(req.user).toEqual(expect.objectContaining({ id: "user-1", companyId: "company-1" }));
   });
+
+  test("rejects every token issued before a security session-version change", async () => {
+    verify.mockReturnValue({ sub: {
+      id: "user-1", email: "owner@example.com", authSessionVersion: 0,
+    } });
+    query.mockResolvedValue({ rows: [{ company_id: "company-1", status: "active",
+      auth_session_version: 1, mfa_enabled: false }] });
+    const { req, res, next } = request();
+
+    await authRequired(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: "SESSION_REVOKED" }));
+    expect(next).not.toHaveBeenCalled();
+  });
 });
 
 function request() {

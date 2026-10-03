@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C4-MFA-ABSOLUTE-SESSION-IMPLEMENTED-DEPLOYMENT-PENDING",
-  "updatedAt": "2026-10-04T08:48:48+10:00",
+  "checkpoint": "P6-A06C4-MFA-SECURE-DEACTIVATION-IMPLEMENTED-DEPLOYMENT-PENDING",
+  "updatedAt": "2026-10-04T09:21:36+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2385,6 +2385,13 @@
       "node": "20.19.1",
       "result": "mfa-absolute-session-implemented",
       "detail": "Every protected Business Manager request now resolves active-factor state from the database. Active-factor users must present a signed non-future MFA login timestamp no older than twelve hours, so pre-enrollment password-only tokens stop working immediately and ordinary requests cannot extend the session. Activation explicitly signs the browser out; the next and every later login requires password plus authenticator code. Angular Settings explains the twelve-hour absolute session and no longer asks for routine manual step-up. Backend release passed 22 suites/93 tests; the 241-file boundary passed. Angular typecheck, production build, 3 targeted authentication tests and all 84 Sophia/Admin tests passed. Deployment and fresh re-enrollment remain required. No database or Stripe mutation occurred and every live billing switch remains false."
+    },
+    {
+      "command": "implement password-plus-fresh-TOTP deactivation, atomic factor erasure/session revocation/audit evidence, security notification and confirmation UI; npm run test:release; boundary scan; Angular typecheck/build/targeted authentication tests/test:sophia",
+      "repository": "backend + frontend",
+      "node": "20.19.1",
+      "result": "mfa-secure-deactivation-implemented",
+      "detail": "Active users can now disable TOTP only after confirming their current password, supplying a fresh replay-protected authenticator code and acknowledging the security warning. The backend atomically consumes the code, deletes the encrypted secret, increments a signed per-user session generation and appends mfa_disabled audit evidence; all prior tokens then fail and the browser signs out. A security email is attempted after commit and cannot roll back or weaken factor invalidation. The frontend reports completion on the login page. Backend release passed 23 suites/97 tests and the 241-file boundary passed. Angular typecheck, production build, 4 targeted authentication tests and all 84 Sophia/Admin tests passed. The additive schema remains deployment-pending. No database or Stripe mutation occurred and every live billing switch remains false."
     }
   ],
   "blockers": [

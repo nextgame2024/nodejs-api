@@ -1,9 +1,11 @@
 import pool from "./db.js";
 import { ensureStudentConsultationSchema } from "./studentConsultationSchema.js";
+import { ensureUserMfaSchema } from "../models/userMfa.model.js";
 
 const BM_USER_TYPE_VALUES = ["employee", "supplier", "client"];
 
 export async function ensureStartupMigrations() {
+  await ensureUserMfaSchema();
   await ensureBmUserTypeValues();
   await ensureTownPlannerBookingWorkflowSchema();
   await ensureStudentAgencyKnowledgeSchema();
