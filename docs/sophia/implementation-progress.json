@@ -2521,6 +2521,13 @@
       "node": "20.19.1 and 22.23.2",
       "result": "platform-operator-initial-context-legacy-tenant-fix-ready",
       "detail": "Production revision 33eaf74 was healthy and a read-only database check proved the super administrator has one active all-sixteen-module platform assignment matching the authenticated Admin company; sophia_runtime_app can read the assignment and customers. The initial deterministic customer, however, is a legacy tenant with no external Business Manager company mapping. Platform principal construction incorrectly copied that nullable target mapping into a required identity-company field, causing validation failure; the route guard then mislabeled the server error as logout. Platform principals now retain the authenticated internal operator company ID while tenantId identifies the selected customer, organisation enumeration explicitly permits nullable legacy mappings, every platform operator receives the safe organisation.read context baseline, and the context endpoint itself requires valid authority rather than an unrelated selected module. The frontend now sends only genuine 401 responses to Login and presents 403/context failures without clearing the valid session. Runtime passed 138 suites/511 tests plus typecheck/build; the focused frontend guard/service/shell suite passed 22 tests plus typecheck/build. The manually created migration 059 tables exist, but its migration ledger record was absent during the read-only check and still needs recording. No production data, email, provider or billing mutation occurred."
+    },
+    {
+      "command": "diagnose browser status-zero organisation request after successful platform context; allow the server-authorised tenant-selection header through Runtime CORS; Runtime typecheck/full tests/build",
+      "repository": "sophia-runtime",
+      "node": "repository Runtime",
+      "result": "platform-operator-tenant-header-cors-fix-ready",
+      "detail": "The successful Sophia Admin shell and organisation list proved authentication and platform authority were valid. The subsequent tenant organisation request introduced X-Sophia-Admin-Tenant-Id, but the Runtime CORS policy did not allow that header, so the browser blocked its preflight and Angular reported status 0 Unknown Error before the controller ran. The Runtime now centrally allows the tenant-selection header and has regression coverage for the case-insensitive CORS contract. Typecheck, all 139 suites/512 tests and the production build passed. No production schema/data, email, provider, Stripe or billing mutation occurred; live billing switches remain disabled."
     }
   ],
   "blockers": [
