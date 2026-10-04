@@ -1,7 +1,6 @@
 import { Controller, Get, Inject, Req, UseGuards } from "@nestjs/common";
 import { AdminAuthGuard } from "./authorization/admin-auth.guard.js";
 import { AdminAuthorizationService } from "./authorization/admin-authorization.service.js";
-import { RequireAdminPermissions } from "./authorization/admin-permission.decorator.js";
 import type { AdminPrincipal } from "./contracts/admin-contracts.js";
 
 @Controller("admin/v1/context")
@@ -12,7 +11,6 @@ export class AdminContextController {
   ) {}
 
   @Get()
-  @RequireAdminPermissions("organisation.read")
   async context(@Req() request: { adminPrincipal: AdminPrincipal }) {
     return {
       principal: request.adminPrincipal,

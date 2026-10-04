@@ -32,7 +32,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 export type AdminOrganisationContext = {
   customerId: string;
-  externalCompanyId: string;
+  externalCompanyId: string | null;
   name: string;
   status: string;
 };
@@ -122,7 +122,7 @@ export class AdminAuthorizationService {
     const schema = runtimeConfig().schema;
     if (principal.authorityType !== "platform") {
       const tenant = await this.database.query<{
-        customer_id: string; external_company_id: string; name: string; status: string;
+        customer_id: string; external_company_id: string | null; name: string; status: string;
       }>(
         `SELECT customer_id, external_company_id, name, status
            FROM ${schema}.customers WHERE customer_id = $1`,
@@ -131,7 +131,7 @@ export class AdminAuthorizationService {
       return tenant.rows.map(toOrganisationContext);
     }
     const tenants = await this.database.query<{
-      customer_id: string; external_company_id: string; name: string; status: string;
+      customer_id: string; external_company_id: string | null; name: string; status: string;
     }>(
       `SELECT customer_id, external_company_id, name, status
          FROM ${schema}.customers
@@ -157,9 +157,9 @@ export class AdminAuthorizationService {
       where = "WHERE customer_id = $1";
     }
     const tenant = await this.database.query<{
-      customer_id: string; external_company_id: string;
+      customer_id: string;
     }>(
-      `SELECT customer_id, external_company_id
+      `SELECT customer_id
          FROM ${schema}.customers
          ${where}
         ORDER BY lower(name), customer_id
@@ -174,7 +174,7 @@ export class AdminAuthorizationService {
       apiVersion: ADMIN_API_VERSION,
       identityUserId: identity.userId,
       tenantId: target.customer_id,
-      externalCompanyId: target.external_company_id,
+      externalCompanyId: assignment.operator_company_id,
       membershipId: assignment.assignment_id,
       role: "platform_operator",
       permissions: permissionsForAdminRole("platform_operator", assignment.module_scope),
@@ -187,7 +187,7 @@ export class AdminAuthorizationService {
 }
 
 function toOrganisationContext(row: {
-  customer_id: string; external_company_id: string; name: string; status: string;
+  customer_id: string; external_company_id: string | null; name: string; status: string;
 }): AdminOrganisationContext {
   return {
     customerId: row.customer_id,

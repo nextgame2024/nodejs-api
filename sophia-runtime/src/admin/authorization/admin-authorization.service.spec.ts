@@ -133,7 +133,6 @@ describe("AdminAuthorizationService", () => {
     };
     const target = {
       customer_id: "11111111-1111-4111-8111-111111111111",
-      external_company_id: "44444444-4444-4444-8444-444444444444",
     };
     const database = {
       query: jest.fn()
@@ -153,10 +152,12 @@ describe("AdminAuthorizationService", () => {
       authorityType: "platform",
       role: "platform_operator",
       tenantId: target.customer_id,
+      externalCompanyId: assignment.operator_company_id,
       operatorCompanyId: assignment.operator_company_id,
     }));
     expect(principal.permissions).toContain("platform.organisations.provision");
     expect(principal.permissions).toContain("billing.manage");
+    expect(principal.permissions).toContain("organisation.read");
     expect(principal.permissions).not.toContain("agents.edit");
   });
 });

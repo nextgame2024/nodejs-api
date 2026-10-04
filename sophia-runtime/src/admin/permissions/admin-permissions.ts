@@ -120,9 +120,12 @@ export function permissionsForAdminRole(
 ): readonly AdminPermission[] {
   if (role === "platform_operator") {
     const selected = new Set(moduleScope ?? []);
-    return SOPHIA_ADMIN_MODULE_IDS
+    return Array.from(new Set<AdminPermission>([
+      "organisation.read",
+      ...SOPHIA_ADMIN_MODULE_IDS
       .filter((moduleId) => selected.has(moduleId))
-      .flatMap((moduleId) => PLATFORM_OPERATOR_MODULE_PERMISSIONS[moduleId]);
+      .flatMap((moduleId) => PLATFORM_OPERATOR_MODULE_PERMISSIONS[moduleId]),
+    ]));
   }
   if (role !== "client_administrator") return ADMIN_ROLE_PERMISSIONS[role];
   const selected = new Set(moduleScope ?? []);
