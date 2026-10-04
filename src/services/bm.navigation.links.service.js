@@ -71,7 +71,7 @@ export const syncSophiaAdminEntitlement = (args) =>
   model.syncSophiaAdminEntitlement(args);
 
 export const syncSophiaAdminEntitlements = (args) =>
-  model.syncSophiaAdminEntitlements(args);
+  modelNS.syncSophiaAdminEntitlements(args);
 
 export const companyExists = (companyId) => model.companyExists(companyId);
 

@@ -501,4 +501,5 @@ export default {
   getSophiaAdminEntitlement,
   hasActiveSophiaAdminEntitlement,
   syncSophiaAdminEntitlement,
+  syncSophiaAdminEntitlements,
 };

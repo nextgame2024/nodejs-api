@@ -2500,6 +2500,13 @@
       "node": "20.19.1",
       "result": "navigation-entitlement-selector-usability-fixed",
       "detail": "Navigation-label and module choices now use native checked inputs so their visual state matches the selected sets. Initial company assignment now immediately loads its active users even though the form value is patched without emitting a change event. Navigation labels and Sophia Admin modules expose Select all/Clear all, and the user selector exposes All active users. Bulk Sophia assignment/revocation is capped at 100 selected users, uses a single database transaction, writes the existing per-user audit event for each changed client-administrator entitlement, and preserves any different active Admin role. Bulk mode does not touch Sophia entitlements during an unrelated generic-link save unless the operator explicitly changes the Sophia selection. Backend release passed 24 suites/99 tests; Angular typecheck, the focused 3-test Chrome suite and production build passed with the existing build warnings. No production data, email, provider or billing mutation occurred."
+    },
+    {
+      "command": "reproduce deployed bulk entitlement save failure; expose syncSophiaAdminEntitlements through named and compatibility default model shapes; focused and full backend release tests",
+      "repository": "backend",
+      "node": "20.15.0",
+      "result": "bulk-entitlement-model-export-hotfix-ready",
+      "detail": "The deployed service resolves the model's compatibility default export, but the new bulk operation was initially present only as a named export, producing model.syncSophiaAdminEntitlements is not a function. The function is now exported through both shapes and the service directly uses the named export. A regression test asserts both export declarations. The focused suite passed 3 tests and the full backend release passed 24 suites/100 tests. The failed production request returned before any entitlement mutation; no email, provider or billing operation occurred."
     }
   ],
   "blockers": [

@@ -4,6 +4,14 @@ import { describe, expect, test } from "@jest/globals";
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("Business Manager Sophia Admin entitlement boundary", () => {
+  test("exports the bulk entitlement operation through both model shapes", () => {
+    const model = read("src/models/bm.navigation.links.model.js");
+    expect(model).toContain("export async function syncSophiaAdminEntitlements");
+    expect(model.slice(model.lastIndexOf("export default"))).toContain(
+      "syncSophiaAdminEntitlements",
+    );
+  });
+
   test("keeps the special link user scoped and super-admin controlled", () => {
     const controller = read("src/controllers/bm.navigation.links.controller.js");
     expect(controller).toContain('const SOPHIA_ADMIN_LABEL = "Sophia Ai admin"');
