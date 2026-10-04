@@ -47,6 +47,25 @@ export const CLIENT_ADMIN_MODULE_PERMISSIONS = {
   "ADM-16": ["usage.read", "billing.read"],
 } as const satisfies Record<SophiaAdminModuleId, readonly AdminPermission[]>;
 
+export const PLATFORM_OPERATOR_MODULE_PERMISSIONS = {
+  "ADM-01": ["platform.organisations.provision", "platform.support.access", "organisation.read", "organisation.manage", "organisation.suspend"],
+  "ADM-02": ["users.read", "users.invite", "users.manage", "users.roles.assign"],
+  "ADM-03": ["agents.read", "agents.edit", "agents.publish", "agents.disable"],
+  "ADM-04": ["agent_versions.read", "agent_versions.publish", "agent_versions.rollback"],
+  "ADM-05": ["instructions.read", "instructions.edit", "instructions.test"],
+  "ADM-06": ["knowledge.read", "knowledge.edit", "knowledge.ingest", "knowledge.publish", "knowledge.retire"],
+  "ADM-07": ["tools.read", "tools.bind", "tools.test"],
+  "ADM-08": ["connectors.read", "connectors.manage", "connectors.test", "connectors.credentials.rotate"],
+  "ADM-09": ["workflows.read", "workflows.configure", "workflows.publish", "workflows.retry"],
+  "ADM-10": ["permissions.read", "permissions.assign"],
+  "ADM-11": ["escalations.read", "escalations.configure", "escalations.assign", "escalations.resolve"],
+  "ADM-12": ["conversations.read_metadata", "conversations.read_content", "conversations.export", "conversations.annotate"],
+  "ADM-13": ["evaluations.read", "evaluations.edit", "evaluations.run", "evaluations.approve"],
+  "ADM-14": ["analytics.read", "analytics.export"],
+  "ADM-15": ["audit.read", "audit.export", "privacy.read", "privacy.manage", "privacy.approve", "privacy.requests.manage", "privacy.holds.manage"],
+  "ADM-16": ["usage.read", "usage.limits.manage", "billing.read", "billing.manage"],
+} as const satisfies Record<SophiaAdminModuleId, readonly AdminPermission[]>;
+
 const CLIENT_ADMIN_ROLE_PERMISSIONS = Array.from(new Set(
   Object.values(CLIENT_ADMIN_MODULE_PERMISSIONS).flat(),
 )) as AdminPermission[];
@@ -96,9 +115,15 @@ export const ADMIN_ROLE_PERMISSIONS = {
 export type AdminRoleKey = keyof typeof ADMIN_ROLE_PERMISSIONS;
 
 export function permissionsForAdminRole(
-  role: AdminRoleKey,
+  role: AdminRoleKey | "platform_operator",
   moduleScope: readonly string[] | null | undefined,
 ): readonly AdminPermission[] {
+  if (role === "platform_operator") {
+    const selected = new Set(moduleScope ?? []);
+    return SOPHIA_ADMIN_MODULE_IDS
+      .filter((moduleId) => selected.has(moduleId))
+      .flatMap((moduleId) => PLATFORM_OPERATOR_MODULE_PERMISSIONS[moduleId]);
+  }
   if (role !== "client_administrator") return ADMIN_ROLE_PERMISSIONS[role];
   const selected = new Set(moduleScope ?? []);
   return SOPHIA_ADMIN_MODULE_IDS

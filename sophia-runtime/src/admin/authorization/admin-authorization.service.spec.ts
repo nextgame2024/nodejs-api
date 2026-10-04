@@ -1,11 +1,27 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { ForbiddenException } from "@nestjs/common";
 import { AdminAuthorizationService } from "./admin-authorization.service.js";
+import { AdminRoleKeySchema } from "../contracts/admin-contracts.js";
 
 describe("AdminAuthorizationService", () => {
   beforeEach(() => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
+  });
+
+  it("does not expose platform operator authority as an assignable tenant role", () => {
+    expect(AdminRoleKeySchema.safeParse("platform_operator").success).toBe(false);
+  });
+
+  it("rejects malformed organisation selectors before querying authority", async () => {
+    const database = { query: jest.fn() };
+    const service = new AdminAuthorizationService(database as never);
+    await expect(service.resolvePrincipal({
+      userId: "operator-1",
+      companyId: "33333333-3333-4333-8333-333333333333",
+      status: "active",
+    }, "not-a-tenant")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(database.query).not.toHaveBeenCalled();
   });
 
   it("resolves a fixed role through the external company and active membership", async () => {
@@ -19,10 +35,12 @@ describe("AdminAuthorizationService", () => {
     };
     const client = { query: jest.fn().mockResolvedValue({ rows: [membership] }) };
     const database = {
-      query: jest.fn().mockResolvedValue({ rows: [{
-        customer_id: membership.customer_id,
-        external_company_id: membership.external_company_id,
-      }] }),
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{
+          customer_id: membership.customer_id,
+          external_company_id: membership.external_company_id,
+        }] }),
       tenantTransaction: jest.fn(async (_tenant: string, work: (client: typeof client) => unknown) => work(client)),
     };
     const service = new AdminAuthorizationService(database as never);
@@ -51,10 +69,12 @@ describe("AdminAuthorizationService", () => {
     };
     const client = { query: jest.fn().mockResolvedValue({ rows: [membership] }) };
     const database = {
-      query: jest.fn().mockResolvedValue({ rows: [{
-        customer_id: membership.customer_id,
-        external_company_id: membership.external_company_id,
-      }] }),
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{
+          customer_id: membership.customer_id,
+          external_company_id: membership.external_company_id,
+        }] }),
       tenantTransaction: jest.fn(async (_tenant: string, work: (client: typeof client) => unknown) => work(client)),
     };
     const service = new AdminAuthorizationService(database as never);
@@ -78,10 +98,12 @@ describe("AdminAuthorizationService", () => {
     };
     const client = { query: jest.fn().mockResolvedValue({ rows: [membership] }) };
     const database = {
-      query: jest.fn().mockResolvedValue({ rows: [{
-        customer_id: membership.customer_id,
-        external_company_id: membership.external_company_id,
-      }] }),
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{
+          customer_id: membership.customer_id,
+          external_company_id: membership.external_company_id,
+        }] }),
       tenantTransaction: jest.fn(async (_tenant: string, work: (client: typeof client) => unknown) => work(client)),
     };
     const service = new AdminAuthorizationService(database as never);
@@ -99,5 +121,42 @@ describe("AdminAuthorizationService", () => {
     expect(principal.permissions).not.toContain("users.read");
     expect(principal.permissions).not.toContain("billing.manage");
     expect(principal.permissions).not.toContain("platform.support.access");
+  });
+
+  it("resolves an internal platform operator against a server-selected customer", async () => {
+    const assignment = {
+      assignment_id: "22222222-2222-4222-8222-222222222222",
+      identity_user_id: "operator-1",
+      operator_company_id: "33333333-3333-4333-8333-333333333333",
+      module_scope: ["ADM-01", "ADM-16"],
+      authorization_revision: 7,
+    };
+    const target = {
+      customer_id: "11111111-1111-4111-8111-111111111111",
+      external_company_id: "44444444-4444-4444-8444-444444444444",
+    };
+    const database = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [assignment] })
+        .mockResolvedValueOnce({ rows: [target] }),
+    };
+    const service = new AdminAuthorizationService(database as never);
+
+    const principal = await service.resolvePrincipal({
+      userId: assignment.identity_user_id,
+      companyId: assignment.operator_company_id,
+      status: "active",
+      mfaVerifiedAt: new Date().toISOString(),
+    }, target.customer_id);
+
+    expect(principal).toEqual(expect.objectContaining({
+      authorityType: "platform",
+      role: "platform_operator",
+      tenantId: target.customer_id,
+      operatorCompanyId: assignment.operator_company_id,
+    }));
+    expect(principal.permissions).toContain("platform.organisations.provision");
+    expect(principal.permissions).toContain("billing.manage");
+    expect(principal.permissions).not.toContain("agents.edit");
   });
 });

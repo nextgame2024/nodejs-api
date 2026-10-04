@@ -19,15 +19,16 @@ describe("Business Manager Sophia Admin entitlement boundary", () => {
     expect(controller).toContain("Only the platform super administrator can assign Sophia Admin access");
     expect(controller).toContain("selectedSophiaAdmin && requestedModules.length > 0");
     expect(controller).toContain("A maximum of 100 target users may be updated at once");
+    expect(controller).toContain("Sophia Admin access can only be assigned within the internal operator company");
   });
 
   test("revokes the membership rather than treating link visibility as authorization", () => {
     const model = read("src/models/bm.navigation.links.model.js");
-    expect(model).toContain("m.role_key = 'client_administrator'");
+    expect(model).toContain("platform_operator_assignments");
     expect(model).toContain("authorization_revision = authorization_revision + 1");
-    expect(model).toContain("client_admin.entitlement_revoked");
+    expect(model).toContain("platform_operator.entitlement_revoked");
     expect(model).toContain("status = 'revoked', module_scope = NULL");
     expect(model).toContain("syncSophiaAdminEntitlements");
-    expect(model).toContain("protectedActiveRole");
+    expect(model).not.toContain("The company must have exactly one Sophia organisation");
   });
 });

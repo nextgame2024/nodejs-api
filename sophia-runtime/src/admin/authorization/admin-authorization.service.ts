@@ -20,12 +20,50 @@ type MembershipRow = {
   authorization_revision: number;
 };
 
+type PlatformAssignmentRow = {
+  assignment_id: string;
+  identity_user_id: string;
+  operator_company_id: string;
+  module_scope: string[];
+  authorization_revision: number;
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export type AdminOrganisationContext = {
+  customerId: string;
+  externalCompanyId: string;
+  name: string;
+  status: string;
+};
+
 @Injectable()
 export class AdminAuthorizationService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
-  async resolvePrincipal(identity: VerifiedBusinessManagerIdentity): Promise<AdminPrincipal> {
+  async resolvePrincipal(
+    identity: VerifiedBusinessManagerIdentity,
+    requestedTenantId?: string,
+  ): Promise<AdminPrincipal> {
+    if (requestedTenantId && !UUID_PATTERN.test(requestedTenantId)) {
+      throw new ForbiddenException("The selected Sophia organisation is unavailable.");
+    }
     const schema = runtimeConfig().schema;
+    const platform = await this.database.query<PlatformAssignmentRow>(
+      `SELECT assignment_id, identity_user_id, operator_company_id,
+              module_scope, authorization_revision
+         FROM ${schema}.platform_operator_assignments
+        WHERE identity_user_id = $1 AND operator_company_id = $2 AND status = 'active'
+        LIMIT 2`,
+      [identity.userId, identity.companyId],
+    );
+    if (platform.rows.length === 1) {
+      return this.resolvePlatformPrincipal(identity, platform.rows[0], requestedTenantId);
+    }
+    if (requestedTenantId) {
+      throw new ForbiddenException("Platform operator authority is required to select an organisation.");
+    }
+
     const tenant = await this.database.query<{ customer_id: string; external_company_id: string }>(
       `SELECT customer_id, external_company_id FROM ${schema}.customers
        WHERE external_company_id = $1 LIMIT 2`,
@@ -75,11 +113,86 @@ export class AdminAuthorizationService {
       role: membership.role_key,
       permissions,
       authorizationRevision: membership.authorization_revision,
+      authorityType: "tenant",
       ...(identity.mfaVerifiedAt ? { mfaVerifiedAt: identity.mfaVerifiedAt } : {}),
     });
+  }
+
+  async listAvailableOrganisations(principal: AdminPrincipal): Promise<AdminOrganisationContext[]> {
+    const schema = runtimeConfig().schema;
+    if (principal.authorityType !== "platform") {
+      const tenant = await this.database.query<{
+        customer_id: string; external_company_id: string; name: string; status: string;
+      }>(
+        `SELECT customer_id, external_company_id, name, status
+           FROM ${schema}.customers WHERE customer_id = $1`,
+        [principal.tenantId],
+      );
+      return tenant.rows.map(toOrganisationContext);
+    }
+    const tenants = await this.database.query<{
+      customer_id: string; external_company_id: string; name: string; status: string;
+    }>(
+      `SELECT customer_id, external_company_id, name, status
+         FROM ${schema}.customers
+        ORDER BY lower(name), customer_id`,
+    );
+    return tenants.rows.map(toOrganisationContext);
   }
 
   hasPermission(principal: AdminPrincipal, permission: AdminPermission): boolean {
     return principal.permissions.includes(permission);
   }
+
+  private async resolvePlatformPrincipal(
+    identity: VerifiedBusinessManagerIdentity,
+    assignment: PlatformAssignmentRow,
+    requestedTenantId?: string,
+  ): Promise<AdminPrincipal> {
+    const schema = runtimeConfig().schema;
+    const params: string[] = [];
+    let where = "";
+    if (requestedTenantId) {
+      params.push(requestedTenantId);
+      where = "WHERE customer_id = $1";
+    }
+    const tenant = await this.database.query<{
+      customer_id: string; external_company_id: string;
+    }>(
+      `SELECT customer_id, external_company_id
+         FROM ${schema}.customers
+         ${where}
+        ORDER BY lower(name), customer_id
+        LIMIT 1`,
+      params,
+    );
+    if (tenant.rows.length !== 1) {
+      throw new ForbiddenException("The selected Sophia organisation is unavailable.");
+    }
+    const target = tenant.rows[0];
+    return AdminPrincipalSchema.parse({
+      apiVersion: ADMIN_API_VERSION,
+      identityUserId: identity.userId,
+      tenantId: target.customer_id,
+      externalCompanyId: target.external_company_id,
+      membershipId: assignment.assignment_id,
+      role: "platform_operator",
+      permissions: permissionsForAdminRole("platform_operator", assignment.module_scope),
+      authorizationRevision: assignment.authorization_revision,
+      authorityType: "platform",
+      operatorCompanyId: assignment.operator_company_id,
+      ...(identity.mfaVerifiedAt ? { mfaVerifiedAt: identity.mfaVerifiedAt } : {}),
+    });
+  }
+}
+
+function toOrganisationContext(row: {
+  customer_id: string; external_company_id: string; name: string; status: string;
+}): AdminOrganisationContext {
+  return {
+    customerId: row.customer_id,
+    externalCompanyId: row.external_company_id,
+    name: row.name,
+    status: row.status,
+  };
 }

@@ -38,7 +38,7 @@ function harness(options: {
     getHandler: () => function handler() {},
     getClass: () => class Controller {},
   } as unknown as ExecutionContext;
-  return { guard, context, request, identity, audit };
+  return { guard, context, request, identity, authorization, audit };
 }
 
 describe("AdminAuthGuard", () => {
@@ -128,5 +128,21 @@ describe("AdminAuthGuard", () => {
     });
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request).toEqual(expect.objectContaining({ adminPrincipal: principal }));
+  });
+
+  it("passes only the server context header into principal resolution", async () => {
+    const { guard, context, authorization } = harness({
+      headers: {
+        authorization: "Bearer business-manager-jwt",
+        "x-sophia-admin-tenant-id": principal.tenantId,
+      },
+      params: { tenantId: principal.tenantId },
+      required: ["organisation.read"],
+    });
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(authorization.resolvePrincipal).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-1" }),
+      principal.tenantId,
+    );
   });
 });

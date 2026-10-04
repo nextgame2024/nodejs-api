@@ -305,6 +305,11 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
   if (uniqueTargetUserIds.length > 100) {
     throw badRequest("A maximum of 100 target users may be updated at once");
   }
+  if (uniqueTargetUserIds.length && companyId !== req.user.companyId) {
+    const error = new Error("Sophia Admin access can only be assigned within the internal operator company");
+    error.status = 403;
+    throw error;
+  }
   const requestedModules = Array.isArray(payload.sophia_admin_modules)
     ? Array.from(new Set(payload.sophia_admin_modules.map(normalizeText).filter(Boolean)))
     : [];
@@ -358,6 +363,9 @@ export const getSophiaAdminEntitlement = asyncHandler(async (req, res) => {
   const targetUserId = normalizeText(req.query.userId);
   if (!companyId || !targetUserId) {
     throw badRequest("companyId and userId are required");
+  }
+  if (companyId !== req.user.companyId) {
+    return res.status(403).json({ error: "Sophia Admin access is restricted to the internal operator company" });
   }
   const entitlement = await service.getSophiaAdminEntitlement(companyId, targetUserId);
   if (!entitlement) {

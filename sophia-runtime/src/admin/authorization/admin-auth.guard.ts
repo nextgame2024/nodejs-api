@@ -36,7 +36,8 @@ export class AdminAuthGuard implements CanActivate {
       throw new UnauthorizedException("Sophia Admin authentication is required.");
     }
     const identity = await this.identity.authenticate(authorizationHeader);
-    const principal = await this.authorization.resolvePrincipal(identity);
+    const requestedTenantId = header(request, "x-sophia-admin-tenant-id");
+    const principal = await this.authorization.resolvePrincipal(identity, requestedTenantId);
     const required = this.reflector.getAllAndOverride<AdminPermission[]>(
       ADMIN_PERMISSIONS_METADATA,
       [context.getHandler(), context.getClass()],

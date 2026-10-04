@@ -265,18 +265,15 @@ export async function getSophiaAdminEntitlement(companyId, targetUserId) {
       u.name AS "userName",
       u.email::text AS "userEmail",
       u.status::text AS "userStatus",
-      c.customer_id::text AS "customerId",
-      m.membership_id::text AS "membershipId",
-      m.role_key AS "roleKey",
-      m.status AS "membershipStatus",
-      COALESCE(m.module_scope, ARRAY[]::text[]) AS modules,
-      m.authorization_revision AS "authorizationRevision"
+      p.assignment_id::text AS "membershipId",
+      CASE WHEN p.assignment_id IS NULL THEN NULL ELSE 'platform_operator' END AS "roleKey",
+      p.status AS "membershipStatus",
+      COALESCE(p.module_scope, ARRAY[]::text[]) AS modules,
+      p.authorization_revision AS "authorizationRevision"
     FROM users u
-    LEFT JOIN sophia_runtime.customers c
-      ON c.external_company_id = u.company_id::text
-    LEFT JOIN sophia_runtime.admin_memberships m
-      ON m.customer_id = c.customer_id
-     AND m.identity_user_id = u.id::text
+    LEFT JOIN sophia_runtime.platform_operator_assignments p
+      ON p.operator_company_id = u.company_id
+     AND p.identity_user_id = u.id::text
     WHERE u.company_id = $1
       AND u.id = $2
     LIMIT 1
@@ -289,7 +286,7 @@ export async function getSophiaAdminEntitlement(companyId, targetUserId) {
   return {
     ...row,
     enabled:
-      row.roleKey === "client_administrator" &&
+      row.roleKey === "platform_operator" &&
       row.membershipStatus === "active" &&
       row.modules.length > 0,
   };
@@ -300,17 +297,14 @@ export async function hasActiveSophiaAdminEntitlement(companyId, targetUserId) {
     `
     SELECT 1
     FROM users u
-    JOIN sophia_runtime.customers c
-      ON c.external_company_id = u.company_id::text
-    JOIN sophia_runtime.admin_memberships m
-      ON m.customer_id = c.customer_id
-     AND m.identity_user_id = u.id::text
+    JOIN sophia_runtime.platform_operator_assignments p
+      ON p.operator_company_id = u.company_id
+     AND p.identity_user_id = u.id::text
     WHERE u.company_id = $1
       AND u.id = $2
       AND u.status = 'active'
-      AND m.status = 'active'
-      AND m.role_key = 'client_administrator'
-      AND cardinality(m.module_scope) > 0
+      AND p.status = 'active'
+      AND cardinality(p.module_scope) > 0
     LIMIT 1
     `,
     [companyId, targetUserId],
@@ -373,83 +367,57 @@ export async function syncSophiaAdminEntitlements({
       throw error;
     }
 
-    const tenant = await client.query(
-      `SELECT customer_id::text
-       FROM sophia_runtime.customers
-       WHERE external_company_id = $1
-       LIMIT 2`,
-      [companyId],
-    );
-    if (tenant.rows.length !== 1) {
-      const error = new Error("The company must have exactly one Sophia organisation before Admin access can be assigned");
-      error.status = 409;
-      throw error;
-    }
-    const customerId = tenant.rows[0].customer_id;
     const current = await client.query(
-      `SELECT membership_id::text, identity_user_id, role_key, status, authorization_revision
-       FROM sophia_runtime.admin_memberships
-       WHERE customer_id = $1::uuid AND identity_user_id = ANY($2::text[])
+      `SELECT assignment_id::text, identity_user_id, status, authorization_revision
+       FROM sophia_runtime.platform_operator_assignments
+       WHERE operator_company_id = $1::uuid AND identity_user_id = ANY($2::text[])
        ORDER BY identity_user_id
        FOR UPDATE`,
-      [customerId, uniqueTargetUserIds],
+      [companyId, uniqueTargetUserIds],
     );
     const memberships = new Map(current.rows.map((row) => [row.identity_user_id, row]));
 
     for (const targetUserId of uniqueTargetUserIds) {
       const membership = memberships.get(targetUserId) ?? null;
-      const protectedActiveRole =
-        enabled && membership?.status === "active" && membership.role_key !== "client_administrator";
-      if (protectedActiveRole && uniqueTargetUserIds.length === 1) {
-        const error = new Error("The selected user already has a different active Sophia Admin role");
-        error.status = 409;
-        throw error;
-      }
       let changed = false;
 
-      if (enabled && !protectedActiveRole) {
+      if (enabled) {
         await client.query(
-          `INSERT INTO sophia_runtime.admin_memberships (
-             customer_id, identity_user_id, role_key, status,
-             permission_overrides, module_scope, authorization_revision
-           ) VALUES ($1::uuid, $2, 'client_administrator', 'active',
-                     '{"allow":[],"deny":[]}'::jsonb, $3::text[], 1)
-           ON CONFLICT (customer_id, identity_user_id) DO UPDATE
-           SET role_key = 'client_administrator',
+          `INSERT INTO sophia_runtime.platform_operator_assignments (
+             operator_company_id, identity_user_id, status, module_scope, authorization_revision
+           ) VALUES ($1::uuid, $2, 'active', $3::text[], 1)
+           ON CONFLICT (identity_user_id) DO UPDATE
+           SET operator_company_id = EXCLUDED.operator_company_id,
                status = 'active',
-               permission_overrides = '{"allow":[],"deny":[]}'::jsonb,
                module_scope = EXCLUDED.module_scope,
-               authorization_revision = sophia_runtime.admin_memberships.authorization_revision + 1,
+               authorization_revision = sophia_runtime.platform_operator_assignments.authorization_revision + 1,
                updated_at = now()`,
-          [customerId, targetUserId, modules],
+          [companyId, targetUserId, modules],
         );
         changed = true;
-      } else if (!enabled && membership?.role_key === "client_administrator" && membership.status !== "revoked") {
+      } else if (membership && membership.status !== "revoked") {
         await client.query(
-          `UPDATE sophia_runtime.admin_memberships
+          `UPDATE sophia_runtime.platform_operator_assignments
            SET status = 'revoked', module_scope = NULL,
                authorization_revision = authorization_revision + 1,
                updated_at = now()
-           WHERE customer_id = $1::uuid AND identity_user_id = $2`,
-          [customerId, targetUserId],
+           WHERE operator_company_id = $1::uuid AND identity_user_id = $2`,
+          [companyId, targetUserId],
         );
         changed = true;
       }
 
       if (changed) {
         await client.query(
-          `INSERT INTO sophia_runtime.admin_audit_events (
-             customer_id, identity_user_id, event_type, resource_type,
-             resource_id, permission_key, outcome, correlation_id, metadata
-           ) VALUES (
-             $1::uuid, $2, $3, 'membership', $4, 'users.roles.assign',
-             'allowed', 'bm-client-admin-' || gen_random_uuid()::text, $5::jsonb
-           )`,
+          `INSERT INTO sophia_runtime.platform_operator_audit_events (
+             assignment_id, actor_identity_user_id, target_identity_user_id, event_type, metadata
+           ) SELECT assignment_id, $1, $2, $3, $4::jsonb
+             FROM sophia_runtime.platform_operator_assignments
+            WHERE identity_user_id = $2`,
           [
-            customerId,
             actorUserId,
-            enabled ? "client_admin.entitlement_assigned" : "client_admin.entitlement_revoked",
             targetUserId,
+            enabled ? "platform_operator.entitlement_assigned" : "platform_operator.entitlement_revoked",
             JSON.stringify({ targetUserId, modules: enabled ? modules : [], source: "business_manager_navigation" }),
           ],
         );
