@@ -3,6 +3,11 @@ import * as service from "../services/bm.navigation.links.service.js";
 
 const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
+const SOPHIA_ADMIN_LABEL = "Sophia Ai admin";
+const SOPHIA_ADMIN_MODULES = new Set([
+  "ADM-01", "ADM-02", "ADM-03", "ADM-04", "ADM-05", "ADM-06", "ADM-07", "ADM-08",
+  "ADM-09", "ADM-10", "ADM-11", "ADM-12", "ADM-13", "ADM-14", "ADM-15", "ADM-16",
+]);
 
 const NAVIGATION_LABELS_BY_TYPE = {
   header: [
@@ -13,6 +18,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Ai Toolkit",
     "Dashboard",
     "Settings",
+    SOPHIA_ADMIN_LABEL,
   ],
   menu: [
     "Clients",
@@ -258,6 +264,9 @@ export const createNavigationLink = asyncHandler(async (req, res) => {
     navigationType: payload.navigation_type,
     navigationLabel: payload.navigation_label,
   });
+  if (labelEquals(payload.navigation_label, SOPHIA_ADMIN_LABEL)) {
+    throw badRequest("Use the user-scoped navigation sync to assign Sophia Admin access");
+  }
 
   const navigationLink = await withDuplicateKeyHandling(() =>
     service.createNavigationLink(companyId, userId, payload),
@@ -278,14 +287,71 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
     navigationLabels: payload.navigation_labels ?? [],
   });
 
+  const selectedSophiaAdmin = (payload.navigation_labels ?? []).some((label) =>
+    labelEquals(label, SOPHIA_ADMIN_LABEL),
+  );
+  const targetUserId = normalizeText(
+    payload.target_user_id ?? payload.targetUserId,
+  );
+  const requestedModules = Array.isArray(payload.sophia_admin_modules)
+    ? Array.from(new Set(payload.sophia_admin_modules.map(normalizeText).filter(Boolean)))
+    : [];
+  const invalidModule = requestedModules.find((moduleId) => !SOPHIA_ADMIN_MODULES.has(moduleId));
+  if (invalidModule) throw badRequest(`Unknown Sophia Admin module: ${invalidModule}`);
+  if (selectedSophiaAdmin && !isSuperAdmin(req)) {
+    const error = new Error("Only the platform super administrator can assign Sophia Admin access");
+    error.status = 403;
+    throw error;
+  }
+  if (selectedSophiaAdmin && payload.navigation_type !== "header") {
+    throw badRequest("Sophia Ai admin is available only as a header link");
+  }
+  if (selectedSophiaAdmin && !targetUserId) {
+    throw badRequest("target_user_id is required for Sophia Admin access");
+  }
+  if (selectedSophiaAdmin && requestedModules.length === 0) {
+    throw badRequest("At least one Sophia Admin module is required");
+  }
+
+  const genericLabels = (payload.navigation_labels ?? []).filter(
+    (label) => !labelEquals(label, SOPHIA_ADMIN_LABEL),
+  );
+
   const result = await withDuplicateKeyHandling(() =>
     service.syncNavigationLabels(companyId, userId, {
       navigation_type: payload.navigation_type,
-      navigation_labels: payload.navigation_labels ?? [],
+      navigation_labels: genericLabels,
     }),
   );
 
-  res.json(result);
+  let sophiaAdminEntitlement = null;
+  if (isSuperAdmin(req) && payload.navigation_type === "header" && targetUserId) {
+    sophiaAdminEntitlement = await service.syncSophiaAdminEntitlement({
+      companyId,
+      targetUserId,
+      actorUserId: userId,
+      modules: requestedModules,
+      enabled: selectedSophiaAdmin,
+    });
+  }
+
+  res.json({ ...result, sophiaAdminEntitlement });
+});
+
+export const getSophiaAdminEntitlement = asyncHandler(async (req, res) => {
+  if (!isSuperAdmin(req)) {
+    return res.status(403).json({ error: "Platform super administrator access is required" });
+  }
+  const companyId = normalizeText(req.query.companyId);
+  const targetUserId = normalizeText(req.query.userId);
+  if (!companyId || !targetUserId) {
+    throw badRequest("companyId and userId are required");
+  }
+  const entitlement = await service.getSophiaAdminEntitlement(companyId, targetUserId);
+  if (!entitlement) {
+    return res.status(404).json({ error: "The selected company user was not found" });
+  }
+  res.json({ entitlement });
 });
 
 export const updateNavigationLink = asyncHandler(async (req, res) => {
@@ -315,6 +381,9 @@ export const updateNavigationLink = asyncHandler(async (req, res) => {
     navigationType: nextType,
     navigationLabel: nextLabel,
   });
+  if (labelEquals(nextLabel, SOPHIA_ADMIN_LABEL)) {
+    throw badRequest("Use the user-scoped navigation sync to assign Sophia Admin access");
+  }
 
   const navigationLink = await withDuplicateKeyHandling(() =>
     service.updateNavigationLink(scopeCompanyId, navigationLinkId, payload),
@@ -358,9 +427,12 @@ export const listActiveNavigationLinks = asyncHandler(async (req, res) => {
     throw badRequest("navigationType must be one of: header, menu");
   }
 
-  const navigationLinks = await service.listActiveNavigationLinks(companyId, {
-    navigationType,
-  });
+  const includeUserEntitlement = companyId === req.user.companyId;
+  const navigationLinks = await service.listActiveNavigationLinks(
+    companyId,
+    includeUserEntitlement ? req.user.id : null,
+    { navigationType },
+  );
 
   res.json({ navigationLinks });
 });

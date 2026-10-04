@@ -26,7 +26,9 @@ export const InvitationIssueSchema = z.object({
   role: AdminRoleKeySchema,
   expiresInHours: z.number().int().min(1).max(168).default(48),
   deliveryMode: z.literal("dry-run"),
-}).strict();
+}).strict().refine((value) => value.role !== "client_administrator", {
+  message: "Client Administrator access is assigned from Business Manager navigation settings.",
+});
 
 export const InvitationRedeemSchema = z.object({
   token: z.string().min(32).max(512),
@@ -40,4 +42,6 @@ export const MembershipUpdateSchema = z.object({
   status: z.enum(["active", "suspended", "revoked"]).optional(),
 }).strict().refine((value) => value.role !== undefined || value.status !== undefined, {
   message: "A role or membership status change is required.",
+}).refine((value) => value.role !== "client_administrator", {
+  message: "Client Administrator access is assigned from Business Manager navigation settings.",
 });

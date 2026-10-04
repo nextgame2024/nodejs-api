@@ -291,7 +291,10 @@ export const unsubscribeFromEmails = asyncHandler(async (req, res) => {
 
 /** GET /api/users — list users in company (auth required) */
 export const listUsers = asyncHandler(async (req, res) => {
-  const companyId = isSuperAdmin(req) ? null : req.user.companyId;
+  const requestedCompanyId = (req.query.companyId || "").toString().trim();
+  const companyId = isSuperAdmin(req)
+    ? requestedCompanyId || null
+    : req.user.companyId;
 
   const page = Math.max(1, Number(req.query.page || 1));
   const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));

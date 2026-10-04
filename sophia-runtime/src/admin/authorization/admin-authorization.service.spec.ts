@@ -65,4 +65,39 @@ describe("AdminAuthorizationService", () => {
       status: "active",
     })).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it("limits a client administrator to the explicitly selected modules", async () => {
+    const membership = {
+      membership_id: "22222222-2222-4222-8222-222222222222",
+      customer_id: "11111111-1111-4111-8111-111111111111",
+      external_company_id: "33333333-3333-4333-8333-333333333333",
+      role_key: "client_administrator",
+      permission_overrides: { allow: [], deny: [] },
+      module_scope: ["ADM-03", "ADM-14"],
+      authorization_revision: 4,
+    };
+    const client = { query: jest.fn().mockResolvedValue({ rows: [membership] }) };
+    const database = {
+      query: jest.fn().mockResolvedValue({ rows: [{
+        customer_id: membership.customer_id,
+        external_company_id: membership.external_company_id,
+      }] }),
+      tenantTransaction: jest.fn(async (_tenant: string, work: (client: typeof client) => unknown) => work(client)),
+    };
+    const service = new AdminAuthorizationService(database as never);
+
+    const principal = await service.resolvePrincipal({
+      userId: "client-user",
+      companyId: membership.external_company_id,
+      status: "active",
+    });
+
+    expect(principal.role).toBe("client_administrator");
+    expect(principal.permissions).toContain("agents.read");
+    expect(principal.permissions).toContain("agents.edit");
+    expect(principal.permissions).toContain("analytics.read");
+    expect(principal.permissions).not.toContain("users.read");
+    expect(principal.permissions).not.toContain("billing.manage");
+    expect(principal.permissions).not.toContain("platform.support.access");
+  });
 });

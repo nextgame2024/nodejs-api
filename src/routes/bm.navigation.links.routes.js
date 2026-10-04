@@ -8,11 +8,17 @@ import {
   updateNavigationLink,
   deleteNavigationLink,
   listActiveNavigationLinks,
+  getSophiaAdminEntitlement,
 } from "../controllers/bm.navigation.links.controller.js";
 
 const router = Router();
 
 router.get("/bm/navigation-links/active", authRequired, listActiveNavigationLinks);
+router.get(
+  "/bm/navigation-links/sophia-admin-entitlement",
+  authRequired,
+  getSophiaAdminEntitlement,
+);
 
 router.get("/bm/navigation-links", authRequired, listNavigationLinks);
 router.post("/bm/navigation-links", authRequired, createNavigationLink);

@@ -3,9 +3,9 @@ import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import type { VerifiedBusinessManagerIdentity } from "../identity/business-manager-identity.bridge.js";
 import {
-  ADMIN_ROLE_PERMISSIONS,
   isAdminPermission,
   isAdminRoleKey,
+  permissionsForAdminRole,
   type AdminPermission,
 } from "../permissions/admin-permissions.js";
 import { ADMIN_API_VERSION, AdminPrincipalSchema, type AdminPrincipal } from "../contracts/admin-contracts.js";
@@ -16,6 +16,7 @@ type MembershipRow = {
   external_company_id: string;
   role_key: string;
   permission_overrides: { allow?: unknown; deny?: unknown } | null;
+  module_scope: string[] | null;
   authorization_revision: number;
 };
 
@@ -37,7 +38,7 @@ export class AdminAuthorizationService {
       tenant.rows[0].customer_id,
       (client) => client.query<MembershipRow>(
       `SELECT m.membership_id, m.customer_id, c.external_company_id,
-              m.role_key, m.permission_overrides, m.authorization_revision
+              m.role_key, m.permission_overrides, m.module_scope, m.authorization_revision
        FROM ${schema}.admin_memberships m
        JOIN ${schema}.customers c ON c.customer_id = m.customer_id
        WHERE m.identity_user_id = $1 AND m.status = 'active'
@@ -62,7 +63,7 @@ export class AdminAuthorizationService {
       (Array.isArray(overrides.deny) ? overrides.deny : [])
         .filter((value): value is string => typeof value === "string" && isAdminPermission(value)),
     );
-    const permissions = ADMIN_ROLE_PERMISSIONS[membership.role_key]
+    const permissions = permissionsForAdminRole(membership.role_key, membership.module_scope)
       .filter((permission) => !denied.has(permission));
 
     return AdminPrincipalSchema.parse({

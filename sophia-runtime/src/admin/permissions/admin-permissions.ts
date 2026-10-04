@@ -21,7 +21,35 @@ export const ADMIN_PERMISSIONS = [
 ] as const;
 
 export type AdminPermission = typeof ADMIN_PERMISSIONS[number];
-export type AdminRoleKey = keyof typeof ADMIN_ROLE_PERMISSIONS;
+
+export const SOPHIA_ADMIN_MODULE_IDS = [
+  "ADM-01", "ADM-02", "ADM-03", "ADM-04", "ADM-05", "ADM-06", "ADM-07", "ADM-08",
+  "ADM-09", "ADM-10", "ADM-11", "ADM-12", "ADM-13", "ADM-14", "ADM-15", "ADM-16",
+] as const;
+export type SophiaAdminModuleId = typeof SOPHIA_ADMIN_MODULE_IDS[number];
+
+export const CLIENT_ADMIN_MODULE_PERMISSIONS = {
+  "ADM-01": ["organisation.read", "organisation.manage"],
+  "ADM-02": ["users.read"],
+  "ADM-03": ["agents.read", "agents.edit", "agents.publish", "agents.disable"],
+  "ADM-04": ["agent_versions.read", "agent_versions.publish", "agent_versions.rollback"],
+  "ADM-05": ["instructions.read", "instructions.edit", "instructions.test"],
+  "ADM-06": ["knowledge.read", "knowledge.edit", "knowledge.ingest", "knowledge.publish", "knowledge.retire"],
+  "ADM-07": ["tools.read", "tools.bind", "tools.test"],
+  "ADM-08": ["connectors.read", "connectors.manage", "connectors.test", "connectors.credentials.rotate"],
+  "ADM-09": ["workflows.read", "workflows.configure", "workflows.publish", "workflows.retry"],
+  "ADM-10": ["permissions.read"],
+  "ADM-11": ["escalations.read", "escalations.configure", "escalations.assign", "escalations.resolve"],
+  "ADM-12": ["conversations.read_metadata", "conversations.read_content", "conversations.export", "conversations.annotate"],
+  "ADM-13": ["evaluations.read", "evaluations.edit", "evaluations.run", "evaluations.approve"],
+  "ADM-14": ["analytics.read", "analytics.export"],
+  "ADM-15": ["audit.read", "audit.export"],
+  "ADM-16": ["usage.read", "billing.read"],
+} as const satisfies Record<SophiaAdminModuleId, readonly AdminPermission[]>;
+
+const CLIENT_ADMIN_ROLE_PERMISSIONS = Array.from(new Set(
+  Object.values(CLIENT_ADMIN_MODULE_PERMISSIONS).flat(),
+)) as AdminPermission[];
 
 const CONFIGURATION_READ = [
   "organisation.read", "agents.read", "agent_versions.read", "instructions.read",
@@ -62,7 +90,21 @@ export const ADMIN_ROLE_PERMISSIONS = {
     "knowledge.read", "tools.read", "connectors.read", "workflows.read",
     "permissions.read", "conversations.read_metadata", "analytics.read", "audit.read", "privacy.read", "usage.read", "billing.read",
   ],
+  client_administrator: CLIENT_ADMIN_ROLE_PERMISSIONS,
 } as const satisfies Record<string, readonly AdminPermission[]>;
+
+export type AdminRoleKey = keyof typeof ADMIN_ROLE_PERMISSIONS;
+
+export function permissionsForAdminRole(
+  role: AdminRoleKey,
+  moduleScope: readonly string[] | null | undefined,
+): readonly AdminPermission[] {
+  if (role !== "client_administrator") return ADMIN_ROLE_PERMISSIONS[role];
+  const selected = new Set(moduleScope ?? []);
+  return SOPHIA_ADMIN_MODULE_IDS
+    .filter((moduleId) => selected.has(moduleId))
+    .flatMap((moduleId) => CLIENT_ADMIN_MODULE_PERMISSIONS[moduleId]);
+}
 
 export const MFA_REQUIRED_PERMISSIONS = new Set<AdminPermission>([
   "platform.organisations.provision",

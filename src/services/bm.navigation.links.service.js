@@ -37,8 +37,38 @@ export const updateNavigationLink = (companyId, navigationLinkId, payload) =>
 export const deleteNavigationLink = (companyId, navigationLinkId) =>
   model.deleteNavigationLink(companyId, navigationLinkId);
 
-export const listActiveNavigationLinks = (companyId, { navigationType }) =>
-  model.listActiveNavigationLinks(companyId, { navigationType });
+export async function listActiveNavigationLinks(
+  companyId,
+  userId,
+  { navigationType },
+) {
+  const navigationLinks = await model.listActiveNavigationLinks(companyId, {
+    navigationType,
+  });
+  const includeSophiaAdmin =
+    (!navigationType || navigationType === "header") &&
+    (await model.hasActiveSophiaAdminEntitlement(companyId, userId));
+  if (!includeSophiaAdmin) return navigationLinks;
+  return [
+    ...navigationLinks,
+    {
+      navigationLinkId: `sophia-admin:${userId}`,
+      companyId,
+      userId,
+      navigationType: "header",
+      navigationLabel: "Sophia Ai admin",
+      active: true,
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+}
+
+export const getSophiaAdminEntitlement = (companyId, targetUserId) =>
+  model.getSophiaAdminEntitlement(companyId, targetUserId);
+
+export const syncSophiaAdminEntitlement = (args) =>
+  model.syncSophiaAdminEntitlement(args);
 
 export const companyExists = (companyId) => model.companyExists(companyId);
 
