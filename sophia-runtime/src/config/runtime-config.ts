@@ -327,14 +327,14 @@ function billingConfig(): RuntimeConfig["billing"] {
   const liveOverageEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED, false);
   const liveMilestoneEnabled = parseBoolean(process.env.SOPHIA_BILLING_LIVE_MILESTONE_ENABLED, false);
   const stripeSecretKey = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY);
-  if (stripeSecretKey && !/^sk_(?:test|live)_/.test(stripeSecretKey)) {
-    throw new Error("SOPHIA_BILLING_STRIPE_SECRET_KEY must be a Stripe secret key.");
+  if (stripeSecretKey && !isStripeTestCredential(stripeSecretKey) && !isStripeLiveCredential(stripeSecretKey)) {
+    throw new Error("SOPHIA_BILLING_STRIPE_SECRET_KEY must be a Stripe secret or restricted key.");
   }
-  if (provider === "stripe_sandbox" && stripeSecretKey && !stripeSecretKey.startsWith("sk_test_")) {
-    throw new Error("Stripe sandbox mode requires a test-mode secret key.");
+  if (provider === "stripe_sandbox" && stripeSecretKey && !isStripeTestCredential(stripeSecretKey)) {
+    throw new Error("Stripe sandbox mode requires a test-mode secret or restricted key.");
   }
-  if (provider === "stripe_live" && stripeSecretKey && !stripeSecretKey.startsWith("sk_live_")) {
-    throw new Error("Stripe live mode requires a live-mode secret key.");
+  if (provider === "stripe_live" && stripeSecretKey && !isStripeLiveCredential(stripeSecretKey)) {
+    throw new Error("Stripe live mode requires a live-mode secret or restricted key.");
   }
   if (provider !== "stripe_live" && liveCheckoutEnabled) {
     throw new Error("SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED may only be enabled with stripe_live.");
@@ -400,6 +400,14 @@ function billingConfig(): RuntimeConfig["billing"] {
     ),
     stripeMeterBindings: stripeMeterBindings(process.env.SOPHIA_BILLING_STRIPE_METER_BINDINGS),
   };
+}
+
+export function isStripeLiveCredential(value: string | undefined): value is string {
+  return Boolean(value && /^(?:sk|rk)_live_/.test(value));
+}
+
+export function isStripeTestCredential(value: string | undefined): value is string {
+  return Boolean(value && /^(?:sk|rk)_test_/.test(value));
 }
 
 function hostedUrl(value: string | undefined): string | undefined {

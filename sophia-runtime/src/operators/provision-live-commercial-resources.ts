@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import Stripe from "stripe";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeLiveCredential, runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 import { STRIPE_BILLING_API_VERSION, STRIPE_BILLING_WEBHOOK_EVENT_TYPES } from
   "../admin/billing/stripe-billing.constants.js";
@@ -27,8 +27,8 @@ if (process.env.SOPHIA_BILLING_LIVE_RESOURCE_CONFIRM !== CONFIRMATION) {
   throw new Error(`Set SOPHIA_BILLING_LIVE_RESOURCE_CONFIRM=${CONFIRMATION}.`);
 }
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_live" || !config.billing.stripeSecretKey?.startsWith("sk_live_")) {
-  throw new Error("Live catalog provisioning requires stripe_live and a live-mode secret key.");
+if (config.billing.provider !== "stripe_live" || !isStripeLiveCredential(config.billing.stripeSecretKey)) {
+  throw new Error("Live catalog provisioning requires stripe_live and a live-mode Stripe credential.");
 }
 if (config.billing.liveCheckoutEnabled) throw new Error("Live Checkout must remain disabled during provisioning.");
 const meterEventName = config.billing.stripeMeterBindings["active-overage-minutes"];

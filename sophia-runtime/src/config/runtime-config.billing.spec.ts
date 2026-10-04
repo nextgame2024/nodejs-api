@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
-import { runtimeConfig } from "./runtime-config.js";
+import { isStripeLiveCredential, isStripeTestCredential, runtimeConfig } from "./runtime-config.js";
 
 const billingKeys = [
   "SOPHIA_RUNTIME_DATABASE_URL",
@@ -41,10 +41,20 @@ describe("runtime billing configuration", () => {
       liveOverageEnabled: false, liveMilestoneEnabled: false });
   });
 
+  it("accepts mode-matched restricted keys and rejects cross-mode restricted keys", () => {
+    expect(isStripeLiveCredential("rk_live_sophia")).toBe(true);
+    expect(isStripeTestCredential("rk_test_sophia")).toBe(true);
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "rk_live_sophia";
+    expect(runtimeConfig().billing.stripeSecretKey).toBe("rk_live_sophia");
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "rk_test_sophia";
+    expect(() => runtimeConfig()).toThrow("live mode requires a live-mode secret or restricted key");
+  });
+
   it("rejects a live secret in sandbox mode", () => {
     process.env.SOPHIA_BILLING_PROVIDER = "stripe_sandbox";
     process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
-    expect(() => runtimeConfig()).toThrow("sandbox mode requires a test-mode secret key");
+    expect(() => runtimeConfig()).toThrow("sandbox mode requires a test-mode secret or restricted key");
   });
 
   it("rejects charge activation outside live mode", () => {

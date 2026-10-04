@@ -8,7 +8,7 @@ describe("Founding Stripe sandbox provisioner", () => {
   it("is sandbox-only and requires explicit object-creation confirmation", () => {
     expect(source).toContain("I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS");
     expect(source).toContain('config.billing.provider !== "stripe_sandbox"');
-    expect(source).toContain('startsWith("sk_test_")');
+    expect(source).toContain("isStripeTestCredential");
   });
 
   it("provisions every approved Price role and a cancellation-disabled portal", () => {

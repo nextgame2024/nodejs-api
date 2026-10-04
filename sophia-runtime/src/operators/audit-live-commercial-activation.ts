@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeLiveCredential, runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 import { StripeBillingCommercialMilestoneDispatcher } from
   "../admin/billing/stripe-billing-commercial-milestone.dispatcher.js";
@@ -25,9 +25,10 @@ type RecentMfaProof = { proved_at: Date | string };
 type CurrentTaxAttestation = { attested_at: Date | string };
 
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_live" || !config.billing.stripeSecretKey?.startsWith("sk_live_")) {
-  throw new Error("The live activation audit requires stripe_live and the deployed live Stripe key.");
+if (config.billing.provider !== "stripe_live" || !isStripeLiveCredential(config.billing.stripeSecretKey)) {
+  throw new Error("The live activation audit requires stripe_live and a deployed live Stripe credential.");
 }
+const restrictedLiveKey = config.billing.stripeSecretKey.startsWith("rk_live_");
 if (config.billing.liveCheckoutEnabled) {
   throw new Error("Live Checkout must remain disabled during the activation audit.");
 }
@@ -99,8 +100,10 @@ try {
       detail: adjustment.detail },
     { id: "live_founding_milestone", status: milestone.availability === "configured" ? "pass" : "blocked",
       detail: milestone.detail },
-    { id: "stripe_key_scope", status: "security_review_required",
-      detail: "The runtime currently uses a standard sk_live key. Move to a least-privilege restricted key or document why required permissions prevent it, and apply IP restrictions where deployment egress permits." },
+    { id: "stripe_key_scope", status: restrictedLiveKey ? "pass" : "security_review_required",
+      detail: restrictedLiveKey
+        ? "The runtime uses a live restricted key; its permissions must still be rechecked after billing capability changes."
+        : "The runtime currently uses a standard sk_live key. Move to a least-privilege restricted key or document why required permissions prevent it, and apply an access policy where deployment egress permits." },
     { id: "genuine_customer", status: "waiting",
       detail: "No synthetic live charge is needed. Complete tenant, plan, contract, billing-contact and acceptance checks when the genuine customer is ready." },
   ] as const;

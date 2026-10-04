@@ -22,6 +22,7 @@ describe("live commercial activation audit", () => {
     expect(source).toContain('id: "live_overage_collection"');
     expect(source).toContain('id: "live_founding_milestone"');
     expect(source).toContain('id: "stripe_key_scope"');
+    expect(source).toContain('startsWith("rk_live_")');
     expect(source).toContain('id: "genuine_customer"');
     expect(source).toContain('decision: blockers.length === 0 ? "ready_for_explicit_charge_authority" : "keep_checkout_disabled"');
   });

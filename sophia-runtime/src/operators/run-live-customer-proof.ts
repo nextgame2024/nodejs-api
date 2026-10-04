@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import Stripe from "stripe";
 import { Pool } from "pg";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeLiveCredential, runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 import { STRIPE_BILLING_API_VERSION, STRIPE_BILLING_PROVIDER_KEY } from
   "../admin/billing/stripe-billing.constants.js";
@@ -25,8 +25,8 @@ if (mutating && process.env.SOPHIA_BILLING_LIVE_CUSTOMER_CONFIRM !== CONFIRMATIO
 }
 
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_live" || !config.billing.stripeSecretKey?.startsWith("sk_live_")) {
-  throw new Error("The live Customer proof requires stripe_live and a live-mode secret key.");
+if (config.billing.provider !== "stripe_live" || !isStripeLiveCredential(config.billing.stripeSecretKey)) {
+  throw new Error("The live Customer proof requires stripe_live and a live-mode Stripe credential.");
 }
 if (config.billing.liveCheckoutEnabled) throw new Error("Live Checkout must remain disabled throughout this proof.");
 

@@ -9,7 +9,7 @@ import { BillingInvoiceAdjustmentRecoveryService } from "../admin/billing/billin
 import { BillingMeterOutboxService } from "../admin/billing/billing-meter-outbox.service.js";
 import { BillingPeriodLedgerService } from "../admin/billing/billing-period-ledger.service.js";
 import type { AdminPrincipal } from "../admin/contracts/admin-contracts.js";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeTestCredential, runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 
 const VOICE_PLAN_ID = "112e2d08-9e8b-4748-a89a-954a28ad43c9";
@@ -28,8 +28,8 @@ if (!new Set(["prepare", "close", "finalize", "diagnose", "status",
 }
 
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_sandbox" || !config.billing.stripeSecretKey?.startsWith("sk_test_")) {
-  throw new Error("C4B proof requires the deployed Sophia Stripe sandbox adapter and a test-mode key.");
+if (config.billing.provider !== "stripe_sandbox" || !isStripeTestCredential(config.billing.stripeSecretKey)) {
+  throw new Error("C4B proof requires the deployed Sophia Stripe sandbox adapter and a test-mode credential.");
 }
 const basePrice = config.billing.stripePriceMappings[VOICE_PLAN_ID];
 const meteredPrice = config.billing.stripeMeteredPriceMappings[VOICE_PLAN_ID];

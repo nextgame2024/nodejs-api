@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import Stripe from "stripe";
 import { z } from "zod";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeTestCredential, runtimeConfig } from "../config/runtime-config.js";
 
 const CONFIRMATION = "I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS";
 const PURPOSE = "founding-plan-v1";
@@ -11,8 +11,8 @@ if (process.env.SOPHIA_FOUNDING_CONFIRM !== CONFIRMATION) {
 }
 
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_sandbox" || !config.billing.stripeSecretKey?.startsWith("sk_test_")) {
-  throw new Error("Founding provisioning requires the dedicated Sophia Stripe sandbox adapter and a test-mode key.");
+if (config.billing.provider !== "stripe_sandbox" || !isStripeTestCredential(config.billing.stripeSecretKey)) {
+  throw new Error("Founding provisioning requires the dedicated Sophia Stripe sandbox adapter and a test-mode credential.");
 }
 const meterEventName = config.billing.stripeMeterBindings["active-overage-minutes"];
 if (!meterEventName) throw new Error("The approved active-overage-minutes Meter binding must be configured.");

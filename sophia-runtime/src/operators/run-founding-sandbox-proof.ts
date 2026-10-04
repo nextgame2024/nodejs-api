@@ -9,7 +9,7 @@ import { BillingInvoiceAdjustmentOutboxService } from "../admin/billing/billing-
 import { BillingLifecycleService } from "../admin/billing/billing-lifecycle.service.js";
 import { BillingPeriodLedgerService } from "../admin/billing/billing-period-ledger.service.js";
 import type { AdminPrincipal } from "../admin/contracts/admin-contracts.js";
-import { runtimeConfig } from "../config/runtime-config.js";
+import { isStripeTestCredential, runtimeConfig } from "../config/runtime-config.js";
 import { DatabaseService } from "../database/database.service.js";
 
 const CONFIRMATION = "I_UNDERSTAND_THIS_CREATES_STRIPE_SANDBOX_OBJECTS";
@@ -24,8 +24,8 @@ if (!new Set(["prepare", "close", "milestone", "advance-commitment", "status"]).
 }
 
 const config = runtimeConfig();
-if (config.billing.provider !== "stripe_sandbox" || !config.billing.stripeSecretKey?.startsWith("sk_test_")) {
-  throw new Error("Founding proof requires the dedicated Sophia Stripe sandbox adapter and a test-mode key.");
+if (config.billing.provider !== "stripe_sandbox" || !isStripeTestCredential(config.billing.stripeSecretKey)) {
+  throw new Error("Founding proof requires the dedicated Sophia Stripe sandbox adapter and a test-mode credential.");
 }
 const basePrice = config.billing.stripePriceMappings[planVersionId];
 const commencementPrice = config.billing.stripeInitialPriceMappings[planVersionId]?.commencement;
