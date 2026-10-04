@@ -4,6 +4,42 @@ Date: 2026-10-04 (Australia/Brisbane)
 
 Status: blocked; live Checkout remains disabled.
 
+## Owner-attestation follow-up
+
+On 2026-10-04 the owner attested that the business is not GST-registered and
+that its reasonable current and current-plus-next-11-month projected GST
+turnover from all business activities is below AUD 75,000. Migration `056`
+stores the structured claims, the attesting identity and a digest of the dated
+statement as append-only evidence; it does not store the raw statement. The
+attestation must be reviewed by 2026-11-03, or earlier if the facts change.
+
+The screenshot-confirmed live Stripe account identifier was checked against the
+authority store. There was exactly one coherent active seller policy, the live
+provider key/account key had no collision, and the supplied live account was
+not confused with the existing sandbox account. The immutable live
+`stripe-sophia` / `legacy-primary` binding was then created in the same guarded
+transaction as the attestation. Live Checkout Session, subscription and invoice
+counts stayed at zero. No Stripe request was made and no collection switch was
+changed.
+
+The subsequent compiled activation audit passed `stored_tax_policy`,
+`current_tax_attestation`, `recent_mfa`, `catalog_and_webhook` and
+`checkout_disabled`. Its decision remains `keep_checkout_disabled`. Remaining
+gates are:
+
+- verify live overage collection immediately before activation while its switch
+  remains off, then authorise it only for genuine obligations;
+- verify live Founding milestone collection while its switch remains off, then
+  authorise it only after production-deployment acceptance;
+- replace the standard live Stripe key with a least-privilege restricted key,
+  or document the minimum required permissions, and review an access policy for
+  the deployment egress model; and
+- complete genuine-customer tenant, plan, signed-terms, billing-contact and
+  authorised-representative checks.
+
+Runtime revision `3d560c2fb7b7` deployed successfully. The full Runtime suite
+passed 135 suites / 501 tests, plus typecheck and production build.
+
 ## Decision
 
 The first live payment will come from a genuine customer. No synthetic live
