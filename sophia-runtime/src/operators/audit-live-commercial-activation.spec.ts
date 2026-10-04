@@ -16,6 +16,8 @@ describe("live commercial activation audit", () => {
 
   it("reports every unresolved first-customer gate", () => {
     expect(source).toContain('id: "current_tax_attestation"');
+    expect(source).toContain("latest_current_seller_tax_attestation");
+    expect(source).toContain("currentTaxAttestationAt");
     expect(source).toContain('id: "recent_mfa"');
     expect(source).toContain('id: "live_overage_collection"');
     expect(source).toContain('id: "live_founding_milestone"');

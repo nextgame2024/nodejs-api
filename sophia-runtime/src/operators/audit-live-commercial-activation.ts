@@ -8,6 +8,8 @@ import { StripeBillingInvoiceAdjustmentDispatcher } from
 import { STRIPE_BILLING_PROVIDER_KEY } from "../admin/billing/stripe-billing.constants.js";
 
 type SellerPolicy = {
+  seller_legal_entity_id: string;
+  seller_commercial_policy_version_id: string;
   seller_key: string;
   legal_form: string;
   jurisdiction_country: string;
@@ -20,6 +22,7 @@ type SellerPolicy = {
 };
 
 type RecentMfaProof = { proved_at: Date | string };
+type CurrentTaxAttestation = { attested_at: Date | string };
 
 const config = runtimeConfig();
 if (config.billing.provider !== "stripe_live" || !config.billing.stripeSecretKey?.startsWith("sk_live_")) {
@@ -32,7 +35,8 @@ if (config.billing.liveCheckoutEnabled) {
 const database = new DatabaseService();
 try {
   const sellerPolicies = await database.query<SellerPolicy>(
-    `SELECT seller.seller_key,legal.legal_form,legal.jurisdiction_country,
+    `SELECT seller.seller_legal_entity_id,policy.seller_commercial_policy_version_id,
+            seller.seller_key,legal.legal_form,legal.jurisdiction_country,
             legal.registration_identifier_type,policy.customer_scope,policy.gst_registered,
             policy.tax_jurisdiction_country,policy.tax_calculation_mode,policy.price_display_mode
      FROM ${config.schema}.seller_billing_provider_accounts account
@@ -46,7 +50,8 @@ try {
        ORDER BY effective_from DESC LIMIT 2
      ) legal ON true
      JOIN LATERAL (
-       SELECT customer_scope,gst_registered,tax_jurisdiction_country,tax_calculation_mode,price_display_mode
+       SELECT seller_commercial_policy_version_id,customer_scope,gst_registered,
+              tax_jurisdiction_country,tax_calculation_mode,price_display_mode
        FROM ${config.schema}.seller_commercial_policy_versions
        WHERE seller_legal_entity_id=seller.seller_legal_entity_id AND status='published'
          AND effective_from<=now() AND (effective_to IS NULL OR effective_to>now())
@@ -68,6 +73,12 @@ try {
     `SELECT ${config.schema}.latest_billing_authorization_proof() AS proved_at`,
   );
   const recentMfaProof = recentMfaProofs.rows[0]?.proved_at ? recentMfaProofs.rows[0] : null;
+  const currentTaxAttestations = policy ? await database.query<CurrentTaxAttestation>(
+    `SELECT ${config.schema}.latest_current_seller_tax_attestation($1,$2) AS attested_at`,
+    [policy.seller_legal_entity_id, policy.seller_commercial_policy_version_id],
+  ) : { rows: [] };
+  const currentTaxAttestation = currentTaxAttestations.rows[0]?.attested_at
+    ? currentTaxAttestations.rows[0] : null;
 
   const gates = [
     { id: "checkout_disabled", status: "pass", detail: "Real charge-creating Checkout remains disabled." },
@@ -76,8 +87,10 @@ try {
       detail: storedTaxPolicyIsCoherent
         ? "The effective stored policy is AU sole trader, ABN, business-only and non-GST."
         : "Exactly one coherent effective seller policy was not found." },
-    { id: "current_tax_attestation", status: "operator_required",
-      detail: "The seller/accountant must reconfirm current and projected GST turnover and registration before the first invoice." },
+    { id: "current_tax_attestation", status: currentTaxAttestation ? "pass" : "operator_required",
+      detail: currentTaxAttestation
+        ? "A current owner attestation confirms non-registration and current/projected GST turnover below AU$75,000."
+        : "The seller/accountant must reconfirm current and projected GST turnover and registration before the first invoice." },
     { id: "recent_mfa", status: recentMfaProof ? "pass" : "blocked",
       detail: recentMfaProof
         ? "A recent MFA-authenticated billing.manage authorization proof is recorded."
@@ -107,6 +120,8 @@ try {
       priceDisplayMode: policy.price_display_mode,
     } : null,
     recentMfaProofAt: recentMfaProof ? new Date(recentMfaProof.proved_at).toISOString() : null,
+    currentTaxAttestationAt: currentTaxAttestation
+      ? new Date(currentTaxAttestation.attested_at).toISOString() : null,
     gates,
     blockers,
     externalMutation: false,
