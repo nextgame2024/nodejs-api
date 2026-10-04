@@ -5,6 +5,7 @@ import { StripeBillingCommercialMilestoneDispatcher } from
   "../admin/billing/stripe-billing-commercial-milestone.dispatcher.js";
 import { StripeBillingInvoiceAdjustmentDispatcher } from
   "../admin/billing/stripe-billing-invoice-adjustment.dispatcher.js";
+import { STRIPE_BILLING_PROVIDER_KEY } from "../admin/billing/stripe-billing.constants.js";
 
 type SellerPolicy = {
   seller_key: string;
@@ -17,6 +18,8 @@ type SellerPolicy = {
   tax_calculation_mode: string;
   price_display_mode: string;
 };
+
+type RecentMfaProof = { proved_at: Date | string };
 
 const config = runtimeConfig();
 if (config.billing.provider !== "stripe_live" || !config.billing.stripeSecretKey?.startsWith("sk_live_")) {
@@ -49,9 +52,9 @@ try {
          AND effective_from<=now() AND (effective_to IS NULL OR effective_to>now())
        ORDER BY effective_from DESC LIMIT 2
      ) policy ON true
-     WHERE account.provider_key='stripe' AND account.provider_environment='live'
+     WHERE account.provider_key=$2 AND account.provider_environment='live'
        AND account.provider_account_key=$1 AND account.status='active'`,
-    [config.billing.providerAccountKey],
+    [config.billing.providerAccountKey, STRIPE_BILLING_PROVIDER_KEY],
   );
   const policy = sellerPolicies.rows.length === 1 ? sellerPolicies.rows[0] : null;
   const storedTaxPolicyIsCoherent = Boolean(policy
@@ -61,6 +64,15 @@ try {
     && policy.tax_calculation_mode === "none" && policy.price_display_mode === "no_tax");
   const adjustment = new StripeBillingInvoiceAdjustmentDispatcher(config.billing).status();
   const milestone = new StripeBillingCommercialMilestoneDispatcher(config.billing).status();
+  const recentMfaProofs = await database.query<RecentMfaProof>(
+    `SELECT created_at AS proved_at
+     FROM ${config.schema}.admin_audit_events
+     WHERE event_type='billing.authorization.proved'
+       AND permission_key='billing.manage' AND outcome='allowed'
+       AND created_at>=now()-interval '12 hours'
+     ORDER BY created_at DESC LIMIT 1`,
+  );
+  const recentMfaProof = recentMfaProofs.rows[0] ?? null;
 
   const gates = [
     { id: "checkout_disabled", status: "pass", detail: "Real charge-creating Checkout remains disabled." },
@@ -71,8 +83,10 @@ try {
         : "Exactly one coherent effective seller policy was not found." },
     { id: "current_tax_attestation", status: "operator_required",
       detail: "The seller/accountant must reconfirm current and projected GST turnover and registration before the first invoice." },
-    { id: "recent_mfa", status: "blocked",
-      detail: "Business Manager /user does not yet supply the verified MFA timestamp required by billing.manage." },
+    { id: "recent_mfa", status: recentMfaProof ? "pass" : "blocked",
+      detail: recentMfaProof
+        ? "A recent MFA-authenticated billing.manage authorization proof is recorded."
+        : "No recent MFA-authenticated billing.manage authorization proof is recorded." },
     { id: "live_overage_collection", status: adjustment.availability === "configured" ? "pass" : "blocked",
       detail: adjustment.detail },
     { id: "live_founding_milestone", status: milestone.availability === "configured" ? "pass" : "blocked",
@@ -97,6 +111,7 @@ try {
       taxMode: policy.tax_calculation_mode,
       priceDisplayMode: policy.price_display_mode,
     } : null,
+    recentMfaProofAt: recentMfaProof ? new Date(recentMfaProof.proved_at).toISOString() : null,
     gates,
     blockers,
     externalMutation: false,

@@ -10,6 +10,7 @@ describe("UsageBillingController permissions", () => {
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.limits)).toEqual(["usage.read"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.updateLimits)).toEqual(["usage.limits.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.checkout)).toEqual(["billing.manage"]);
+    expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.authorizationProof)).toEqual(["billing.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.portal)).toEqual(["billing.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.bindCustomer)).toEqual(["billing.manage"]);
     expect(Reflect.getMetadata(ADMIN_PERMISSIONS_METADATA, prototype.reconcile)).toEqual(["billing.manage"]);

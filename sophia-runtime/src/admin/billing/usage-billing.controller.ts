@@ -33,6 +33,12 @@ export class UsageBillingController {
     return this.lifecycle.checkout(tenantId, request.adminPrincipal, body);
   }
 
+  @Post("authorization-proof") @RequireAdminPermissions("billing.manage")
+  authorizationProof(@Param("tenantId") tenantId: string,
+    @Req() request: { adminPrincipal: AdminPrincipal }) {
+    return this.lifecycle.authorizationProof(tenantId, request.adminPrincipal);
+  }
+
   @Post("portal") @RequireAdminPermissions("billing.manage")
   portal(@Param("tenantId") tenantId: string, @Req() request: { adminPrincipal: AdminPrincipal }, @Body() body: unknown) {
     return this.lifecycle.portal(tenantId, request.adminPrincipal, body);

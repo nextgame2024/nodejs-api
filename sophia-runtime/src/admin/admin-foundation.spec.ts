@@ -6,6 +6,8 @@ import { AdminAuditService } from "./authorization/admin-audit.service.js";
 import { AdminModule } from "./admin.module.js";
 import { StripeBillingProvider } from "./billing/stripe-billing.provider.js";
 import { StripeBillingMeterEventDispatcher } from "./billing/stripe-billing-meter-event.dispatcher.js";
+import { BILLING_INVOICE_ADJUSTMENT_DISPATCHER } from "./billing/billing-invoice-adjustment.port.js";
+import { BILLING_COMMERCIAL_MILESTONE_DISPATCHER } from "./billing/billing-commercial-milestone.port.js";
 
 describe("Sophia Admin foundation", () => {
   beforeEach(() => {
@@ -65,5 +67,22 @@ describe("Sophia Admin foundation", () => {
       { useFactory?: () => StripeBillingMeterEventDispatcher } | undefined;
     expect(registration?.useFactory).toEqual(expect.any(Function));
     expect(registration?.useFactory?.()).toBeInstanceOf(StripeBillingMeterEventDispatcher);
+  });
+
+  it("keeps live collection adapters wired while their independent switches remain default-off", () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
+    delete process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED;
+    delete process.env.SOPHIA_BILLING_LIVE_MILESTONE_ENABLED;
+    const providers = Reflect.getMetadata("providers", AdminModule) as unknown[];
+    for (const token of [BILLING_INVOICE_ADJUSTMENT_DISPATCHER, BILLING_COMMERCIAL_MILESTONE_DISPATCHER]) {
+      const registration = providers.find((provider) => provider && typeof provider === "object"
+        && (provider as { provide?: unknown }).provide === token) as
+        { useFactory?: (disabled: object, stripe: object) => object } | undefined;
+      const disabled = {}; const stripe = {};
+      expect(registration?.useFactory?.(disabled, stripe)).toBe(stripe);
+    }
+    delete process.env.SOPHIA_BILLING_PROVIDER;
+    delete process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY;
   });
 });

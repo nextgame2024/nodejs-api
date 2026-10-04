@@ -20,9 +20,11 @@ merely by changing `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED`:
   collection switches and covered by environment-aware mocked regression tests,
   but have not been invoked against live Stripe;
 - `billing.manage` correctly requires recent MFA. Business Manager TOTP
-  enrollment and step-up are implemented, but production still needs the MFA
-  table, dedicated encryption key, genuine operator enrollment and an
-  authenticated privileged-request proof;
+  enrollment is deployed and the genuine operator proof passed. A durable
+  no-charge proof endpoint and evidence-aware activation audit are implemented
+  and await deployment;
+- the live seller/provider account binding is absent from the authority store,
+  even though the immutable seller policy and live Stripe resources exist;
 - the stored seller policy is intentionally business-only and non-GST, but the
   seller/accountant must reconfirm actual current and projected GST turnover
   before the first invoice; and
@@ -55,6 +57,11 @@ This checkpoint is an implementation boundary, not tax or legal advice.
   command. It reads the effective seller policy and reports every gate; it makes
   no Stripe request and creates no Customer, Checkout Session, invoice or charge.
 - The audit does not print a legal name, ABN value, API key or webhook secret.
+- The audit uses the canonical `stripe-sophia` provider key and accepts only a
+  successful `billing.manage` proof recorded within the prior twelve hours.
+- Live invoice-adjustment and commercial-milestone adapters are now wired for
+  both Stripe environments. Their independent live switches still default off
+  and remain the final submission authority.
 - Business Manager now implements password-confirmed TOTP enrollment,
   code-confirmed activation, encrypted-at-rest secrets, monotonic anti-replay,
   bounded lockout and signed server-time step-up evidence. Sophia rejects
@@ -66,21 +73,22 @@ This checkpoint is an implementation boundary, not tax or legal advice.
    contact and authorised customer representative.
 2. Obtain current seller/accountant confirmation of GST registration and price
    display obligations; publish a new immutable policy/version if facts changed.
-3. Apply `scripts/sql/user_mfa_factors.sql`, install a dedicated 32-byte base64
-   `BM_MFA_ENCRYPTION_KEY`, deploy both applications, enroll the genuine
-   operator and prove a recent server-verified timestamp reaches Sophia Admin.
-4. Run the final production-readiness audit for the environment-safe live
+3. Deploy the durable authorization-proof endpoint and repaired activation
+   audit, then record a fresh MFA-authenticated `billing.manage` proof.
+4. Publish the exact immutable live seller/provider-account binding for the
+   canonical `stripe-sophia` account after verifying its external account
+   identity; do not infer or fabricate that identifier.
+5. Run the final production-readiness audit for the environment-safe live
    overage path; keep its switch off until the genuine tenant is approved.
-5. Run the final production-readiness audit for the live Founding milestone
+6. Run the final production-readiness audit for the live Founding milestone
    path, if the first customer's plan is Founding; keep its switch off until the
    milestone is actually accepted by an authorised recent-MFA administrator.
-6. Replace the standard Stripe key with a verified least-privilege restricted
+7. Replace the standard Stripe key with a verified least-privilege restricted
    key where feasible, or document required permissions; apply IP restrictions
    if Render provides stable egress suitable for allowlisting.
-7. Re-run `billing:verify-live` and `billing:audit-live-activation`, then obtain
+8. Re-run `billing:verify-live` and `billing:audit-live-activation`, then obtain
    a fresh explicit authority decision before changing the activation flag.
 
-The MFA implementation did not apply its schema, configure a production key,
-enroll a factor or issue a production MFA token. No Stripe request, Customer,
-subscription, invoice, Checkout Session or charge was created by this
-checkpoint.
+The authenticated MFA proof contacted no Stripe API and created no Customer,
+subscription, invoice, Checkout Session or charge. Checkout, live overage and
+live milestone collection remained disabled.

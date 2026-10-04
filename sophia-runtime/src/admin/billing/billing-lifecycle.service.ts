@@ -53,6 +53,36 @@ export class BillingLifecycleService {
 
   status() { return this.provider.status(); }
 
+  async authorizationProof(tenantId: string, principal: AdminPrincipal) {
+    const status = this.provider.status();
+    await this.audit.record({
+      tenantId,
+      identityUserId: principal.identityUserId,
+      eventType: "billing.authorization.proved",
+      permission: "billing.manage",
+      outcome: "allowed",
+      resourceType: "billingAuthorization",
+      metadata: {
+        providerKey: status.providerKey,
+        providerAccountKey: status.providerAccountKey,
+        availability: status.availability,
+        checkoutEnabled: status.checkout,
+        stripeRequest: false,
+        liveCharge: false,
+      },
+    });
+    return {
+      authorized: true,
+      permission: "billing.manage" as const,
+      mfaVerifiedAt: principal.mfaVerifiedAt,
+      availability: status.availability,
+      checkoutEnabled: status.checkout,
+      stripeRequest: false,
+      externalMutation: false,
+      liveCharge: false,
+    };
+  }
+
   async checkout(tenantId: string, principal: AdminPrincipal, body: unknown) {
     const input = hostedCheckoutSchema.parse(body);
     const status = this.provider.status();

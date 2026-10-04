@@ -24,6 +24,14 @@ describe("live commercial activation audit", () => {
     expect(source).toContain('decision: blockers.length === 0 ? "ready_for_explicit_charge_authority" : "keep_checkout_disabled"');
   });
 
+  it("uses canonical provider scope and durable recent-MFA proof evidence", () => {
+    expect(source).toContain("STRIPE_BILLING_PROVIDER_KEY");
+    expect(source).toContain("billing.authorization.proved");
+    expect(source).toContain("permission_key='billing.manage'");
+    expect(source).toContain("created_at>=now()-interval '12 hours'");
+    expect(source).not.toContain("account.provider_key='stripe'");
+  });
+
   it("does not expose legal identity or secret values", () => {
     expect(source).not.toContain("legal_name");
     expect(source).not.toContain("registration_identifier_value");

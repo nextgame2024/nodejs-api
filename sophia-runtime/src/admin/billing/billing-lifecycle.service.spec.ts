@@ -43,6 +43,34 @@ describe("BillingLifecycleService", () => {
     expect(provider.createHostedCheckout).not.toHaveBeenCalled();
   });
 
+  it("records an MFA-gated billing authorization proof without provider or billing I/O", async () => {
+    const provider = providerMock();
+    provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
+      providerAccountKey: "legacy-primary", checkout: false,
+      portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
+    const query = jest.fn();
+    const audit = { record: jest.fn(async () => undefined) };
+    const service = new BillingLifecycleService({ query } as never, provider, audit as never,
+      ledger() as never, meterOutbox() as never, invoiceAdjustments() as never,
+      invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments() as never);
+    const mfaPrincipal = { identityUserId: "billing-operator",
+      mfaVerifiedAt: "2026-10-04T00:00:00.000Z" } as never;
+
+    await expect(service.authorizationProof(tenantId, mfaPrincipal)).resolves.toEqual({
+      authorized: true, permission: "billing.manage", mfaVerifiedAt: "2026-10-04T00:00:00.000Z",
+      availability: "live", checkoutEnabled: false, stripeRequest: false,
+      externalMutation: false, liveCharge: false,
+    });
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId, identityUserId: "billing-operator", eventType: "billing.authorization.proved",
+      permission: "billing.manage", outcome: "allowed",
+      metadata: expect.objectContaining({ checkoutEnabled: false, stripeRequest: false, liveCharge: false }),
+    }));
+    expect(query).not.toHaveBeenCalled();
+    expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect(provider.reconcileTenant).not.toHaveBeenCalled();
+  });
+
   it("binds an externally created and provider-verified live Customer without creating a charge", async () => {
     const provider = providerMock();
     provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",

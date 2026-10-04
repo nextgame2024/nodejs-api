@@ -2,7 +2,7 @@
 
 Date: 2026-10-04 (Australia/Brisbane)
 
-Status: implemented; deployment configuration and authenticated operator proof remain required.
+Status: deployed operator proof passed; durable proof endpoint deployment remains pending.
 
 ## Implemented boundary
 
@@ -45,24 +45,43 @@ Status: implemented; deployment configuration and authenticated operator proof r
 - Password-only factor removal is not an account-recovery path. Lost-device
   recovery and organisation-enforced MFA remain separately governed work.
 
-## Deployment requirements
+## Deployed proof
+
+On 2026-10-04 the production database was verified to contain
+`users.auth_session_version`, `user_mfa_factors` and
+`user_security_audit_events`. The genuine operator enrolled TOTP, completed a
+fresh MFA login and received a Business Manager identity containing the
+server-issued `mfaVerifiedAt` timestamp.
+
+The operator's existing Business Manager company was mapped to one new Sophia
+tenant and the operator received the fixed `billing_administrator` role under
+explicit user authority. The tenant was verified empty: it had no commercial
+assignment, provider Customer, Checkout intent, subscription or invoice.
+
+One bounded request with a synthetic plan identifier passed the deployed
+`billing.manage` guard and stopped at the disabled live-Checkout boundary with
+HTTP 503 before database billing work or Stripe I/O. An otherwise equivalent
+signed identity without `mfaVerifiedAt` failed in Business Manager with HTTP
+401 and `MFA_AUTHENTICATION_REQUIRED`; Runtime also returned HTTP 401. No
+Customer, subscription, invoice, Checkout Session or charge was created.
+
+The source now includes a dedicated `authorization-proof` action. It is guarded
+by `billing.manage`, records only sanitized durable audit evidence, returns
+`stripeRequest: false` and `liveCharge: false`, and invokes no billing provider.
+The activation audit consumes that evidence for twelve hours rather than
+hard-coding the recent-MFA gate as blocked.
+
+## Remaining deployment requirements
 
 1. Invalidate and re-enroll any factor whose setup key or QR payload was copied
    outside the intended enrollment screen. A TOTP setup key is an
    authenticator secret, even though its six-digit outputs change.
-2. Apply `scripts/sql/user_mfa_factors.sql` to the Business Manager database
-   using its authorised owner connection. Existing deployments must rerun the
-   additive script for `auth_session_version` and the security-audit table, or
-   allow the normal startup schema synchronisation to apply them.
-3. Generate a dedicated 32-byte base64 key and install it only in the Business
-   Manager Render service as `BM_MFA_ENCRYPTION_KEY`. Do not reuse `JWT_SECRET`,
-   a Stripe key or the Sophia connector secret.
-4. Optionally set `BM_MFA_TOTP_ISSUER`; the default label is `Sophia AI`.
-5. Deploy backend and frontend, then enroll the genuine operator from Settings.
-6. Prove that MFA login supplies `/api/user.mfaVerifiedAt` and that a protected
-   Sophia `billing.manage` request passes while the same request without recent
-   evidence fails closed.
+2. Preserve the dedicated deployed `BM_MFA_ENCRYPTION_KEY`; do not reuse
+   `JWT_SECRET`, a Stripe key or the Sophia connector secret.
+3. Deploy the durable `authorization-proof` endpoint and repaired activation
+   audit, then invoke the endpoint with a fresh MFA login before the final
+   activation audit.
 
-Checkout and both live collection switches remain disabled. This checkpoint did
-not apply the schema, enroll a factor, issue a production MFA token, contact
-Stripe, or create a charge.
+Checkout and both live collection switches remain disabled. This proof did not
+contact Stripe or create a Customer, subscription, invoice, Checkout Session or
+charge.

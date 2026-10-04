@@ -155,12 +155,12 @@ import { runtimeConfig } from "../config/runtime-config.js";
       inject: [DisabledBillingInvoiceAdjustmentDispatcher, StripeBillingInvoiceAdjustmentDispatcher],
       useFactory: (disabled: DisabledBillingInvoiceAdjustmentDispatcher,
         stripe: StripeBillingInvoiceAdjustmentDispatcher) =>
-        runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
+        runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
     { provide: BILLING_COMMERCIAL_MILESTONE_DISPATCHER,
       inject: [DisabledBillingCommercialMilestoneDispatcher, StripeBillingCommercialMilestoneDispatcher],
       useFactory: (disabled: DisabledBillingCommercialMilestoneDispatcher,
         stripe: StripeBillingCommercialMilestoneDispatcher) =>
-        runtimeConfig().billing.provider === "stripe_sandbox" ? stripe : disabled },
+        runtimeConfig().billing.provider === "disabled" ? disabled : stripe },
     { provide: APP_INTERCEPTOR, useClass: AdminAuditInterceptor },
     { provide: KNOWLEDGE_OBJECT_STORAGE, useExisting: PrivateS3KnowledgeStorageService },
     { provide: KNOWLEDGE_MALWARE_SCANNER, useExisting: HttpMalwareScannerService },
