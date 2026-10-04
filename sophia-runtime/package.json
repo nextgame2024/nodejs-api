@@ -8,7 +8,7 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-database-migrations.mjs",
     "contracts:check": "node --import tsx scripts/generate-v2-contracts.mts --check",
     "contracts:generate": "node --import tsx scripts/generate-v2-contracts.mts",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
@@ -16,7 +16,8 @@
     "start": "node dist/main.js",
     "start:dev": "tsx watch src/main.ts",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
-    "migrate": "tsx src/database/migrate.ts",
+    "migrate": "node dist/database/migrate.js",
+    "migrate:dev": "tsx src/database/migrate.ts",
     "providers:provision": "tsx scripts/provider-operations.mts provision",
     "providers:reconcile": "tsx scripts/provider-operations.mts reconcile",
     "operations:check-service-objectives": "node scripts/audit-service-objectives.mjs --preflight",
