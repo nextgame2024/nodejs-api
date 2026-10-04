@@ -1,6 +1,9 @@
 import "dotenv/config";
 import type { AvatarProviderSelection } from "../providers/avatar/avatar-provider.interface.js";
 
+export const LIVE_CHECKOUT_ACTIVATION_CONFIRMATION =
+  "I_AUTHORIZE_SOPHIA_LIVE_CHECKOUT_FOR_APPROVED_CUSTOMERS";
+
 export type RuntimeConfig = {
   port: number;
   corsOrigins: string[];
@@ -343,9 +346,15 @@ function billingConfig(): RuntimeConfig["billing"] {
     throw new Error("Live billing collection switches may only be enabled with stripe_live.");
   }
   if (provider === "stripe_live" && liveCheckoutEnabled) {
-    throw new Error(
-      "Stripe live Checkout cannot be enabled until live overage, commercial milestone, recent-MFA, tax-attestation, and key-scope gates are implemented and verified.",
-    );
+    if (!stripeSecretKey?.startsWith("rk_live_")) {
+      throw new Error("Stripe live Checkout requires a least-privilege rk_live restricted key.");
+    }
+    if (!liveOverageEnabled) {
+      throw new Error("Stripe live Checkout requires live overage collection to be explicitly enabled first.");
+    }
+    if (process.env.SOPHIA_BILLING_LIVE_ACTIVATION_CONFIRM !== LIVE_CHECKOUT_ACTIVATION_CONFIRMATION) {
+      throw new Error("Stripe live Checkout requires the separate explicit production activation confirmation.");
+    }
   }
   const stripeWebhookSecret = emptyToUndefined(process.env.SOPHIA_BILLING_STRIPE_WEBHOOK_SECRET);
   if (stripeWebhookSecret && !stripeWebhookSecret.startsWith("whsec_")) {

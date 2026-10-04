@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
-import { isStripeLiveCredential, isStripeTestCredential, runtimeConfig } from "./runtime-config.js";
+import { isStripeLiveCredential, isStripeTestCredential, LIVE_CHECKOUT_ACTIVATION_CONFIRMATION,
+  runtimeConfig } from "./runtime-config.js";
 
 const billingKeys = [
   "SOPHIA_RUNTIME_DATABASE_URL",
@@ -8,6 +9,7 @@ const billingKeys = [
   "SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED",
   "SOPHIA_BILLING_LIVE_OVERAGE_ENABLED",
   "SOPHIA_BILLING_LIVE_MILESTONE_ENABLED",
+  "SOPHIA_BILLING_LIVE_ACTIVATION_CONFIRM",
   "SOPHIA_BILLING_STRIPE_SECRET_KEY",
   "SOPHIA_BILLING_STRIPE_OVERAGE_PRICE_MAPPINGS",
   "SOPHIA_BILLING_STRIPE_INITIAL_PRICE_MAPPINGS",
@@ -63,13 +65,23 @@ describe("runtime billing configuration", () => {
     expect(() => runtimeConfig()).toThrow("may only be enabled with stripe_live");
   });
 
-  it("rejects live charge activation while the launch gates remain incomplete", () => {
+  it("requires a restricted key before live charge activation", () => {
     process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
     process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "sk_live_sophia";
     process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED = "true";
-    expect(() => runtimeConfig()).toThrow(
-      "cannot be enabled until live overage, commercial milestone, recent-MFA, tax-attestation, and key-scope gates",
-    );
+    expect(() => runtimeConfig()).toThrow("requires a least-privilege rk_live restricted key");
+  });
+
+  it("requires overage collection and a separate confirmation for live charge activation", () => {
+    process.env.SOPHIA_BILLING_PROVIDER = "stripe_live";
+    process.env.SOPHIA_BILLING_STRIPE_SECRET_KEY = "rk_live_sophia";
+    process.env.SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED = "true";
+    expect(() => runtimeConfig()).toThrow("requires live overage collection");
+    process.env.SOPHIA_BILLING_LIVE_OVERAGE_ENABLED = "true";
+    expect(() => runtimeConfig()).toThrow("requires the separate explicit production activation confirmation");
+    process.env.SOPHIA_BILLING_LIVE_ACTIVATION_CONFIRM = LIVE_CHECKOUT_ACTIVATION_CONFIRMATION;
+    expect(runtimeConfig().billing).toMatchObject({ liveCheckoutEnabled: true, liveOverageEnabled: true,
+      liveMilestoneEnabled: false });
   });
 
   it("requires a stable lowercase provider account key", () => {
