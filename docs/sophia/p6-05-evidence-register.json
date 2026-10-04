@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "1.0",
+  "taskId": "P6-05",
+  "status": "preflight_blocked",
+  "dependency": {
+    "taskId": "P6-04",
+    "status": "blocked"
+  },
+  "claims": {
+    "liveLatencyMeasured": false,
+    "providerAvailabilityMeasured": false,
+    "objectivesApproved": false,
+    "productionReady": false
+  },
+  "compositions": [
+    {
+      "id": "essential",
+      "pipelineMode": "native-realtime",
+      "owner": "Sophia Runtime and kiosk owners",
+      "runbook": "p6-05-preflight.md#operational-runbooks",
+      "rollback": "Disable the profile for new sessions; preserve or gracefully close existing sessions and reconcile allocated provider resources."
+    },
+    {
+      "id": "professional",
+      "pipelineMode": "orchestrated-voice",
+      "owner": "Sophia Runtime, kiosk and presentation-adapter owners",
+      "runbook": "p6-05-preflight.md#operational-runbooks",
+      "rollback": "Disable the profile for new sessions; do not silently substitute an unapproved speech or avatar owner; reconcile every partially allocated resource."
+    },
+    {
+      "id": "premium",
+      "pipelineMode": "composite-realtime",
+      "owner": "Sophia Runtime, kiosk and composite-provider owners",
+      "runbook": "p6-05-preflight.md#operational-runbooks",
+      "rollback": "Disable the profile for new sessions; close the pinned composite session safely and do not change reasoning ownership mid-session."
+    }
+  ],
+  "requiredMetrics": [
+    {
+      "id": "startup",
+      "definition": "Admission request to ready session, with allocation, provider, persistence and browser-connect stages separated.",
+      "requiredModes": ["mocked_warm", "mocked_cold", "live_warm", "live_cold"]
+    },
+    {
+      "id": "first_audio",
+      "definition": "Accepted user turn or explicit greeting request to the first audible assistant frame.",
+      "requiredModes": ["mocked_warm", "live_warm", "live_cold"]
+    },
+    {
+      "id": "interruption",
+      "definition": "User speech-start or interrupt request to confirmed output stop and stale-buffer discard.",
+      "requiredModes": ["mocked_warm", "live_warm"]
+    },
+    {
+      "id": "tool_execution",
+      "definition": "Accepted tool request to terminal result, separated into policy/database, connector and provider-bridge time.",
+      "requiredModes": ["mocked_warm", "live_warm"]
+    },
+    {
+      "id": "concurrency",
+      "definition": "Admission, completion, rejection and cleanup behavior at declared concurrent-session and tool-call loads.",
+      "requiredModes": ["mocked_warm", "live_warm"]
+    },
+    {
+      "id": "report_duration",
+      "definition": "Authoritative report job creation to terminal generation state, separated from delivery acceptance and verified delivery.",
+      "requiredModes": ["mocked_warm", "live_warm"]
+    },
+    {
+      "id": "delivery_queue_age",
+      "definition": "Oldest eligible delivery item age plus claim-to-provider-acceptance and, where available, provider-acceptance-to-verified-delivery.",
+      "requiredModes": ["mocked_warm", "live_warm"]
+    }
+  ],
+  "observations": [],
+  "objectives": [
+    { "id": "startup", "approval": "unapproved", "target": null },
+    { "id": "first_audio", "approval": "unapproved", "target": null },
+    { "id": "interruption", "approval": "unapproved", "target": null },
+    { "id": "tool_execution", "approval": "unapproved", "target": null },
+    { "id": "concurrency", "approval": "unapproved", "target": null },
+    { "id": "report_duration", "approval": "unapproved", "target": null },
+    { "id": "delivery_queue_age", "approval": "unapproved", "target": null },
+    { "id": "provider_cost_per_session", "approval": "unapproved", "target": null },
+    { "id": "failover_limit", "approval": "unapproved", "target": null }
+  ],
+  "rehearsals": [
+    { "id": "provider_outage", "status": "not_run" },
+    { "id": "partial_startup", "status": "not_run" },
+    { "id": "queue_backlog", "status": "not_run" },
+    { "id": "privacy_incident", "status": "not_run" },
+    { "id": "rollback", "status": "not_run" }
+  ],
+  "blockers": [
+    "P6-04 is not complete.",
+    "No correlated benchmark dataset exists for all required metrics and supported compositions.",
+    "No explicitly authorised, budget-capped live provider benchmark has run.",
+    "No service objective, provider-cost ceiling or failover limit has been approved.",
+    "The five operational playbooks are drafted but have not been rehearsed."
+  ]
+}

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C4-MFA-DURABLE-PROOF-PASSED-ACTIVATION-BLOCKED",
-  "updatedAt": "2026-10-04T10:38:00+10:00",
+  "checkpoint": "P6-05-PREFLIGHT-STRUCTURE-PASSED-READINESS-BLOCKED",
+  "updatedAt": "2026-10-04T14:10:08+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -685,7 +685,7 @@
     },
     "P6-A06": {
       "status": "in_progress",
-      "completedSlice": "P6-A06C3C",
+      "completedSlice": "P6-A06C4-preactivation-gates",
       "evidence": [
         "p6-a06a-checkpoint.md",
         "p6-a06b-checkpoint.md",
@@ -734,9 +734,40 @@
         "p6-a06c3b0c4a-checkpoint.md",
         "p6-a06c3b0c4b-checkpoint.md",
         "p6-a06c3b0b-checkpoint.md",
+        "p6-a06c4-checkpoint.md",
+        "p6-a06c4-mfa-checkpoint.md",
+        "../../sophia-runtime/src/database/migrations/055_billing_authorization_proofs.sql",
+        "../../sophia-runtime/src/operators/audit-live-commercial-activation.ts",
         "../../../frontend/src/app/sophia-admin/usage-billing/usage-billing-admin.page.ts"
       ],
-      "detail": "P6-A06A/B completed the fail-closed adapter and recurring sandbox lifecycle. P6-A06C1/C2 established genuine non-owner authentication and environment-separated dormant live mode; C3A added read-only live verification and no-charge Customer binding. C3B0A adds seller/legal/policy authority and aggregate active-minute preview; C3B0B publishes the approved non-GST B2B seller policy and three immutable AUD plan versions with 3 concurrent sessions and 15 aggregate tool calls/minute; C3B0C1 provider-account isolation; C3B0C2 canonical connected intervals; C3B0C3 provider-period preservation and immutable one-ceiling ledgers. C4A applies migrations 044/045 and atomically creates one digest-bound outbox item only for positive whole-minute overage. Migration 046 and plan 2.1.50 separate provider-neutral capacity plus read/search, mutation, sensitive and per-tool safety admission from commercial entitlements. The isolated C4B fixture finalized an exact two-minute ledger and Stripe accepted and summarized one event, but the diagnostic proved its renewal invoice was already paid with a zero-quantity line before the post-period aggregate arrived. Plan 2.1.60 invalidates Meter-backed subscription-line charging for this aggregate-once policy and adds C4B3 for an idempotent draft-renewal invoice adjustment using a separately approved one-time overage Price. No live Stripe event or charge was created; live Checkout remains disabled."
+      "detail": "The fail-closed adapter, recurring/Founding sandbox lifecycle, immutable commercial model, provider-account isolation, exact aggregate usage ledgers, invoice-adjustment recovery and Founding deployment-milestone paths are implemented. The deployed MFA schema and durable billing.manage proof passed; the same identity without current MFA failed. A live restricted Stripe key then passed read-only verification of four plans, six one-time Prices, portals, the thirteen-event webhook and signing-secret configuration. The activation audit now passes catalog/webhook, stored non-GST B2B policy, current turnover attestation, recent MFA and key scope. P6-A06C4 remains incomplete until the genuine customer record and commercial acceptance exist and separate explicit authority enables the appropriate collection switches. Checkout, live overage and live milestone collection remain false; no real subscription, invoice, Checkout Session or charge has been created."
+    },
+    "P6-04": {
+      "status": "blocked",
+      "completedSlice": "preflight",
+      "evidence": [
+        "p6-04-preflight.md",
+        "../../scripts/check-sophia-boundaries.mjs",
+        "../../sophia-runtime/src/database/database.service.spec.ts",
+        "../../sophia-runtime/src/admin/authorization/admin-auth.guard.spec.ts",
+        "../../sophia-runtime/src/connectors/authority/connector-authority.service.spec.ts",
+        "../../../frontend/src/app/sophia-runtime/presentation/sophia-presentation-host.component.spec.ts"
+      ],
+      "detail": "Safe preflight passed the Runtime, backend, real-estate, architecture and frontend gates and mapped the adversarial scenarios to executed or partial evidence. Bounded AWS, HTTP, authentication, email, image and provider-SDK owner upgrades removed fast-xml-parser and every critical/high backend production finding; a Node 22 no-network API smoke and the full regression gates passed. The Angular framework/Router was aligned at 21.2.25, build/CLI/DevKit at 21.2.24 and Piscina overridden to patched 5.3.2: the frontend production audit is clean and its complete tree has zero critical findings. A temporary localhost PostgreSQL cluster passed the opt-in SQL gate (4 suites/11 tests) with real email explicitly disabled; it was stopped and removed. Formal P6-04 remains blocked because P6-A06 is incomplete, exact release images have not been scanned, two-replica/process-kill fault injection and an independently authorised penetration test remain unrun. No production data or provider was mutated."
+    },
+    "P6-05": {
+      "status": "blocked",
+      "completedSlice": "preflight",
+      "evidence": [
+        "p6-05-preflight.md",
+        "p6-05-evidence-register.json",
+        "../../sophia-runtime/scripts/audit-service-objectives.mjs",
+        "../../sophia-runtime/src/conversation/conversation.service.ts",
+        "../../sophia-runtime/src/tools/tools.service.ts",
+        "../../sophia-runtime/src/admin/operations/operational-accountability.service.ts",
+        "../../../frontend/src/app/sophia-runtime/services/sophia-session.facade.ts"
+      ],
+      "detail": "The blocked preflight now defines exact startup, first-audio, interruption, tool, concurrency, report and queue-age clock boundaries; separates warm/cold, mocked/live and backend/provider/network evidence; assigns owners and rollback paths to Essential, Professional and Premium; and drafts provider-outage, partial-startup, queue-backlog, privacy-incident and release-rollback runbooks. A machine-readable register and strict audit command fail closed on 51 missing composition/mode datasets, nine unapproved objectives and five unrehearsed playbooks. Existing coarse startup logs, durable tool durations, queue ages and provider-usage evidence were inventoried but were not promoted into performance claims. Formal P6-05 remains blocked by P6-04 and by missing authorised live evidence, approved targets/cost/failover limits and rehearsals. No live provider, email, billing or production-data request occurred; Checkout, live overage and live milestone collection remain disabled."
     }
   },
   "tests": [
@@ -2406,10 +2437,38 @@
       "node": "20.15.0",
       "result": "mfa-durable-proof-pass-activation-remains-blocked",
       "detail": "Runtime revision 678920099c6a deployed and migration 055 was applied as the only pending migration. The genuine operator's fresh MFA token invoked the provider-free authorization-proof endpoint successfully: billing.manage was allowed, Checkout was false, and the response explicitly reported stripeRequest=false, externalMutation=false and liveCharge=false. Durable proof timestamp 2026-10-04T00:37:37.993Z was recorded through the tenant-bound function and the token was cleared from the clipboard. The compiled read-only activation audit then passed recent_mfa while retaining decision keep_checkout_disabled. Remaining gates are the absent coherent live seller/provider-account binding, current GST re-attestation, disabled/unproven live overage collection, disabled/unproven live Founding milestone collection, Stripe least-privilege/IP-scope review and genuine-customer onboarding. No Stripe request, Customer, subscription, invoice, Checkout Session or charge was created; all three live switches remained false."
+    },
+    {
+      "command": "P6-04 safe preflight: Runtime tests/typechecks/build/contracts; backend release/boundary/protected-real-estate tests; frontend Sophia/Admin tests/typecheck/build; production dependency audits; credential-pattern scan; Docker Scout availability check",
+      "repository": "backend + sophia-runtime + frontend",
+      "node": "20.19.1 and repository Runtime",
+      "result": "preflight-complete-release-blocked",
+      "detail": "Runtime passed 135 suites/503 tests, both typechecks, build and contract drift; backend release passed 23 suites/97 tests with 12 SQL-gated tests skipped, the 241-file boundary passed and protected real estate passed 8 suites/38 tests; frontend passed 84 ChromeHeadless tests, typecheck and production build. Heuristic credential-pattern scans found no candidate repository paths. Runtime production audit had zero findings. Backend production audit found 39 findings (1 critical, 7 high, 31 moderate); frontend found one high Angular Router SSR advisory. Docker Scout is installed but the daemon is inaccessible, so no image scan ran. Disposable-database/two-replica fault injection and independent penetration testing remain unrun. No live provider, email, database or billing mutation occurred."
+    },
+    {
+      "command": "upgrade AWS/HTTP/authentication/email/image/provider dependency owners; refresh patched transitive lock selections; production audit; Node 22 no-network dependency API smoke; npm run test:release; npm run test:p0:boundaries; npm run test:p0:real-estate; create isolated localhost PostgreSQL; npm run test:release:sql; stop and remove temporary cluster",
+      "repository": "backend",
+      "node": "22.23.2",
+      "result": "critical-high-production-dependencies-cleared-sql-gate-pass",
+      "detail": "The AWS SDK packages were aligned at 3.1146.0 and the unused direct credential-provider package was removed, eliminating fast-xml-parser from the installed tree. Axios 1.20.0, Express 5.2.1, Google GenAI 2.27.0, JsonWebToken 9.0.3, Nodemailer 10.0.14 and Sharp 0.35.5 plus patched transitive FormData/JWS/path-to-regexp/ws selections reduced the production audit to 4 moderate, 0 high and 0 critical findings. A no-network dependency API smoke passed. Backend release passed 23 suites/97 tests, the 241-file boundary passed and protected real estate passed 8 suites/38 tests. A localhost-only PostgreSQL fixture then passed all 4 SQL suites/11 non-email tests; the consent-gated real-email test remained explicitly disabled. The disposable cluster was stopped and permanently removed. No production data, provider, email or billing mutation occurred."
+    },
+    {
+      "command": "align Angular framework/Router 21.2.25 and build/CLI/DevKit 21.2.24; override vulnerable build-time Piscina 5.2.0 with patched 5.3.2; production/full dependency audits; npm run test:sophia; Angular typecheck; production build",
+      "repository": "frontend",
+      "node": "20.19.1",
+      "result": "frontend-production-audit-clean-full-tree-critical-free",
+      "detail": "The Angular Router SSR advisory was removed without introducing SSR: the production audit now has zero findings. The full audit then exposed Angular Build's exact Piscina 5.2.0 critical development-time RCE gadget; a narrow same-major 5.3.2 override removed it. The complete tree now has 0 critical, 14 high and 4 moderate findings, with all remaining findings confined to development/build/test dependencies. The peer tree is valid and deduplicated; all 84 Sophia/Admin Chrome tests, typecheck and production build passed using the patched build worker. Existing bundle/style/CommonJS/stylesheet warnings remain non-security build warnings."
+    },
+    {
+      "command": "npm run operations:check-service-objectives; npm run operations:audit-service-objectives (expected blocked exit 2)",
+      "repository": "backend/sophia-runtime",
+      "node": "20.15.0",
+      "result": "p6-05-preflight-structure-pass-readiness-blocked",
+      "detail": "The preflight register passed its structural check for all three supported compositions, seven required metric families, nine objective categories and five operational rehearsals. The strict audit correctly returned blocked with 51 missing composition/mode datasets, all objectives unapproved and all rehearsals unrun. The result explicitly reports externalMutation=false and liveProviderRequest=false; it is not live performance or availability evidence."
     }
   ],
   "blockers": [
-    "No disposable PostgreSQL environment was confirmed for destructive or contention-oriented SQL failure injection; additive P1 migrations and a rollback-only constraint check were completed on the configured database with user authorization.",
+    "A disposable localhost PostgreSQL cluster now passed the backend SQL-gated locking/contention suite and was removed. P6-04 still lacks the broader two-Runtime-replica, process-kill/lease-reclaim and timeout-after-authoritative-commit harness against the exact Runtime migration stack.",
     "Live provider, email and production payment/subscription checks remain gated by explicit provider, data-handling, commercial and charge authority. The dedicated Sophia Stripe recurring sandbox lifecycle is complete; it does not authorize live resources or charges.",
     "The Sophia Runtime/Admin Chrome suite and real Stripe sandbox lifecycle passed separately. A complete authenticated browser-to-provider E2E harness remains unavailable and must not be inferred from those two evidence sets.",
     "No CI configuration exists, so schema drift enforcement is available as repository commands but is not yet automatically invoked by CI.",
@@ -2448,7 +2507,11 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. Guardrail and hosted billing actions remain fail-closed until the implemented Business Manager MFA path is deployed and approved step-up supplies recent MFA.",
-    "P6-A06C4 cannot proceed to real-charge activation yet. The deployed MFA schema, genuine operator enrollment, durable billing.manage proof endpoint and evidence-aware activation audit passed. The immutable live seller/provider-account binding is absent; live overage and Founding milestone readiness remain unproven with both switches off. The current non-GST business-only seller policy needs seller/accountant re-attestation, the standard live Stripe key needs least-privilege/IP-scope review, and the first genuine customer has not been onboarded. Runtime rejects Checkout activation while these gates remain incomplete."
+    "P6-A06C4 cannot proceed to real-charge activation yet. The deployed MFA schema and positive/negative billing.manage proofs passed. The current non-GST business-only turnover attestation, coherent seller/provider-account binding, live restricted key and read-only catalog/portal/webhook verification now pass. The genuine customer tenant, Founding assignment, signed terms, billing contact and authorised representative are still absent. Live overage and Founding milestone switches remain independently disabled, and Checkout activation still requires fresh MFA plus separate explicit charge authority.",
+    "P6-04 remains prerequisite-blocked by incomplete P6-A06, not by a critical dependency finding. The backend production re-audit has four moderate, zero high and zero critical findings; the frontend production audit has zero findings. Both complete dependency trees have zero critical findings. Frontend development/build/test dependencies still report fourteen high and four moderate findings and remain a maintenance queue.",
+    "P6-04 two-replica review/commit, competing-capacity, worker-kill/lease-reclaim and timeout-after-authoritative-commit tests remain unrun. The isolated backend SQL locking/contention gate passed; the next harness must exercise two actual Runtime processes and the exact Runtime migration stack without using the shared production database.",
+    "P6-04 has no exact release-image scan or independently authorised penetration-test result. Docker Scout is installed but the local daemon is inaccessible; its daemon-free filesystem scan was also attempted and required an unavailable Docker login. A scoped staging penetration test must be independently commissioned and must not be represented as passed until evidence exists.",
+    "P6-05 is prerequisite-blocked by P6-04. Its structural preflight passes, but all 51 required composition/mode datasets are absent, all latency/availability/regression/cost/failover objectives remain unapproved, and the provider-outage, partial-startup, queue-backlog, privacy-incident and rollback playbooks remain unrehearsed. Mock evidence cannot be used as live latency or provider-availability proof."
   ],
   "nextReadyTask": null,
   "nextBlockedTask": "P6-A06C4",
