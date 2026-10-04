@@ -7,9 +7,10 @@ describe("Business Manager Sophia Admin entitlement boundary", () => {
   test("keeps the special link user scoped and super-admin controlled", () => {
     const controller = read("src/controllers/bm.navigation.links.controller.js");
     expect(controller).toContain('const SOPHIA_ADMIN_LABEL = "Sophia Ai admin"');
-    expect(controller).toContain("target_user_id is required for Sophia Admin access");
+    expect(controller).toContain("At least one target user is required for Sophia Admin access");
     expect(controller).toContain("Only the platform super administrator can assign Sophia Admin access");
     expect(controller).toContain("selectedSophiaAdmin && requestedModules.length > 0");
+    expect(controller).toContain("A maximum of 100 target users may be updated at once");
   });
 
   test("revokes the membership rather than treating link visibility as authorization", () => {
@@ -18,5 +19,7 @@ describe("Business Manager Sophia Admin entitlement boundary", () => {
     expect(model).toContain("authorization_revision = authorization_revision + 1");
     expect(model).toContain("client_admin.entitlement_revoked");
     expect(model).toContain("status = 'revoked', module_scope = NULL");
+    expect(model).toContain("syncSophiaAdminEntitlements");
+    expect(model).toContain("protectedActiveRole");
   });
 });

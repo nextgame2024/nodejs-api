@@ -2493,6 +2493,13 @@
       "node": "20.19.1 and 22.23.2",
       "result": "client-admin-final-module-revocation-fixed-and-production-reconciled",
       "detail": "The UI previously returned without dispatching when the last selected Sophia Admin module was cleared, explaining the absence of an application request in the browser trace. The save path now removes the presentation link and sends an empty module scope as an explicit revocation, while the backend independently treats a selected special link with zero modules as disabled. Production then exposed that migration 057 required module_scope for revoked as well as active client_administrator rows; migration 058 narrows that invariant to active memberships. The first revocation transaction rolled back on the constraint and wrote no partial audit. After migration 058 was applied and recorded, the same audited service revoked Pedro from revision 3 with sixteen modules to revision 4 with no module scope. A direct post-condition query confirmed status revoked and the migration record. No email, provider request or billing mutation occurred."
+    },
+    {
+      "command": "repair Navigation Links checkbox rendering and initial-company user load; add select-all controls and audited bulk client-administrator synchronization; backend release; Angular typecheck/focused Chrome test/production build",
+      "repository": "backend + frontend",
+      "node": "20.19.1",
+      "result": "navigation-entitlement-selector-usability-fixed",
+      "detail": "Navigation-label and module choices now use native checked inputs so their visual state matches the selected sets. Initial company assignment now immediately loads its active users even though the form value is patched without emitting a change event. Navigation labels and Sophia Admin modules expose Select all/Clear all, and the user selector exposes All active users. Bulk Sophia assignment/revocation is capped at 100 selected users, uses a single database transaction, writes the existing per-user audit event for each changed client-administrator entitlement, and preserves any different active Admin role. Bulk mode does not touch Sophia entitlements during an unrelated generic-link save unless the operator explicitly changes the Sophia selection. Backend release passed 24 suites/99 tests; Angular typecheck, the focused 3-test Chrome suite and production build passed with the existing build warnings. No production data, email, provider or billing mutation occurred."
     }
   ],
   "blockers": [

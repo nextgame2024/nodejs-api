@@ -325,22 +325,49 @@ export async function syncSophiaAdminEntitlement({
   modules,
   enabled,
 }) {
+  const entitlements = await syncSophiaAdminEntitlements({
+    companyId,
+    targetUserIds: [targetUserId],
+    actorUserId,
+    modules,
+    enabled,
+  });
+  return entitlements[0] ?? null;
+}
+
+export async function syncSophiaAdminEntitlements({
+  companyId,
+  targetUserIds,
+  actorUserId,
+  modules,
+  enabled,
+}) {
+  const uniqueTargetUserIds = Array.from(
+    new Set((targetUserIds ?? []).map((value) => String(value || "").trim()).filter(Boolean)),
+  );
+  if (!uniqueTargetUserIds.length || uniqueTargetUserIds.length > 100) {
+    const error = new Error("Between 1 and 100 target users are required");
+    error.status = 400;
+    throw error;
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const user = await client.query(
+    const users = await client.query(
       `SELECT id::text, status::text
        FROM users
-       WHERE id = $1 AND company_id = $2
+       WHERE id = ANY($1::uuid[]) AND company_id = $2
+       ORDER BY id
        FOR UPDATE`,
-      [targetUserId, companyId],
+      [uniqueTargetUserIds, companyId],
     );
-    if (user.rows.length !== 1) {
-      const error = new Error("The selected user does not belong to the selected company");
+    if (users.rows.length !== uniqueTargetUserIds.length) {
+      const error = new Error("Every selected user must belong to the selected company");
       error.status = 400;
       throw error;
     }
-    if (enabled && user.rows[0].status !== "active") {
+    if (enabled && users.rows.some((user) => user.status !== "active")) {
       const error = new Error("Sophia Admin can only be assigned to an active user");
       error.status = 409;
       throw error;
@@ -360,69 +387,80 @@ export async function syncSophiaAdminEntitlement({
     }
     const customerId = tenant.rows[0].customer_id;
     const current = await client.query(
-      `SELECT membership_id::text, role_key, status, authorization_revision
+      `SELECT membership_id::text, identity_user_id, role_key, status, authorization_revision
        FROM sophia_runtime.admin_memberships
-       WHERE customer_id = $1::uuid AND identity_user_id = $2
+       WHERE customer_id = $1::uuid AND identity_user_id = ANY($2::text[])
+       ORDER BY identity_user_id
        FOR UPDATE`,
-      [customerId, targetUserId],
+      [customerId, uniqueTargetUserIds],
     );
-    const membership = current.rows[0] ?? null;
-    if (enabled && membership?.status === "active" && membership.role_key !== "client_administrator") {
-      const error = new Error("The selected user already has a different active Sophia Admin role");
-      error.status = 409;
-      throw error;
-    }
+    const memberships = new Map(current.rows.map((row) => [row.identity_user_id, row]));
 
-    let changed = false;
-    if (enabled) {
-      await client.query(
-        `INSERT INTO sophia_runtime.admin_memberships (
-           customer_id, identity_user_id, role_key, status,
-           permission_overrides, module_scope, authorization_revision
-         ) VALUES ($1::uuid, $2, 'client_administrator', 'active',
-                   '{"allow":[],"deny":[]}'::jsonb, $3::text[], 1)
-         ON CONFLICT (customer_id, identity_user_id) DO UPDATE
-         SET role_key = 'client_administrator',
-             status = 'active',
-             permission_overrides = '{"allow":[],"deny":[]}'::jsonb,
-             module_scope = EXCLUDED.module_scope,
-             authorization_revision = sophia_runtime.admin_memberships.authorization_revision + 1,
-             updated_at = now()`,
-        [customerId, targetUserId, modules],
-      );
-      changed = true;
-    } else if (membership?.role_key === "client_administrator" && membership.status !== "revoked") {
-      await client.query(
-        `UPDATE sophia_runtime.admin_memberships
-         SET status = 'revoked', module_scope = NULL,
-             authorization_revision = authorization_revision + 1,
-             updated_at = now()
-         WHERE customer_id = $1::uuid AND identity_user_id = $2`,
-        [customerId, targetUserId],
-      );
-      changed = true;
-    }
+    for (const targetUserId of uniqueTargetUserIds) {
+      const membership = memberships.get(targetUserId) ?? null;
+      const protectedActiveRole =
+        enabled && membership?.status === "active" && membership.role_key !== "client_administrator";
+      if (protectedActiveRole && uniqueTargetUserIds.length === 1) {
+        const error = new Error("The selected user already has a different active Sophia Admin role");
+        error.status = 409;
+        throw error;
+      }
+      let changed = false;
 
-    if (changed) {
-      await client.query(
-        `INSERT INTO sophia_runtime.admin_audit_events (
-           customer_id, identity_user_id, event_type, resource_type,
-           resource_id, permission_key, outcome, correlation_id, metadata
-         ) VALUES (
-           $1::uuid, $2, $3, 'membership', $4, 'users.roles.assign',
-           'allowed', 'bm-client-admin-' || gen_random_uuid()::text, $5::jsonb
-         )`,
-        [
-          customerId,
-          actorUserId,
-          enabled ? "client_admin.entitlement_assigned" : "client_admin.entitlement_revoked",
-          targetUserId,
-          JSON.stringify({ targetUserId, modules: enabled ? modules : [], source: "business_manager_navigation" }),
-        ],
-      );
+      if (enabled && !protectedActiveRole) {
+        await client.query(
+          `INSERT INTO sophia_runtime.admin_memberships (
+             customer_id, identity_user_id, role_key, status,
+             permission_overrides, module_scope, authorization_revision
+           ) VALUES ($1::uuid, $2, 'client_administrator', 'active',
+                     '{"allow":[],"deny":[]}'::jsonb, $3::text[], 1)
+           ON CONFLICT (customer_id, identity_user_id) DO UPDATE
+           SET role_key = 'client_administrator',
+               status = 'active',
+               permission_overrides = '{"allow":[],"deny":[]}'::jsonb,
+               module_scope = EXCLUDED.module_scope,
+               authorization_revision = sophia_runtime.admin_memberships.authorization_revision + 1,
+               updated_at = now()`,
+          [customerId, targetUserId, modules],
+        );
+        changed = true;
+      } else if (!enabled && membership?.role_key === "client_administrator" && membership.status !== "revoked") {
+        await client.query(
+          `UPDATE sophia_runtime.admin_memberships
+           SET status = 'revoked', module_scope = NULL,
+               authorization_revision = authorization_revision + 1,
+               updated_at = now()
+           WHERE customer_id = $1::uuid AND identity_user_id = $2`,
+          [customerId, targetUserId],
+        );
+        changed = true;
+      }
+
+      if (changed) {
+        await client.query(
+          `INSERT INTO sophia_runtime.admin_audit_events (
+             customer_id, identity_user_id, event_type, resource_type,
+             resource_id, permission_key, outcome, correlation_id, metadata
+           ) VALUES (
+             $1::uuid, $2, $3, 'membership', $4, 'users.roles.assign',
+             'allowed', 'bm-client-admin-' || gen_random_uuid()::text, $5::jsonb
+           )`,
+          [
+            customerId,
+            actorUserId,
+            enabled ? "client_admin.entitlement_assigned" : "client_admin.entitlement_revoked",
+            targetUserId,
+            JSON.stringify({ targetUserId, modules: enabled ? modules : [], source: "business_manager_navigation" }),
+          ],
+        );
+      }
     }
     await client.query("COMMIT");
-    return getSophiaAdminEntitlement(companyId, targetUserId);
+    return Promise.all(
+      uniqueTargetUserIds.map((targetUserId) =>
+        getSophiaAdminEntitlement(companyId, targetUserId),
+      ),
+    );
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

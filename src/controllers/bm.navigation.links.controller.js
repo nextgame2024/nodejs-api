@@ -293,6 +293,18 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
   const targetUserId = normalizeText(
     payload.target_user_id ?? payload.targetUserId,
   );
+  const targetUserIds = Array.from(
+    new Set(
+      (Array.isArray(payload.target_user_ids) ? payload.target_user_ids : [])
+        .map(normalizeText)
+        .filter(Boolean),
+    ),
+  );
+  if (targetUserId) targetUserIds.unshift(targetUserId);
+  const uniqueTargetUserIds = Array.from(new Set(targetUserIds));
+  if (uniqueTargetUserIds.length > 100) {
+    throw badRequest("A maximum of 100 target users may be updated at once");
+  }
   const requestedModules = Array.isArray(payload.sophia_admin_modules)
     ? Array.from(new Set(payload.sophia_admin_modules.map(normalizeText).filter(Boolean)))
     : [];
@@ -306,8 +318,8 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
   if (selectedSophiaAdmin && payload.navigation_type !== "header") {
     throw badRequest("Sophia Ai admin is available only as a header link");
   }
-  if (selectedSophiaAdmin && !targetUserId) {
-    throw badRequest("target_user_id is required for Sophia Admin access");
+  if (selectedSophiaAdmin && uniqueTargetUserIds.length === 0) {
+    throw badRequest("At least one target user is required for Sophia Admin access");
   }
   const enableSophiaAdmin = selectedSophiaAdmin && requestedModules.length > 0;
 
@@ -323,17 +335,19 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
   );
 
   let sophiaAdminEntitlement = null;
-  if (isSuperAdmin(req) && payload.navigation_type === "header" && targetUserId) {
-    sophiaAdminEntitlement = await service.syncSophiaAdminEntitlement({
+  let sophiaAdminEntitlements = [];
+  if (isSuperAdmin(req) && payload.navigation_type === "header" && uniqueTargetUserIds.length) {
+    sophiaAdminEntitlements = await service.syncSophiaAdminEntitlements({
       companyId,
-      targetUserId,
+      targetUserIds: uniqueTargetUserIds,
       actorUserId: userId,
       modules: requestedModules,
       enabled: enableSophiaAdmin,
     });
+    sophiaAdminEntitlement = sophiaAdminEntitlements[0] ?? null;
   }
 
-  res.json({ ...result, sophiaAdminEntitlement });
+  res.json({ ...result, sophiaAdminEntitlement, sophiaAdminEntitlements });
 });
 
 export const getSophiaAdminEntitlement = asyncHandler(async (req, res) => {

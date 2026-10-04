@@ -70,6 +70,9 @@ export const getSophiaAdminEntitlement = (companyId, targetUserId) =>
 export const syncSophiaAdminEntitlement = (args) =>
   model.syncSophiaAdminEntitlement(args);
 
+export const syncSophiaAdminEntitlements = (args) =>
+  model.syncSophiaAdminEntitlements(args);
+
 export const companyExists = (companyId) => model.companyExists(companyId);
 
 const normalizeLabel = (value) => String(value || "").trim().toLowerCase();
