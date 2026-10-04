@@ -2,7 +2,7 @@
 
 Date: 2026-10-04 (Australia/Brisbane)
 
-Status: deployed operator proof passed; durable proof endpoint deployment remains pending.
+Status: deployed operator proof and durable evidence audit passed.
 
 ## Implemented boundary
 
@@ -65,7 +65,7 @@ signed identity without `mfaVerifiedAt` failed in Business Manager with HTTP
 401 and `MFA_AUTHENTICATION_REQUIRED`; Runtime also returned HTTP 401. No
 Customer, subscription, invoice, Checkout Session or charge was created.
 
-The source now includes a dedicated `authorization-proof` action. It is guarded
+The deployed Runtime includes a dedicated `authorization-proof` action. It is guarded
 by `billing.manage`, records only sanitized durable audit evidence, returns
 `stripeRequest: false` and `liveCharge: false`, and invokes no billing provider.
 Migration `055` stores that evidence in an append-only table accessible to the
@@ -80,9 +80,8 @@ bypassing tenant RLS or exposing tenant audit rows.
    authenticator secret, even though its six-digit outputs change.
 2. Preserve the dedicated deployed `BM_MFA_ENCRYPTION_KEY`; do not reuse
    `JWT_SECRET`, a Stripe key or the Sophia connector secret.
-3. Deploy the durable `authorization-proof` endpoint and repaired activation
-   audit, then invoke the endpoint with a fresh MFA login before the final
-   activation audit.
+3. Record another fresh proof immediately before any later explicit activation
+   decision because durable proof evidence expires after twelve hours.
 
 Checkout and both live collection switches remain disabled. This proof did not
 contact Stripe or create a Customer, subscription, invoice, Checkout Session or

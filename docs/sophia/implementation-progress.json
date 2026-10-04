@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
-  "checkpoint": "P6-A06C4-MFA-PROOF-PASSED-AUDIT-REPAIR-IMPLEMENTED-DEPLOYMENT-PENDING",
-  "updatedAt": "2026-10-04T10:29:00+10:00",
+  "checkpoint": "P6-A06C4-MFA-DURABLE-PROOF-PASSED-ACTIVATION-BLOCKED",
+  "updatedAt": "2026-10-04T10:38:00+10:00",
   "tasks": {
     "P0-01": {
       "status": "complete",
@@ -2399,6 +2399,13 @@
       "node": "20.15.0",
       "result": "mfa-proof-passed-activation-audit-repaired-deployment-pending",
       "detail": "The deployed auth_session_version column, user_mfa_factors table and user_security_audit_events table were verified. Under explicit authority, the genuine operator's Business Manager company was mapped to one empty Sophia tenant and received the fixed billing_administrator role. A fresh MFA session returned mfaVerifiedAt and passed billing.manage, stopping at disabled live Checkout before billing or Stripe I/O; the equivalent signed identity without MFA failed with MFA_AUTHENTICATION_REQUIRED and Runtime HTTP 401. Source now adds a provider-free durable authorization-proof endpoint, migration 055 append-only proof evidence behind narrow security-definer functions, makes the read-only activation audit consume proof evidence for twelve hours without bypassing tenant audit RLS, uses canonical provider key stripe-sophia, and correctly wires live adjustment/milestone adapters while their independent switches remain default-off. The first deployed endpoint proof exposed the tenant-RLS visibility defect before migration 055; its transaction otherwise succeeded safely. The audit also exposed that no immutable live seller/provider-account binding exists. Runtime typecheck and build passed; 134 suites/500 tests passed; the 241-file boundary scan passed. No Stripe request, Customer, subscription, invoice, Checkout Session or charge was created, and all three live switches remained false."
+    },
+    {
+      "command": "deploy commits 90b0329 and 6789200; apply additive migration 055; invoke authenticated authorization-proof; run compiled billing:audit-live-activation with all collection switches false",
+      "repository": "deployed Sophia Runtime + production Neon",
+      "node": "20.15.0",
+      "result": "mfa-durable-proof-pass-activation-remains-blocked",
+      "detail": "Runtime revision 678920099c6a deployed and migration 055 was applied as the only pending migration. The genuine operator's fresh MFA token invoked the provider-free authorization-proof endpoint successfully: billing.manage was allowed, Checkout was false, and the response explicitly reported stripeRequest=false, externalMutation=false and liveCharge=false. Durable proof timestamp 2026-10-04T00:37:37.993Z was recorded through the tenant-bound function and the token was cleared from the clipboard. The compiled read-only activation audit then passed recent_mfa while retaining decision keep_checkout_disabled. Remaining gates are the absent coherent live seller/provider-account binding, current GST re-attestation, disabled/unproven live overage collection, disabled/unproven live Founding milestone collection, Stripe least-privilege/IP-scope review and genuine-customer onboarding. No Stripe request, Customer, subscription, invoice, Checkout Session or charge was created; all three live switches remained false."
     }
   ],
   "blockers": [
@@ -2441,7 +2448,7 @@
     "P6-A01 does not enable transcript or raw-audio persistence and does not grant conversation content/export to the fixed Operations Member role. Those API/UI paths remain fail-closed until a separately approved role/grant model and recent-MFA identity are available. High-volume background export remains unavailable until an approved private object store and worker lifecycle exist; current manifests render on authorised access and store no content copy.",
     "P6-A03 uses bounded on-demand aggregation because no measured volume or latency evidence justifies a persistent aggregate store. Lifecycle completion is not labelled as business conversion; only pack-declared canonical source-confirmed outcomes receive specialised business metric names. Organisation timezone remains optional, invalid values fall back to UTC, and provider costs are not currency-converted or represented as charges, revenue, savings or causal impact. Export documents contain aggregates only, are capped at 5,000 points/5 MiB, expire after 24 hours and are scrubbed when expiry is observed; no background expiry scheduler is deployed.",
     "P6-A05 tenant administrators can only lower current platform/commercial ceilings and configure non-enforcing provider-cost estimate alerts; they cannot publish rates, raise entitlements or self-assign a plan. P6-A06C3B0B subsequently published the operator-approved platform plan catalog, but assigned no tenant and created no billing balance or charge. Guardrail and hosted billing actions remain fail-closed until the implemented Business Manager MFA path is deployed and approved step-up supplies recent MFA.",
-    "P6-A06C4 cannot proceed to real-charge activation yet. The deployed MFA schema, genuine operator enrollment and authenticated billing.manage proof passed. The durable proof endpoint, repaired audit and corrected live adapter wiring await deployment; the immutable live seller/provider-account binding is absent; live overage and Founding milestone readiness remain unproven with both switches off. The current non-GST business-only seller policy needs seller/accountant re-attestation, the standard live Stripe key needs least-privilege/IP-scope review, and the first genuine customer has not been onboarded. Runtime rejects Checkout activation while these gates remain incomplete."
+    "P6-A06C4 cannot proceed to real-charge activation yet. The deployed MFA schema, genuine operator enrollment, durable billing.manage proof endpoint and evidence-aware activation audit passed. The immutable live seller/provider-account binding is absent; live overage and Founding milestone readiness remain unproven with both switches off. The current non-GST business-only seller policy needs seller/accountant re-attestation, the standard live Stripe key needs least-privilege/IP-scope review, and the first genuine customer has not been onboarded. Runtime rejects Checkout activation while these gates remain incomplete."
   ],
   "nextReadyTask": null,
   "nextBlockedTask": "P6-A06C4",

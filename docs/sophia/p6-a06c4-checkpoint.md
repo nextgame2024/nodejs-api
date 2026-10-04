@@ -21,8 +21,7 @@ merely by changing `SOPHIA_BILLING_LIVE_CHECKOUT_ENABLED`:
   but have not been invoked against live Stripe;
 - `billing.manage` correctly requires recent MFA. Business Manager TOTP
   enrollment is deployed and the genuine operator proof passed. A durable
-  no-charge proof endpoint and evidence-aware activation audit are implemented
-  and await deployment;
+  no-charge proof endpoint and evidence-aware activation audit are deployed;
 - the live seller/provider account binding is absent from the authority store,
   even though the immutable seller policy and live Stripe resources exist;
 - the stored seller policy is intentionally business-only and non-GST, but the
@@ -75,8 +74,8 @@ This checkpoint is an implementation boundary, not tax or legal advice.
    contact and authorised customer representative.
 2. Obtain current seller/accountant confirmation of GST registration and price
    display obligations; publish a new immutable policy/version if facts changed.
-3. Deploy the durable authorization-proof endpoint and repaired activation
-   audit, then record a fresh MFA-authenticated `billing.manage` proof.
+3. Record a fresh MFA-authenticated `billing.manage` proof within twelve hours
+   of the eventual activation decision.
 4. Publish the exact immutable live seller/provider-account binding for the
    canonical `stripe-sophia` account after verifying its external account
    identity; do not infer or fabricate that identifier.
