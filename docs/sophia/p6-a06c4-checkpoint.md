@@ -59,6 +59,8 @@ This checkpoint is an implementation boundary, not tax or legal advice.
 - The audit does not print a legal name, ABN value, API key or webhook secret.
 - The audit uses the canonical `stripe-sophia` provider key and accepts only a
   successful `billing.manage` proof recorded within the prior twelve hours.
+  Migration `055` exposes only the latest qualifying timestamp through a
+  security-definer function, preserving tenant isolation on Admin audit rows.
 - Live invoice-adjustment and commercial-milestone adapters are now wired for
   both Stripe environments. Their independent live switches still default off
   and remain the final submission authority.

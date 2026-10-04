@@ -48,9 +48,13 @@ describe("BillingLifecycleService", () => {
     provider.status = jest.fn(() => ({ availability: "live", providerKey: "stripe-sophia",
       providerAccountKey: "legacy-primary", checkout: false,
       portal: true, signedWebhooks: true, reconciliation: true, missingConfiguration: [], detail: "live checkout disabled" }));
-    const query = jest.fn();
+    const query = jest.fn(async (sql: string) => sql.includes("record_billing_authorization_proof")
+      ? { rows: [{ proved_at: "2026-10-04T00:00:01.000Z" }] }
+      : { rows: [] });
     const audit = { record: jest.fn(async () => undefined) };
-    const service = new BillingLifecycleService({ query } as never, provider, audit as never,
+    const transaction = jest.fn(async (_tenant: string, work: (client: { query: typeof query }) => unknown) =>
+      work({ query }));
+    const service = new BillingLifecycleService({ tenantTransaction: transaction } as never, provider, audit as never,
       ledger() as never, meterOutbox() as never, invoiceAdjustments() as never,
       invoiceAdjustmentRecovery() as never, commercialMilestones() as never, commitments() as never);
     const mfaPrincipal = { identityUserId: "billing-operator",
@@ -58,6 +62,7 @@ describe("BillingLifecycleService", () => {
 
     await expect(service.authorizationProof(tenantId, mfaPrincipal)).resolves.toEqual({
       authorized: true, permission: "billing.manage", mfaVerifiedAt: "2026-10-04T00:00:00.000Z",
+      provedAt: "2026-10-04T00:00:01.000Z",
       availability: "live", checkoutEnabled: false, stripeRequest: false,
       externalMutation: false, liveCharge: false,
     });
@@ -65,8 +70,9 @@ describe("BillingLifecycleService", () => {
       tenantId, identityUserId: "billing-operator", eventType: "billing.authorization.proved",
       permission: "billing.manage", outcome: "allowed",
       metadata: expect.objectContaining({ checkoutEnabled: false, stripeRequest: false, liveCharge: false }),
-    }));
-    expect(query).not.toHaveBeenCalled();
+    }), expect.objectContaining({ query }));
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("record_billing_authorization_proof"),
+      [tenantId, "billing-operator", "2026-10-04T00:00:00.000Z"]);
     expect(provider.createHostedCheckout).not.toHaveBeenCalled();
     expect(provider.reconcileTenant).not.toHaveBeenCalled();
   });

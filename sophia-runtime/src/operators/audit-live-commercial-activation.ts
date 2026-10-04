@@ -65,14 +65,9 @@ try {
   const adjustment = new StripeBillingInvoiceAdjustmentDispatcher(config.billing).status();
   const milestone = new StripeBillingCommercialMilestoneDispatcher(config.billing).status();
   const recentMfaProofs = await database.query<RecentMfaProof>(
-    `SELECT created_at AS proved_at
-     FROM ${config.schema}.admin_audit_events
-     WHERE event_type='billing.authorization.proved'
-       AND permission_key='billing.manage' AND outcome='allowed'
-       AND created_at>=now()-interval '12 hours'
-     ORDER BY created_at DESC LIMIT 1`,
+    `SELECT ${config.schema}.latest_billing_authorization_proof() AS proved_at`,
   );
-  const recentMfaProof = recentMfaProofs.rows[0] ?? null;
+  const recentMfaProof = recentMfaProofs.rows[0]?.proved_at ? recentMfaProofs.rows[0] : null;
 
   const gates = [
     { id: "checkout_disabled", status: "pass", detail: "Real charge-creating Checkout remains disabled." },

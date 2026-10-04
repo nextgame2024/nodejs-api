@@ -54,27 +54,37 @@ export class BillingLifecycleService {
   status() { return this.provider.status(); }
 
   async authorizationProof(tenantId: string, principal: AdminPrincipal) {
+    if (!principal.mfaVerifiedAt) throw new ConflictException("Recent MFA verification is required.");
     const status = this.provider.status();
-    await this.audit.record({
-      tenantId,
-      identityUserId: principal.identityUserId,
-      eventType: "billing.authorization.proved",
-      permission: "billing.manage",
-      outcome: "allowed",
-      resourceType: "billingAuthorization",
-      metadata: {
-        providerKey: status.providerKey,
-        providerAccountKey: status.providerAccountKey,
-        availability: status.availability,
-        checkoutEnabled: status.checkout,
-        stripeRequest: false,
-        liveCharge: false,
-      },
+    const provedAt = await this.database.tenantTransaction(tenantId, async (client) => {
+      const proof = await client.query<{ proved_at: Date | string }>(
+        `SELECT ${runtimeConfig().schema}.record_billing_authorization_proof($1,$2,$3) AS proved_at`,
+        [tenantId, principal.identityUserId, principal.mfaVerifiedAt],
+      );
+      if (!proof.rows[0]) throw new ConflictException("Billing authorization proof was not recorded.");
+      await this.audit.record({
+        tenantId,
+        identityUserId: principal.identityUserId,
+        eventType: "billing.authorization.proved",
+        permission: "billing.manage",
+        outcome: "allowed",
+        resourceType: "billingAuthorization",
+        metadata: {
+          providerKey: status.providerKey,
+          providerAccountKey: status.providerAccountKey,
+          availability: status.availability,
+          checkoutEnabled: status.checkout,
+          stripeRequest: false,
+          liveCharge: false,
+        },
+      }, client);
+      return new Date(proof.rows[0].proved_at).toISOString();
     });
     return {
       authorized: true,
       permission: "billing.manage" as const,
       mfaVerifiedAt: principal.mfaVerifiedAt,
+      provedAt,
       availability: status.availability,
       checkoutEnabled: status.checkout,
       stripeRequest: false,

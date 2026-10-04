@@ -68,8 +68,10 @@ Customer, subscription, invoice, Checkout Session or charge was created.
 The source now includes a dedicated `authorization-proof` action. It is guarded
 by `billing.manage`, records only sanitized durable audit evidence, returns
 `stripeRequest: false` and `liveCharge: false`, and invokes no billing provider.
-The activation audit consumes that evidence for twelve hours rather than
-hard-coding the recent-MFA gate as blocked.
+Migration `055` stores that evidence in an append-only table accessible to the
+runtime role only through narrow record/latest-proof functions. This allows the
+global activation audit to consume the evidence for twelve hours without
+bypassing tenant RLS or exposing tenant audit rows.
 
 ## Remaining deployment requirements
 

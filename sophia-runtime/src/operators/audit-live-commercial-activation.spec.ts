@@ -26,9 +26,7 @@ describe("live commercial activation audit", () => {
 
   it("uses canonical provider scope and durable recent-MFA proof evidence", () => {
     expect(source).toContain("STRIPE_BILLING_PROVIDER_KEY");
-    expect(source).toContain("billing.authorization.proved");
-    expect(source).toContain("permission_key='billing.manage'");
-    expect(source).toContain("created_at>=now()-interval '12 hours'");
+    expect(source).toContain("latest_billing_authorization_proof()");
     expect(source).not.toContain("account.provider_key='stripe'");
   });
 
