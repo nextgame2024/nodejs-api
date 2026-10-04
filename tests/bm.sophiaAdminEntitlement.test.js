@@ -9,7 +9,7 @@ describe("Business Manager Sophia Admin entitlement boundary", () => {
     expect(controller).toContain('const SOPHIA_ADMIN_LABEL = "Sophia Ai admin"');
     expect(controller).toContain("target_user_id is required for Sophia Admin access");
     expect(controller).toContain("Only the platform super administrator can assign Sophia Admin access");
-    expect(controller).toContain("At least one Sophia Admin module is required");
+    expect(controller).toContain("selectedSophiaAdmin && requestedModules.length > 0");
   });
 
   test("revokes the membership rather than treating link visibility as authorization", () => {

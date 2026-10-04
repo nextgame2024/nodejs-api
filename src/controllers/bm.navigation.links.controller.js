@@ -309,9 +309,7 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
   if (selectedSophiaAdmin && !targetUserId) {
     throw badRequest("target_user_id is required for Sophia Admin access");
   }
-  if (selectedSophiaAdmin && requestedModules.length === 0) {
-    throw badRequest("At least one Sophia Admin module is required");
-  }
+  const enableSophiaAdmin = selectedSophiaAdmin && requestedModules.length > 0;
 
   const genericLabels = (payload.navigation_labels ?? []).filter(
     (label) => !labelEquals(label, SOPHIA_ADMIN_LABEL),
@@ -331,7 +329,7 @@ export const syncNavigationLabels = asyncHandler(async (req, res) => {
       targetUserId,
       actorUserId: userId,
       modules: requestedModules,
-      enabled: selectedSophiaAdmin,
+      enabled: enableSophiaAdmin,
     });
   }
 
