@@ -7,7 +7,7 @@ const workspaceRoot = path.resolve(backendRoot, "..");
 
 const scopes = [
   {
-    id: "active-runtime-student-quarantine",
+    id: "active-runtime-retired-student-demo",
     files: [
       path.join(backendRoot, "sophia-runtime/src/tools/tools.module.ts"),
       path.join(backendRoot, "sophia-runtime/src/tools/tools.service.ts"),

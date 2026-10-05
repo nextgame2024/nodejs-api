@@ -1,6 +1,4 @@
 import "dotenv/config.js";
-import { ensureStudentConsultationSchema } from "../src/config/studentConsultationSchema.js";
-import { processStudentConsultationEmailCycle, startStudentConsultationWorkflow } from "../src/services/bm.studentConsultationWorker.service.js";
 import pool from "../src/config/db.js";
 import {
   s3,
@@ -477,7 +475,6 @@ async function runCycle() {
 
 (async () => {
   await ensureTownPlannerBookingWorkflowSchema();
-  await ensureStudentConsultationSchema();
   if (RUN_ONCE) {
     console.log(
       `[${nowIso()}] Running single cycle (--once${FORCE_ARTICLE ? " + --article-now" : ""}).`
@@ -486,7 +483,6 @@ async function runCycle() {
       runCycle(),
       processPropertyReportCycle(),
       processInspectionEmailCycle(),
-      processStudentConsultationEmailCycle(),
     ]);
     process.exit(0);
   } else {
@@ -494,7 +490,6 @@ async function runCycle() {
       `[${nowIso()}] Background worker loop started (every ${LOOP_MS}ms) — articles at ${DAILY_ARTICLES_HOUR}:00, cleanup at ${CLEANUP_HOUR}:00 (${BRISBANE_TZ}).`
     );
     const inspectionWorkflow = startInspectionWorkflow();
-    const consultationWorkflow = startStudentConsultationWorkflow();
     await Promise.all([
       (async () => {
         for (;;) {
@@ -507,7 +502,6 @@ async function runCycle() {
         }
       })(),
       inspectionWorkflow.done,
-      consultationWorkflow.done,
     ]);
   }
 })();
