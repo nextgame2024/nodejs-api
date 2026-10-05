@@ -13,6 +13,7 @@ function harness(entitled = true) {
       entitlement_id: entitlementId,
       customer_id: tenantId,
       identity_user_id: "user-1",
+      role_key: "chief_executive",
       authorization_revision: 3,
     }] : [],
     rowCount: entitled ? 1 : 0,
@@ -46,6 +47,7 @@ describe("OpenForAustraliaWorkspaceService", () => {
       tenantId,
       externalCompanyId: companyId,
       entitlementId,
+      role: "chief_executive",
       authorizationRevision: 3,
     });
   });

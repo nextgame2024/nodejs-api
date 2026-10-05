@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { DatabaseService } from "../../database/database.service.js";
 import type { VerifiedBusinessManagerIdentity } from "../../admin/identity/business-manager-identity.bridge.js";
+import type { OpenForAustraliaRole } from "./open-for-australia-policy.js";
 
 const PACK_ID = "open-for-australia";
 
@@ -15,6 +16,7 @@ type EntitlementRow = {
   entitlement_id: string;
   customer_id: string;
   identity_user_id: string;
+  role_key: OpenForAustraliaRole;
   authorization_revision: number;
 };
 
@@ -23,6 +25,7 @@ export type OpenForAustraliaWorkspacePrincipal = {
   tenantId: string;
   externalCompanyId: string;
   entitlementId: string;
+  role: OpenForAustraliaRole;
   authorizationRevision: number;
 };
 
@@ -54,7 +57,7 @@ export class OpenForAustraliaWorkspaceService {
     const entitlement = await this.database.tenantReadTransaction(
       tenant.customer_id,
       (client) => client.query<EntitlementRow>(
-        `SELECT entitlement_id, customer_id, identity_user_id, authorization_revision
+        `SELECT entitlement_id, customer_id, identity_user_id, role_key, authorization_revision
            FROM ${schema}.business_pack_entitlements
           WHERE customer_id = $1 AND identity_user_id = $2
             AND pack_id = $3 AND status = 'active'
@@ -77,6 +80,7 @@ export class OpenForAustraliaWorkspaceService {
       tenantId: row.customer_id,
       externalCompanyId: tenant.external_company_id,
       entitlementId: row.entitlement_id,
+      role: row.role_key,
       authorizationRevision: row.authorization_revision,
     };
   }
