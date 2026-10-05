@@ -71,7 +71,7 @@ describe("Open For Australia roles and privacy contract", () => {
   });
 
   it("registers every classified field and privacy target without inventing retention", () => {
-    expect(Object.keys(OPEN_FOR_AUSTRALIA_FIELD_POLICIES)).toHaveLength(12);
+    expect(Object.keys(OPEN_FOR_AUSTRALIA_FIELD_POLICIES)).toHaveLength(17);
     expect(new Set(OPEN_FOR_AUSTRALIA_RETENTION_TARGETS.map((item) => item.datasetKey)))
       .toEqual(new Set(OPEN_FOR_AUSTRALIA_PRIVACY_TARGETS));
     for (const target of OPEN_FOR_AUSTRALIA_RETENTION_TARGETS) {

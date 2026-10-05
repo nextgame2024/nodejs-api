@@ -81,6 +81,9 @@ type FieldPolicy = {
 };
 
 export const OPEN_FOR_AUSTRALIA_FIELD_POLICIES = {
+  studentId: {
+    classification: "operational", listVisible: true, permission: "student",
+  },
   studentReference: {
     classification: "operational", listVisible: true, permission: "student",
   },
@@ -92,6 +95,18 @@ export const OPEN_FOR_AUSTRALIA_FIELD_POLICIES = {
   },
   email: {
     classification: "personal", listVisible: true, permission: "student",
+  },
+  currentStage: {
+    classification: "operational", listVisible: true, permission: "student",
+  },
+  status: {
+    classification: "operational", listVisible: true, permission: "student",
+  },
+  collegeName: {
+    classification: "personal", listVisible: true, permission: "student",
+  },
+  advisorAssigned: {
+    classification: "operational", listVisible: true, permission: "student",
   },
   phone: {
     classification: "personal", listVisible: false, permission: "student",

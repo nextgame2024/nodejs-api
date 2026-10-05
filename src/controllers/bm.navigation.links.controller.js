@@ -21,6 +21,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     SOPHIA_ADMIN_LABEL,
   ],
   menu: [
+    "Students",
     "Clients",
     "Sites",
     "Pallets",

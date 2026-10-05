@@ -86,4 +86,13 @@ describe("OpenForAustraliaWorkspaceGuard", () => {
       "ofa-test-1",
     );
   });
+
+  it("derives the current tenant when the route has no tenant parameter", async () => {
+    const { guard, context, request } = harness({
+      headers: { authorization: "Token business-manager-token" },
+    });
+    request.params = {};
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.openForAustraliaPrincipal).toEqual(principal);
+  });
 });

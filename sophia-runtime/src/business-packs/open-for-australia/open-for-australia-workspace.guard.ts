@@ -42,7 +42,7 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
     const identity = await this.identity.authenticate(authorization);
     const principal = await this.workspace.resolvePrincipal(identity, correlationId);
     const targetTenant = request.params?.["tenantId"];
-    if (!targetTenant || targetTenant !== principal.tenantId) {
+    if (targetTenant && targetTenant !== principal.tenantId) {
       await this.workspace.recordAccess(
         principal.tenantId,
         principal.identityUserId,

@@ -1,7 +1,7 @@
 # Open For Australia operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
-Status: architecture and delivery order approved; OFA-00A through OFA-00C complete in source
+Status: architecture and delivery order approved; OFA-00A through OFA-01A complete in source
 
 ## Product boundary
 
