@@ -9,6 +9,7 @@ import { AdminModule } from "./admin/admin.module.js";
 import { ConnectorsModule } from "./connectors/connectors.module.js";
 import { V2OrchestrationModule } from "./platform/orchestration/v2-orchestration.module.js";
 import { RuntimeAdmissionModule } from "./platform/admission/runtime-admission.module.js";
+import { OpenForAustraliaModule } from "./business-packs/open-for-australia/open-for-australia.module.js";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { RuntimeAdmissionModule } from "./platform/admission/runtime-admission.m
     ConnectorsModule,
     ConversationModule,
     V2OrchestrationModule,
+    OpenForAustraliaModule,
     HealthModule,
   ],
 })

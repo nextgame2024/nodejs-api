@@ -166,6 +166,13 @@ import { runtimeConfig } from "../config/runtime-config.js";
     { provide: KNOWLEDGE_MALWARE_SCANNER, useExisting: HttpMalwareScannerService },
     { provide: KNOWLEDGE_TEXT_PARSER, useExisting: IsolatedTextParserService },
   ],
-  exports: [AdminAuthorizationService, AdminAuditService, AdminAuthGuard, KnowledgeFileIntakeService, ProviderUsageLedgerService],
+  exports: [
+    AdminAuthorizationService,
+    AdminAuditService,
+    AdminAuthGuard,
+    BusinessManagerIdentityBridge,
+    KnowledgeFileIntakeService,
+    ProviderUsageLedgerService,
+  ],
 })
 export class AdminModule {}
