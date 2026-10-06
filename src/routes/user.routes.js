@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   registerUser,
   getCurrentUser,
+  getRuntimeIdentity,
   updateCurrentUser,
   listUsers,
   updateUserByAdmin,
@@ -29,6 +30,10 @@ router.delete("/users/:id", authRequired, removeUserByAdmin);
 
 // Current user (auth)
 router.get("/user", authRequired, getCurrentUser);
+
+// Lean, server-to-server identity projection for Sophia Runtime. The shared
+// auth middleware remains the authority for session, company and MFA checks.
+router.get("/user/runtime-identity", authRequired, getRuntimeIdentity);
 
 // Update current user (auth)
 router.put("/user", authRequired, updateCurrentUser);

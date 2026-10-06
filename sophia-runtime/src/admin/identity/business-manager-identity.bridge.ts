@@ -15,7 +15,7 @@ export class BusinessManagerIdentityBridge {
     if (!/^\s*(?:Bearer|Token)\s+\S+\s*$/i.test(authorization)) {
       throw new UnauthorizedException("A Business Manager access token is required.");
     }
-    const response = await fetch(`${runtimeConfig().businessManager.apiUrl}/user`, {
+    const response = await fetch(`${runtimeConfig().businessManager.apiUrl}/user/runtime-identity`, {
       method: "GET",
       headers: { authorization, accept: "application/json" },
       signal: AbortSignal.timeout(5_000),

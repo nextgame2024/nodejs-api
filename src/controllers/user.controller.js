@@ -350,6 +350,24 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   return res.json({ user: mapUserResponse(user, token) });
 });
 
+/**
+ * GET /api/user/runtime-identity — minimal identity introspection for Sophia Runtime.
+ *
+ * authRequired has already verified the JWT, current session revision, active
+ * account, company binding and MFA state. Returning that verified projection
+ * avoids loading the same user a second time (and avoids profile/schema work)
+ * on every Runtime request.
+ */
+export const getRuntimeIdentity = asyncHandler(async (req, res) => res.json({
+  user: {
+    id: req.user.id,
+    companyId: req.user.companyId,
+    status: "active",
+    ...(req.user.email ? { email: req.user.email } : {}),
+    ...(req.user.mfaVerifiedAt ? { mfaVerifiedAt: req.user.mfaVerifiedAt } : {}),
+  },
+}));
+
 /** PUT /api/user — update current user (auth required) */
 export const updateCurrentUser = asyncHandler(async (req, res) => {
   const userId = req.user.id;

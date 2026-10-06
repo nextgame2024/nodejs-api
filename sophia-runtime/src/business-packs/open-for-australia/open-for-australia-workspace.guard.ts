@@ -7,9 +7,12 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { Reflector } from "@nestjs/core";
 import { BusinessManagerIdentityBridge } from "../../admin/identity/business-manager-identity.bridge.js";
 import {
   OpenForAustraliaWorkspaceService,
+  OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT,
+  type OpenForAustraliaDashboardSummary,
   type OpenForAustraliaWorkspacePrincipal,
 } from "./open-for-australia-workspace.service.js";
 
@@ -17,6 +20,7 @@ type WorkspaceRequest = {
   headers: Record<string, string | string[] | undefined>;
   params?: Record<string, string | undefined>;
   openForAustraliaPrincipal?: OpenForAustraliaWorkspacePrincipal;
+  openForAustraliaDashboardSummary?: OpenForAustraliaDashboardSummary;
 };
 
 @Injectable()
@@ -26,6 +30,7 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
     private readonly identity: BusinessManagerIdentityBridge,
     @Inject(OpenForAustraliaWorkspaceService)
     private readonly workspace: OpenForAustraliaWorkspaceService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -40,7 +45,15 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
     const correlationId = validCorrelation(header(request, "x-correlation-id"))
       ?? randomUUID();
     const identity = await this.identity.authenticate(authorization);
-    const principal = await this.workspace.resolvePrincipal(identity, correlationId);
+    const isDashboard = this.reflector.get<boolean>(
+      OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT,
+      context.getHandler(),
+    ) === true;
+    const dashboardContext = isDashboard
+      ? await this.workspace.resolveDashboardPrincipal(identity, correlationId)
+      : undefined;
+    const principal = dashboardContext?.principal
+      ?? await this.workspace.resolvePrincipal(identity, correlationId);
     const targetTenant = request.params?.["tenantId"];
     if (targetTenant && targetTenant !== principal.tenantId) {
       await this.workspace.recordAccess(
@@ -55,13 +68,10 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
       );
     }
 
-    await this.workspace.recordAccess(
-      principal.tenantId,
-      principal.identityUserId,
-      "allowed",
-      correlationId,
-    );
     request.openForAustraliaPrincipal = principal;
+    if (dashboardContext) {
+      request.openForAustraliaDashboardSummary = dashboardContext.summary;
+    }
     return true;
   }
 }

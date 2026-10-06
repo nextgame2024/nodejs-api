@@ -27,7 +27,7 @@ describe("BusinessManagerIdentityBridge", () => {
       email: "person@example.com",
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://business-manager.example/api/user",
+      "https://business-manager.example/api/user/runtime-identity",
       expect.objectContaining({ headers: expect.objectContaining({ authorization: "Token signed-existing-token" }) }),
     );
   });

@@ -29,6 +29,16 @@ export type OpenForAustraliaWorkspacePrincipal = {
   authorizationRevision: number;
 };
 
+export type OpenForAustraliaDashboardSummary = {
+  totalStudents: number;
+  activeStudents: number;
+  actionRequired: number;
+  onHold: number;
+};
+
+export const OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT =
+  "openForAustralia.dashboardContext";
+
 @Injectable()
 export class OpenForAustraliaWorkspaceService {
   constructor(
@@ -39,50 +49,90 @@ export class OpenForAustraliaWorkspaceService {
     identity: VerifiedBusinessManagerIdentity,
     correlationId: string = randomUUID(),
   ): Promise<OpenForAustraliaWorkspacePrincipal> {
-    const schema = runtimeSchema();
-    const customer = await this.database.query<CustomerRow>(
-      `SELECT customer_id, external_company_id
-         FROM ${schema}.customers
-        WHERE external_company_id = $1 AND status = 'active'
-        LIMIT 2`,
-      [identity.companyId],
-    );
-    if (customer.rows.length !== 1) {
-      throw new ForbiddenException(
-        "An active, unambiguous Open For Australia organisation is required.",
-      );
-    }
+    return (await this.resolve(identity, correlationId, false)).principal;
+  }
 
-    const tenant = customer.rows[0];
-    const entitlement = await this.database.tenantReadTransaction(
-      tenant.customer_id,
-      (client) => client.query<EntitlementRow>(
+  async resolveDashboardPrincipal(
+    identity: VerifiedBusinessManagerIdentity,
+    correlationId: string = randomUUID(),
+  ): Promise<{
+    principal: OpenForAustraliaWorkspacePrincipal;
+    summary: OpenForAustraliaDashboardSummary;
+  }> {
+    const resolution = await this.resolve(identity, correlationId, true);
+    if (!resolution.summary) throw new Error("Dashboard summary resolution failed closed.");
+    return { principal: resolution.principal, summary: resolution.summary };
+  }
+
+  private async resolve(
+    identity: VerifiedBusinessManagerIdentity,
+    correlationId: string,
+    includeDashboardSummary: boolean,
+  ): Promise<{
+    principal: OpenForAustraliaWorkspacePrincipal;
+    summary?: OpenForAustraliaDashboardSummary;
+  }> {
+    const schema = runtimeSchema();
+    const resolution = await this.database.transaction(async (client) => {
+      const customer = await client.query<CustomerRow>(
+        `SELECT customer_id, external_company_id
+           FROM ${schema}.customers
+          WHERE external_company_id = $1 AND status = 'active'
+          LIMIT 2`,
+        [identity.companyId],
+      );
+      if (customer.rows.length !== 1) return { kind: "customer_invalid" as const };
+
+      const tenant = customer.rows[0];
+      await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [tenant.customer_id]);
+      const entitlement = await client.query<EntitlementRow>(
         `SELECT entitlement_id, customer_id, identity_user_id, role_key, authorization_revision
            FROM ${schema}.business_pack_entitlements
           WHERE customer_id = $1 AND identity_user_id = $2
             AND pack_id = $3 AND status = 'active'
           LIMIT 2`,
         [tenant.customer_id, identity.userId, PACK_ID],
-      ),
-    );
-    if (entitlement.rows.length !== 1) {
-      await this.recordAccess(tenant.customer_id, identity.userId, "denied", correlationId, {
-        reason: "entitlement_missing",
-      });
+      );
+      if (entitlement.rows.length !== 1) {
+        await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
+          "denied", correlationId, { reason: "entitlement_missing" });
+        return { kind: "entitlement_missing" as const };
+      }
+
+      const row = entitlement.rows[0];
+      await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
+        "allowed", correlationId, {});
+      const summary = includeDashboardSummary
+        ? await this.loadStudentSummary(client, schema, tenant.customer_id,
+          row.role_key, row.identity_user_id)
+        : undefined;
+      return {
+        kind: "resolved" as const,
+        principal: {
+          identityUserId: row.identity_user_id,
+          tenantId: row.customer_id,
+          externalCompanyId: tenant.external_company_id,
+          entitlementId: row.entitlement_id,
+          role: row.role_key,
+          authorizationRevision: row.authorization_revision,
+        },
+        ...(summary ? { summary } : {}),
+      };
+    });
+
+    if (resolution.kind === "customer_invalid") {
+      throw new ForbiddenException(
+        "An active, unambiguous Open For Australia organisation is required.",
+      );
+    }
+    if (resolution.kind === "entitlement_missing") {
       throw new ForbiddenException(
         "Open For Australia workspace entitlement is required.",
       );
     }
-
-    const row = entitlement.rows[0];
-    return {
-      identityUserId: row.identity_user_id,
-      tenantId: row.customer_id,
-      externalCompanyId: tenant.external_company_id,
-      entitlementId: row.entitlement_id,
-      role: row.role_key,
-      authorizationRevision: row.authorization_revision,
-    };
+    return { principal: resolution.principal, ...(resolution.summary
+      ? { summary: resolution.summary }
+      : {}) };
   }
 
   async recordAccess(
@@ -128,6 +178,41 @@ export class OpenForAustraliaWorkspaceService {
         JSON.stringify(metadata),
       ],
     );
+  }
+
+  private async loadStudentSummary(
+    client: PoolClient,
+    schema: string,
+    tenantId: string,
+    role: OpenForAustraliaRole,
+    identityUserId: string,
+  ): Promise<OpenForAustraliaDashboardSummary> {
+    const params: unknown[] = [tenantId];
+    const advisorScope = role === "advisor"
+      ? " AND advisor_identity_user_id = $2"
+      : "";
+    if (role === "advisor") params.push(identityUserId);
+    const result = await client.query<{
+      total: number;
+      active: number;
+      action_required: number;
+      on_hold: number;
+    }>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE status = 'active')::int AS active,
+              count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
+              count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
+         FROM ${schema}.open_for_australia_students
+        WHERE customer_id = $1${advisorScope}`,
+      params,
+    );
+    const summary = result.rows[0];
+    return {
+      totalStudents: Number(summary?.total ?? 0),
+      activeStudents: Number(summary?.active ?? 0),
+      actionRequired: Number(summary?.action_required ?? 0),
+      onHold: Number(summary?.on_hold ?? 0),
+    };
   }
 }
 

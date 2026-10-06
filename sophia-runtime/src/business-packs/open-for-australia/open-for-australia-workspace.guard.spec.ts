@@ -5,6 +5,7 @@ import {
   type ExecutionContext,
 } from "@nestjs/common";
 import { OpenForAustraliaWorkspaceGuard } from "./open-for-australia-workspace.guard.js";
+import { Reflector } from "@nestjs/core";
 
 const principal = {
   identityUserId: "user-1",
@@ -30,14 +31,20 @@ function harness(input: {
   }) };
   const workspace = {
     resolvePrincipal: jest.fn().mockResolvedValue(principal),
+    resolveDashboardPrincipal: jest.fn().mockResolvedValue({
+      principal,
+      summary: { totalStudents: 0, activeStudents: 0, actionRequired: 0, onHold: 0 },
+    }),
     recordAccess: jest.fn().mockResolvedValue(undefined),
   };
   const guard = new OpenForAustraliaWorkspaceGuard(
     identity as never,
     workspace as never,
+    new Reflector(),
   );
   const context = {
     switchToHttp: () => ({ getRequest: () => request }),
+    getHandler: () => function workspaceHandler() {},
   } as unknown as ExecutionContext;
   return { guard, context, request, identity, workspace };
 }
@@ -68,7 +75,7 @@ describe("OpenForAustraliaWorkspaceGuard", () => {
     );
   });
 
-  it("attaches the entitled principal and audits allowed access", async () => {
+  it("attaches the principal whose resolution already recorded allowed access", async () => {
     const { guard, context, request, workspace } = harness({
       headers: {
         authorization: "Bearer business-manager-token",
@@ -79,12 +86,7 @@ describe("OpenForAustraliaWorkspaceGuard", () => {
     expect(request).toEqual(expect.objectContaining({
       openForAustraliaPrincipal: principal,
     }));
-    expect(workspace.recordAccess).toHaveBeenCalledWith(
-      principal.tenantId,
-      principal.identityUserId,
-      "allowed",
-      "ofa-test-1",
-    );
+    expect(workspace.recordAccess).not.toHaveBeenCalled();
   });
 
   it("derives the current tenant when the route has no tenant parameter", async () => {

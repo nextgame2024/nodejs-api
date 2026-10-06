@@ -1,11 +1,16 @@
-import { Controller, Get, Query, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Query, Req, SetMetadata, UseGuards } from "@nestjs/common";
 import { OPEN_FOR_AUSTRALIA_PACK_CONTRACT } from "./open-for-australia.pack.js";
 import { OpenForAustraliaStudentsService } from "./open-for-australia-students.service.js";
 import { OpenForAustraliaWorkspaceGuard } from "./open-for-australia-workspace.guard.js";
-import type { OpenForAustraliaWorkspacePrincipal } from "./open-for-australia-workspace.service.js";
+import {
+  OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT,
+  type OpenForAustraliaDashboardSummary,
+  type OpenForAustraliaWorkspacePrincipal,
+} from "./open-for-australia-workspace.service.js";
 
 type WorkspaceRequest = {
   openForAustraliaPrincipal: OpenForAustraliaWorkspacePrincipal;
+  openForAustraliaDashboardSummary?: OpenForAustraliaDashboardSummary;
 };
 
 @Controller("business-packs/open-for-australia/v1/workspace")
@@ -32,11 +37,13 @@ export class OpenForAustraliaCurrentWorkspaceController {
   }
 
   @Get("dashboard")
+  @SetMetadata(OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT, true)
   async dashboard(@Req() request: WorkspaceRequest) {
-    const principal = request.openForAustraliaPrincipal;
+    const summary = request.openForAustraliaDashboardSummary;
+    if (!summary) throw new Error("Dashboard context was not resolved.");
     return {
       workspace: this.workspace(request),
-      summary: await this.students.summary(principal),
+      summary,
     };
   }
 }

@@ -22,18 +22,20 @@ describe("OpenForAustraliaCurrentWorkspaceController", () => {
   });
 
   it("returns dashboard context and counts through one guarded endpoint", async () => {
-    const summary = jest.fn().mockResolvedValue({
+    const summary = {
       totalStudents: 11,
       activeStudents: 8,
       actionRequired: 2,
       onHold: 1,
-    });
-    const controller = new OpenForAustraliaCurrentWorkspaceController({ summary } as never);
-    await expect(controller.dashboard({ openForAustraliaPrincipal: principal })).resolves.toEqual({
+    };
+    const controller = new OpenForAustraliaCurrentWorkspaceController({} as never);
+    await expect(controller.dashboard({
+      openForAustraliaPrincipal: principal,
+      openForAustraliaDashboardSummary: summary,
+    })).resolves.toEqual({
       workspace: expect.objectContaining({ role: "operations", tenantId: principal.tenantId }),
-      summary: { totalStudents: 11, activeStudents: 8, actionRequired: 2, onHold: 1 },
+      summary,
     });
-    expect(summary).toHaveBeenCalledWith(principal);
   });
 
   it("passes the authenticated principal to the student list", async () => {
