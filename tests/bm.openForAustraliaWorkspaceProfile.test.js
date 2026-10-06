@@ -7,9 +7,13 @@ describe("Open For Australia workspace administration", () => {
   test("uses an extensible workspace profile with the map as the safe default", () => {
     const sql = read("../scripts/sql/bm_company_workspace_profile.sql");
     const model = read("../src/models/bm.company.model.js");
+    const userModel = read("../src/models/user.model.js");
+    const userController = read("../src/controllers/user.controller.js");
     expect(sql).toContain("workspace_profile text NOT NULL DEFAULT 'project_map'");
     expect(sql).toContain("'student_operations'");
     expect(model).toContain('workspace_profile AS "workspaceProfile"');
+    expect(userModel).toContain('AS "workspaceProfile"');
+    expect(userController).toContain('workspaceProfile: u.workspaceProfile');
   });
 
   test("keeps workspace profile mutation server-authorized", () => {
@@ -29,7 +33,11 @@ describe("Open For Australia workspace administration", () => {
     expect(model).toContain("business_pack_access_audit_events");
     expect(model).toContain("set_config('sophia.tenant_id'");
     expect(model).toContain("rc.external_company_id = c.company_id::text");
-    expect(controller).toContain("requireSuperAdmin");
+    expect(controller).not.toContain("requireSuperAdmin");
+    expect(model).toContain("assertChiefExecutiveAuthority");
+    expect(model).toContain("role_key = 'chief_executive'");
+    expect(model).toContain("actor.company_id = $4::uuid");
+    expect(model).toContain("A Chief Executive cannot remove or change their own role");
     expect(routes).toContain('from "../middlewares/authJwt.js"');
     expect(routes).toContain('"/bm/business-pack-entitlements/:userId"');
     expect(routes).toContain("authRequired");

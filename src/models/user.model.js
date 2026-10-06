@@ -72,6 +72,12 @@ const USER_SELECT = `
     WHERE c.company_id = users.company_id
     LIMIT 1
   ) AS "companyName",
+  (
+    SELECT c.workspace_profile
+    FROM bm_company c
+    WHERE c.company_id = users.company_id
+    LIMIT 1
+  ) AS "workspaceProfile",
   createdat AS "createdAt",
   updatedat AS "updatedAt"
 `;

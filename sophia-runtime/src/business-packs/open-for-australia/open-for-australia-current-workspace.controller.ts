@@ -30,4 +30,13 @@ export class OpenForAustraliaCurrentWorkspaceController {
   listStudents(@Req() request: WorkspaceRequest, @Query() query: unknown) {
     return this.students.list(request.openForAustraliaPrincipal, query);
   }
+
+  @Get("dashboard")
+  async dashboard(@Req() request: WorkspaceRequest) {
+    const principal = request.openForAustraliaPrincipal;
+    return {
+      workspace: this.workspace(request),
+      summary: await this.students.summary(principal),
+    };
+  }
 }

@@ -51,6 +51,7 @@ const mapUserResponse = (u, token) => ({
   siteName: u.siteName ?? null,
   companyId: u.companyId ?? null,
   companyName: u.companyName ?? null,
+  workspaceProfile: u.workspaceProfile ?? "project_map",
 
   createdAt: toISO(u.createdAt),
   updatedAt: toISO(u.updatedAt),

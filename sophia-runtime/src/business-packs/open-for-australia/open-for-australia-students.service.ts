@@ -89,6 +89,38 @@ export class OpenForAustraliaStudentsService {
       };
     });
   }
+
+  async summary(principal: OpenForAustraliaWorkspacePrincipal) {
+    const schema = runtimeSchema();
+    return this.database.tenantReadTransaction(principal.tenantId, async (client) => {
+      const params: unknown[] = [principal.tenantId];
+      const advisorScope = principal.role === "advisor"
+        ? " AND advisor_identity_user_id = $2"
+        : "";
+      if (principal.role === "advisor") params.push(principal.identityUserId);
+      const result = await client.query<{
+        total: number;
+        active: number;
+        action_required: number;
+        on_hold: number;
+      }>(
+        `SELECT count(*)::int AS total,
+                count(*) FILTER (WHERE status = 'active')::int AS active,
+                count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
+                count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
+           FROM ${schema}.open_for_australia_students
+          WHERE customer_id = $1${advisorScope}`,
+        params,
+      );
+      const row = result.rows[0];
+      return {
+        totalStudents: Number(row?.total ?? 0),
+        activeStudents: Number(row?.active ?? 0),
+        actionRequired: Number(row?.action_required ?? 0),
+        onHold: Number(row?.on_hold ?? 0),
+      };
+    });
+  }
 }
 
 function listProjection(

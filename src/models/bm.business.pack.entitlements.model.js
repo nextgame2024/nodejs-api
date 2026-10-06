@@ -11,7 +11,12 @@ export function getPackDefinition(packId) {
   return PACK_CATALOG[packId] ?? null;
 }
 
-export async function getBusinessPackEntitlement({ companyId, targetUserId, packId }) {
+export async function getBusinessPackEntitlement({
+  companyId,
+  targetUserId,
+  packId,
+  actorUserId,
+}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -23,6 +28,12 @@ export async function getBusinessPackEntitlement({ companyId, targetUserId, pack
     await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [
       scope.customer_id,
     ]);
+    await assertChiefExecutiveAuthority(client, {
+      actorUserId,
+      companyId,
+      customerId: scope.customer_id,
+      packId,
+    });
     const { rows } = await client.query(
       `SELECT entitlement_id::text AS "entitlementId",
               pack_id AS "packId", role_key AS "roleKey",
@@ -58,6 +69,40 @@ async function resolveTargetScope(client, companyId, targetUserId, lock = false)
   );
   if (rows.length !== 1 || !rows[0].customer_id) return null;
   return rows[0];
+}
+
+async function assertChiefExecutiveAuthority(
+  client,
+  { actorUserId, companyId, customerId, packId },
+) {
+  const { rows } = await client.query(
+    `SELECT entitlement_id
+       FROM sophia_runtime.business_pack_entitlements
+      WHERE customer_id = $1::uuid
+        AND identity_user_id = $2
+        AND pack_id = $3
+        AND status = 'active'
+        AND role_key = 'chief_executive'
+        AND EXISTS (
+          SELECT 1
+            FROM users actor
+            JOIN bm_company company ON company.company_id = actor.company_id
+           WHERE actor.id = $2::uuid
+             AND actor.company_id = $4::uuid
+             AND actor.status = 'active'
+             AND company.status = 'active'
+             AND company.workspace_profile = 'student_operations'
+        )
+      LIMIT 1`,
+    [customerId, actorUserId, packId, companyId],
+  );
+  if (rows.length !== 1) {
+    const error = new Error(
+      "An active Chief Executive may administer roles only within their own student operations company",
+    );
+    error.status = 403;
+    throw error;
+  }
 }
 
 export async function setBusinessPackEntitlement({
@@ -96,6 +141,19 @@ export async function setBusinessPackEntitlement({
     await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [
       target.customer_id,
     ]);
+    await assertChiefExecutiveAuthority(client, {
+      actorUserId,
+      companyId,
+      customerId: target.customer_id,
+      packId,
+    });
+    if (targetUserId === actorUserId && roleKey !== "chief_executive") {
+      const error = new Error(
+        "A Chief Executive cannot remove or change their own role",
+      );
+      error.status = 409;
+      throw error;
+    }
     if (roleKey !== null && target.user_status !== "active") {
       const error = new Error("A business-pack role can only be assigned to an active user");
       error.status = 409;
