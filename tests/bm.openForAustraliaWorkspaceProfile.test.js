@@ -30,6 +30,7 @@ describe("Open For Australia workspace administration", () => {
     expect(model).toContain("set_config('sophia.tenant_id'");
     expect(model).toContain("rc.external_company_id = c.company_id::text");
     expect(controller).toContain("requireSuperAdmin");
+    expect(routes).toContain('from "../middlewares/authJwt.js"');
     expect(routes).toContain('"/bm/business-pack-entitlements/:userId"');
     expect(routes).toContain("authRequired");
     expect(routes).toContain("setBusinessPackEntitlement");

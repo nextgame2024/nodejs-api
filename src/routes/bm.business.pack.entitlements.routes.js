@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authRequired } from "../middlewares/auth.middleware.js";
+import { authRequired } from "../middlewares/authJwt.js";
 import {
   getBusinessPackEntitlement,
   setBusinessPackEntitlement,
@@ -15,4 +15,3 @@ router.put(
 );
 
 export default router;
-
