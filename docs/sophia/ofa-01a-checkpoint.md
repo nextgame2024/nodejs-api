@@ -16,7 +16,7 @@ independent server-side authorization boundary.
 
 The screen discovers the runtime tenant from the authenticated Business Manager
 identity, then loads the tenant-scoped student register. It provides bounded
-search, status, college and advisor-assignment filters, pagination, loading,
+search, status, college and advisor-assignment filters, loading,
 empty and access-denied states. It deliberately has no create, edit, import or
 upload action.
 
@@ -79,10 +79,10 @@ PrimeIcons stylesheet reference.
 Until migration 062 is applied and a reviewed entitlement is assigned, the
 production page must remain inaccessible. After those operations, an entitled
 account can open the route and should see the empty synthetic register state.
-Synthetic fixtures should be introduced only in a non-production tenant.
+Test fixtures should be introduced only in a non-production tenant.
 
 ## Next proposed checkpoint
 
-OFA-01B adds validated student create/edit operations, role enforcement,
-optimistic concurrency and immutable change audit. It must remain synthetic-only
+OFA-01B adds the workspace profile and student-operations dashboard shell before
+student writes. Student create/edit operations move to OFA-01E and remain blocked
 until the privacy notice and real-data onboarding gate are approved.

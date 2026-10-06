@@ -3,6 +3,16 @@ import * as service from "../services/bm.company.service.js";
 
 const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
+const WORKSPACE_PROFILES = new Set(["project_map", "student_operations"]);
+
+function validateWorkspaceProfile(payload) {
+  if (payload.workspace_profile === undefined) return;
+  if (!WORKSPACE_PROFILES.has(payload.workspace_profile)) {
+    const error = new Error("Invalid workspace_profile");
+    error.status = 400;
+    throw error;
+  }
+}
 
 export const listCompanies = asyncHandler(async (req, res) => {
   const companyId = isSuperAdmin(req) ? null : req.user.companyId;
@@ -41,6 +51,7 @@ export const createCompany = asyncHandler(async (req, res) => {
   if (!payload.company_name) {
     return res.status(400).json({ error: "company_name is required" });
   }
+  validateWorkspaceProfile(payload);
 
   const company = await service.createCompany(companyId, userId, payload);
   res.status(201).json({ company });
@@ -56,6 +67,9 @@ export const updateCompany = asyncHandler(async (req, res) => {
 
   if (!superAdmin) {
     delete payload.status;
+    delete payload.workspace_profile;
+  } else {
+    validateWorkspaceProfile(payload);
   }
 
   const company = await service.updateCompany(

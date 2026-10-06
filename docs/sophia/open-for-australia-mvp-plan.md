@@ -1,7 +1,7 @@
 # Open For Australia operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
-Status: architecture and delivery order approved; OFA-00A through OFA-01A complete in source
+Status: architecture and delivery order approved; OFA-00A through OFA-01D complete in source
 
 ## Product boundary
 
@@ -154,10 +154,13 @@ deployment remains a separate decision.
 | OFA-00B — workspace authorization | An authenticated, entitled Open For Australia user can read workspace metadata; unauthenticated, wrong-tenant and unentitled calls fail closed. | HTTP/API tests for 200/401/403 and cross-tenant denial; immutable audit event assertion. |
 | OFA-00C — roles/privacy contract | CEO, Operations and Advisor permissions, field classification, data-flow inventory and retention/legal-hold placeholders are represented explicitly. | Permission-matrix tests, sensitive-field masking tests and privacy-target registration tests. |
 | OFA-01A — Students read slice | `/manager/open-for-australia/students` lists/searches synthetic tenant-scoped students. | Migration/RLS tests, API contract tests, Angular service/component tests and cross-tenant denial. |
-| OFA-01B — Students write slice | Authorized users can create and edit a synthetic student with validation and audit history. | Validation, duplicate/idempotency, role-denial, audit and UI form tests. |
+| OFA-01B — Workspace profile and dashboard shell | A super-admin-selected `workspace_profile` switches the Business Manager home between the existing project map and the student-operations dashboard without loading Google Maps for the latter. | Safe-default migration, server-authorized profile mutation, accurate empty/error/dashboard states, Angular build and real-estate regression. |
+| OFA-01C — Students UI alignment | Students uses the established Business Manager controls, list styling and infinite loading without changing the tenant authorization boundary. | Shared-control component tests, filter/error/empty-state tests and production build. |
+| OFA-01D — User role administration | Super Admin assigns or revokes named Open For Australia roles per user for a student-operations company. | Super-admin denial, named-role validation, tenant/RLS context, revision/audit assertions and API/UI tests. |
+| OFA-01E — Students write slice | Authorized users can create and edit a student with validation and audit history after the real-data onboarding gate is approved. | Validation, duplicate/idempotency, role-denial, audit and UI form tests. |
 | OFA-02A — Case foundation | A student case shows stage, owner, checkpoints and append-only activity. | State-transition, append-only activity, permission and Student Case page tests. |
 | OFA-02B — Tasks/actions | Users can assign, complete and filter case actions with due dates and priorities. | Task lifecycle, concurrency, authorization and UI interaction tests. |
-| OFA-03 — Dashboard | Dashboard derives priorities, due dates, blocked cases and workflow counts from operational data. | Deterministic read-model fixtures, empty/error states and dashboard component tests. |
+| OFA-03 — Dashboard expansion | The dashboard adds due dates, payment controls, blocked-case reasons and workflow counts as those operational read models become available. | Deterministic read-model fixtures, empty/error states and dashboard component tests. |
 | OFA-04A — Payments read model | Manual/reference payment schedules, reconciliation states and TRUST/PTY separation are visible without claiming Xero verification. | Financial invariant, tenant isolation, status and Payments page tests. |
 | OFA-04B — Controls/approvals | Signed Engagement Letter, Paid + PENDING urgency and college-payment preparation are enforced; execution remains disabled. | Blocking/urgency/approval state-machine tests and explicit no-transfer assertion. |
 | OFA-05A — storage infrastructure | Dedicated private S3/KMS/quarantine design is deployed and verified before the product accepts documents. | Infrastructure policy tests, public-access denial, encryption and scan-event test evidence. |

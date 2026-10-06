@@ -4,6 +4,7 @@ const COMPANY_SELECT = `
   company_id AS "companyId",
   owner_user_id AS "ownerUserId",
   company_name AS "companyName",
+  workspace_profile AS "workspaceProfile",
   status,
   createdat AS "createdAt",
   updatedat AS "updatedAt",
@@ -108,6 +109,7 @@ export async function createCompany(companyId, userId, payload) {
         company_id,
         owner_user_id,
         company_name,
+        workspace_profile,
         status,
         legal_name,
         trading_name,
@@ -141,13 +143,15 @@ export async function createCompany(companyId, userId, payload) {
         $15,
         $16,
         $17,
-        $18
+        $18,
+        $19
      )
      RETURNING ${COMPANY_SELECT}`,
     [
       companyId,
       payload.owner_user_id ?? userId,
       payload.company_name,
+      payload.workspace_profile ?? "project_map",
       payload.status ?? "active",
       payload.legal_name ?? null,
       payload.trading_name ?? null,
@@ -175,6 +179,7 @@ export async function updateCompany(companyId, targetCompanyId, payload) {
 
   const map = {
     company_name: "company_name",
+    workspace_profile: "workspace_profile",
     status: "status",
     legal_name: "legal_name",
     trading_name: "trading_name",
