@@ -10,26 +10,26 @@ import { randomUUID } from "node:crypto";
 import { Reflector } from "@nestjs/core";
 import { BusinessManagerIdentityBridge } from "../../admin/identity/business-manager-identity.bridge.js";
 import {
-  OpenForAustraliaWorkspaceService,
-  OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT,
-  type OpenForAustraliaDashboardSummary,
-  type OpenForAustraliaWorkspacePrincipal,
-} from "./open-for-australia-workspace.service.js";
+  StudentOperationsWorkspaceService,
+  STUDENT_OPERATIONS_DASHBOARD_CONTEXT,
+  type StudentOperationsDashboardSummary,
+  type StudentOperationsWorkspacePrincipal,
+} from "./student-operations-workspace.service.js";
 
 type WorkspaceRequest = {
   headers: Record<string, string | string[] | undefined>;
   params?: Record<string, string | undefined>;
-  openForAustraliaPrincipal?: OpenForAustraliaWorkspacePrincipal;
-  openForAustraliaDashboardSummary?: OpenForAustraliaDashboardSummary;
+  studentOperationsPrincipal?: StudentOperationsWorkspacePrincipal;
+  studentOperationsDashboardSummary?: StudentOperationsDashboardSummary;
 };
 
 @Injectable()
-export class OpenForAustraliaWorkspaceGuard implements CanActivate {
+export class StudentOperationsWorkspaceGuard implements CanActivate {
   constructor(
     @Inject(BusinessManagerIdentityBridge)
     private readonly identity: BusinessManagerIdentityBridge,
-    @Inject(OpenForAustraliaWorkspaceService)
-    private readonly workspace: OpenForAustraliaWorkspaceService,
+    @Inject(StudentOperationsWorkspaceService)
+    private readonly workspace: StudentOperationsWorkspaceService,
     private readonly reflector: Reflector,
   ) {}
 
@@ -38,7 +38,7 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
     const authorization = header(request, "authorization");
     if (!authorization) {
       throw new UnauthorizedException(
-        "Open For Australia workspace authentication is required.",
+        "Student Operations workspace authentication is required.",
       );
     }
 
@@ -46,7 +46,7 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
       ?? randomUUID();
     const identity = await this.identity.authenticate(authorization);
     const isDashboard = this.reflector.get<boolean>(
-      OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT,
+      STUDENT_OPERATIONS_DASHBOARD_CONTEXT,
       context.getHandler(),
     ) === true;
     const dashboardContext = isDashboard
@@ -68,9 +68,9 @@ export class OpenForAustraliaWorkspaceGuard implements CanActivate {
       );
     }
 
-    request.openForAustraliaPrincipal = principal;
+    request.studentOperationsPrincipal = principal;
     if (dashboardContext) {
-      request.openForAustraliaDashboardSummary = dashboardContext.summary;
+      request.studentOperationsDashboardSummary = dashboardContext.summary;
     }
     return true;
   }

@@ -1,11 +1,11 @@
-# Open For Australia operations MVP — gap analysis and proposed plan
+# Student Operations operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
 Status: architecture and delivery order approved; OFA-00A through OFA-01D complete in source
 
 ## Product boundary
 
-Open For Australia will be a client-specific operations workspace inside
+Student Operations will be a client-specific operations workspace inside
 Business Manager. Xero TRUST and Xero PTY remain accounting sources of truth.
 Sophia stores operational cases, checkpoints, tasks, approvals, evidence and
 audit context around Xero; it must not independently decide financial amounts or
@@ -21,16 +21,16 @@ real-estate demonstration remains independent and unchanged.
 | Angular Business Manager shell, company/user context, configurable navigation and responsive page patterns | Reuse for the five workspace routes and client entitlement. |
 | Existing Express Business Manager company, user and navigation APIs | Keep in place; do not rewrite them as part of this MVP. |
 | Node 22.23.2 repository/runtime contract | Reuse. Both the Express API and Nest Sophia Runtime target Node 22. |
-| NestJS Sophia Runtime with tenant context, PostgreSQL migrations, RLS-oriented data model, authorization, immutable audit, workflows, escalations, privacy control plane and connector authority | Reuse as the host for a new `open-for-australia` business pack and its domain API. |
+| NestJS Sophia Runtime with tenant context, PostgreSQL migrations, RLS-oriented data model, authorization, immutable audit, workflows, escalations, privacy control plane and connector authority | Reuse as the host for a new `student-operations` business pack and its domain API. |
 | Sophia conversation/orchestration and tool registry | Reuse after deterministic operational read models exist; tools call domain services rather than tables directly. |
 | Real-estate business pack and deterministic tests | Preserve unchanged; it is a regression boundary, not a template to copy wholesale. |
 | Existing Business Manager `Documents` module | Do not reuse as a student file vault. It models commercial quotes/invoices and lacks the quarantine/scanning/access lifecycle required for identity documents. |
 | Existing generic S3 helper | Do not use for student documents. It includes legacy public-URL behavior and static application credentials and does not enforce scan-before-read. |
-| Existing privacy Admin controls | Reuse the policy/evidence patterns; extend them with Open For Australia data-flow, retention, access/correction and erasure targets. |
+| Existing privacy Admin controls | Reuse the policy/evidence patterns; extend them with Student Operations data-flow, retention, access/correction and erasure targets. |
 
 ## Missing from the proposed MVP
 
-- No Open For Australia operational schema, RLS policies or API contracts.
+- No Student Operations operational schema, RLS policies or API contracts.
 - No student master record, case, stage history, payment schedule, checkpoint,
   task, approval, activity or college model.
 - No five client workspace screens.
@@ -41,7 +41,7 @@ real-estate demonstration remains independent and unchanged.
   or idempotent synchronization.
 - No deterministic TRUST-versus-PTY controls, commission calculation, signed
   Engagement Letter gate or Paid + PENDING urgency rule.
-- No Open For Australia Sophia tools or grounded operational assistant.
+- No Student Operations Sophia tools or grounded operational assistant.
 - No approved privacy notice, collection-purpose catalogue, retention schedule,
   breach runbook or registered-migration-agent record schedule.
 
@@ -52,7 +52,7 @@ deployable service for the MVP:
 
 1. Keep the existing Express API responsible for legacy Business Manager
    company/user/navigation functions.
-2. Add `open-for-australia` as a new bounded business pack in the existing NestJS
+2. Add `student-operations` as a new bounded business pack in the existing NestJS
    Sophia Runtime. It owns the new operational tables, DTO validation, domain
    rules, RLS, permissions, audit events and APIs.
 3. Add the new Angular routes under Business Manager and call the Nest domain API
@@ -134,7 +134,7 @@ operational recovery requirements.
 
 The MVP already needs the useful operational core of a CRM: people/organisation
 records, a case pipeline, assigned owners, tasks, due dates, notes/evidence and an
-activity timeline. Build those as Open For Australia operational concepts now.
+activity timeline. Build those as Student Operations operational concepts now.
 
 Do not build marketing automation, campaign management, lead scoring or a
 general-purpose HubSpot clone in the MVP. A later phase can add inquiry/lead
@@ -150,13 +150,13 @@ deployment remains a separate decision.
 
 | Checkpoint | Demonstrable outcome | Required functional evidence |
 | --- | --- | --- |
-| OFA-00A — pack boundary | Nest declares a versioned, disabled-by-default `open-for-australia` contract without changing the active registry or real-estate behavior. | Contract/registry tests, fail-closed capability tests, runtime build, full real-estate regression. |
-| OFA-00B — workspace authorization | An authenticated, entitled Open For Australia user can read workspace metadata; unauthenticated, wrong-tenant and unentitled calls fail closed. | HTTP/API tests for 200/401/403 and cross-tenant denial; immutable audit event assertion. |
+| OFA-00A — pack boundary | Nest declares a versioned, disabled-by-default `student-operations` contract without changing the active registry or real-estate behavior. | Contract/registry tests, fail-closed capability tests, runtime build, full real-estate regression. |
+| OFA-00B — workspace authorization | An authenticated, entitled Student Operations user can read workspace metadata; unauthenticated, wrong-tenant and unentitled calls fail closed. | HTTP/API tests for 200/401/403 and cross-tenant denial; immutable audit event assertion. |
 | OFA-00C — roles/privacy contract | CEO, Operations and Advisor permissions, field classification, data-flow inventory and retention/legal-hold placeholders are represented explicitly. | Permission-matrix tests, sensitive-field masking tests and privacy-target registration tests. |
-| OFA-01A — Students read slice | `/manager/open-for-australia/students` lists/searches synthetic tenant-scoped students. | Migration/RLS tests, API contract tests, Angular service/component tests and cross-tenant denial. |
+| OFA-01A — Students read slice | `/manager/student-operations/students` lists/searches synthetic tenant-scoped students. | Migration/RLS tests, API contract tests, Angular service/component tests and cross-tenant denial. |
 | OFA-01B — Workspace profile and dashboard shell | A super-admin-selected `workspace_profile` switches the Business Manager home between the existing project map and the student-operations dashboard without loading Google Maps for the latter. | Safe-default migration, server-authorized profile mutation, accurate empty/error/dashboard states, Angular build and real-estate regression. |
 | OFA-01C — Students UI alignment | Students uses the established Business Manager controls, list styling and infinite loading without changing the tenant authorization boundary. | Shared-control component tests, filter/error/empty-state tests and production build. |
-| OFA-01D — User role administration | Super Admin assigns or revokes named Open For Australia roles per user for a student-operations company. | Super-admin denial, named-role validation, tenant/RLS context, revision/audit assertions and API/UI tests. |
+| OFA-01D — User role administration | Super Admin assigns or revokes named Student Operations roles per user for a student-operations company. | Super-admin denial, named-role validation, tenant/RLS context, revision/audit assertions and API/UI tests. |
 | OFA-01E — Students write slice | Authorized users can create and edit a student with validation and audit history after the real-data onboarding gate is approved. | Validation, duplicate/idempotency, role-denial, audit and UI form tests. |
 | OFA-02A — Case foundation | A student case shows stage, owner, checkpoints and append-only activity. | State-transition, append-only activity, permission and Student Case page tests. |
 | OFA-02B — Tasks/actions | Users can assign, complete and filter case actions with due dates and priorities. | Task lifecycle, concurrency, authorization and UI interaction tests. |
@@ -187,7 +187,7 @@ At the end of each checkpoint, provide:
 
 - Confirm roles, field inventory, privacy notice, retention/legal-hold matrix,
   audit events and acceptance criteria.
-- Define API/OpenAPI contracts and the `open_for_australia` tenant-scoped schema.
+- Define API/OpenAPI contracts and the `student_operations` tenant-scoped schema.
 - Add business-pack boundary, permissions and cross-tenant denial tests.
 - Create infrastructure-as-code design for the private quarantine/clean bucket;
   no sensitive upload feature is released before it is deployed and verified.
@@ -239,7 +239,7 @@ At the end of each checkpoint, provide:
 
 1. Confirm the initial roles and who can see passports, payment details and
    exports.
-2. Confirm whether Open For Australia is operating through a registered migration
+2. Confirm whether Student Operations is operating through a registered migration
    agent and obtain the authoritative client-file retention requirements.
 3. Confirm AWS account/region and whether GuardDuty Malware Protection for S3 is
    available and approved.

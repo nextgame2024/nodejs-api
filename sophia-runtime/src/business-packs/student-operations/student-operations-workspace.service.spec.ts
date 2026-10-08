@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { ForbiddenException } from "@nestjs/common";
-import { OpenForAustraliaWorkspaceService } from "./open-for-australia-workspace.service.js";
+import { StudentOperationsWorkspaceService } from "./student-operations-workspace.service.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
@@ -32,14 +32,14 @@ function harness(entitled = true) {
       work({ query: auditQuery })),
   };
   return {
-    service: new OpenForAustraliaWorkspaceService(database as never),
+    service: new StudentOperationsWorkspaceService(database as never),
     database,
     auditQuery,
     clientQuery,
   };
 }
 
-describe("OpenForAustraliaWorkspaceService", () => {
+describe("StudentOperationsWorkspaceService", () => {
   it("resolves one active tenant-bound entitlement", async () => {
     const { service } = harness();
     await expect(service.resolvePrincipal({
@@ -65,7 +65,7 @@ describe("OpenForAustraliaWorkspaceService", () => {
     }, "correlation-2")).rejects.toBeInstanceOf(ForbiddenException);
     expect(clientQuery).toHaveBeenCalledWith(
       expect.stringContaining("business_pack_access_audit_events"),
-      expect.arrayContaining([tenantId, "user-1", "open-for-australia", "denied"]),
+      expect.arrayContaining([tenantId, "user-1", "student-operations", "denied"]),
     );
   });
 

@@ -4,7 +4,7 @@ Status: source retired on 5 October 2026.
 
 The former student-agency demonstration implemented migration-rule guidance,
 rule comparison, consultation booking, consultation email delivery and related
-demo UI. It was not the Open For Australia operations product and is no longer
+demo UI. It was not the Student Operations operations product and is no longer
 part of any executable product path.
 
 ## Removed executable surface
@@ -27,9 +27,9 @@ deleted in dependency order using
 avoided `CASCADE`; its only foreign-key dependencies were internal to the six
 tables. A post-operation catalogue query returned zero matching tables.
 
-## New Open For Australia boundary
+## New Student Operations boundary
 
-Any future Open For Australia implementation is a new business pack, not a
+Any future Student Operations implementation is a new business pack, not a
 revival or rename of this demo. It must use a new domain model, tenant-scoped
 authorization, privacy controls, auditable workflow state and protected document
 storage. Generic platform primitives may be reused; demo-specific schema and

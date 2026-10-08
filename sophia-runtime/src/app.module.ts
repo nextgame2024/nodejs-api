@@ -9,7 +9,7 @@ import { AdminModule } from "./admin/admin.module.js";
 import { ConnectorsModule } from "./connectors/connectors.module.js";
 import { V2OrchestrationModule } from "./platform/orchestration/v2-orchestration.module.js";
 import { RuntimeAdmissionModule } from "./platform/admission/runtime-admission.module.js";
-import { OpenForAustraliaModule } from "./business-packs/open-for-australia/open-for-australia.module.js";
+import { StudentOperationsModule } from "./business-packs/student-operations/student-operations.module.js";
 
 @Module({
   imports: [
@@ -22,7 +22,7 @@ import { OpenForAustraliaModule } from "./business-packs/open-for-australia/open
     ConnectorsModule,
     ConversationModule,
     V2OrchestrationModule,
-    OpenForAustraliaModule,
+    StudentOperationsModule,
     HealthModule,
   ],
 })

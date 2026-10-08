@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
   type ExecutionContext,
 } from "@nestjs/common";
-import { OpenForAustraliaWorkspaceGuard } from "./open-for-australia-workspace.guard.js";
+import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
 import { Reflector } from "@nestjs/core";
 
 const principal = {
@@ -37,7 +37,7 @@ function harness(input: {
     }),
     recordAccess: jest.fn().mockResolvedValue(undefined),
   };
-  const guard = new OpenForAustraliaWorkspaceGuard(
+  const guard = new StudentOperationsWorkspaceGuard(
     identity as never,
     workspace as never,
     new Reflector(),
@@ -49,7 +49,7 @@ function harness(input: {
   return { guard, context, request, identity, workspace };
 }
 
-describe("OpenForAustraliaWorkspaceGuard", () => {
+describe("StudentOperationsWorkspaceGuard", () => {
   it("returns 401 semantics when no bearer identity is present", async () => {
     const { guard, context, identity } = harness();
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
@@ -84,7 +84,7 @@ describe("OpenForAustraliaWorkspaceGuard", () => {
     });
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request).toEqual(expect.objectContaining({
-      openForAustraliaPrincipal: principal,
+      studentOperationsPrincipal: principal,
     }));
     expect(workspace.recordAccess).not.toHaveBeenCalled();
   });
@@ -95,6 +95,6 @@ describe("OpenForAustraliaWorkspaceGuard", () => {
     });
     request.params = {};
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(request.openForAustraliaPrincipal).toEqual(principal);
+    expect(request.studentOperationsPrincipal).toEqual(principal);
   });
 });

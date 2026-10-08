@@ -2,10 +2,10 @@ import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { DatabaseService } from "../../database/database.service.js";
 import {
-  projectOpenForAustraliaFields,
-  type OpenForAustraliaField,
-} from "./open-for-australia-policy.js";
-import type { OpenForAustraliaWorkspacePrincipal } from "./open-for-australia-workspace.service.js";
+  projectStudentOperationsFields,
+  type StudentOperationsField,
+} from "./student-operations-policy.js";
+import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
 
 const StudentListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -31,10 +31,10 @@ type StudentListRow = {
 };
 
 @Injectable()
-export class OpenForAustraliaStudentsService {
+export class StudentOperationsStudentsService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
-  async list(principal: OpenForAustraliaWorkspacePrincipal, input: unknown) {
+  async list(principal: StudentOperationsWorkspacePrincipal, input: unknown) {
     const parsed = StudentListQuerySchema.safeParse(input);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -75,7 +75,7 @@ export class OpenForAustraliaStudentsService {
         `SELECT student_id, student_reference, legal_name, preferred_name, email,
                 current_stage, status, college_name, advisor_identity_user_id,
                 count(*) OVER()::int AS total_count
-           FROM ${schema}.open_for_australia_students
+           FROM ${schema}.student_operations_students
           WHERE ${clauses.join(" AND ")}
           ORDER BY legal_name ASC, student_id ASC
           LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -90,7 +90,7 @@ export class OpenForAustraliaStudentsService {
     });
   }
 
-  async summary(principal: OpenForAustraliaWorkspacePrincipal) {
+  async summary(principal: StudentOperationsWorkspacePrincipal) {
     const schema = runtimeSchema();
     return this.database.tenantReadTransaction(principal.tenantId, async (client) => {
       const params: unknown[] = [principal.tenantId];
@@ -108,7 +108,7 @@ export class OpenForAustraliaStudentsService {
                 count(*) FILTER (WHERE status = 'active')::int AS active,
                 count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
                 count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
-           FROM ${schema}.open_for_australia_students
+           FROM ${schema}.student_operations_students
           WHERE customer_id = $1${advisorScope}`,
         params,
       );
@@ -125,9 +125,9 @@ export class OpenForAustraliaStudentsService {
 
 function listProjection(
   row: StudentListRow,
-  principal: OpenForAustraliaWorkspacePrincipal,
+  principal: StudentOperationsWorkspacePrincipal,
 ) {
-  const input: Partial<Record<OpenForAustraliaField, unknown>> = {
+  const input: Partial<Record<StudentOperationsField, unknown>> = {
     studentId: row.student_id,
     studentReference: row.student_reference,
     legalName: row.legal_name,
@@ -138,7 +138,7 @@ function listProjection(
     collegeName: row.college_name,
     advisorAssigned: row.advisor_identity_user_id !== null,
   };
-  const projected = projectOpenForAustraliaFields(input, principal.role, {
+  const projected = projectStudentOperationsFields(input, principal.role, {
     surface: "list",
     assigned: principal.role === "advisor",
   });

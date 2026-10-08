@@ -1,6 +1,6 @@
-export const OPEN_FOR_AUSTRALIA_POLICY_VERSION = "2026-10-05.1";
+export const STUDENT_OPERATIONS_POLICY_VERSION = "2026-10-05.1";
 
-export const OPEN_FOR_AUSTRALIA_PERMISSIONS = [
+export const STUDENT_OPERATIONS_PERMISSIONS = [
   "workspace.read",
   "students.read_all",
   "students.read_assigned",
@@ -25,11 +25,11 @@ export const OPEN_FOR_AUSTRALIA_PERMISSIONS = [
   "privacy.manage",
 ] as const;
 
-export type OpenForAustraliaPermission =
-  typeof OPEN_FOR_AUSTRALIA_PERMISSIONS[number];
+export type StudentOperationsPermission =
+  typeof STUDENT_OPERATIONS_PERMISSIONS[number];
 
-export const OPEN_FOR_AUSTRALIA_ROLE_PERMISSIONS = {
-  chief_executive: OPEN_FOR_AUSTRALIA_PERMISSIONS,
+export const STUDENT_OPERATIONS_ROLE_PERMISSIONS = {
+  chief_executive: STUDENT_OPERATIONS_PERMISSIONS,
   operations: [
     "workspace.read",
     "students.read_all",
@@ -55,18 +55,18 @@ export const OPEN_FOR_AUSTRALIA_ROLE_PERMISSIONS = {
     "payments.read_assigned_status",
     "assistant.use",
   ],
-} as const satisfies Record<string, readonly OpenForAustraliaPermission[]>;
+} as const satisfies Record<string, readonly StudentOperationsPermission[]>;
 
-export const OPEN_FOR_AUSTRALIA_STEP_UP_PERMISSIONS = [
+export const STUDENT_OPERATIONS_STEP_UP_PERMISSIONS = [
   "payments.approve",
   "reports.export",
   "privacy.manage",
-] as const satisfies readonly OpenForAustraliaPermission[];
+] as const satisfies readonly StudentOperationsPermission[];
 
-export type OpenForAustraliaRole =
-  keyof typeof OPEN_FOR_AUSTRALIA_ROLE_PERMISSIONS;
+export type StudentOperationsRole =
+  keyof typeof STUDENT_OPERATIONS_ROLE_PERMISSIONS;
 
-export type OpenForAustraliaFieldClassification =
+export type StudentOperationsFieldClassification =
   | "operational"
   | "personal"
   | "restricted_personal"
@@ -75,12 +75,12 @@ export type OpenForAustraliaFieldClassification =
   | "restricted_financial";
 
 type FieldPolicy = {
-  classification: OpenForAustraliaFieldClassification;
+  classification: StudentOperationsFieldClassification;
   listVisible: boolean;
   permission: "student" | "identity" | "sensitive" | "payment_status" | "payment_full";
 };
 
-export const OPEN_FOR_AUSTRALIA_FIELD_POLICIES = {
+export const STUDENT_OPERATIONS_FIELD_POLICIES = {
   studentId: {
     classification: "operational", listVisible: true, permission: "student",
   },
@@ -134,33 +134,33 @@ export const OPEN_FOR_AUSTRALIA_FIELD_POLICIES = {
   },
 } as const satisfies Record<string, FieldPolicy>;
 
-export type OpenForAustraliaField =
-  keyof typeof OPEN_FOR_AUSTRALIA_FIELD_POLICIES;
+export type StudentOperationsField =
+  keyof typeof STUDENT_OPERATIONS_FIELD_POLICIES;
 
-export type OpenForAustraliaAccessContext = {
+export type StudentOperationsAccessContext = {
   surface: "list" | "case";
   assigned: boolean;
 };
 
-export type OpenForAustraliaFieldProjection = {
-  values: Partial<Record<OpenForAustraliaField, unknown>>;
-  maskedFields: OpenForAustraliaField[];
+export type StudentOperationsFieldProjection = {
+  values: Partial<Record<StudentOperationsField, unknown>>;
+  maskedFields: StudentOperationsField[];
 };
 
-export function projectOpenForAustraliaFields(
-  input: Partial<Record<OpenForAustraliaField, unknown>>,
-  role: OpenForAustraliaRole,
-  context: OpenForAustraliaAccessContext,
-): OpenForAustraliaFieldProjection {
-  const permissions = new Set<OpenForAustraliaPermission>(
-    OPEN_FOR_AUSTRALIA_ROLE_PERMISSIONS[role],
+export function projectStudentOperationsFields(
+  input: Partial<Record<StudentOperationsField, unknown>>,
+  role: StudentOperationsRole,
+  context: StudentOperationsAccessContext,
+): StudentOperationsFieldProjection {
+  const permissions = new Set<StudentOperationsPermission>(
+    STUDENT_OPERATIONS_ROLE_PERMISSIONS[role],
   );
-  const values: Partial<Record<OpenForAustraliaField, unknown>> = {};
-  const maskedFields: OpenForAustraliaField[] = [];
+  const values: Partial<Record<StudentOperationsField, unknown>> = {};
+  const maskedFields: StudentOperationsField[] = [];
 
-  for (const field of Object.keys(OPEN_FOR_AUSTRALIA_FIELD_POLICIES) as OpenForAustraliaField[]) {
+  for (const field of Object.keys(STUDENT_OPERATIONS_FIELD_POLICIES) as StudentOperationsField[]) {
     if (!Object.hasOwn(input, field)) continue;
-    const policy = OPEN_FOR_AUSTRALIA_FIELD_POLICIES[field];
+    const policy = STUDENT_OPERATIONS_FIELD_POLICIES[field];
     const allowed = policy.listVisible || context.surface === "case"
       ? hasFieldPermission(permissions, policy.permission, context.assigned)
       : false;
@@ -170,7 +170,7 @@ export function projectOpenForAustraliaFields(
   return { values, maskedFields };
 }
 
-export const OPEN_FOR_AUSTRALIA_DATA_FLOWS = [
+export const STUDENT_OPERATIONS_DATA_FLOWS = [
   {
     key: "business-manager-to-sophia-runtime",
     capability: "workspace identity and operational API",
@@ -213,7 +213,7 @@ export const OPEN_FOR_AUSTRALIA_DATA_FLOWS = [
   },
 ] as const;
 
-export const OPEN_FOR_AUSTRALIA_PRIVACY_TARGETS = [
+export const STUDENT_OPERATIONS_PRIVACY_TARGETS = [
   "student_profiles",
   "student_cases_and_activity",
   "student_documents",
@@ -221,8 +221,8 @@ export const OPEN_FOR_AUSTRALIA_PRIVACY_TARGETS = [
   "access_and_decision_audit",
 ] as const;
 
-export const OPEN_FOR_AUSTRALIA_RETENTION_TARGETS =
-  OPEN_FOR_AUSTRALIA_PRIVACY_TARGETS.map((datasetKey) => ({
+export const STUDENT_OPERATIONS_RETENTION_TARGETS =
+  STUDENT_OPERATIONS_PRIVACY_TARGETS.map((datasetKey) => ({
     datasetKey,
     retentionDays: null,
     legalReviewRequired: true,
@@ -231,16 +231,16 @@ export const OPEN_FOR_AUSTRALIA_RETENTION_TARGETS =
     disposalMethod: "unapproved",
   } as const));
 
-export function hasOpenForAustraliaPermission(
-  role: OpenForAustraliaRole,
-  permission: OpenForAustraliaPermission,
+export function hasStudentOperationsPermission(
+  role: StudentOperationsRole,
+  permission: StudentOperationsPermission,
 ): boolean {
-  return (OPEN_FOR_AUSTRALIA_ROLE_PERMISSIONS[role] as readonly OpenForAustraliaPermission[])
+  return (STUDENT_OPERATIONS_ROLE_PERMISSIONS[role] as readonly StudentOperationsPermission[])
     .includes(permission);
 }
 
 function hasFieldPermission(
-  permissions: ReadonlySet<OpenForAustraliaPermission>,
+  permissions: ReadonlySet<StudentOperationsPermission>,
   permission: FieldPolicy["permission"],
   assigned: boolean,
 ): boolean {

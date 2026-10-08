@@ -1,7 +1,7 @@
 import pool from "../config/db.js";
 
 const PACK_CATALOG = Object.freeze({
-  "open-for-australia": Object.freeze({
+  "student-operations": Object.freeze({
     workspaceProfile: "student_operations",
     roles: Object.freeze(["chief_executive", "operations", "advisor"]),
   }),

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
-import { OpenForAustraliaWorkspaceController } from "./open-for-australia-workspace.controller.js";
+import { StudentOperationsWorkspaceController } from "./student-operations-workspace.controller.js";
 
-describe("OpenForAustraliaWorkspaceController", () => {
+describe("StudentOperationsWorkspaceController", () => {
   it("returns only fail-closed workspace metadata", () => {
-    const result = new OpenForAustraliaWorkspaceController().workspace({
-      openForAustraliaPrincipal: {
+    const result = new StudentOperationsWorkspaceController().workspace({
+      studentOperationsPrincipal: {
         identityUserId: "user-1",
         tenantId: "11111111-1111-4111-8111-111111111111",
         externalCompanyId: "22222222-2222-4222-8222-222222222222",
@@ -14,7 +14,7 @@ describe("OpenForAustraliaWorkspaceController", () => {
       },
     });
     expect(result).toEqual(expect.objectContaining({
-      packId: "open-for-australia",
+      packId: "student-operations",
       tenantId: "11111111-1111-4111-8111-111111111111",
       authorizationRevision: 4,
       role: "chief_executive",
@@ -28,7 +28,7 @@ describe("OpenForAustraliaWorkspaceController", () => {
   });
 
   it("publishes the fail-closed role and privacy contract", () => {
-    const result = new OpenForAustraliaWorkspaceController().policy();
+    const result = new StudentOperationsWorkspaceController().policy();
     expect(result.version).toBe("2026-10-05.1");
     expect(Object.keys(result.roles)).toEqual([
       "chief_executive", "operations", "advisor",

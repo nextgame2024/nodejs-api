@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-describe("Open For Australia Business Manager navigation", () => {
+describe("Student Operations Business Manager navigation", () => {
   it("accepts Students only as a configurable menu label", () => {
     const controller = fs.readFileSync(
       path.join(root, "src/controllers/bm.navigation.links.controller.js"),

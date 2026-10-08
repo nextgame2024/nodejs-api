@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { BadRequestException } from "@nestjs/common";
-import { OpenForAustraliaStudentsService } from "./open-for-australia-students.service.js";
+import { StudentOperationsStudentsService } from "./student-operations-students.service.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 
@@ -37,10 +37,10 @@ function harness() {
       work: (client: { query: typeof query }) => Promise<unknown>,
     ) => work({ query })),
   };
-  return { service: new OpenForAustraliaStudentsService(database as never), database, query };
+  return { service: new StudentOperationsStudentsService(database as never), database, query };
 }
 
-describe("OpenForAustraliaStudentsService", () => {
+describe("StudentOperationsStudentsService", () => {
   it("returns only approved list fields from a tenant read transaction", async () => {
     const { service, database } = harness();
     await expect(service.list(principal("operations"), { page: "1", limit: "20" }))

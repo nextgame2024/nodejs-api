@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const OpenForAustraliaPackContractSchema = z.object({
-  packId: z.literal("open-for-australia"),
+export const StudentOperationsPackContractSchema = z.object({
+  packId: z.literal("student-operations"),
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   enabledByDefault: z.literal(false),
   workspaceRoutes: z.tuple([
@@ -20,13 +20,13 @@ export const OpenForAustraliaPackContractSchema = z.object({
   financialExecution: z.literal("disabled"),
 }).strict();
 
-export type OpenForAustraliaPackContract = z.infer<
-  typeof OpenForAustraliaPackContractSchema
+export type StudentOperationsPackContract = z.infer<
+  typeof StudentOperationsPackContractSchema
 >;
 
-export const OPEN_FOR_AUSTRALIA_PACK_CONTRACT =
-  OpenForAustraliaPackContractSchema.parse({
-    packId: "open-for-australia",
+export const STUDENT_OPERATIONS_PACK_CONTRACT =
+  StudentOperationsPackContractSchema.parse({
+    packId: "student-operations",
     version: "0.1.0",
     enabledByDefault: false,
     workspaceRoutes: [

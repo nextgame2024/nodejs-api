@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { DatabaseService } from "../../database/database.service.js";
 import type { VerifiedBusinessManagerIdentity } from "../../admin/identity/business-manager-identity.bridge.js";
-import type { OpenForAustraliaRole } from "./open-for-australia-policy.js";
+import type { StudentOperationsRole } from "./student-operations-policy.js";
 
-const PACK_ID = "open-for-australia";
+const PACK_ID = "student-operations";
 
 type CustomerRow = {
   customer_id: string;
@@ -16,31 +16,31 @@ type EntitlementRow = {
   entitlement_id: string;
   customer_id: string;
   identity_user_id: string;
-  role_key: OpenForAustraliaRole;
+  role_key: StudentOperationsRole;
   authorization_revision: number;
 };
 
-export type OpenForAustraliaWorkspacePrincipal = {
+export type StudentOperationsWorkspacePrincipal = {
   identityUserId: string;
   tenantId: string;
   externalCompanyId: string;
   entitlementId: string;
-  role: OpenForAustraliaRole;
+  role: StudentOperationsRole;
   authorizationRevision: number;
 };
 
-export type OpenForAustraliaDashboardSummary = {
+export type StudentOperationsDashboardSummary = {
   totalStudents: number;
   activeStudents: number;
   actionRequired: number;
   onHold: number;
 };
 
-export const OPEN_FOR_AUSTRALIA_DASHBOARD_CONTEXT =
-  "openForAustralia.dashboardContext";
+export const STUDENT_OPERATIONS_DASHBOARD_CONTEXT =
+  "studentOperations.dashboardContext";
 
 @Injectable()
-export class OpenForAustraliaWorkspaceService {
+export class StudentOperationsWorkspaceService {
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
   ) {}
@@ -48,7 +48,7 @@ export class OpenForAustraliaWorkspaceService {
   async resolvePrincipal(
     identity: VerifiedBusinessManagerIdentity,
     correlationId: string = randomUUID(),
-  ): Promise<OpenForAustraliaWorkspacePrincipal> {
+  ): Promise<StudentOperationsWorkspacePrincipal> {
     return (await this.resolve(identity, correlationId, false)).principal;
   }
 
@@ -56,8 +56,8 @@ export class OpenForAustraliaWorkspaceService {
     identity: VerifiedBusinessManagerIdentity,
     correlationId: string = randomUUID(),
   ): Promise<{
-    principal: OpenForAustraliaWorkspacePrincipal;
-    summary: OpenForAustraliaDashboardSummary;
+    principal: StudentOperationsWorkspacePrincipal;
+    summary: StudentOperationsDashboardSummary;
   }> {
     const resolution = await this.resolve(identity, correlationId, true);
     if (!resolution.summary) throw new Error("Dashboard summary resolution failed closed.");
@@ -69,8 +69,8 @@ export class OpenForAustraliaWorkspaceService {
     correlationId: string,
     includeDashboardSummary: boolean,
   ): Promise<{
-    principal: OpenForAustraliaWorkspacePrincipal;
-    summary?: OpenForAustraliaDashboardSummary;
+    principal: StudentOperationsWorkspacePrincipal;
+    summary?: StudentOperationsDashboardSummary;
   }> {
     const schema = runtimeSchema();
     const resolution = await this.database.transaction(async (client) => {
@@ -122,12 +122,12 @@ export class OpenForAustraliaWorkspaceService {
 
     if (resolution.kind === "customer_invalid") {
       throw new ForbiddenException(
-        "An active, unambiguous Open For Australia organisation is required.",
+        "An active, unambiguous Student Operations organisation is required.",
       );
     }
     if (resolution.kind === "entitlement_missing") {
       throw new ForbiddenException(
-        "Open For Australia workspace entitlement is required.",
+        "Student Operations workspace entitlement is required.",
       );
     }
     return { principal: resolution.principal, ...(resolution.summary
@@ -184,9 +184,9 @@ export class OpenForAustraliaWorkspaceService {
     client: PoolClient,
     schema: string,
     tenantId: string,
-    role: OpenForAustraliaRole,
+    role: StudentOperationsRole,
     identityUserId: string,
-  ): Promise<OpenForAustraliaDashboardSummary> {
+  ): Promise<StudentOperationsDashboardSummary> {
     const params: unknown[] = [tenantId];
     const advisorScope = role === "advisor"
       ? " AND advisor_identity_user_id = $2"
@@ -202,7 +202,7 @@ export class OpenForAustraliaWorkspaceService {
               count(*) FILTER (WHERE status = 'active')::int AS active,
               count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
               count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
-         FROM ${schema}.open_for_australia_students
+         FROM ${schema}.student_operations_students
         WHERE customer_id = $1${advisorScope}`,
       params,
     );

@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { OpenForAustraliaCurrentWorkspaceController } from "./open-for-australia-current-workspace.controller.js";
+import { StudentOperationsCurrentWorkspaceController } from "./student-operations-current-workspace.controller.js";
 
 const principal = {
   identityUserId: "user-1",
@@ -10,11 +10,11 @@ const principal = {
   authorizationRevision: 2,
 };
 
-describe("OpenForAustraliaCurrentWorkspaceController", () => {
+describe("StudentOperationsCurrentWorkspaceController", () => {
   it("returns the identity-derived workspace context", () => {
-    const controller = new OpenForAustraliaCurrentWorkspaceController({ list: jest.fn() } as never);
-    expect(controller.workspace({ openForAustraliaPrincipal: principal })).toEqual(expect.objectContaining({
-      packId: "open-for-australia",
+    const controller = new StudentOperationsCurrentWorkspaceController({ list: jest.fn() } as never);
+    expect(controller.workspace({ studentOperationsPrincipal: principal })).toEqual(expect.objectContaining({
+      packId: "student-operations",
       tenantId: principal.tenantId,
       role: "operations",
       authorizationRevision: 2,
@@ -28,10 +28,10 @@ describe("OpenForAustraliaCurrentWorkspaceController", () => {
       actionRequired: 2,
       onHold: 1,
     };
-    const controller = new OpenForAustraliaCurrentWorkspaceController({} as never);
+    const controller = new StudentOperationsCurrentWorkspaceController({} as never);
     await expect(controller.dashboard({
-      openForAustraliaPrincipal: principal,
-      openForAustraliaDashboardSummary: summary,
+      studentOperationsPrincipal: principal,
+      studentOperationsDashboardSummary: summary,
     })).resolves.toEqual({
       workspace: expect.objectContaining({ role: "operations", tenantId: principal.tenantId }),
       summary,
@@ -40,9 +40,9 @@ describe("OpenForAustraliaCurrentWorkspaceController", () => {
 
   it("passes the authenticated principal to the student list", async () => {
     const list = jest.fn().mockResolvedValue({ students: [], page: 1, limit: 20, total: 0 });
-    const controller = new OpenForAustraliaCurrentWorkspaceController({ list } as never);
+    const controller = new StudentOperationsCurrentWorkspaceController({ list } as never);
     await expect(controller.listStudents(
-      { openForAustraliaPrincipal: principal }, { q: "synthetic" },
+      { studentOperationsPrincipal: principal }, { q: "synthetic" },
     )).resolves.toEqual({ students: [], page: 1, limit: 20, total: 0 });
     expect(list).toHaveBeenCalledWith(principal, { q: "synthetic" });
   });

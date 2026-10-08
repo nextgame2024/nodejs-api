@@ -42,13 +42,13 @@ describe("student operations role administration authority", () => {
     await expect(model.getBusinessPackEntitlement({
       companyId,
       targetUserId,
-      packId: "open-for-australia",
+      packId: "student-operations",
       actorUserId,
     })).rejects.toMatchObject({ status: 403 });
     expect(query).toHaveBeenCalledWith(expect.stringContaining("role_key = 'chief_executive'"), [
       customerId,
       actorUserId,
-      "open-for-australia",
+      "student-operations",
       companyId,
     ]);
     expect(release).toHaveBeenCalled();
@@ -65,7 +65,7 @@ describe("student operations role administration authority", () => {
     await expect(model.setBusinessPackEntitlement({
       companyId,
       targetUserId: actorUserId,
-      packId: "open-for-australia",
+      packId: "student-operations",
       roleKey: null,
       actorUserId,
     })).rejects.toMatchObject({ status: 409 });
