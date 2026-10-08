@@ -21,6 +21,7 @@ type WorkspaceRequest = {
   params?: Record<string, string | undefined>;
   studentOperationsPrincipal?: StudentOperationsWorkspacePrincipal;
   studentOperationsDashboardSummary?: StudentOperationsDashboardSummary;
+  studentOperationsCorrelationId?: string;
 };
 
 @Injectable()
@@ -69,6 +70,7 @@ export class StudentOperationsWorkspaceGuard implements CanActivate {
     }
 
     request.studentOperationsPrincipal = principal;
+    request.studentOperationsCorrelationId = correlationId;
     if (dashboardContext) {
       request.studentOperationsDashboardSummary = dashboardContext.summary;
     }

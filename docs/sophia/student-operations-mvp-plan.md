@@ -1,7 +1,7 @@
 # Student Operations operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
-Status: architecture and delivery order approved; OFA-00A through OFA-01D complete in source
+Status: architecture and delivery order approved; OFA-00A through OFA-01D complete in source; OFA-01E implemented and awaiting UI review/build verification
 
 ## Product boundary
 

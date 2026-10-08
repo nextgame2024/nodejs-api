@@ -1,4 +1,4 @@
-export const STUDENT_OPERATIONS_POLICY_VERSION = "2026-10-05.1";
+export const STUDENT_OPERATIONS_POLICY_VERSION = "2026-10-08.1";
 
 export const STUDENT_OPERATIONS_PERMISSIONS = [
   "workspace.read",
@@ -107,6 +107,18 @@ export const STUDENT_OPERATIONS_FIELD_POLICIES = {
   },
   advisorAssigned: {
     classification: "operational", listVisible: true, permission: "student",
+  },
+  advisorIdentityUserId: {
+    classification: "operational", listVisible: false, permission: "student",
+  },
+  recordVersion: {
+    classification: "operational", listVisible: false, permission: "student",
+  },
+  createdAt: {
+    classification: "operational", listVisible: false, permission: "student",
+  },
+  updatedAt: {
+    classification: "operational", listVisible: false, permission: "student",
   },
   phone: {
     classification: "personal", listVisible: false, permission: "student",

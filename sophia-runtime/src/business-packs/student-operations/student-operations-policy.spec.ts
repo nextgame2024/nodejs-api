@@ -29,7 +29,7 @@ describe("Student Operations roles and privacy contract", () => {
 
   it("masks restricted fields on list views and for unassigned advisors", () => {
     const record = {
-      studentReference: "OFA-001",
+      studentReference: "STU-001",
       legalName: "Example Student",
       passportNumber: "P1234567",
       healthOrCharacterInformation: "restricted case note",
@@ -38,7 +38,7 @@ describe("Student Operations roles and privacy contract", () => {
     expect(projectStudentOperationsFields(record, "chief_executive", {
       surface: "list", assigned: true,
     })).toEqual({
-      values: { studentReference: "OFA-001", legalName: "Example Student" },
+      values: { studentReference: "STU-001", legalName: "Example Student" },
       maskedFields: ["passportNumber", "healthOrCharacterInformation", "paymentAmount"],
     });
     expect(projectStudentOperationsFields(record, "advisor", {
@@ -71,7 +71,7 @@ describe("Student Operations roles and privacy contract", () => {
   });
 
   it("registers every classified field and privacy target without inventing retention", () => {
-    expect(Object.keys(STUDENT_OPERATIONS_FIELD_POLICIES)).toHaveLength(17);
+    expect(Object.keys(STUDENT_OPERATIONS_FIELD_POLICIES)).toHaveLength(21);
     expect(new Set(STUDENT_OPERATIONS_RETENTION_TARGETS.map((item) => item.datasetKey)))
       .toEqual(new Set(STUDENT_OPERATIONS_PRIVACY_TARGETS));
     for (const target of STUDENT_OPERATIONS_RETENTION_TARGETS) {
