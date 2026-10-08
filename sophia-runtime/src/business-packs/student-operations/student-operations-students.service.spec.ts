@@ -127,6 +127,23 @@ describe("StudentOperationsStudentsService", () => {
     );
   });
 
+  it("loads advisor identities using the entitlement role_key column", async () => {
+    const { service, query } = harness();
+    query.mockResolvedValueOnce({
+      rows: [{ identity_user_id: "advisor-1" }],
+      rowCount: 1,
+    });
+
+    await expect(service.advisors(principal("operations"))).resolves.toEqual({
+      advisorIdentityUserIds: ["advisor-1"],
+    });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("role_key = 'advisor'"),
+      [tenantId],
+    );
+    expect(query.mock.calls[0][0]).not.toContain("AND role = 'advisor'");
+  });
+
   it("denies student writes to advisors before opening a transaction", async () => {
     const { service, database } = harness();
     await expect(service.create(principal("advisor"), {}, "write-key-001"))

@@ -29,13 +29,18 @@ names or email addresses.
 - Migration `064_student_operations_student_writes.sql` adds record versions,
   tenant-isolated append-only audit events and tenant-isolated idempotency
   records.
+- Migration `065_student_operations_write_least_privilege.sql` explicitly
+  removes destructive privileges inherited by the runtime role.
 - `GET /business-packs/student-operations/v1/workspace/advisors`
 - `GET /business-packs/student-operations/v1/workspace/students/:studentId`
 - `POST /business-packs/student-operations/v1/workspace/students`
 - `PATCH /business-packs/student-operations/v1/workspace/students/:studentId`
 
-Migration 064 has not been applied to a local, staging or production database in
-this checkpoint. No real student records were created.
+Migrations 064 and 065 were applied to the configured production database after
+deployment authorization on 8 October 2026. Read-only verification confirmed
+the migration records, record-version column, forced RLS, append-only trigger,
+empty student/audit/idempotency tables and the corrected runtime privileges. No
+student records were created.
 
 ## Evidence run
 

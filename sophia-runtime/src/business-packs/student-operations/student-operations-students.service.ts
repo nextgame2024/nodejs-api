@@ -187,7 +187,7 @@ export class StudentOperationsStudentsService {
           WHERE customer_id = $1
             AND pack_id = 'student-operations'
             AND status = 'active'
-            AND role = 'advisor'
+            AND role_key = 'advisor'
           ORDER BY identity_user_id`,
         [principal.tenantId],
       );
