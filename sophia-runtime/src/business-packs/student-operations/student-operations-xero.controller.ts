@@ -31,6 +31,12 @@ export class StudentOperationsXeroController {
     return this.xero.testConnection(principal.tenantId, principal.identityUserId, connectionId);
   }
 
+  @Get("connections/:connectionId/student-candidates")
+  studentCandidates(@Req() request: WorkspaceRequest, @Param("connectionId") connectionId: string) {
+    const principal = this.authorize(request);
+    return this.xero.discoverStudentCandidates(principal.tenantId, connectionId);
+  }
+
   private authorize(request: WorkspaceRequest): StudentOperationsWorkspacePrincipal {
     const principal = request.studentOperationsPrincipal;
     if (!hasStudentOperationsPermission(principal.role, "integrations.manage")) {

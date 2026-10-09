@@ -21,7 +21,9 @@ describe("XeroCryptoService", () => {
     expect(first).not.toEqual(second);
     expect(first).not.toContain("refresh-token");
     expect(service.open(first, config)).toBe("refresh-token");
-    expect(() => service.open(`${first.slice(0, -1)}x`, config)).toThrow();
+    const tamperIndex = Math.floor(first.length / 2);
+    const tampered = `${first.slice(0, tamperIndex)}${first[tamperIndex] === "A" ? "B" : "A"}${first.slice(tamperIndex + 1)}`;
+    expect(() => service.open(tampered, config)).toThrow();
   });
 
   it("signs tenant-bound short-lived OAuth state and rejects tampering", () => {

@@ -57,4 +57,57 @@ describe("XeroClient", () => {
     await expect(new XeroClient().exchangeCode("code", "verifier", config))
       .rejects.toThrow("Xero authorization could not be completed.");
   });
+
+  it("derives reviewable student candidates from sales invoices and Xero contacts", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Pagination: { PageNumber: 1, PageSize: 500, PageCount: 1, ItemCount: 3 },
+        Invoices: [
+          {
+            Type: "ACCREC", Status: "PAID", InvoiceID: "invoice-1", InvoiceNumber: "TRUST-001",
+            DateString: "2026-09-01T00:00:00", DueDateString: "2026-09-10T00:00:00",
+            Total: 1000, AmountPaid: 1000, AmountDue: 0, CurrencyCode: "AUD",
+            Contact: { ContactID: "contact-1", Name: "Student One" },
+          },
+          {
+            Type: "ACCREC", Status: "AUTHORISED", InvoiceID: "invoice-2", InvoiceNumber: "TRUST-002",
+            DateString: "2099-10-01T00:00:00", DueDateString: "2099-10-20T00:00:00",
+            Total: "500", AmountPaid: "100", AmountDue: "400", CurrencyCode: "AUD",
+            Contact: { ContactID: "contact-1", Name: "Student One" },
+          },
+          {
+            Type: "ACCPAY", Status: "PAID", InvoiceID: "bill-1", Total: 200,
+            Contact: { ContactID: "supplier-1", Name: "College Supplier" },
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Contacts: [{
+          ContactID: "contact-1", ContactNumber: "STU-100", Name: "Student One",
+          EmailAddress: "student.one@example.invalid",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    const result = await new XeroClient().studentCandidates("access", "tenant-1");
+
+    expect(result).toEqual({
+      candidates: [expect.objectContaining({
+        xeroContactId: "contact-1",
+        legalName: "Student One",
+        email: "student.one@example.invalid",
+        suggestedStudentReference: "STU-100",
+        invoiceCount: 2,
+        latestInvoiceNumber: "TRUST-002",
+        totalInvoiced: 1500,
+        totalPaid: 1100,
+        amountDue: 400,
+        paymentStatus: "due",
+      })],
+      invoiceCount: 2,
+      truncated: false,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("summaryOnly=true");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("Contacts");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ "xero-tenant-id": "tenant-1" });
+  });
 });

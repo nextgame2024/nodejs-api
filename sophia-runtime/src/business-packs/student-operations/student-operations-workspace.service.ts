@@ -32,6 +32,7 @@ export type StudentOperationsWorkspacePrincipal = {
 export type StudentOperationsDashboardSummary = {
   totalStudents: number;
   activeStudents: number;
+  newApplications: number;
   actionRequired: number;
   onHold: number;
 };
@@ -195,11 +196,13 @@ export class StudentOperationsWorkspaceService {
     const result = await client.query<{
       total: number;
       active: number;
+      new_applications: number;
       action_required: number;
       on_hold: number;
     }>(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE status = 'active')::int AS active,
+              count(*) FILTER (WHERE current_stage = 'new_application')::int AS new_applications,
               count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
               count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
          FROM ${schema}.student_operations_students
@@ -210,6 +213,7 @@ export class StudentOperationsWorkspaceService {
     return {
       totalStudents: Number(summary?.total ?? 0),
       activeStudents: Number(summary?.active ?? 0),
+      newApplications: Number(summary?.new_applications ?? 0),
       actionRequired: Number(summary?.action_required ?? 0),
       onHold: Number(summary?.on_hold ?? 0),
     };

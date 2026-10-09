@@ -33,7 +33,7 @@ function harness(input: {
     resolvePrincipal: jest.fn().mockResolvedValue(principal),
     resolveDashboardPrincipal: jest.fn().mockResolvedValue({
       principal,
-      summary: { totalStudents: 0, activeStudents: 0, actionRequired: 0, onHold: 0 },
+      summary: { totalStudents: 0, activeStudents: 0, newApplications: 0, actionRequired: 0, onHold: 0 },
     }),
     recordAccess: jest.fn().mockResolvedValue(undefined),
   };

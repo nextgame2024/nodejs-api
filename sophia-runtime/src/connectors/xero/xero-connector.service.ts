@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -15,11 +16,17 @@ import { XeroCryptoService } from "./xero-crypto.service.js";
 import {
   XERO_CONNECTOR_KEY,
   XERO_READ_ONLY_SCOPES,
+  XERO_STUDENT_DISCOVERY_SCOPES,
   xeroConfiguration,
   type XeroConfig,
 } from "./xero.config.js";
 
-const INTERNAL_READ_SCOPES = ["xero:organisation:read", "xero:accounts:read"];
+const INTERNAL_READ_SCOPES = [
+  "xero:organisation:read",
+  "xero:accounts:read",
+  "xero:invoices:read",
+  "xero:contacts:read",
+];
 
 type TokenEnvelope = { accessToken: string; refreshToken: string };
 
@@ -36,6 +43,7 @@ type ConnectionRow = {
   last_tested_at: Date | null;
   last_error_code: string | null;
   health_status: string;
+  granted_scopes: unknown;
 };
 
 type AuthorizationRow = {
@@ -60,10 +68,12 @@ export class XeroConnectorService {
       `SELECT x.xero_connection_id, x.xero_authorization_id, x.connector_binding_id,
               x.provider_connection_id, x.xero_tenant_id, x.tenant_name, x.tenant_type,
               x.tenant_short_code, x.status, x.last_tested_at, x.last_error_code,
-              b.health_status
+              b.health_status, a.granted_scopes
          FROM ${schema}.xero_connections x
          JOIN ${schema}.connector_bindings b
            ON b.connector_binding_id=x.connector_binding_id AND b.customer_id=x.customer_id
+         JOIN ${schema}.xero_authorizations a
+           ON a.xero_authorization_id=x.xero_authorization_id AND a.customer_id=x.customer_id
         WHERE x.customer_id=$1
         ORDER BY lower(x.tenant_name), x.created_at`,
       [tenantId],
@@ -83,6 +93,7 @@ export class XeroConnectorService {
         healthStatus: row.health_status,
         lastTestedAt: row.last_tested_at?.toISOString() ?? null,
         lastErrorCode: row.last_error_code,
+        missingStudentDiscoveryScopes: missingScopes(row.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES),
       })),
     };
   }
@@ -171,6 +182,26 @@ export class XeroConnectorService {
     }
   }
 
+  async discoverStudentCandidates(tenantId: string, connectionId: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(connectionId)) throw new NotFoundException("Xero connection not found.");
+    const config = requiredConfig();
+    const connection = await this.loadConnection(tenantId, connectionId);
+    const missing = missingScopes(connection.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES);
+    if (missing.length) {
+      throw new ConflictException("Reconnect Xero to allow read-only invoice and contact access.");
+    }
+    const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
+    const result = await this.client.studentCandidates(accessToken, connection.xero_tenant_id);
+    return {
+      connection: {
+        connectionId: connection.xero_connection_id,
+        tenantName: connection.tenant_name,
+      },
+      generatedAt: new Date().toISOString(),
+      ...result,
+    };
+  }
+
   private async consumeState(
     tenantId: string,
     identityUserId: string,
@@ -242,9 +273,11 @@ export class XeroConnectorService {
           await db.query(
             `UPDATE ${schema}.connector_bindings
                 SET credential_ref=$3, status='active', health_status='unknown',
-                    last_error_code=NULL, revision=revision+1, updated_at=now()
+                    allowed_scopes=$4::jsonb, last_error_code=NULL,
+                    revision=revision+1, updated_at=now()
               WHERE customer_id=$1 AND connector_binding_id=$2`,
-            [tenantId, row.connector_binding_id, `xero-authorization://${authorizationId}`],
+            [tenantId, row.connector_binding_id, `xero-authorization://${authorizationId}`,
+              JSON.stringify(INTERNAL_READ_SCOPES)],
           );
           await this.bindingEvent(db, schema, tenantId, row.connector_binding_id,
             identityUserId, "reconnected", "active");
@@ -282,10 +315,12 @@ export class XeroConnectorService {
       `SELECT x.xero_connection_id, x.xero_authorization_id, x.connector_binding_id,
               x.provider_connection_id, x.xero_tenant_id, x.tenant_name, x.tenant_type,
               x.tenant_short_code, x.status, x.last_tested_at, x.last_error_code,
-              b.health_status
+              b.health_status, a.granted_scopes
          FROM ${schema}.xero_connections x
          JOIN ${schema}.connector_bindings b
            ON b.connector_binding_id=x.connector_binding_id AND b.customer_id=x.customer_id
+         JOIN ${schema}.xero_authorizations a
+           ON a.xero_authorization_id=x.xero_authorization_id AND a.customer_id=x.customer_id
         WHERE x.customer_id=$1 AND x.xero_connection_id=$2
         LIMIT 1`,
       [tenantId, connectionId],
@@ -393,4 +428,12 @@ function appendOutcome(returnUrl: string, outcome: "connected" | "cancelled" | "
   const url = new URL(returnUrl);
   url.searchParams.set("xero", outcome);
   return url.toString();
+}
+
+function missingScopes(granted: unknown, required: readonly string[]): string[] {
+  const values = Array.isArray(granted)
+    ? granted.filter((value): value is string => typeof value === "string")
+    : [];
+  const present = new Set(values);
+  return required.filter((scope) => !present.has(scope));
 }

@@ -6,6 +6,13 @@ export const XERO_READ_ONLY_SCOPES = [
   "email",
   "offline_access",
   "accounting.settings.read",
+  "accounting.invoices.read",
+  "accounting.contacts.read",
+] as const;
+
+export const XERO_STUDENT_DISCOVERY_SCOPES = [
+  "accounting.invoices.read",
+  "accounting.contacts.read",
 ] as const;
 
 export type XeroConfig = {

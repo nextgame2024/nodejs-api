@@ -25,6 +25,7 @@ describe("StudentOperationsCurrentWorkspaceController", () => {
     const summary = {
       totalStudents: 11,
       activeStudents: 8,
+      newApplications: 3,
       actionRequired: 2,
       onHold: 1,
     };

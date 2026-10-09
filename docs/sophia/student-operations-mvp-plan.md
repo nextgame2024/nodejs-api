@@ -1,7 +1,7 @@
 # Student Operations operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
-Status: architecture and delivery order approved; OFA-00A through OFA-01D complete in source; OFA-01E implemented and awaiting UI review/build verification
+Status: architecture and delivery order approved; OFA-00A through OFA-01E complete; OFA-07A student discovery implemented in source and awaiting deployment review
 
 ## Product boundary
 
@@ -168,6 +168,7 @@ deployment remains a separate decision.
 | OFA-06A — Sophia read-only | Embedded and full Sophia can explain priorities, missing documents and blocked cases from scoped APIs. | Grounding, authorization, no-cross-tenant and no-write tool tests. |
 | OFA-06B — reviewed preparation | Sophia can prepare drafts/packs only through explicit review; financial and destructive execution is prohibited. | Review-gate, replay/idempotency, rejection and prohibited-action tests. |
 | OFA-07 — Xero read-only | Separately authorized TRUST and PTY connections synchronize verified read models with freshness and reconciliation evidence. | OAuth/scope, webhook or polling, idempotency, retry and TRUST/PTY isolation tests. |
+| OFA-07A — Xero student discovery | A Chief Executive can explicitly scan recent TRUST sales invoices, review distinct Xero contacts and prefill a student record without silently importing or overwriting operational data. | Granular read-scope, tenant/role denial, bounded-provider-read, candidate mapping and Angular review-flow tests. |
 | OFA-08 — Xero reviewed writes | Any approved Xero write is individually scoped, MFA/review gated and auditable. | Sandbox end-to-end proof, replay protection, denial and reconciliation tests before any live authority. |
 
 ### Checkpoint review gate

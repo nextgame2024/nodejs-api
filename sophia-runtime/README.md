@@ -56,10 +56,17 @@ The registered Xero callback must exactly match `XERO_REDIRECT_URI`; locally it 
 
 Configure `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_RETURN_URL`,
 `XERO_OAUTH_STATE_SECRET`, and `XERO_TOKEN_ENCRYPTION_KEY` only in the runtime environment.
-The first phase requests identity, offline access, and `accounting.settings.read` only. It can verify the selected
-organisation and list bank-account metadata, but it cannot read transactions or write accounting data. Each Xero
+The connector requests identity, offline access, `accounting.settings.read`, `accounting.invoices.read`, and
+`accounting.contacts.read`. It can verify the selected organisation, list bank-account metadata, and produce a
+bounded review-only student candidate preview from sales invoices and contacts. It cannot write accounting data.
+Existing connections must be re-authorized when the invoice/contact scopes are introduced. Each Xero
 organisation is persisted as a tenant-scoped connector binding, allowing one agency to connect TRUST and operating
 organisations independently and allowing other agencies to connect their own organisations later.
+
+`GET /api/business-packs/student-operations/v1/workspace/integrations/xero/connections/:connectionId/student-candidates`
+is Chief Executive-only, validates the connection against the authenticated tenant, and scans at most the 500 most
+recently updated non-void sales invoices. This endpoint is deliberately a review preview, not a bulk import or a
+durable sync. A subsequent resumable sync checkpoint must use local read models and incremental provider cursors.
 
 ## Sophia subscription billing
 

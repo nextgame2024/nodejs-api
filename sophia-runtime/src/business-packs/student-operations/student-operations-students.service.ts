@@ -330,11 +330,13 @@ export class StudentOperationsStudentsService {
       const result = await client.query<{
         total: number;
         active: number;
+        new_applications: number;
         action_required: number;
         on_hold: number;
       }>(
         `SELECT count(*)::int AS total,
                 count(*) FILTER (WHERE status = 'active')::int AS active,
+                count(*) FILTER (WHERE current_stage = 'new_application')::int AS new_applications,
                 count(*) FILTER (WHERE status = 'action_required')::int AS action_required,
                 count(*) FILTER (WHERE status = 'on_hold')::int AS on_hold
            FROM ${schema}.student_operations_students
@@ -345,6 +347,7 @@ export class StudentOperationsStudentsService {
       return {
         totalStudents: Number(row?.total ?? 0),
         activeStudents: Number(row?.active ?? 0),
+        newApplications: Number(row?.new_applications ?? 0),
         actionRequired: Number(row?.action_required ?? 0),
         onHold: Number(row?.on_hold ?? 0),
       };

@@ -29,4 +29,19 @@ describe("StudentOperationsXeroController", () => {
     }
     expect(status).not.toHaveBeenCalled();
   });
+
+  it("loads invoice-derived candidates only for the current Chief Executive tenant", async () => {
+    const discoverStudentCandidates = jest.fn().mockResolvedValue({ candidates: [] });
+    const controller = new StudentOperationsXeroController({ discoverStudentCandidates } as never);
+    const principal = { ...basePrincipal, role: "chief_executive" as const };
+
+    await expect(controller.studentCandidates(
+      { studentOperationsPrincipal: principal },
+      "44444444-4444-4444-8444-444444444444",
+    )).resolves.toEqual({ candidates: [] });
+    expect(discoverStudentCandidates).toHaveBeenCalledWith(
+      principal.tenantId,
+      "44444444-4444-4444-8444-444444444444",
+    );
+  });
 });

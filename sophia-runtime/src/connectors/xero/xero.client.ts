@@ -34,6 +34,29 @@ export type XeroBankAccount = {
   bankAccountType: string | null;
 };
 
+export type XeroStudentCandidate = {
+  xeroContactId: string;
+  legalName: string;
+  email: string | null;
+  suggestedStudentReference: string | null;
+  invoiceCount: number;
+  latestInvoiceNumber: string | null;
+  latestInvoiceDate: string | null;
+  nextPaymentDate: string | null;
+  nextPaymentAmount: number | null;
+  totalInvoiced: number;
+  totalPaid: number;
+  amountDue: number;
+  currencyCode: string | null;
+  paymentStatus: "paid" | "due" | "overdue";
+};
+
+export type XeroStudentCandidateResult = {
+  candidates: XeroStudentCandidate[];
+  invoiceCount: number;
+  truncated: boolean;
+};
+
 @Injectable()
 export class XeroClient {
   async exchangeCode(code: string, verifier: string, config: XeroConfig): Promise<XeroTokenSet> {
@@ -109,6 +132,119 @@ export class XeroClient {
       }));
   }
 
+  async studentCandidates(accessToken: string, tenantId: string): Promise<XeroStudentCandidateResult> {
+    const invoicesUrl = new URL("https://api.xero.com/api.xro/2.0/Invoices");
+    invoicesUrl.search = new URLSearchParams({
+      Statuses: "DRAFT,SUBMITTED,AUTHORISED,PAID",
+      page: "1",
+      pageSize: "500",
+      summaryOnly: "true",
+      order: "UpdatedDateUTC DESC",
+    }).toString();
+    const payload = record(await this.json(invoicesUrl.toString(), accessToken, tenantId));
+    if (!Array.isArray(payload.Invoices)) {
+      throw new BadGatewayException("Xero returned an invalid invoices response.");
+    }
+    const invoices = payload.Invoices.map(record)
+      .filter((invoice) => invoice.Type === "ACCREC" && invoice.Status !== "VOIDED" && invoice.Status !== "DELETED");
+    const contactIds = Array.from(new Set(invoices.map((invoice) => {
+      const contact = record(invoice.Contact);
+      return requiredString(contact.ContactID, "contact id");
+    })));
+    const contacts = await this.contacts(accessToken, tenantId, contactIds);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const grouped = new Map<string, XeroStudentCandidate>();
+
+    for (const invoice of invoices) {
+      const invoiceContact = record(invoice.Contact);
+      const contactId = requiredString(invoiceContact.ContactID, "contact id");
+      const contact = contacts.get(contactId) ?? invoiceContact;
+      const total = optionalNumber(invoice.Total) ?? 0;
+      const amountPaid = optionalNumber(invoice.AmountPaid) ?? 0;
+      const amountDue = optionalNumber(invoice.AmountDue) ?? Math.max(0, total - amountPaid);
+      const invoiceDate = optionalDate(invoice.DateString) ?? optionalXeroDate(invoice.Date);
+      const dueDate = optionalDate(invoice.DueDateString) ?? optionalXeroDate(invoice.DueDate);
+      const existing = grouped.get(contactId) ?? {
+        xeroContactId: contactId,
+        legalName: optionalString(contact.Name) ?? optionalString(invoiceContact.Name) ?? "Unnamed Xero contact",
+        email: optionalString(contact.EmailAddress) ?? optionalString(invoiceContact.EmailAddress),
+        suggestedStudentReference: optionalString(contact.ContactNumber) ?? optionalString(contact.AccountNumber),
+        invoiceCount: 0,
+        latestInvoiceNumber: null,
+        latestInvoiceDate: null,
+        nextPaymentDate: null,
+        nextPaymentAmount: null,
+        totalInvoiced: 0,
+        totalPaid: 0,
+        amountDue: 0,
+        currencyCode: optionalString(invoice.CurrencyCode),
+        paymentStatus: "paid" as const,
+      };
+      existing.invoiceCount += 1;
+      existing.totalInvoiced += total;
+      existing.totalPaid += amountPaid;
+      existing.amountDue += amountDue;
+      if (invoiceDate && (!existing.latestInvoiceDate || invoiceDate > existing.latestInvoiceDate)) {
+        existing.latestInvoiceDate = invoiceDate;
+        existing.latestInvoiceNumber = optionalString(invoice.InvoiceNumber);
+      }
+      if (amountDue > 0 && dueDate && (!existing.nextPaymentDate || dueDate < existing.nextPaymentDate)) {
+        existing.nextPaymentDate = dueDate;
+        existing.nextPaymentAmount = amountDue;
+      }
+      if (amountDue > 0) {
+        const overdue = Boolean(dueDate && new Date(`${dueDate}T00:00:00Z`).getTime() < today.getTime());
+        existing.paymentStatus = overdue ? "overdue" : existing.paymentStatus === "overdue" ? "overdue" : "due";
+      }
+      grouped.set(contactId, existing);
+    }
+
+    return {
+      candidates: Array.from(grouped.values())
+        .map((candidate) => ({
+          ...candidate,
+          totalInvoiced: money(candidate.totalInvoiced),
+          totalPaid: money(candidate.totalPaid),
+          amountDue: money(candidate.amountDue),
+          nextPaymentAmount: candidate.nextPaymentAmount === null ? null : money(candidate.nextPaymentAmount),
+        }))
+        .sort((left, right) => left.legalName.localeCompare(right.legalName)),
+      invoiceCount: invoices.length,
+      truncated: payload.Pagination
+        ? Number(record(payload.Pagination).PageCount ?? 1) > 1
+        : payload.Invoices.length >= 500,
+    };
+  }
+
+  private async contacts(
+    accessToken: string,
+    tenantId: string,
+    contactIds: string[],
+  ): Promise<Map<string, Record<string, unknown>>> {
+    const output = new Map<string, Record<string, unknown>>();
+    const batches: string[][] = [];
+    for (let index = 0; index < contactIds.length; index += 100) {
+      batches.push(contactIds.slice(index, index + 100));
+    }
+    const responses = await Promise.all(batches.map(async (ids) => {
+      const url = new URL("https://api.xero.com/api.xro/2.0/Contacts");
+      url.search = new URLSearchParams({ IDs: ids.join(","), page: "1", pageSize: "100" }).toString();
+      const payload = record(await this.json(url.toString(), accessToken, tenantId));
+      if (!Array.isArray(payload.Contacts)) {
+        throw new BadGatewayException("Xero returned an invalid contacts response.");
+      }
+      return payload.Contacts;
+    }));
+    for (const contacts of responses) {
+      for (const entry of contacts) {
+        const contact = record(entry);
+        output.set(requiredString(contact.ContactID, "contact id"), contact);
+      }
+    }
+    return output;
+  }
+
   private async tokenRequest(body: URLSearchParams, config: XeroConfig): Promise<XeroTokenSet> {
     const response = await fetch("https://identity.xero.com/connect/token", {
       method: "POST",
@@ -170,4 +306,27 @@ function requiredString(value: unknown, label: string): string {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function optionalDate(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
+  return value.slice(0, 10);
+}
+
+function optionalXeroDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /\/Date\((\d+)/.exec(value);
+  if (!match?.[1]) return null;
+  const parsed = new Date(Number(match[1]));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function money(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }

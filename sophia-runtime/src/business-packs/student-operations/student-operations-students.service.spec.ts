@@ -98,12 +98,13 @@ describe("StudentOperationsStudentsService", () => {
   it("loads all dashboard counts with one tenant-scoped aggregate query", async () => {
     const { service, query } = harness();
     query.mockResolvedValueOnce({
-      rows: [{ total: 11, active: 8, action_required: 2, on_hold: 1 }],
+      rows: [{ total: 11, active: 8, new_applications: 3, action_required: 2, on_hold: 1 }],
       rowCount: 1,
     });
     await expect(service.summary(principal("operations"))).resolves.toEqual({
       totalStudents: 11,
       activeStudents: 8,
+      newApplications: 3,
       actionRequired: 2,
       onHold: 1,
     });
@@ -117,7 +118,7 @@ describe("StudentOperationsStudentsService", () => {
   it("scopes advisor dashboard counts to the signed-in advisor", async () => {
     const { service, query } = harness();
     query.mockResolvedValueOnce({
-      rows: [{ total: 1, active: 1, action_required: 0, on_hold: 0 }],
+      rows: [{ total: 1, active: 1, new_applications: 1, action_required: 0, on_hold: 0 }],
       rowCount: 1,
     });
     await service.summary(principal("advisor"));
