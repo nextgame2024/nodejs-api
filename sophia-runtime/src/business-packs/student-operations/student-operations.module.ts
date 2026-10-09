@@ -5,10 +5,16 @@ import { StudentOperationsCurrentWorkspaceController } from "./student-operation
 import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
 import { StudentOperationsWorkspaceService } from "./student-operations-workspace.service.js";
 import { StudentOperationsStudentsService } from "./student-operations-students.service.js";
+import { ConnectorsModule } from "../../connectors/connectors.module.js";
+import { StudentOperationsXeroController } from "./student-operations-xero.controller.js";
 
 @Module({
-  imports: [AdminModule],
-  controllers: [StudentOperationsWorkspaceController, StudentOperationsCurrentWorkspaceController],
+  imports: [AdminModule, ConnectorsModule],
+  controllers: [
+    StudentOperationsWorkspaceController,
+    StudentOperationsCurrentWorkspaceController,
+    StudentOperationsXeroController,
+  ],
   providers: [
     StudentOperationsWorkspaceService,
     StudentOperationsWorkspaceGuard,

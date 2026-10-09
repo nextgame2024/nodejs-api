@@ -47,6 +47,20 @@ npm run migrate
 
 Do not copy secrets into Angular. Browser clients should call this runtime API for short-lived session metadata only.
 
+## Xero connector foundation
+
+Xero uses a shared, multi-tenant OAuth 2.0 connector. A Student Operations Chief Executive can begin consent through
+`POST /api/business-packs/student-operations/v1/workspace/integrations/xero/authorization`.
+The registered Xero callback must exactly match `XERO_REDIRECT_URI`; locally it is
+`http://localhost:3400/api/connectors/xero/v1/oauth/callback`.
+
+Configure `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_RETURN_URL`,
+`XERO_OAUTH_STATE_SECRET`, and `XERO_TOKEN_ENCRYPTION_KEY` only in the runtime environment.
+The first phase requests identity, offline access, and `accounting.settings.read` only. It can verify the selected
+organisation and list bank-account metadata, but it cannot read transactions or write accounting data. Each Xero
+organisation is persisted as a tenant-scoped connector binding, allowing one agency to connect TRUST and operating
+organisations independently and allowing other agencies to connect their own organisations later.
+
 ## Sophia subscription billing
 
 Sophia subscriptions use an independently configured Stripe adapter. It never

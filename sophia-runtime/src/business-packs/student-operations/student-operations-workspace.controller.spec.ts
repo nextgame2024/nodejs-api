@@ -29,7 +29,7 @@ describe("StudentOperationsWorkspaceController", () => {
 
   it("publishes the fail-closed role and privacy contract", () => {
     const result = new StudentOperationsWorkspaceController().policy();
-    expect(result.version).toBe("2026-10-08.1");
+    expect(result.version).toBe("2026-10-09.1");
     expect(Object.keys(result.roles)).toEqual([
       "chief_executive", "operations", "advisor",
     ]);

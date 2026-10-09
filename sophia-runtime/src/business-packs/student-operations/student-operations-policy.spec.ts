@@ -20,6 +20,8 @@ describe("Student Operations roles and privacy contract", () => {
       expect(permissions.every((item) => STUDENT_OPERATIONS_PERMISSIONS.includes(item))).toBe(true);
     }
     expect(hasStudentOperationsPermission("chief_executive", "payments.approve")).toBe(true);
+    expect(hasStudentOperationsPermission("chief_executive", "integrations.manage")).toBe(true);
+    expect(hasStudentOperationsPermission("operations", "integrations.manage")).toBe(false);
     expect(hasStudentOperationsPermission("operations", "payments.approve")).toBe(false);
     expect(hasStudentOperationsPermission("advisor", "reports.export")).toBe(false);
     expect(STUDENT_OPERATIONS_STEP_UP_PERMISSIONS).toEqual([

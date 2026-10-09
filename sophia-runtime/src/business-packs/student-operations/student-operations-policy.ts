@@ -1,4 +1,4 @@
-export const STUDENT_OPERATIONS_POLICY_VERSION = "2026-10-08.1";
+export const STUDENT_OPERATIONS_POLICY_VERSION = "2026-10-09.1";
 
 export const STUDENT_OPERATIONS_PERMISSIONS = [
   "workspace.read",
@@ -23,6 +23,7 @@ export const STUDENT_OPERATIONS_PERMISSIONS = [
   "reports.export",
   "assistant.use",
   "privacy.manage",
+  "integrations.manage",
 ] as const;
 
 export type StudentOperationsPermission =
