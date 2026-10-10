@@ -26,6 +26,10 @@ describe("StudentOperationsXeroSyncService", () => {
           invoice_count: 2,
           latest_invoice_number: "INV-2",
           latest_invoice_date: "2026-10-02",
+          latest_invoice_reference: "ENROL-200",
+          latest_concept: "Diploma tuition",
+          latest_advisor_name: "Maria Lopez",
+          latest_college_name: "Example College",
           next_payment_date: "2026-10-20",
           next_payment_amount: "75.50",
           total_invoiced: "200.00",
@@ -45,12 +49,17 @@ describe("StudentOperationsXeroSyncService", () => {
     const xero = { syncContactPage: jest.fn(), syncInvoicePage: jest.fn() };
     const service = new StudentOperationsXeroSyncService(database as never, xero as never);
 
-    const result = await service.candidates(tenantId, connectionId, { page: "1", limit: "20", q: "Candidate" });
+    const result = await service.candidates(tenantId, connectionId, {
+      page: "1", limit: "20", q: "Candidate", sort: "invoiceDate", direction: "desc",
+    });
 
     expect(result.total).toBe(1);
     expect(result.candidates[0]).toEqual(expect.objectContaining({
       legalName: "Candidate Student", amountDue: 75.5, paymentStatus: "due",
+      latestInvoiceReference: "ENROL-200", concept: "Diploma tuition",
+      advisorName: "Maria Lopez", collegeName: "Example College",
     }));
+    expect(query.mock.calls.at(-1)?.[0]).toContain("ORDER BY latest_invoice_date DESC");
     expect(query).toHaveBeenLastCalledWith(expect.stringContaining("ILIKE $3"), [
       tenantId, connectionId, "%Candidate%", 20, 0,
     ]);
@@ -147,6 +156,10 @@ describe("StudentOperationsXeroSyncService", () => {
       invoiceId: `77777777-7777-4777-8777-77777777777${index + 1}`,
       contactId: contact.contactId,
       invoiceNumber: `INV-${index + 1}`,
+      invoiceReference: `REF-${index + 1}`,
+      concept: "Tuition",
+      advisorName: "Maria Lopez",
+      collegeName: "Example College",
       type: "ACCREC",
       status: "AUTHORISED",
       invoiceDate: "2026-10-01",

@@ -12,7 +12,22 @@ const CandidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().trim().max(100).optional(),
+  sort: z.enum(["student", "studentReference", "invoiceDate", "invoiceReference", "concept", "advisor", "college", "invoices", "nextPayment", "paymentState"]).default("student"),
+  direction: z.enum(["asc", "desc"]).default("asc"),
 }).strict();
+
+const CandidateSortExpressions = {
+  student: "lower(c.legal_name)",
+  studentReference: "lower(COALESCE(c.contact_number, c.account_number, ''))",
+  invoiceDate: "latest_invoice_date",
+  invoiceReference: "latest_invoice_reference",
+  concept: "latest_concept",
+  advisor: "latest_advisor_name",
+  college: "latest_college_name",
+  invoices: "invoice_count",
+  nextPayment: "next_payment_date",
+  paymentState: "payment_status",
+} as const;
 
 type SyncRunRow = {
   sync_run_id: string;
@@ -49,6 +64,10 @@ type CandidateRow = {
   invoice_count: number;
   latest_invoice_number: string | null;
   latest_invoice_date: string | null;
+  latest_invoice_reference: string | null;
+  latest_concept: string | null;
+  latest_advisor_name: string | null;
+  latest_college_name: string | null;
   next_payment_date: string | null;
   next_payment_amount: string | number | null;
   total_invoiced: string | number;
@@ -107,13 +126,17 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     const run = await this.database.tenantTransaction(principal.tenantId, async (db) => {
       await assertConnection(db, schema, principal.tenantId, connectionId);
-      const existingConfiguration = await db.query<{ last_successful_sync_at: Date | null; last_reconciliation_sync_at: Date | null }>(
+      const existingConfiguration = await db.query<{
+        last_successful_sync_at: Date | null;
+        last_reconciliation_sync_at: Date | null;
+        invoice_metadata_version: number;
+      }>(
         `INSERT INTO ${schema}.student_operations_xero_sync_configurations
            (customer_id, xero_connection_id, organisation_role)
          VALUES ($1, $2, 'trust')
          ON CONFLICT (customer_id, xero_connection_id) DO UPDATE
            SET enabled=true, updated_at=now()
-         RETURNING last_successful_sync_at, last_reconciliation_sync_at`,
+         RETURNING last_successful_sync_at, last_reconciliation_sync_at, invoice_metadata_version`,
         [principal.tenantId, connectionId],
       );
       const active = await db.query<SyncRunRow>(
@@ -129,7 +152,8 @@ export class StudentOperationsXeroSyncService {
       const configuration = existingConfiguration.rows[0];
       const mode = !configuration?.last_successful_sync_at
         ? "initial"
-        : !configuration.last_reconciliation_sync_at
+        : configuration.invoice_metadata_version < 1
+          || !configuration.last_reconciliation_sync_at
           || configuration.last_reconciliation_sync_at.getTime() < Date.now() - 12 * 60 * 60 * 1000
           ? "reconciliation"
           : "incremental";
@@ -205,20 +229,35 @@ export class StudentOperationsXeroSyncService {
   async candidates(tenantId: string, connectionId: string, input: unknown) {
     const parsed = CandidateQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero candidate query.");
-    const { page, limit, q } = parsed.data;
+    const { page, limit, q, sort, direction } = parsed.data;
     const schema = runtimeConfig().schema;
     return this.database.tenantReadTransaction(tenantId, async (db) => {
       await assertConnection(db, schema, tenantId, connectionId);
       const params: unknown[] = [tenantId, connectionId];
-      const search = q ? `AND (c.legal_name ILIKE $3 OR c.email ILIKE $3 OR c.contact_number ILIKE $3 OR c.account_number ILIKE $3)` : "";
+      const search = q ? `AND (
+        c.legal_name ILIKE $3 OR c.email ILIKE $3 OR c.contact_number ILIKE $3 OR c.account_number ILIKE $3
+        OR EXISTS (
+          SELECT 1 FROM ${schema}.student_operations_xero_invoices search_i
+           WHERE search_i.customer_id=c.customer_id
+             AND search_i.xero_connection_id=c.xero_connection_id
+             AND search_i.xero_contact_id=c.xero_contact_id
+             AND (search_i.invoice_number ILIKE $3 OR search_i.invoice_reference ILIKE $3
+               OR search_i.concept ILIKE $3 OR search_i.advisor_name ILIKE $3 OR search_i.college_name ILIKE $3)
+        )
+      )` : "";
       if (q) params.push(`%${q}%`);
       params.push(limit, (page - 1) * limit);
       const limitPosition = params.length - 1;
+      const order = `${CandidateSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, lower(c.legal_name) ASC, c.xero_contact_id ASC`;
       const result = await db.query<CandidateRow>(
         `SELECT c.xero_contact_id, c.legal_name, c.email, c.contact_number, c.account_number,
                 count(i.xero_invoice_id)::int AS invoice_count,
                 (array_agg(i.invoice_number ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC))[1] AS latest_invoice_number,
                 max(i.invoice_date)::text AS latest_invoice_date,
+                (array_agg(i.invoice_reference ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC))[1] AS latest_invoice_reference,
+                (array_agg(i.concept ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC))[1] AS latest_concept,
+                (array_agg(i.advisor_name ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC))[1] AS latest_advisor_name,
+                (array_agg(i.college_name ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC))[1] AS latest_college_name,
                 min(i.due_date) FILTER (WHERE i.amount_due > 0)::text AS next_payment_date,
                 (array_agg(i.amount_due ORDER BY i.due_date ASC NULLS LAST)
                   FILTER (WHERE i.amount_due > 0))[1] AS next_payment_amount,
@@ -243,7 +282,7 @@ export class StudentOperationsXeroSyncService {
             AND COALESCE(r.review_status, 'pending')='pending'
             ${search}
           GROUP BY c.xero_contact_id, c.legal_name, c.email, c.contact_number, c.account_number
-          ORDER BY lower(c.legal_name), c.xero_contact_id
+          ORDER BY ${order}
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
         params,
       );
@@ -365,6 +404,10 @@ export class StudentOperationsXeroSyncService {
                (item->>'invoiceId')::uuid AS xero_invoice_id,
                (item->>'contactId')::uuid AS xero_contact_id,
                NULLIF(item->>'invoiceNumber', '') AS invoice_number,
+               NULLIF(item->>'invoiceReference', '') AS invoice_reference,
+               NULLIF(item->>'concept', '') AS concept,
+               NULLIF(item->>'advisorName', '') AS advisor_name,
+               NULLIF(item->>'collegeName', '') AS college_name,
                item->>'type' AS invoice_type,
                item->>'status' AS invoice_status,
                NULLIF(item->>'invoiceDate', '')::date AS invoice_date,
@@ -379,13 +422,17 @@ export class StudentOperationsXeroSyncService {
            INSERT INTO ${schema}.student_operations_xero_invoices
              (customer_id, xero_connection_id, xero_invoice_id, xero_contact_id,
               invoice_number, invoice_type, invoice_status, invoice_date, due_date,
+              invoice_reference, concept, advisor_name, college_name,
               currency_code, total, amount_paid, amount_due, provider_updated_at, last_seen_sync_run_id)
            SELECT $1::uuid, $2::uuid, xero_invoice_id, xero_contact_id,
                   invoice_number, invoice_type, invoice_status, invoice_date, due_date,
+                  invoice_reference, concept, advisor_name, college_name,
                   currency_code, total, amount_paid, amount_due, provider_updated_at, $3::uuid
              FROM source
            ON CONFLICT (customer_id, xero_connection_id, xero_invoice_id) DO UPDATE SET
              xero_contact_id=EXCLUDED.xero_contact_id, invoice_number=EXCLUDED.invoice_number,
+             invoice_reference=EXCLUDED.invoice_reference, concept=EXCLUDED.concept,
+             advisor_name=EXCLUDED.advisor_name, college_name=EXCLUDED.college_name,
              invoice_type=EXCLUDED.invoice_type, invoice_status=EXCLUDED.invoice_status,
              invoice_date=EXCLUDED.invoice_date, due_date=EXCLUDED.due_date,
              currency_code=EXCLUDED.currency_code, total=EXCLUDED.total,
@@ -427,6 +474,7 @@ export class StudentOperationsXeroSyncService {
             SET last_successful_sync_at=now(),
                 last_incremental_sync_at=CASE WHEN $3='incremental' THEN now() ELSE last_incremental_sync_at END,
                 last_reconciliation_sync_at=CASE WHEN $3 IN ('initial','reconciliation') THEN now() ELSE last_reconciliation_sync_at END,
+                invoice_metadata_version=CASE WHEN $3 IN ('initial','reconciliation') THEN 1 ELSE invoice_metadata_version END,
                 last_error_code=NULL, next_sync_at=now()+incremental_interval,
                 revision=revision+1, updated_at=now()
           WHERE customer_id=$1 AND xero_connection_id=$2`,
@@ -548,6 +596,10 @@ function candidateProjection(row: CandidateRow) {
     invoiceCount: Number(row.invoice_count),
     latestInvoiceNumber: row.latest_invoice_number,
     latestInvoiceDate: row.latest_invoice_date,
+    latestInvoiceReference: row.latest_invoice_reference,
+    concept: row.latest_concept,
+    advisorName: row.latest_advisor_name,
+    collegeName: row.latest_college_name,
     nextPaymentDate: row.next_payment_date,
     nextPaymentAmount: row.next_payment_amount === null ? null : Number(row.next_payment_amount),
     totalInvoiced: Number(row.total_invoiced),

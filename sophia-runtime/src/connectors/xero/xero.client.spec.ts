@@ -95,7 +95,7 @@ describe("XeroClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const requestUrl = String(fetchMock.mock.calls[1]?.[0]);
     expect(requestUrl).toContain("pageSize=100");
-    expect(requestUrl).toContain("summaryOnly=true");
+    expect(requestUrl).not.toContain("summaryOnly=");
     expect(requestUrl).not.toContain("where=");
     expect(requestUrl).not.toContain("Statuses=");
     expect(requestUrl).not.toContain("order=");
@@ -106,7 +106,15 @@ describe("XeroClient", () => {
       Invoices: [
         {
           Type: "ACCREC", Status: "AUTHORISED", InvoiceID: "invoice-1",
-          Contact: { ContactID: "contact-1" }, Total: 100,
+          Contact: { ContactID: "contact-1" }, InvoiceNumber: "INV-1", Reference: "STUDENT-REF",
+          LineItems: [{
+            Description: "Diploma tuition",
+            Tracking: [
+              { Name: "Advisor", Option: "Maria Lopez" },
+              { Name: "College", Option: "Example College" },
+            ],
+          }],
+          Total: 100,
         },
         {
           Type: "ACCPAY", Status: "AUTHORISED", InvoiceID: "invoice-2",
@@ -122,8 +130,15 @@ describe("XeroClient", () => {
     expect(requestUrl).not.toContain("where=");
     expect(requestUrl).not.toContain("Statuses=");
     expect(requestUrl).toContain("pageSize=100");
-    expect(requestUrl).toContain("summaryOnly=true");
-    expect(result.items).toEqual([expect.objectContaining({ invoiceId: "invoice-1", type: "ACCREC" })]);
+    expect(requestUrl).not.toContain("summaryOnly=");
+    expect(result.items).toEqual([expect.objectContaining({
+      invoiceId: "invoice-1",
+      type: "ACCREC",
+      invoiceReference: "STUDENT-REF",
+      concept: "Diploma tuition",
+      advisorName: "Maria Lopez",
+      collegeName: "Example College",
+    })]);
   });
 
   it("uses incremental headers and stable paging for contacts", async () => {

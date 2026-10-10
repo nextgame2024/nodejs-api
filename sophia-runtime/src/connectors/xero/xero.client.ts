@@ -73,6 +73,10 @@ export type XeroInvoiceRecord = {
   invoiceId: string;
   contactId: string;
   invoiceNumber: string | null;
+  invoiceReference: string | null;
+  concept: string | null;
+  advisorName: string | null;
+  collegeName: string | null;
   type: string;
   status: string;
   invoiceDate: string | null;
@@ -206,7 +210,6 @@ export class XeroClient {
     url.search = new URLSearchParams({
       page: String(page),
       pageSize: String(XERO_INVOICE_PAGE_SIZE),
-      summaryOnly: "true",
     }).toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Invoices)) {
@@ -215,12 +218,17 @@ export class XeroClient {
     return {
       items: payload.Invoices.map(record).map((value) => {
         const contact = record(value.Contact);
+        const lineItems = Array.isArray(value.LineItems) ? value.LineItems.map(record) : [];
         const total = optionalNumber(value.Total) ?? 0;
         const amountPaid = optionalNumber(value.AmountPaid) ?? 0;
         return {
           invoiceId: requiredString(value.InvoiceID, "invoice id"),
           contactId: requiredString(contact.ContactID, "contact id"),
           invoiceNumber: optionalString(value.InvoiceNumber),
+          invoiceReference: optionalString(value.Reference),
+          concept: invoiceConcept(lineItems),
+          advisorName: trackingOption(lineItems, ["advisor", "adviser", "counsellor", "consultant", "agent"]),
+          collegeName: trackingOption(lineItems, ["college", "provider", "institution", "school"]),
           type: requiredString(value.Type, "invoice type"),
           status: requiredString(value.Status, "invoice status"),
           invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
@@ -494,6 +502,26 @@ function optionalString(value: unknown): string | null {
 function optionalNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function invoiceConcept(lineItems: Record<string, unknown>[]): string | null {
+  const descriptions = Array.from(new Set(lineItems
+    .map((lineItem) => optionalString(lineItem.Description))
+    .filter((value): value is string => Boolean(value))));
+  return descriptions.length ? descriptions.join(" · ").slice(0, 1000) : null;
+}
+
+function trackingOption(lineItems: Record<string, unknown>[], categoryNames: string[]): string | null {
+  const expected = new Set(categoryNames);
+  for (const lineItem of lineItems) {
+    const tracking = Array.isArray(lineItem.Tracking) ? lineItem.Tracking.map(record) : [];
+    for (const category of tracking) {
+      const name = optionalString(category.Name)?.toLowerCase();
+      const option = optionalString(category.Option);
+      if (name && option && expected.has(name)) return option.slice(0, 200);
+    }
+  }
   return null;
 }
 
