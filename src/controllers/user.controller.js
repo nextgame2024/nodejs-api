@@ -13,6 +13,7 @@ import {
   unsubscribeUserFromEmails,
 } from "../models/user.model.js";
 import pool from "../config/db.js";
+import { normalizeStudentNameInXero } from "../utils/userStudentFields.js";
 import { markPendingToolkitEmailsUnsubscribedForUser } from "../models/aiToolkitEmailSchedule.model.js";
 import {
   sendCommunityWelcomeEmail,
@@ -198,9 +199,9 @@ export const registerUser = asyncHandler(async (req, res) => {
     `SELECT workspace_profile FROM bm_company WHERE company_id = $1 LIMIT 1`,
     [companyId],
   );
-  const studentNameInXero = companyProfileRows[0]?.workspace_profile === "student_operations"
-    ? String(payload.studentNameInXero ?? "").trim() || null
-    : null;
+  const studentNameInXero = normalizeStudentNameInXero(
+    payload.studentNameInXero, type, companyProfileRows[0]?.workspace_profile,
+  );
 
   try {
     const user = await createUser({
@@ -505,9 +506,11 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
       `SELECT workspace_profile FROM bm_company WHERE company_id = $1 LIMIT 1`,
       [next.companyId ?? target.companyId],
     );
-    if (rows[0]?.workspace_profile === "student_operations") {
-      next.studentNameInXero = String(payload.studentNameInXero ?? "").trim() || null;
-    }
+    next.studentNameInXero = normalizeStudentNameInXero(
+      payload.studentNameInXero, next.type ?? target.type, rows[0]?.workspace_profile,
+    );
+  } else if (next.type && next.type !== "student") {
+    next.studentNameInXero = null;
   }
   next.actorUserId = req.user.id;
 

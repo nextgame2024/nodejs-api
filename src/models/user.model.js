@@ -203,7 +203,7 @@ export async function createUser({
     ],
   );
   if (type === 'advisor' && status === 'active' && actorUserId) {
-    await assignAdvisorRoleForNonChiefExecutive(client, {
+    await assignAdvisorRoleForUserType(client, {
       companyId, actorUserId, targetUserId: rows[0].id,
     });
   }
@@ -225,7 +225,7 @@ async function allocateStudentId(client) {
   return `STD-${rows[0].last_value}`;
 }
 
-async function assignAdvisorRoleForNonChiefExecutive(client, { companyId, actorUserId, targetUserId }) {
+async function assignAdvisorRoleForUserType(client, { companyId, actorUserId, targetUserId }) {
   const { rows } = await client.query(
     `SELECT c.workspace_profile, rc.customer_id::text AS customer_id
        FROM bm_company c
@@ -260,7 +260,26 @@ async function assignAdvisorRoleForNonChiefExecutive(client, { companyId, actorU
         AND role_key = 'chief_executive' LIMIT 1`,
     [scope.customer_id, actorUserId],
   );
-  if (chiefRows.length) return;
+  if (chiefRows.length && targetUserId === actorUserId) {
+    const error = new Error('A Chief Executive cannot change their own role to Advisor');
+    error.status = 409;
+    throw error;
+  }
+  const { rows: existingRows } = await client.query(
+    `SELECT role_key, status
+       FROM sophia_runtime.business_pack_entitlements
+      WHERE customer_id = $1::uuid AND identity_user_id = $2
+        AND pack_id = 'student-operations'
+      FOR UPDATE`,
+    [scope.customer_id, targetUserId],
+  );
+  const existing = existingRows[0] ?? null;
+  if (existing?.status === 'active' && existing.role_key === 'chief_executive' && !chiefRows.length) {
+    const error = new Error('A Chief Executive role cannot be changed by an Advisor type selection');
+    error.status = 409;
+    throw error;
+  }
+  if (existing?.status === 'active' && existing.role_key === 'advisor') return;
   const assignment = await client.query(
     `INSERT INTO sophia_runtime.business_pack_entitlements (
        customer_id, identity_user_id, pack_id, status, role_key, authorization_revision
@@ -269,9 +288,10 @@ async function assignAdvisorRoleForNonChiefExecutive(client, { companyId, actorU
        SET status = 'active', role_key = 'advisor',
            authorization_revision = sophia_runtime.business_pack_entitlements.authorization_revision + 1,
            updated_at = now()
-       WHERE sophia_runtime.business_pack_entitlements.status = 'revoked'
+       WHERE sophia_runtime.business_pack_entitlements.role_key IS DISTINCT FROM 'chief_executive'
+          OR $3::boolean
      RETURNING entitlement_id`,
-    [scope.customer_id, targetUserId],
+    [scope.customer_id, targetUserId, chiefRows.length > 0],
   );
   if (!assignment.rows.length) return;
   await client.query(
@@ -279,9 +299,18 @@ async function assignAdvisorRoleForNonChiefExecutive(client, { companyId, actorU
        customer_id, identity_user_id, pack_id, event_type, outcome,
        correlation_id, metadata
      ) VALUES ($1::uuid, $2, 'student-operations',
-       'business_pack.entitlement.assigned', 'allowed', gen_random_uuid()::text,
-       $3::jsonb)`,
-    [scope.customer_id, targetUserId, JSON.stringify({ actorIdentityUserId: actorUserId, source: 'advisor_user_type' })],
+       $3, 'allowed', gen_random_uuid()::text,
+       $4::jsonb)`,
+    [
+      scope.customer_id,
+      targetUserId,
+      existing ? 'business_pack.entitlement.role_changed' : 'business_pack.entitlement.assigned',
+      JSON.stringify({
+        actorIdentityUserId: actorUserId,
+        source: 'advisor_user_type',
+        previousRoleKey: existing?.role_key ?? null,
+      }),
+    ],
   );
 }
 
@@ -407,7 +436,7 @@ export async function updateUserById(
     params,
   );
   if (type === 'advisor' && actorUserId && rows[0]?.status === 'active') {
-    await assignAdvisorRoleForNonChiefExecutive(client, {
+    await assignAdvisorRoleForUserType(client, {
       companyId: rows[0].companyId, actorUserId, targetUserId: id,
     });
   }

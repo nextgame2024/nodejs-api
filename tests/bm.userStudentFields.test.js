@@ -13,6 +13,7 @@ jest.unstable_mockModule('../src/models/bm.sites.model.js', () => ({
 }));
 
 const { createUser, updateUserById } = await import('../src/models/user.model.js');
+const { normalizeStudentNameInXero } = await import('../src/utils/userStudentFields.js');
 const companyId = '11111111-1111-4111-8111-111111111111';
 const actorUserId = '22222222-2222-4222-8222-222222222222';
 
@@ -26,6 +27,15 @@ describe('Business Manager student user fields', () => {
     query.mockReset();
     release.mockClear();
     connect.mockClear();
+  });
+
+  test('stores a Xero student name only for Student type in Student Operations', () => {
+    expect(normalizeStudentNameInXero(' Jane Doe ', 'student', 'student_operations'))
+      .toBe('Jane Doe');
+    expect(normalizeStudentNameInXero('Jane Doe', 'advisor', 'student_operations'))
+      .toBeNull();
+    expect(normalizeStudentNameInXero('Jane Doe', 'student', 'project_map'))
+      .toBeNull();
   });
 
   test('allocates a server-owned Student ID in the insert transaction', async () => {
@@ -84,9 +94,29 @@ describe('Business Manager student user fields', () => {
     expect(update[1]).toContain('STD-2');
   });
 
-  test('does not replace the Chief Executive’s explicit role', async () => {
+  test('assigns Advisor for a Chief Executive creating another Advisor user', async () => {
     query.mockImplementation(async (sql) => {
       if (sql.includes('INSERT INTO users')) return { rows: [{ id: 'advisor-2', status: 'active' }] };
+      if (sql.includes('FROM bm_company c')) return {
+        rows: [{ workspace_profile: 'student_operations', customer_id: companyId }],
+      };
+      if (sql.includes('SELECT 1 FROM users WHERE id')) return { rows: [{ '?column?': 1 }] };
+      if (sql.includes("role_key = 'chief_executive'")) return { rows: [{ '?column?': 1 }] };
+      if (sql.includes('INSERT INTO sophia_runtime.business_pack_entitlements')) {
+        return { rows: [{ entitlement_id: 'entitlement-2' }] };
+      }
+      return { rows: [] };
+    });
+
+    await createUser({ ...base, type: 'advisor', actorUserId });
+
+    expect(query.mock.calls.some(([sql]) =>
+      sql.includes('INSERT INTO sophia_runtime.business_pack_entitlements'))).toBe(true);
+  });
+
+  test('does not allow a Chief Executive to demote themselves through Advisor type', async () => {
+    query.mockImplementation(async (sql) => {
+      if (sql.includes('UPDATE users')) return { rows: [{ id: actorUserId, companyId, status: 'active' }] };
       if (sql.includes('FROM bm_company c')) return {
         rows: [{ workspace_profile: 'student_operations', customer_id: companyId }],
       };
@@ -95,9 +125,52 @@ describe('Business Manager student user fields', () => {
       return { rows: [] };
     });
 
-    await createUser({ ...base, type: 'advisor', actorUserId });
+    await expect(updateUserById(actorUserId, { type: 'advisor', actorUserId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
+  });
 
-    expect(query.mock.calls.some(([sql]) =>
-      sql.includes('INSERT INTO sophia_runtime.business_pack_entitlements'))).toBe(false);
+  test('updates an existing Operations entitlement to Advisor for an Advisor user type', async () => {
+    query.mockImplementation(async (sql) => {
+      if (sql.includes('UPDATE users')) return { rows: [{ id: 'advisor-3', companyId, status: 'active' }] };
+      if (sql.includes('FROM bm_company c')) return {
+        rows: [{ workspace_profile: 'student_operations', customer_id: companyId }],
+      };
+      if (sql.includes('SELECT 1 FROM users WHERE id')) return { rows: [{ '?column?': 1 }] };
+      if (sql.includes("role_key = 'chief_executive'")) return { rows: [] };
+      if (sql.includes('SELECT role_key, status')) return {
+        rows: [{ role_key: 'operations', status: 'active' }],
+      };
+      if (sql.includes('INSERT INTO sophia_runtime.business_pack_entitlements')) {
+        return { rows: [{ entitlement_id: 'entitlement-3' }] };
+      }
+      return { rows: [] };
+    });
+
+    await updateUserById('advisor-3', { type: 'advisor', actorUserId });
+
+    const audit = query.mock.calls.find(([sql]) =>
+      sql.includes('INSERT INTO sophia_runtime.business_pack_access_audit_events'));
+    expect(audit[1][2]).toBe('business_pack.entitlement.role_changed');
+    expect(query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  test('rejects a non-Chief Executive changing a Chief Executive entitlement through Advisor type', async () => {
+    query.mockImplementation(async (sql) => {
+      if (sql.includes('UPDATE users')) return { rows: [{ id: 'chief-1', companyId, status: 'active' }] };
+      if (sql.includes('FROM bm_company c')) return {
+        rows: [{ workspace_profile: 'student_operations', customer_id: companyId }],
+      };
+      if (sql.includes('SELECT 1 FROM users WHERE id')) return { rows: [{ '?column?': 1 }] };
+      if (sql.includes("role_key = 'chief_executive'")) return { rows: [] };
+      if (sql.includes('SELECT role_key, status')) return {
+        rows: [{ role_key: 'chief_executive', status: 'active' }],
+      };
+      return { rows: [] };
+    });
+
+    await expect(updateUserById('chief-1', { type: 'advisor', actorUserId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
   });
 });
