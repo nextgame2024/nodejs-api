@@ -201,16 +201,10 @@ export class StudentOperationsXeroSyncService {
       );
       if (active.rows[0]) return active.rows[0];
       const configuration = existingConfiguration.rows[0];
-      const mode = !configuration?.last_successful_sync_at
-        ? "initial"
-        : configuration.invoice_metadata_version < 1 || configuration.invoice_detail_version < 1
-          || !configuration.last_reconciliation_sync_at
-          || configuration.last_reconciliation_sync_at.getTime() < Date.now() - 12 * 60 * 60 * 1000
-          ? "reconciliation"
-          : "incremental";
-      const modifiedSince = mode === "incremental" && configuration?.last_successful_sync_at
-        ? new Date(configuration.last_successful_sync_at.getTime() - 5 * 60 * 1000)
-        : null;
+      // An explicit refresh is authoritative: scan the complete provider register so
+      // records removed from Xero can be retired from the local read model.
+      const mode = !configuration?.last_successful_sync_at ? "initial" : "reconciliation";
+      const modifiedSince = null;
       const inserted = await db.query<SyncRunRow>(
         `INSERT INTO ${schema}.student_operations_xero_sync_runs
            (customer_id, xero_connection_id, mode, trigger_type, requested_by_identity, modified_since)
@@ -589,6 +583,16 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
+      if (run.mode === "initial" || run.mode === "reconciliation") {
+        await db.query(
+          `UPDATE ${schema}.student_operations_xero_invoices
+              SET invoice_status='DELETED', updated_at=now()
+            WHERE customer_id=$1 AND xero_connection_id=$2 AND invoice_type='ACCREC'
+              AND last_seen_sync_run_id IS DISTINCT FROM $3
+              AND invoice_status <> 'DELETED'`,
+          [tenantId, run.xero_connection_id, run.sync_run_id],
+        );
+      }
       const count = await db.query<{ count: number }>(
         `SELECT count(DISTINCT i.xero_contact_id)::int AS count
            FROM ${schema}.student_operations_xero_invoices i

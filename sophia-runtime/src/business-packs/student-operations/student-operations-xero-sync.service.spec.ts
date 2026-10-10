@@ -187,6 +187,58 @@ describe("StudentOperationsXeroSyncService", () => {
     jest.useRealTimers();
   });
 
+  it("uses a full reconciliation for an explicit refresh", async () => {
+    jest.useFakeTimers();
+    const now = new Date("2026-10-10T00:00:00.000Z");
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
+      if (sql.includes("INSERT INTO sophia_runtime.student_operations_xero_sync_configurations")) {
+        return {
+          rows: [{
+            last_successful_sync_at: now,
+            last_reconciliation_sync_at: now,
+            invoice_metadata_version: 1,
+            invoice_detail_version: 1,
+          }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("status IN ('queued','processing')")) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{
+          sync_run_id: "66666666-6666-4666-8666-666666666666",
+          xero_connection_id: connectionId,
+          mode: "reconciliation",
+          trigger_type: "manual",
+          status: "queued",
+          modified_since: null,
+          contact_count: 0,
+          invoice_count: 0,
+          candidate_count: 0,
+          error_code: null,
+          created_at: now,
+          started_at: null,
+          completed_at: null,
+        }],
+        rowCount: 1,
+      };
+    });
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+
+    const run = await service.enqueueManual({ tenantId, identityUserId: "user-1" } as never, connectionId);
+
+    expect(run).toEqual(expect.objectContaining({ mode: "reconciliation" }));
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("'manual'"), [
+      tenantId, connectionId, "reconciliation", "user-1", null,
+    ]);
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
   it("bulk upserts provider pages and checkpoints visible progress", async () => {
     const now = new Date("2026-10-10T00:00:00.000Z");
     const run = {
@@ -268,6 +320,10 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining("SET invoice_count=$4"), [
       tenantId, run.sync_run_id, expect.any(String), 2,
     ]);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("last_seen_sync_run_id IS DISTINCT FROM $3"),
+      [tenantId, connectionId, run.sync_run_id],
+    );
     expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status='succeeded'"), [
       tenantId, run.sync_run_id, expect.any(String), 2, 2, 2,
     ]);
@@ -322,6 +378,8 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining("next_sync_at=now()"), [
       tenantId, run.sync_run_id, "xero_unavailable", 21_600,
     ]);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("last_seen_sync_run_id IS DISTINCT FROM $3")))
+      .toBe(false);
   });
 
   it("assigns one explicit TRUST source and disables the previous assignment", async () => {
