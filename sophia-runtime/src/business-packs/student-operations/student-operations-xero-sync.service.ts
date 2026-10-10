@@ -365,16 +365,26 @@ export class StudentOperationsXeroSyncService {
                 i.advisor_name, i.college_name, i.payment_track,
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
                 count(*) OVER()::int AS total_count
-           FROM ${schema}.student_operations_xero_invoices i
-           JOIN ${schema}.student_operations_xero_contacts c
+          FROM ${schema}.student_operations_xero_invoices i
+          JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
             AND c.xero_contact_id=i.xero_contact_id
+           JOIN ${schema}.student_operations_xero_sync_runs seen
+             ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
            LEFT JOIN ${schema}.student_operations_xero_candidate_reviews r
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2
             AND i.invoice_type='ACCREC'
-            AND i.invoice_status NOT IN ('VOIDED','DELETED')
+            AND i.invoice_status <> 'DELETED'
+            AND seen.created_at >= COALESCE((
+              SELECT max(full_run.created_at)
+                FROM ${schema}.student_operations_xero_sync_runs full_run
+               WHERE full_run.customer_id=i.customer_id
+                 AND full_run.xero_connection_id=i.xero_connection_id
+                 AND full_run.status='succeeded'
+                 AND full_run.mode IN ('initial','reconciliation')
+            ), seen.created_at)
             ${search}
           ORDER BY ${order}
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
@@ -403,16 +413,26 @@ export class StudentOperationsXeroSyncService {
                 i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
                 i.advisor_name, i.college_name, i.payment_track, i.line_items,
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id
-           FROM ${schema}.student_operations_xero_invoices i
-           JOIN ${schema}.student_operations_xero_contacts c
+          FROM ${schema}.student_operations_xero_invoices i
+          JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
             AND c.xero_contact_id=i.xero_contact_id
+           JOIN ${schema}.student_operations_xero_sync_runs seen
+             ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
            LEFT JOIN ${schema}.student_operations_xero_candidate_reviews r
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
             AND i.invoice_type='ACCREC'
-            AND i.invoice_status NOT IN ('VOIDED','DELETED')`,
+            AND i.invoice_status <> 'DELETED'
+            AND seen.created_at >= COALESCE((
+              SELECT max(full_run.created_at)
+                FROM ${schema}.student_operations_xero_sync_runs full_run
+               WHERE full_run.customer_id=i.customer_id
+                 AND full_run.xero_connection_id=i.xero_connection_id
+                 AND full_run.status='succeeded'
+                 AND full_run.mode IN ('initial','reconciliation')
+            ), seen.created_at)`,
         [tenantId, connectionId, invoiceId],
       );
       const row = result.rows[0];
