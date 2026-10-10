@@ -47,6 +47,31 @@ describe("StudentOperationsXeroController", () => {
     );
   });
 
+  it("loads paged invoices and invoice detail only for the current tenant", async () => {
+    const invoices = jest.fn().mockResolvedValue({ invoices: [], page: 1, limit: 25, total: 0 });
+    const invoice = jest.fn().mockResolvedValue({ xeroInvoiceId: "invoice-1", lineItems: [] });
+    const controller = new StudentOperationsXeroController({} as never, { invoices, invoice } as never);
+    const principal = { ...basePrincipal, role: "chief_executive" as const };
+
+    await controller.studentInvoices(
+      { studentOperationsPrincipal: principal },
+      "44444444-4444-4444-8444-444444444444",
+      { page: "1", limit: "25" },
+    );
+    await controller.studentInvoice(
+      { studentOperationsPrincipal: principal },
+      "44444444-4444-4444-8444-444444444444",
+      "77777777-7777-4777-8777-777777777777",
+    );
+
+    expect(invoices).toHaveBeenCalledWith(principal.tenantId, expect.any(String), { page: "1", limit: "25" });
+    expect(invoice).toHaveBeenCalledWith(
+      principal.tenantId,
+      "44444444-4444-4444-8444-444444444444",
+      "77777777-7777-4777-8777-777777777777",
+    );
+  });
+
   it("queues refresh without waiting for Xero and returns the durable run", async () => {
     const enqueueManual = jest.fn().mockResolvedValue({ syncRunId: "run-1", status: "queued" });
     const controller = new StudentOperationsXeroController({} as never, { enqueueManual } as never);

@@ -96,7 +96,7 @@ describe("XeroClient", () => {
     const requestUrl = String(fetchMock.mock.calls[1]?.[0]);
     expect(requestUrl).toContain("pageSize=100");
     expect(requestUrl).not.toContain("summaryOnly=");
-    expect(requestUrl).not.toContain("where=");
+    expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
     expect(requestUrl).not.toContain("Statuses=");
     expect(requestUrl).not.toContain("order=");
   });
@@ -110,11 +110,11 @@ describe("XeroClient", () => {
           LineItems: [{
             Description: "Diploma tuition",
             Tracking: [
-              { Name: "Advisor", Option: "Maria Lopez" },
-              { Name: "College", Option: "Example College" },
+              { Name: "Sales Representative", Option: "Maria Lopez" },
+              { Name: "Payment Track", Option: "Pending" },
             ],
           }],
-          Total: 100,
+          Total: 100, SentToContact: true,
         },
         {
           Type: "ACCPAY", Status: "AUTHORISED", InvoiceID: "invoice-2",
@@ -127,7 +127,7 @@ describe("XeroClient", () => {
 
     const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
     expect(requestUrl).toContain("page=1");
-    expect(requestUrl).not.toContain("where=");
+    expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
     expect(requestUrl).not.toContain("Statuses=");
     expect(requestUrl).toContain("pageSize=100");
     expect(requestUrl).not.toContain("summaryOnly=");
@@ -137,7 +137,16 @@ describe("XeroClient", () => {
       invoiceReference: "STUDENT-REF",
       concept: "Diploma tuition",
       advisorName: "Maria Lopez",
-      collegeName: "Example College",
+      collegeName: "STUDENT-REF",
+      paymentTrack: "Pending",
+      sentToContact: true,
+      lineItems: [expect.objectContaining({
+        description: "Diploma tuition",
+        tracking: expect.arrayContaining([
+          { name: "Sales Representative", option: "Maria Lopez" },
+          { name: "Payment Track", option: "Pending" },
+        ]),
+      })],
     })]);
   });
 

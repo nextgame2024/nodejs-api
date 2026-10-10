@@ -29,6 +29,28 @@ const CandidateSortExpressions = {
   paymentState: "payment_status",
 } as const;
 
+const InvoiceQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  q: z.string().trim().max(100).optional(),
+  sort: z.enum(["invoiceNumber", "reference", "student", "date", "dueDate", "paid", "due", "status", "sent", "advisor", "paymentTrack"]).default("date"),
+  direction: z.enum(["asc", "desc"]).default("desc"),
+}).strict();
+
+const InvoiceSortExpressions = {
+  invoiceNumber: "lower(COALESCE(i.invoice_number, ''))",
+  reference: "lower(COALESCE(i.invoice_reference, ''))",
+  student: "lower(c.legal_name)",
+  date: "i.invoice_date",
+  dueDate: "i.due_date",
+  paid: "i.amount_paid",
+  due: "i.amount_due",
+  status: "lower(i.invoice_status)",
+  sent: "i.sent_to_contact",
+  advisor: "lower(COALESCE(i.advisor_name, ''))",
+  paymentTrack: "lower(COALESCE(i.payment_track, ''))",
+} as const;
+
 type SyncRunRow = {
   sync_run_id: string;
   xero_connection_id: string;
@@ -76,6 +98,33 @@ type CandidateRow = {
   currency_code: string | null;
   payment_status: "paid" | "due" | "overdue";
   total_count: number;
+};
+
+type InvoiceRow = {
+  xero_invoice_id: string;
+  xero_contact_id: string;
+  invoice_number: string | null;
+  invoice_reference: string | null;
+  legal_name: string;
+  email: string | null;
+  contact_number: string | null;
+  account_number: string | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  invoice_status: string;
+  currency_code: string | null;
+  total: string | number;
+  amount_paid: string | number;
+  amount_due: string | number;
+  sent_to_contact: boolean;
+  concept: string | null;
+  advisor_name: string | null;
+  college_name: string | null;
+  payment_track: string | null;
+  line_items?: unknown;
+  review_status: "pending" | "accepted" | "ignored";
+  student_id: string | null;
+  total_count?: number;
 };
 
 @Injectable()
@@ -130,13 +179,15 @@ export class StudentOperationsXeroSyncService {
         last_successful_sync_at: Date | null;
         last_reconciliation_sync_at: Date | null;
         invoice_metadata_version: number;
+        invoice_detail_version: number;
       }>(
         `INSERT INTO ${schema}.student_operations_xero_sync_configurations
            (customer_id, xero_connection_id, organisation_role)
          VALUES ($1, $2, 'trust')
          ON CONFLICT (customer_id, xero_connection_id) DO UPDATE
            SET enabled=true, updated_at=now()
-         RETURNING last_successful_sync_at, last_reconciliation_sync_at, invoice_metadata_version`,
+         RETURNING last_successful_sync_at, last_reconciliation_sync_at,
+                   invoice_metadata_version, invoice_detail_version`,
         [principal.tenantId, connectionId],
       );
       const active = await db.query<SyncRunRow>(
@@ -152,7 +203,7 @@ export class StudentOperationsXeroSyncService {
       const configuration = existingConfiguration.rows[0];
       const mode = !configuration?.last_successful_sync_at
         ? "initial"
-        : configuration.invoice_metadata_version < 1
+        : configuration.invoice_metadata_version < 1 || configuration.invoice_detail_version < 1
           || !configuration.last_reconciliation_sync_at
           || configuration.last_reconciliation_sync_at.getTime() < Date.now() - 12 * 60 * 60 * 1000
           ? "reconciliation"
@@ -295,6 +346,85 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
+  async invoices(tenantId: string, connectionId: string, input: unknown) {
+    const parsed = InvoiceQuerySchema.safeParse(input);
+    if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
+    const { page, limit, q, sort, direction } = parsed.data;
+    const schema = runtimeConfig().schema;
+    return this.database.tenantReadTransaction(tenantId, async (db) => {
+      await assertConnection(db, schema, tenantId, connectionId);
+      const params: unknown[] = [tenantId, connectionId];
+      const search = q ? `AND (
+        i.invoice_number ILIKE $3 OR i.invoice_reference ILIKE $3 OR c.legal_name ILIKE $3
+        OR c.email ILIKE $3 OR c.contact_number ILIKE $3 OR c.account_number ILIKE $3
+        OR i.concept ILIKE $3 OR i.advisor_name ILIKE $3 OR i.payment_track ILIKE $3
+      )` : "";
+      if (q) params.push(`%${q}%`);
+      params.push(limit, (page - 1) * limit);
+      const limitPosition = params.length - 1;
+      const order = `${InvoiceSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
+      const result = await db.query<InvoiceRow>(
+        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_number, i.invoice_reference,
+                c.legal_name, c.email, c.contact_number, c.account_number,
+                i.invoice_date::text, i.due_date::text, i.invoice_status, i.currency_code,
+                i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
+                i.advisor_name, i.college_name, i.payment_track,
+                COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
+                count(*) OVER()::int AS total_count
+           FROM ${schema}.student_operations_xero_invoices i
+           JOIN ${schema}.student_operations_xero_contacts c
+             ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
+            AND c.xero_contact_id=i.xero_contact_id
+           LEFT JOIN ${schema}.student_operations_xero_candidate_reviews r
+             ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
+            AND r.xero_contact_id=i.xero_contact_id
+          WHERE i.customer_id=$1 AND i.xero_connection_id=$2
+            AND i.invoice_type='ACCREC'
+            ${search}
+          ORDER BY ${order}
+          LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
+        params,
+      );
+      const total = Number(result.rows[0]?.total_count ?? 0);
+      return {
+        invoices: result.rows.map(invoiceProjection),
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      };
+    });
+  }
+
+  async invoice(tenantId: string, connectionId: string, invoiceId: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) throw new NotFoundException("Xero invoice not found.");
+    const schema = runtimeConfig().schema;
+    return this.database.tenantReadTransaction(tenantId, async (db) => {
+      await assertConnection(db, schema, tenantId, connectionId);
+      const result = await db.query<InvoiceRow>(
+        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_number, i.invoice_reference,
+                c.legal_name, c.email, c.contact_number, c.account_number,
+                i.invoice_date::text, i.due_date::text, i.invoice_status, i.currency_code,
+                i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
+                i.advisor_name, i.college_name, i.payment_track, i.line_items,
+                COALESCE(r.review_status, 'pending') AS review_status, r.student_id
+           FROM ${schema}.student_operations_xero_invoices i
+           JOIN ${schema}.student_operations_xero_contacts c
+             ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
+            AND c.xero_contact_id=i.xero_contact_id
+           LEFT JOIN ${schema}.student_operations_xero_candidate_reviews r
+             ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
+            AND r.xero_contact_id=i.xero_contact_id
+          WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
+            AND i.invoice_type='ACCREC'`,
+        [tenantId, connectionId, invoiceId],
+      );
+      const row = result.rows[0];
+      if (!row) throw new NotFoundException("Xero invoice not found.");
+      return { ...invoiceProjection(row), lineItems: Array.isArray(row.line_items) ? row.line_items : [] };
+    });
+  }
+
   async process(tenantId: string, runId: string): Promise<void> {
     const owner = randomUUID();
     const schema = runtimeConfig().schema;
@@ -408,6 +538,9 @@ export class StudentOperationsXeroSyncService {
                NULLIF(item->>'concept', '') AS concept,
                NULLIF(item->>'advisorName', '') AS advisor_name,
                NULLIF(item->>'collegeName', '') AS college_name,
+               NULLIF(item->>'paymentTrack', '') AS payment_track,
+               COALESCE((item->>'sentToContact')::boolean, false) AS sent_to_contact,
+               COALESCE(item->'lineItems', '[]'::jsonb) AS line_items,
                item->>'type' AS invoice_type,
                item->>'status' AS invoice_status,
                NULLIF(item->>'invoiceDate', '')::date AS invoice_date,
@@ -422,17 +555,21 @@ export class StudentOperationsXeroSyncService {
            INSERT INTO ${schema}.student_operations_xero_invoices
              (customer_id, xero_connection_id, xero_invoice_id, xero_contact_id,
               invoice_number, invoice_type, invoice_status, invoice_date, due_date,
-              invoice_reference, concept, advisor_name, college_name,
+              invoice_reference, concept, advisor_name, college_name, payment_track,
+              sent_to_contact, line_items,
               currency_code, total, amount_paid, amount_due, provider_updated_at, last_seen_sync_run_id)
            SELECT $1::uuid, $2::uuid, xero_invoice_id, xero_contact_id,
                   invoice_number, invoice_type, invoice_status, invoice_date, due_date,
-                  invoice_reference, concept, advisor_name, college_name,
+                  invoice_reference, concept, advisor_name, college_name, payment_track,
+                  sent_to_contact, line_items,
                   currency_code, total, amount_paid, amount_due, provider_updated_at, $3::uuid
              FROM source
            ON CONFLICT (customer_id, xero_connection_id, xero_invoice_id) DO UPDATE SET
              xero_contact_id=EXCLUDED.xero_contact_id, invoice_number=EXCLUDED.invoice_number,
              invoice_reference=EXCLUDED.invoice_reference, concept=EXCLUDED.concept,
              advisor_name=EXCLUDED.advisor_name, college_name=EXCLUDED.college_name,
+             payment_track=EXCLUDED.payment_track, sent_to_contact=EXCLUDED.sent_to_contact,
+             line_items=EXCLUDED.line_items,
              invoice_type=EXCLUDED.invoice_type, invoice_status=EXCLUDED.invoice_status,
              invoice_date=EXCLUDED.invoice_date, due_date=EXCLUDED.due_date,
              currency_code=EXCLUDED.currency_code, total=EXCLUDED.total,
@@ -475,6 +612,7 @@ export class StudentOperationsXeroSyncService {
                 last_incremental_sync_at=CASE WHEN $3='incremental' THEN now() ELSE last_incremental_sync_at END,
                 last_reconciliation_sync_at=CASE WHEN $3 IN ('initial','reconciliation') THEN now() ELSE last_reconciliation_sync_at END,
                 invoice_metadata_version=CASE WHEN $3 IN ('initial','reconciliation') THEN 1 ELSE invoice_metadata_version END,
+                invoice_detail_version=CASE WHEN $3 IN ('initial','reconciliation') THEN 1 ELSE invoice_detail_version END,
                 last_error_code=NULL, next_sync_at=now()+incremental_interval,
                 revision=revision+1, updated_at=now()
           WHERE customer_id=$1 AND xero_connection_id=$2`,
@@ -607,6 +745,32 @@ function candidateProjection(row: CandidateRow) {
     amountDue: Number(row.amount_due),
     currencyCode: row.currency_code,
     paymentStatus: row.payment_status,
+  };
+}
+
+function invoiceProjection(row: InvoiceRow) {
+  return {
+    xeroInvoiceId: row.xero_invoice_id,
+    xeroContactId: row.xero_contact_id,
+    invoiceNumber: row.invoice_number,
+    reference: row.invoice_reference,
+    studentName: row.legal_name,
+    studentEmail: row.email,
+    suggestedStudentReference: row.contact_number ?? row.account_number,
+    invoiceDate: row.invoice_date,
+    dueDate: row.due_date,
+    status: row.invoice_status.toLowerCase(),
+    currencyCode: row.currency_code,
+    total: Number(row.total),
+    amountPaid: Number(row.amount_paid),
+    amountDue: Number(row.amount_due),
+    sentToContact: row.sent_to_contact,
+    concept: row.concept,
+    advisorName: row.advisor_name,
+    collegeName: row.invoice_reference ?? row.college_name,
+    paymentTrack: row.payment_track,
+    reviewStatus: row.review_status,
+    studentId: row.student_id,
   };
 }
 

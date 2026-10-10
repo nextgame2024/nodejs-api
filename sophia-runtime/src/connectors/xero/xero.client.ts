@@ -77,6 +77,9 @@ export type XeroInvoiceRecord = {
   concept: string | null;
   advisorName: string | null;
   collegeName: string | null;
+  paymentTrack: string | null;
+  sentToContact: boolean;
+  lineItems: XeroInvoiceLineItemRecord[];
   type: string;
   status: string;
   invoiceDate: string | null;
@@ -86,6 +89,20 @@ export type XeroInvoiceRecord = {
   amountPaid: number;
   amountDue: number;
   updatedAt: string | null;
+};
+
+export type XeroInvoiceLineItemRecord = {
+  lineItemId: string | null;
+  itemCode: string | null;
+  description: string | null;
+  quantity: number | null;
+  unitAmount: number | null;
+  discountRate: number | null;
+  accountCode: string | null;
+  taxType: string | null;
+  taxAmount: number | null;
+  lineAmount: number | null;
+  tracking: Array<{ name: string; option: string }>;
 };
 
 export type XeroPage<T> = { items: T[]; page: number; pageCount: number };
@@ -210,6 +227,7 @@ export class XeroClient {
     url.search = new URLSearchParams({
       page: String(page),
       pageSize: String(XERO_INVOICE_PAGE_SIZE),
+      where: 'Type=="ACCREC"',
     }).toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Invoices)) {
@@ -221,14 +239,18 @@ export class XeroClient {
         const lineItems = Array.isArray(value.LineItems) ? value.LineItems.map(record) : [];
         const total = optionalNumber(value.Total) ?? 0;
         const amountPaid = optionalNumber(value.AmountPaid) ?? 0;
+        const invoiceReference = optionalString(value.Reference);
         return {
           invoiceId: requiredString(value.InvoiceID, "invoice id"),
           contactId: requiredString(contact.ContactID, "contact id"),
           invoiceNumber: optionalString(value.InvoiceNumber),
-          invoiceReference: optionalString(value.Reference),
+          invoiceReference,
           concept: invoiceConcept(lineItems),
-          advisorName: trackingOption(lineItems, ["advisor", "adviser", "counsellor", "consultant", "agent"]),
-          collegeName: trackingOption(lineItems, ["college", "provider", "institution", "school"]),
+          advisorName: trackingOption(lineItems, ["sales representative", "advisor", "adviser", "counsellor", "consultant", "agent"]),
+          collegeName: invoiceReference,
+          paymentTrack: trackingOption(lineItems, ["payment track"]),
+          sentToContact: value.SentToContact === true,
+          lineItems: lineItems.map(invoiceLineItem),
           type: requiredString(value.Type, "invoice type"),
           status: requiredString(value.Status, "invoice status"),
           invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
@@ -239,8 +261,7 @@ export class XeroClient {
           amountDue: optionalNumber(value.AmountDue) ?? Math.max(0, total - amountPaid),
           updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
         };
-      }).filter((invoice) => invoice.type === "ACCREC"
-        && !["VOIDED", "DELETED"].includes(invoice.status)),
+      }).filter((invoice) => invoice.type === "ACCREC"),
       page,
       pageCount: paginationPageCount(payload, page, payload.Invoices.length, XERO_INVOICE_PAGE_SIZE),
     };
@@ -523,6 +544,27 @@ function trackingOption(lineItems: Record<string, unknown>[], categoryNames: str
     }
   }
   return null;
+}
+
+function invoiceLineItem(lineItem: Record<string, unknown>): XeroInvoiceLineItemRecord {
+  const tracking = Array.isArray(lineItem.Tracking) ? lineItem.Tracking.map(record) : [];
+  return {
+    lineItemId: optionalString(lineItem.LineItemID),
+    itemCode: optionalString(lineItem.ItemCode),
+    description: optionalString(lineItem.Description)?.slice(0, 4000) ?? null,
+    quantity: optionalNumber(lineItem.Quantity),
+    unitAmount: optionalNumber(lineItem.UnitAmount),
+    discountRate: optionalNumber(lineItem.DiscountRate),
+    accountCode: optionalString(lineItem.AccountCode),
+    taxType: optionalString(lineItem.TaxType),
+    taxAmount: optionalNumber(lineItem.TaxAmount),
+    lineAmount: optionalNumber(lineItem.LineAmount),
+    tracking: tracking.flatMap((category) => {
+      const name = optionalString(category.Name);
+      const option = optionalString(category.Option);
+      return name && option ? [{ name: name.slice(0, 200), option: option.slice(0, 200) }] : [];
+    }),
+  };
 }
 
 function optionalDate(value: unknown): string | null {

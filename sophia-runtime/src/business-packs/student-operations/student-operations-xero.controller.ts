@@ -45,6 +45,26 @@ export class StudentOperationsXeroController {
     return this.sync.candidates(principal.tenantId, connectionId, query);
   }
 
+  @Get("connections/:connectionId/student-invoices")
+  studentInvoices(
+    @Req() request: WorkspaceRequest,
+    @Param("connectionId") connectionId: string,
+    @Query() query: unknown,
+  ) {
+    const principal = this.authorize(request);
+    return this.sync.invoices(principal.tenantId, connectionId, query);
+  }
+
+  @Get("connections/:connectionId/student-invoices/:invoiceId")
+  studentInvoice(
+    @Req() request: WorkspaceRequest,
+    @Param("connectionId") connectionId: string,
+    @Param("invoiceId") invoiceId: string,
+  ) {
+    const principal = this.authorize(request);
+    return this.sync.invoice(principal.tenantId, connectionId, invoiceId);
+  }
+
   @Get("connections/:connectionId/student-sync")
   studentSyncStatus(@Req() request: WorkspaceRequest, @Param("connectionId") connectionId: string) {
     const principal = this.authorize(request);

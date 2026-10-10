@@ -67,6 +67,75 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(xero.syncInvoicePage).not.toHaveBeenCalled();
   });
 
+  it("pages individual invoices and projects Xero list fields from the local read model", async () => {
+    const invoiceId = "77777777-7777-4777-8777-777777777771";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
+      return {
+        rows: [{
+          xero_invoice_id: invoiceId,
+          xero_contact_id: "55555555-5555-4555-8555-555555555555",
+          invoice_number: "INV-10035", invoice_reference: "ATI",
+          legal_name: "Fabian Student", email: "student@example.invalid",
+          contact_number: "S15", account_number: null,
+          invoice_date: "2029-10-01", due_date: "2029-10-01", invoice_status: "DRAFT",
+          currency_code: "AUD", total: "2200", amount_paid: "0", amount_due: "2200",
+          sent_to_contact: false, concept: "Diploma tuition", advisor_name: "S15 Paulina",
+          college_name: "ATI", payment_track: "Pending", review_status: "pending",
+          student_id: null, total_count: 7793,
+        }],
+        rowCount: 1,
+      };
+    });
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+
+    const result = await service.invoices(tenantId, connectionId, {
+      page: "2", limit: "25", q: "ATI", sort: "dueDate", direction: "desc",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ page: 2, limit: 25, total: 7793, totalPages: 312 }));
+    expect(result.invoices[0]).toEqual(expect.objectContaining({
+      xeroInvoiceId: invoiceId, invoiceNumber: "INV-10035", reference: "ATI",
+      advisorName: "S15 Paulina", paymentTrack: "Pending", amountDue: 2200,
+    }));
+    expect(query).toHaveBeenLastCalledWith(expect.stringContaining("ORDER BY i.due_date DESC"), [
+      tenantId, connectionId, "%ATI%", 25, 25,
+    ]);
+  });
+
+  it("returns stored line items for invoice detail without calling Xero", async () => {
+    const invoiceId = "77777777-7777-4777-8777-777777777771";
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
+      return { rows: [{
+        xero_invoice_id: invoiceId,
+        xero_contact_id: "55555555-5555-4555-8555-555555555555",
+        invoice_number: "INV-10035", invoice_reference: "ATI", legal_name: "Fabian Student",
+        email: null, contact_number: null, account_number: null, invoice_date: "2029-10-01",
+        due_date: "2029-10-01", invoice_status: "DRAFT", currency_code: "AUD",
+        total: "2200", amount_paid: "0", amount_due: "2200", sent_to_contact: false,
+        concept: "Diploma tuition", advisor_name: "S15 Paulina", college_name: "ATI",
+        payment_track: "Pending", review_status: "pending", student_id: null,
+        line_items: [{ description: "Diploma tuition", quantity: 1, lineAmount: 2200 }],
+      }], rowCount: 1 };
+    });
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const xero = { syncInvoicePage: jest.fn() };
+    const service = new StudentOperationsXeroSyncService(database as never, xero as never);
+
+    const result = await service.invoice(tenantId, connectionId, invoiceId);
+
+    expect(result.lineItems).toEqual([{ description: "Diploma tuition", quantity: 1, lineAmount: 2200 }]);
+    expect(xero.syncInvoicePage).not.toHaveBeenCalled();
+  });
+
   it("durably queues a manual initial sync before any provider work", async () => {
     jest.useFakeTimers();
     const now = new Date("2026-10-10T00:00:00.000Z");
@@ -160,6 +229,9 @@ describe("StudentOperationsXeroSyncService", () => {
       concept: "Tuition",
       advisorName: "Maria Lopez",
       collegeName: "Example College",
+      paymentTrack: "Pending",
+      sentToContact: true,
+      lineItems: [],
       type: "ACCREC",
       status: "AUTHORISED",
       invoiceDate: "2026-10-01",
