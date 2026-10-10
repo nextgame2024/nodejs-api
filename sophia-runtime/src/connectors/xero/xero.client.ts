@@ -105,7 +105,15 @@ export type XeroInvoiceLineItemRecord = {
   tracking: Array<{ name: string; option: string }>;
 };
 
-export type XeroPage<T> = { items: T[]; page: number; pageCount: number };
+export type XeroPage<T> = {
+  items: T[];
+  page: number;
+  pageCount: number;
+  /** Provider-side count for the complete filtered result, when Xero supplies pagination metadata. */
+  itemCount?: number;
+};
+
+export const XERO_REGISTER_INVOICE_STATUSES = "DRAFT,SUBMITTED,AUTHORISED,PAID";
 
 const XERO_INVOICE_PAGE_SIZE = 100;
 const XERO_GET_MAX_ATTEMPTS = 3;
@@ -222,17 +230,22 @@ export class XeroClient {
     tenantId: string,
     page: number,
     modifiedSince?: Date,
+    registerOnly = false,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
-    url.search = new URLSearchParams({
+    const parameters: Record<string, string> = {
       page: String(page),
       pageSize: String(XERO_INVOICE_PAGE_SIZE),
       where: 'Type=="ACCREC"',
-    }).toString();
+      order: "UpdatedDateUTC ASC",
+    };
+    if (registerOnly) parameters.Statuses = XERO_REGISTER_INVOICE_STATUSES;
+    url.search = new URLSearchParams(parameters).toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Invoices)) {
       throw new BadGatewayException("Xero returned an invalid invoices response.");
     }
+    const itemCount = paginationItemCount(payload);
     return {
       items: payload.Invoices.map(record).map((value) => {
         const contact = record(value.Contact);
@@ -264,6 +277,7 @@ export class XeroClient {
       }).filter((invoice) => invoice.type === "ACCREC"),
       page,
       pageCount: paginationPageCount(payload, page, payload.Invoices.length, XERO_INVOICE_PAGE_SIZE),
+      ...(itemCount === undefined ? {} : { itemCount }),
     };
   }
 
@@ -599,6 +613,14 @@ function paginationPageCount(
     : Number.NaN;
   if (Number.isInteger(count) && count >= page) return count;
   return itemCount >= pageSize ? page + 1 : page;
+}
+
+function paginationItemCount(payload: Record<string, unknown>): number | undefined {
+  const paginationValue = payload.Pagination ?? payload.pagination;
+  if (!paginationValue || typeof paginationValue !== "object") return undefined;
+  const pagination = record(paginationValue);
+  const count = Number(pagination.ItemCount ?? pagination.itemCount);
+  return Number.isInteger(count) && count >= 0 ? count : undefined;
 }
 
 function optionalXeroDate(value: unknown): string | null {

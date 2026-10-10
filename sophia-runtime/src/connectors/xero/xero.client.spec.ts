@@ -98,7 +98,23 @@ describe("XeroClient", () => {
     expect(requestUrl).not.toContain("summaryOnly=");
     expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
     expect(requestUrl).not.toContain("Statuses=");
-    expect(requestUrl).not.toContain("order=");
+    expect(requestUrl).toContain("order=UpdatedDateUTC+ASC");
+  });
+
+  it("requests the exact Xero sales register states for a full reconciliation", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      Pagination: { PageNumber: 1, PageSize: 100, PageCount: 78, ItemCount: 7793 },
+      Invoices: [],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(new XeroClient().invoicePage(
+      "access", "tenant-1", 1, undefined, true,
+    )).resolves.toEqual(expect.objectContaining({ pageCount: 78, itemCount: 7793 }));
+
+    const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(requestUrl).toContain("Statuses=DRAFT%2CSUBMITTED%2CAUTHORISED%2CPAID");
+    expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
+    expect(requestUrl).toContain("order=UpdatedDateUTC+ASC");
   });
 
   it("filters the unfiltered invoice page locally", async () => {

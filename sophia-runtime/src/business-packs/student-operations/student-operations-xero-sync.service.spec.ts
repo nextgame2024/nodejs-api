@@ -105,7 +105,9 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query).toHaveBeenLastCalledWith(expect.stringContaining("ORDER BY i.due_date DESC"), [
       tenantId, connectionId, "%ATI%", 25, 25,
     ]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status <> 'DELETED'");
+    expect(query.mock.calls.at(-1)?.[0]).toContain(
+      "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
+    );
     expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
   });
 
@@ -135,7 +137,9 @@ describe("StudentOperationsXeroSyncService", () => {
     const result = await service.invoice(tenantId, connectionId, invoiceId);
 
     expect(result.lineItems).toEqual([{ description: "Diploma tuition", quantity: 1, lineAmount: 2200 }]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status <> 'DELETED'");
+    expect(query.mock.calls.at(-1)?.[0]).toContain(
+      "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
+    );
     expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
     expect(xero.syncInvoicePage).not.toHaveBeenCalled();
   });
@@ -300,7 +304,9 @@ describe("StudentOperationsXeroSyncService", () => {
     }));
     const xero = {
       syncContactPage: jest.fn(async () => ({ items: contacts, page: 1, pageCount: 1 })),
-      syncInvoicePage: jest.fn(async () => ({ items: invoices, page: 1, pageCount: 1 })),
+      syncInvoicePage: jest.fn(async () => ({
+        items: invoices, page: 1, pageCount: 1, itemCount: invoices.length,
+      })),
     };
     const service = new StudentOperationsXeroSyncService(database as never, xero as never);
 
@@ -320,10 +326,12 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining("SET invoice_count=$4"), [
       tenantId, run.sync_run_id, expect.any(String), 2,
     ]);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("last_seen_sync_run_id IS DISTINCT FROM $3"),
-      [tenantId, connectionId, run.sync_run_id],
+    expect(xero.syncInvoicePage).toHaveBeenCalledWith(
+      tenantId, connectionId, 1, undefined, true,
     );
+    expect(query.mock.calls.some(([sql]) => String(sql).includes(
+      "last_seen_sync_run_id IS DISTINCT FROM $3",
+    ))).toBe(false);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status='succeeded'"), [
       tenantId, run.sync_run_id, expect.any(String), 2, 2, 2,
     ]);

@@ -51,6 +51,8 @@ const InvoiceSortExpressions = {
   paymentTrack: "lower(COALESCE(i.payment_track, ''))",
 } as const;
 
+const XERO_REGISTER_STATUSES_SQL = "'DRAFT','SUBMITTED','AUTHORISED','PAID'";
+
 type SyncRunRow = {
   sync_run_id: string;
   xero_connection_id: string;
@@ -376,7 +378,7 @@ export class StudentOperationsXeroSyncService {
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2
             AND i.invoice_type='ACCREC'
-            AND i.invoice_status <> 'DELETED'
+            AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
                 FROM ${schema}.student_operations_xero_sync_runs full_run
@@ -424,7 +426,7 @@ export class StudentOperationsXeroSyncService {
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
             AND i.invoice_type='ACCREC'
-            AND i.invoice_status <> 'DELETED'
+            AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
                 FROM ${schema}.student_operations_xero_sync_runs full_run
@@ -483,13 +485,39 @@ export class StudentOperationsXeroSyncService {
     modifiedSince?: Date,
   ): Promise<number> {
     let invoiceCount = 0;
+    let providerItemCount: number | undefined;
+    const seenInvoiceIds = new Set<string>();
+    const registerOnly = run.mode === "initial" || run.mode === "reconciliation";
     for (let page = 1; page <= 10_000; page += 1) {
-      const response = await this.xero.syncInvoicePage(tenantId, run.xero_connection_id, page, modifiedSince);
+      const response = await this.xero.syncInvoicePage(
+        tenantId,
+        run.xero_connection_id,
+        page,
+        modifiedSince,
+        registerOnly,
+      );
+      if (response.itemCount !== undefined) {
+        if (providerItemCount !== undefined && response.itemCount !== providerItemCount) {
+          throw new ConflictException("Xero invoice pagination changed during synchronization.");
+        }
+        providerItemCount = response.itemCount;
+      }
+      for (const invoice of response.items) {
+        if (seenInvoiceIds.has(invoice.invoiceId)) {
+          throw new ConflictException("Xero invoice pagination returned a duplicate record.");
+        }
+        seenInvoiceIds.add(invoice.invoiceId);
+      }
       invoiceCount += response.items.length;
       await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
-      if (page >= response.pageCount) return invoiceCount;
+      if (page >= response.pageCount) {
+        if (providerItemCount !== undefined && invoiceCount !== providerItemCount) {
+          throw new ConflictException("Xero invoice synchronization returned an incomplete register.");
+        }
+        return invoiceCount;
+      }
     }
-    return invoiceCount;
+    throw new ConflictException("Xero invoice synchronization exceeded the page limit.");
   }
 
   private persistContacts(
@@ -603,16 +631,6 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
-      if (run.mode === "initial" || run.mode === "reconciliation") {
-        await db.query(
-          `UPDATE ${schema}.student_operations_xero_invoices
-              SET invoice_status='DELETED', updated_at=now()
-            WHERE customer_id=$1 AND xero_connection_id=$2 AND invoice_type='ACCREC'
-              AND last_seen_sync_run_id IS DISTINCT FROM $3
-              AND invoice_status <> 'DELETED'`,
-          [tenantId, run.xero_connection_id, run.sync_run_id],
-        );
-      }
       const count = await db.query<{ count: number }>(
         `SELECT count(DISTINCT i.xero_contact_id)::int AS count
            FROM ${schema}.student_operations_xero_invoices i
@@ -620,7 +638,7 @@ export class StudentOperationsXeroSyncService {
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.invoice_type='ACCREC'
-            AND i.invoice_status NOT IN ('VOIDED','DELETED')
+            AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND COALESCE(r.review_status, 'pending')='pending'`,
         [tenantId, run.xero_connection_id],
       );
