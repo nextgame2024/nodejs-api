@@ -475,6 +475,24 @@ export class StudentOperationsXeroSyncService {
   private fail(tenantId: string, runId: string, owner: string, failure: SafeProviderFailure) {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
+      const previousFailures = await db.query<{ count: number }>(
+        `SELECT count(*)::int AS count
+           FROM ${schema}.student_operations_xero_sync_runs failed
+          WHERE failed.customer_id=$1 AND failed.status='failed'
+            AND failed.xero_connection_id=(SELECT current_run.xero_connection_id
+              FROM ${schema}.student_operations_xero_sync_runs current_run
+              WHERE current_run.customer_id=$1 AND current_run.sync_run_id=$2)
+            AND failed.created_at > COALESCE((
+              SELECT max(succeeded.created_at)
+                FROM ${schema}.student_operations_xero_sync_runs succeeded
+               WHERE succeeded.customer_id=$1 AND succeeded.status='succeeded'
+                 AND succeeded.xero_connection_id=failed.xero_connection_id
+            ), '-infinity'::timestamptz)`,
+        [tenantId, runId],
+      );
+      const retryAfterSeconds = durableRetryDelay(
+        failure.retryAfterSeconds, Number(previousFailures.rows[0]?.count ?? 0),
+      );
       await db.query(
         `UPDATE ${schema}.student_operations_xero_sync_runs
             SET status='failed', error_code=$4, provider_status=$5,
@@ -482,7 +500,7 @@ export class StudentOperationsXeroSyncService {
                 completed_at=now(), lease_owner=NULL, lease_expires_at=NULL
           WHERE customer_id=$1 AND sync_run_id=$2 AND lease_owner=$3`,
         [tenantId, runId, owner, failure.code, failure.providerStatus,
-          failure.correlationId, failure.retryAfterSeconds],
+          failure.correlationId, retryAfterSeconds],
       );
       await db.query(
         `UPDATE ${schema}.student_operations_xero_sync_configurations c
@@ -492,7 +510,7 @@ export class StudentOperationsXeroSyncService {
             AND c.xero_connection_id=(SELECT r.xero_connection_id
               FROM ${schema}.student_operations_xero_sync_runs r
               WHERE r.customer_id=$1 AND r.sync_run_id=$2)`,
-        [tenantId, runId, failure.code, failure.retryAfterSeconds],
+        [tenantId, runId, failure.code, retryAfterSeconds],
       );
     });
   }
@@ -614,4 +632,10 @@ function isXeroInternalError(error: unknown): boolean {
   const response = (error as { getResponse(): unknown }).getResponse();
   return Boolean(response && typeof response === "object"
     && (response as Record<string, unknown>).providerStatus === 500);
+}
+
+function durableRetryDelay(providerDelaySeconds: number, previousFailureCount: number): number {
+  const multipliers = [1, 3, 12, 72, 144];
+  const multiplier = multipliers[Math.min(previousFailureCount, multipliers.length - 1)] ?? 144;
+  return Math.min(43_200, Math.max(providerDelaySeconds, 300 * multiplier));
 }

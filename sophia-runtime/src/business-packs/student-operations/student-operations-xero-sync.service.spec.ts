@@ -253,6 +253,57 @@ describe("StudentOperationsXeroSyncService", () => {
     ]);
   });
 
+  it("backs off repeated Xero failures to protect the provider call allowance", async () => {
+    const now = new Date("2026-10-10T00:00:00.000Z");
+    const run = {
+      sync_run_id: "66666666-6666-4666-8666-666666666666",
+      xero_connection_id: connectionId,
+      mode: "initial",
+      trigger_type: "schedule",
+      status: "processing",
+      modified_since: null,
+      contact_count: 0,
+      invoice_count: 0,
+      candidate_count: 0,
+      error_code: null,
+      created_at: now,
+      started_at: now,
+      completed_at: null,
+    };
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("SET status='processing'")) return { rows: [run], rowCount: 1 };
+      if (sql.includes("FROM sophia_runtime.student_operations_xero_sync_runs failed")) {
+        return { rows: [{ count: 3 }], rowCount: 1 };
+      }
+      return { rows: [{ exists: 1 }], rowCount: 1 };
+    });
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const xero = {
+      syncContactPage: jest.fn(async () => {
+        throw new BadGatewayException({
+          message: "Xero could not complete the request.",
+          errorCode: "xero_unavailable",
+          providerStatus: 500,
+          retryAfterSeconds: 300,
+        });
+      }),
+      syncInvoicePage: jest.fn(),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, xero as never);
+
+    await service.process(tenantId, run.sync_run_id);
+
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status='failed'"), [
+      tenantId, run.sync_run_id, expect.any(String), "xero_unavailable", 500, null, 21_600,
+    ]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("next_sync_at=now()"), [
+      tenantId, run.sync_run_id, "xero_unavailable", 21_600,
+    ]);
+  });
+
   it("assigns one explicit TRUST source and disables the previous assignment", async () => {
     const query = jest.fn(async () => ({ rows: [{ exists: 1 }], rowCount: 1 }));
     const database = {
