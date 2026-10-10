@@ -380,6 +380,7 @@ export class StudentOperationsXeroSyncService {
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2
             AND i.invoice_type='ACCREC'
+            AND i.invoice_status NOT IN ('VOIDED','DELETED')
             ${search}
           ORDER BY ${order}
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
@@ -416,7 +417,8 @@ export class StudentOperationsXeroSyncService {
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
-            AND i.invoice_type='ACCREC'`,
+            AND i.invoice_type='ACCREC'
+            AND i.invoice_status NOT IN ('VOIDED','DELETED')`,
         [tenantId, connectionId, invoiceId],
       );
       const row = result.rows[0];
