@@ -9,7 +9,22 @@ export async function ensureUsersSiteSchema() {
   await pool.query(`
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS site_id uuid NULL,
+      ADD COLUMN IF NOT EXISTS student_id text NULL,
+      ADD COLUMN IF NOT EXISTS student_name_in_xero text NULL,
       ADD COLUMN IF NOT EXISTS email_subscription_status char(1) NOT NULL DEFAULT 'Y';
+    CREATE TABLE IF NOT EXISTS bm_student_id_counter (
+      id boolean PRIMARY KEY DEFAULT true CHECK (id),
+      last_value bigint NOT NULL DEFAULT 0 CHECK (last_value >= 0)
+    );
+    INSERT INTO bm_student_id_counter (id, last_value)
+    VALUES (true, 0) ON CONFLICT (id) DO NOTHING;
+    UPDATE bm_student_id_counter SET last_value = GREATEST(
+      last_value,
+      COALESCE((SELECT MAX(substring(student_id FROM '^STD-([0-9]+)$')::bigint)
+                FROM users WHERE student_id ~ '^STD-[0-9]+$'), 0)
+    ) WHERE id = true;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_users_student_id
+      ON users (student_id) WHERE student_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_users_company_site
       ON users (company_id, site_id);
     CREATE INDEX IF NOT EXISTS idx_users_email_subscription_status
@@ -55,6 +70,8 @@ const USER_SELECT = `
   contacts,
   type,
   status,
+  student_id AS "studentId",
+  student_name_in_xero AS "studentNameInXero",
   auth_session_version AS "authSessionVersion",
   email_subscription_status AS "emailSubscriptionStatus",
   site_id AS "siteId",
@@ -146,16 +163,23 @@ export async function createUser({
   type = "employee",
   status = "active",
   siteId = null,
+  studentNameInXero = null,
+  actorUserId = null,
 }) {
   await ensureUsersSiteSchema();
-  const { rows } = await pool.query(
+  const client = await pool.connect();
+  try {
+  await client.query('BEGIN');
+  const studentId = type === 'student' ? await allocateStudentId(client) : null;
+  const { rows } = await client.query(
     `INSERT INTO users (
         id, company_id, email, username, password, image, bio,
-        name, address, cel, tel, contacts, type, status, site_id
+        name, address, cel, tel, contacts, type, status, site_id,
+        student_id, student_name_in_xero
      )
      VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10, $11, $12, $13, $14
+        $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
      )
      RETURNING
        ${USER_SELECT}`,
@@ -174,9 +198,91 @@ export async function createUser({
       type,
       status,
       siteId,
+      studentId,
+      studentNameInXero,
     ],
   );
+  if (type === 'advisor' && status === 'active' && actorUserId) {
+    await assignAdvisorRoleForNonChiefExecutive(client, {
+      companyId, actorUserId, targetUserId: rows[0].id,
+    });
+  }
+  await client.query('COMMIT');
   return rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function allocateStudentId(client) {
+  const { rows } = await client.query(
+    `UPDATE bm_student_id_counter SET last_value = last_value + 1
+     WHERE id = true RETURNING last_value`,
+  );
+  return `STD-${rows[0].last_value}`;
+}
+
+async function assignAdvisorRoleForNonChiefExecutive(client, { companyId, actorUserId, targetUserId }) {
+  const { rows } = await client.query(
+    `SELECT c.workspace_profile, rc.customer_id::text AS customer_id
+       FROM bm_company c
+       LEFT JOIN sophia_runtime.customers rc
+         ON rc.external_company_id = c.company_id::text AND rc.status = 'active'
+      WHERE c.company_id = $1::uuid`,
+    [companyId],
+  );
+  if (rows.length !== 1) {
+    const error = new Error('Student operations company requires one active runtime customer mapping');
+    error.status = 409;
+    throw error;
+  }
+  const scope = rows[0];
+  if (scope?.workspace_profile !== 'student_operations') return;
+  if (!scope.customer_id) {
+    const error = new Error('Student operations company requires an active runtime customer mapping');
+    error.status = 409;
+    throw error;
+  }
+  const { rows: actorRows } = await client.query(
+    `SELECT 1 FROM users WHERE id = $1::uuid AND company_id = $2::uuid
+       AND status = 'active' LIMIT 1`,
+    [actorUserId, companyId],
+  );
+  if (!actorRows.length) return;
+  await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [scope.customer_id]);
+  const { rows: chiefRows } = await client.query(
+    `SELECT 1 FROM sophia_runtime.business_pack_entitlements
+      WHERE customer_id = $1::uuid AND identity_user_id = $2
+        AND pack_id = 'student-operations' AND status = 'active'
+        AND role_key = 'chief_executive' LIMIT 1`,
+    [scope.customer_id, actorUserId],
+  );
+  if (chiefRows.length) return;
+  const assignment = await client.query(
+    `INSERT INTO sophia_runtime.business_pack_entitlements (
+       customer_id, identity_user_id, pack_id, status, role_key, authorization_revision
+     ) VALUES ($1::uuid, $2, 'student-operations', 'active', 'advisor', 1)
+     ON CONFLICT (customer_id, identity_user_id, pack_id) DO UPDATE
+       SET status = 'active', role_key = 'advisor',
+           authorization_revision = sophia_runtime.business_pack_entitlements.authorization_revision + 1,
+           updated_at = now()
+       WHERE sophia_runtime.business_pack_entitlements.status = 'revoked'
+     RETURNING entitlement_id`,
+    [scope.customer_id, targetUserId],
+  );
+  if (!assignment.rows.length) return;
+  await client.query(
+    `INSERT INTO sophia_runtime.business_pack_access_audit_events (
+       customer_id, identity_user_id, pack_id, event_type, outcome,
+       correlation_id, metadata
+     ) VALUES ($1::uuid, $2, 'student-operations',
+       'business_pack.entitlement.assigned', 'allowed', gen_random_uuid()::text,
+       $3::jsonb)`,
+    [scope.customer_id, targetUserId, JSON.stringify({ actorIdentityUserId: actorUserId, source: 'advisor_user_type' })],
+  );
 }
 
 export async function updateUserById(
@@ -198,9 +304,14 @@ export async function updateUserById(
     status,
     emailSubscriptionStatus,
     siteId,
+    studentNameInXero,
+    actorUserId,
   },
 ) {
   await ensureUsersSiteSchema();
+  const client = await pool.connect();
+  try {
+  await client.query('BEGIN');
   const sets = [];
   const params = [];
   let i = 1;
@@ -266,13 +377,28 @@ export async function updateUserById(
     sets.push(`site_id = $${i++}`);
     params.push(siteId);
   }
+  if (studentNameInXero !== undefined) {
+    sets.push(`student_name_in_xero = $${i++}`);
+    params.push(studentNameInXero);
+  }
 
-  if (!sets.length) return findById(id);
+  if (type === 'student') {
+    const { rows } = await client.query('SELECT type, student_id FROM users WHERE id = $1 FOR UPDATE', [id]);
+    if (rows[0] && !rows[0].student_id) {
+      sets.push(`student_id = $${i++}`);
+      params.push(await allocateStudentId(client));
+    }
+  }
+
+  if (!sets.length) {
+    await client.query('COMMIT');
+    return findById(id);
+  }
 
   sets.push(`updatedat = NOW()`);
   params.push(id);
 
-  const { rows } = await pool.query(
+  const { rows } = await client.query(
     `UPDATE users
      SET ${sets.join(", ")}
      WHERE id = $${i}
@@ -280,7 +406,19 @@ export async function updateUserById(
        ${USER_SELECT}`,
     params,
   );
+  if (type === 'advisor' && actorUserId && rows[0]?.status === 'active') {
+    await assignAdvisorRoleForNonChiefExecutive(client, {
+      companyId: rows[0].companyId, actorUserId, targetUserId: id,
+    });
+  }
+  await client.query('COMMIT');
   return rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function unsubscribeUserFromEmails(userId) {

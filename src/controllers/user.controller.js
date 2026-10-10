@@ -24,7 +24,7 @@ const SUPER_ADMIN_ID = "c2dad143-077c-4082-92f0-47805601db3b";
 const DEFAULT_REGISTRATION_COMPANY_ID =
   process.env.REGISTRATION_COMPANY_ID || "81c2f065-aceb-4043-add5-b11271d21fb3";
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
-const USER_TYPES = new Set(["employee", "supplier", "client"]);
+const USER_TYPES = new Set(["employee", "supplier", "client", "student", "advisor"]);
 const USER_STATUSES = new Set(["active", "archived"]);
 
 const isUniqueViolation = (e) =>
@@ -48,6 +48,8 @@ const mapUserResponse = (u, token) => ({
   emailSubscriptionStatus: u.emailSubscriptionStatus ?? "Y",
   hasProcesses: Boolean(u.hasProcesses),
   siteId: u.siteId ?? null,
+  studentId: u.studentId ?? null,
+  studentNameInXero: u.studentNameInXero ?? null,
   siteName: u.siteName ?? null,
   companyId: u.companyId ?? null,
   companyName: u.companyName ?? null,
@@ -192,6 +194,14 @@ export const registerUser = asyncHandler(async (req, res) => {
     normalizeOptionalUuid(payload.siteId ?? payload.site_id),
   );
 
+  const { rows: companyProfileRows } = await pool.query(
+    `SELECT workspace_profile FROM bm_company WHERE company_id = $1 LIMIT 1`,
+    [companyId],
+  );
+  const studentNameInXero = companyProfileRows[0]?.workspace_profile === "student_operations"
+    ? String(payload.studentNameInXero ?? "").trim() || null
+    : null;
+
   try {
     const user = await createUser({
       username,
@@ -201,6 +211,8 @@ export const registerUser = asyncHandler(async (req, res) => {
       type,
       status,
       siteId,
+      studentNameInXero,
+      actorUserId: req.user?.id ?? null,
       ...optional,
     });
 
@@ -487,6 +499,17 @@ export const updateUserByAdmin = asyncHandler(async (req, res) => {
     }
     next.companyId = companyRows[0].company_id;
   }
+
+  if (payload.studentNameInXero !== undefined) {
+    const { rows } = await pool.query(
+      `SELECT workspace_profile FROM bm_company WHERE company_id = $1 LIMIT 1`,
+      [next.companyId ?? target.companyId],
+    );
+    if (rows[0]?.workspace_profile === "student_operations") {
+      next.studentNameInXero = String(payload.studentNameInXero ?? "").trim() || null;
+    }
+  }
+  next.actorUserId = req.user.id;
 
   if (payload.siteId !== undefined || payload.site_id !== undefined) {
     next.siteId = await assertSiteBelongsToCompany(

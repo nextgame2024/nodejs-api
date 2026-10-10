@@ -1,7 +1,7 @@
 import pool from "./db.js";
 import { ensureUserMfaSchema } from "../models/userMfa.model.js";
 
-const BM_USER_TYPE_VALUES = ["employee", "supplier", "client"];
+const BM_USER_TYPE_VALUES = ["employee", "supplier", "client", "student", "advisor"];
 
 export async function ensureStartupMigrations() {
   await ensureUserMfaSchema();
