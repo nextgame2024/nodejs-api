@@ -83,6 +83,8 @@ describe("StudentOperationsXeroSyncService", () => {
           sent_to_contact: false, concept: "Diploma tuition", advisor_name: "S15 Paulina",
           college_name: "ATI", payment_track: "Pending", review_status: "pending",
           student_id: null, total_count: 7793,
+          invoice_total_count: 7545, credit_note_total_count: 200,
+          prepayment_total_count: 30, overpayment_total_count: 18,
         }],
         rowCount: 1,
       };
@@ -97,7 +99,11 @@ describe("StudentOperationsXeroSyncService", () => {
       page: "2", limit: "25", q: "ATI", sort: "dueDate", direction: "desc",
     });
 
-    expect(result).toEqual(expect.objectContaining({ page: 2, limit: 25, total: 7793, totalPages: 312 }));
+    expect(result).toEqual(expect.objectContaining({
+      page: 2, limit: 25, total: 7793, totalPages: 312,
+      invoiceTotal: 7545, creditNoteTotal: 200,
+      prepaymentTotal: 30, overpaymentTotal: 18,
+    }));
     expect(result.invoices[0]).toEqual(expect.objectContaining({
       xeroInvoiceId: invoiceId, invoiceNumber: "INV-10035", reference: "ATI",
       advisorName: "S15 Paulina", paymentTrack: "Pending", amountDue: 2200,
@@ -307,6 +313,15 @@ describe("StudentOperationsXeroSyncService", () => {
       syncInvoicePage: jest.fn(async () => ({
         items: invoices, page: 1, pageCount: 1, itemCount: invoices.length,
       })),
+      syncCreditNotePage: jest.fn(async () => ({
+        items: [], page: 1, pageCount: 1, itemCount: 0,
+      })),
+      syncPrepaymentPage: jest.fn(async () => ({
+        items: [], page: 1, pageCount: 1, itemCount: 0,
+      })),
+      syncOverpaymentPage: jest.fn(async () => ({
+        items: [], page: 1, pageCount: 1, itemCount: 0,
+      })),
     };
     const service = new StudentOperationsXeroSyncService(database as never, xero as never);
 
@@ -327,7 +342,16 @@ describe("StudentOperationsXeroSyncService", () => {
       tenantId, run.sync_run_id, expect.any(String), 2,
     ]);
     expect(xero.syncInvoicePage).toHaveBeenCalledWith(
-      tenantId, connectionId, 1, undefined, true,
+      tenantId, connectionId, 1, undefined, false,
+    );
+    expect(xero.syncCreditNotePage).toHaveBeenCalledWith(
+      tenantId, connectionId, 1, undefined,
+    );
+    expect(xero.syncPrepaymentPage).toHaveBeenCalledWith(
+      tenantId, connectionId, 1, undefined,
+    );
+    expect(xero.syncOverpaymentPage).toHaveBeenCalledWith(
+      tenantId, connectionId, 1, undefined,
     );
     expect(query.mock.calls.some(([sql]) => String(sql).includes(
       "last_seen_sync_run_id IS DISTINCT FROM $3",

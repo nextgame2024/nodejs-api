@@ -105,6 +105,7 @@ type CandidateRow = {
 type InvoiceRow = {
   xero_invoice_id: string;
   xero_contact_id: string;
+  invoice_type: string;
   invoice_number: string | null;
   invoice_reference: string | null;
   legal_name: string;
@@ -127,6 +128,10 @@ type InvoiceRow = {
   review_status: "pending" | "accepted" | "ignored";
   student_id: string | null;
   total_count?: number;
+  invoice_total_count?: number;
+  credit_note_total_count?: number;
+  prepayment_total_count?: number;
+  overpayment_total_count?: number;
 };
 
 @Injectable()
@@ -360,13 +365,17 @@ export class StudentOperationsXeroSyncService {
       const limitPosition = params.length - 1;
       const order = `${InvoiceSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
       const result = await db.query<InvoiceRow>(
-        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_number, i.invoice_reference,
+        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_type, i.invoice_number, i.invoice_reference,
                 c.legal_name, c.email, c.contact_number, c.account_number,
                 i.invoice_date::text, i.due_date::text, i.invoice_status, i.currency_code,
                 i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
                 i.advisor_name, i.college_name, i.payment_track,
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
-                count(*) OVER()::int AS total_count
+                count(*) OVER()::int AS total_count,
+                count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
+                count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
+                count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
+                count(*) FILTER (WHERE i.invoice_type='RECEIVE-OVERPAYMENT') OVER()::int AS overpayment_total_count
           FROM ${schema}.student_operations_xero_invoices i
           JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
@@ -377,7 +386,7 @@ export class StudentOperationsXeroSyncService {
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2
-            AND i.invoice_type='ACCREC'
+            AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
             AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
@@ -399,6 +408,10 @@ export class StudentOperationsXeroSyncService {
         limit,
         total,
         totalPages: Math.ceil(total / limit),
+        invoiceTotal: Number(result.rows[0]?.invoice_total_count ?? 0),
+        creditNoteTotal: Number(result.rows[0]?.credit_note_total_count ?? 0),
+        prepaymentTotal: Number(result.rows[0]?.prepayment_total_count ?? 0),
+        overpaymentTotal: Number(result.rows[0]?.overpayment_total_count ?? 0),
       };
     });
   }
@@ -409,7 +422,7 @@ export class StudentOperationsXeroSyncService {
     return this.database.tenantReadTransaction(tenantId, async (db) => {
       await assertConnection(db, schema, tenantId, connectionId);
       const result = await db.query<InvoiceRow>(
-        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_number, i.invoice_reference,
+        `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_type, i.invoice_number, i.invoice_reference,
                 c.legal_name, c.email, c.contact_number, c.account_number,
                 i.invoice_date::text, i.due_date::text, i.invoice_status, i.currency_code,
                 i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
@@ -425,7 +438,7 @@ export class StudentOperationsXeroSyncService {
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
-            AND i.invoice_type='ACCREC'
+            AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
             AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
@@ -487,14 +500,13 @@ export class StudentOperationsXeroSyncService {
     let invoiceCount = 0;
     let providerItemCount: number | undefined;
     const seenInvoiceIds = new Set<string>();
-    const registerOnly = run.mode === "initial" || run.mode === "reconciliation";
     for (let page = 1; page <= 10_000; page += 1) {
       const response = await this.xero.syncInvoicePage(
         tenantId,
         run.xero_connection_id,
         page,
         modifiedSince,
-        registerOnly,
+        false,
       );
       if (response.itemCount !== undefined) {
         if (providerItemCount !== undefined && response.itemCount !== providerItemCount) {
@@ -514,10 +526,81 @@ export class StudentOperationsXeroSyncService {
         if (providerItemCount !== undefined && invoiceCount !== providerItemCount) {
           throw new ConflictException("Xero invoice synchronization returned an incomplete register.");
         }
-        return invoiceCount;
+        const creditNoteCount = await this.importSupplementalPages(
+          tenantId,
+          run,
+          owner,
+          modifiedSince,
+          invoiceCount,
+          "credit note",
+        );
+        const prepaymentCount = await this.importSupplementalPages(
+          tenantId,
+          run,
+          owner,
+          modifiedSince,
+          invoiceCount + creditNoteCount,
+          "prepayment",
+        );
+        const overpaymentCount = await this.importSupplementalPages(
+          tenantId,
+          run,
+          owner,
+          modifiedSince,
+          invoiceCount + creditNoteCount + prepaymentCount,
+          "overpayment",
+        );
+        return invoiceCount + creditNoteCount + prepaymentCount + overpaymentCount;
       }
     }
     throw new ConflictException("Xero invoice synchronization exceeded the page limit.");
+  }
+
+  private async importSupplementalPages(
+    tenantId: string,
+    run: SyncRunRow,
+    owner: string,
+    modifiedSince: Date | undefined,
+    processedBefore: number,
+    resource: "credit note" | "prepayment" | "overpayment",
+  ): Promise<number> {
+    let itemCount = 0;
+    let providerItemCount: number | undefined;
+    const seenIds = new Set<string>();
+    for (let page = 1; page <= 10_000; page += 1) {
+      const response = resource === "credit note"
+        ? await this.xero.syncCreditNotePage(tenantId, run.xero_connection_id, page, modifiedSince)
+        : resource === "prepayment"
+          ? await this.xero.syncPrepaymentPage(tenantId, run.xero_connection_id, page, modifiedSince)
+          : await this.xero.syncOverpaymentPage(tenantId, run.xero_connection_id, page, modifiedSince);
+      if (response.itemCount !== undefined) {
+        if (providerItemCount !== undefined && response.itemCount !== providerItemCount) {
+          throw new ConflictException(`Xero ${resource} pagination changed during synchronization.`);
+        }
+        providerItemCount = response.itemCount;
+      }
+      for (const item of response.items) {
+        if (seenIds.has(item.invoiceId)) {
+          throw new ConflictException(`Xero ${resource} pagination returned a duplicate record.`);
+        }
+        seenIds.add(item.invoiceId);
+      }
+      itemCount += response.items.length;
+      await this.persistInvoices(
+        tenantId,
+        run,
+        owner,
+        response.items,
+        processedBefore + itemCount,
+      );
+      if (page >= response.pageCount) {
+        if (providerItemCount !== undefined && itemCount !== providerItemCount) {
+          throw new ConflictException(`Xero ${resource} synchronization returned an incomplete register.`);
+        }
+        return itemCount;
+      }
+    }
+    throw new ConflictException(`Xero ${resource} synchronization exceeded the page limit.`);
   }
 
   private persistContacts(
@@ -796,6 +879,13 @@ function invoiceProjection(row: InvoiceRow) {
   return {
     xeroInvoiceId: row.xero_invoice_id,
     xeroContactId: row.xero_contact_id,
+    documentType: row.invoice_type === "ACCRECCREDIT"
+      ? "credit_note"
+      : row.invoice_type === "RECEIVE-PREPAYMENT"
+        ? "prepayment"
+        : row.invoice_type === "RECEIVE-OVERPAYMENT"
+          ? "overpayment"
+          : "invoice",
     invoiceNumber: row.invoice_number,
     reference: row.invoice_reference,
     studentName: row.legal_name,

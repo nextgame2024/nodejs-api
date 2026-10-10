@@ -281,6 +281,165 @@ export class XeroClient {
     };
   }
 
+  async creditNotePage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const url = new URL("https://api.xero.com/api.xro/2.0/CreditNotes");
+    url.search = new URLSearchParams({
+      page: String(page),
+      pageSize: String(XERO_INVOICE_PAGE_SIZE),
+      where: 'Type=="ACCRECCREDIT"',
+      order: "UpdatedDateUTC ASC",
+    }).toString();
+    const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
+    if (!Array.isArray(payload.CreditNotes)) {
+      throw new BadGatewayException("Xero returned an invalid credit notes response.");
+    }
+    const itemCount = paginationItemCount(payload);
+    return {
+      items: payload.CreditNotes.map(record).map((value) => {
+        const contact = record(value.Contact);
+        const lineItems = Array.isArray(value.LineItems) ? value.LineItems.map(record) : [];
+        const total = optionalNumber(value.Total) ?? 0;
+        const remainingCredit = optionalNumber(value.RemainingCredit) ?? 0;
+        const reference = optionalString(value.Reference);
+        return {
+          invoiceId: requiredString(value.CreditNoteID, "credit note id"),
+          contactId: requiredString(contact.ContactID, "contact id"),
+          invoiceNumber: optionalString(value.CreditNoteNumber),
+          invoiceReference: reference,
+          concept: invoiceConcept(lineItems),
+          advisorName: trackingOption(lineItems, ["sales representative", "advisor", "adviser", "counsellor", "consultant", "agent"]),
+          collegeName: reference,
+          paymentTrack: trackingOption(lineItems, ["payment track"]),
+          sentToContact: value.SentToContact === true,
+          lineItems: lineItems.map(invoiceLineItem),
+          type: requiredString(value.Type, "credit note type"),
+          status: requiredString(value.Status, "credit note status"),
+          invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
+          dueDate: null,
+          currencyCode: optionalString(value.CurrencyCode),
+          total,
+          amountPaid: Math.max(0, total - remainingCredit),
+          amountDue: remainingCredit,
+          updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
+        };
+      }).filter((creditNote) => creditNote.type === "ACCRECCREDIT"),
+      page,
+      pageCount: paginationPageCount(payload, page, payload.CreditNotes.length, XERO_INVOICE_PAGE_SIZE),
+      ...(itemCount === undefined ? {} : { itemCount }),
+    };
+  }
+
+  async prepaymentPage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    return this.receivableCreditPage(
+      accessToken,
+      tenantId,
+      page,
+      modifiedSince,
+      {
+        endpoint: "Prepayments",
+        collection: "Prepayments",
+        id: "PrepaymentID",
+        type: "RECEIVE-PREPAYMENT",
+        label: "prepayment",
+      },
+    );
+  }
+
+  async overpaymentPage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    return this.receivableCreditPage(
+      accessToken,
+      tenantId,
+      page,
+      modifiedSince,
+      {
+        endpoint: "Overpayments",
+        collection: "Overpayments",
+        id: "OverpaymentID",
+        type: "RECEIVE-OVERPAYMENT",
+        label: "overpayment",
+      },
+    );
+  }
+
+  private async receivableCreditPage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince: Date | undefined,
+    resource: {
+      endpoint: "Prepayments" | "Overpayments";
+      collection: "Prepayments" | "Overpayments";
+      id: "PrepaymentID" | "OverpaymentID";
+      type: "RECEIVE-PREPAYMENT" | "RECEIVE-OVERPAYMENT";
+      label: "prepayment" | "overpayment";
+    },
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const url = new URL(`https://api.xero.com/api.xro/2.0/${resource.endpoint}`);
+    url.search = new URLSearchParams({
+      page: String(page),
+      pageSize: String(XERO_INVOICE_PAGE_SIZE),
+      where: `Type=="${resource.type}"`,
+      order: "UpdatedDateUTC ASC",
+    }).toString();
+    const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
+    const values = payload[resource.collection];
+    if (!Array.isArray(values)) {
+      throw new BadGatewayException(`Xero returned an invalid ${resource.label}s response.`);
+    }
+    const itemCount = paginationItemCount(payload);
+    return {
+      items: values.map(record).map((value) => {
+        const contact = record(value.Contact);
+        const lineItems = Array.isArray(value.LineItems) ? value.LineItems.map(record) : [];
+        const total = optionalNumber(value.Total) ?? 0;
+        const remainingCredit = optionalNumber(value.RemainingCredit) ?? 0;
+        const reference = optionalString(value.Reference);
+        const number = resource.type === "RECEIVE-PREPAYMENT"
+          ? optionalString(value.InvoiceNumber) ?? reference
+          : reference;
+        return {
+          invoiceId: requiredString(value[resource.id], `${resource.label} id`),
+          contactId: requiredString(contact.ContactID, "contact id"),
+          invoiceNumber: number,
+          invoiceReference: resource.type === "RECEIVE-PREPAYMENT" ? null : reference,
+          concept: invoiceConcept(lineItems),
+          advisorName: trackingOption(lineItems, ["sales representative", "advisor", "adviser", "counsellor", "consultant", "agent"]),
+          collegeName: resource.type === "RECEIVE-PREPAYMENT" ? null : reference,
+          paymentTrack: trackingOption(lineItems, ["payment track"]),
+          sentToContact: false,
+          lineItems: lineItems.map(invoiceLineItem),
+          type: requiredString(value.Type, `${resource.label} type`),
+          status: requiredString(value.Status, `${resource.label} status`),
+          invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
+          dueDate: null,
+          currencyCode: optionalString(value.CurrencyCode),
+          total,
+          amountPaid: Math.max(0, total - remainingCredit),
+          amountDue: remainingCredit,
+          updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
+        };
+      }).filter((value) => value.type === resource.type),
+      page,
+      pageCount: paginationPageCount(payload, page, values.length, XERO_INVOICE_PAGE_SIZE),
+      ...(itemCount === undefined ? {} : { itemCount }),
+    };
+  }
+
   async studentCandidates(accessToken: string, tenantId: string): Promise<XeroStudentCandidateResult> {
     const invoicesUrl = new URL("https://api.xero.com/api.xro/2.0/Invoices");
     invoicesUrl.search = new URLSearchParams({

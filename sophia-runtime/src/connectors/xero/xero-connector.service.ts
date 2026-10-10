@@ -240,6 +240,41 @@ export class XeroConnectorService {
     );
   }
 
+  async syncCreditNotePage(
+    tenantId: string,
+    connectionId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
+    return this.client.creditNotePage(
+      accessToken,
+      connection.xero_tenant_id,
+      page,
+      modifiedSince,
+    );
+  }
+
+  async syncPrepaymentPage(
+    tenantId: string,
+    connectionId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
+    return this.client.prepaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+  }
+
+  async syncOverpaymentPage(
+    tenantId: string,
+    connectionId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
+    return this.client.overpaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+  }
+
   private async syncAccess(tenantId: string, connectionId: string) {
     if (!/^[0-9a-f-]{36}$/i.test(connectionId)) throw new NotFoundException("Xero connection not found.");
     const config = requiredConfig();

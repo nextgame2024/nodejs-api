@@ -166,6 +166,83 @@ describe("XeroClient", () => {
     })]);
   });
 
+  it("maps receivable credit notes from the Xero sales register", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      Pagination: { PageNumber: 1, PageSize: 100, PageCount: 1, ItemCount: 1 },
+      CreditNotes: [{
+        Type: "ACCRECCREDIT", Status: "AUTHORISED",
+        CreditNoteID: "credit-note-1", CreditNoteNumber: "CN-248", Reference: "ATI",
+        Contact: { ContactID: "contact-1" }, DateString: "2026-10-01T00:00:00",
+        Total: 250, RemainingCredit: 100, CurrencyCode: "AUD", SentToContact: true,
+        LineItems: [{
+          Description: "Tuition adjustment",
+          Tracking: [{ Name: "Sales Representative", Option: "Maria Lopez" }],
+        }],
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(new XeroClient().creditNotePage("access", "tenant-1", 1)).resolves.toEqual({
+      items: [expect.objectContaining({
+        invoiceId: "credit-note-1", invoiceNumber: "CN-248", type: "ACCRECCREDIT",
+        amountPaid: 150, amountDue: 100, advisorName: "Maria Lopez",
+      })],
+      page: 1,
+      pageCount: 1,
+      itemCount: 1,
+    });
+
+    const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(requestUrl).toContain("/CreditNotes?");
+    expect(requestUrl).toContain("where=Type%3D%3D%22ACCRECCREDIT%22");
+    expect(requestUrl).toContain("order=UpdatedDateUTC+ASC");
+  });
+
+  it("maps receive prepayments and overpayments from the Xero sales register", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Pagination: { PageNumber: 1, PageSize: 100, PageCount: 1, ItemCount: 1 },
+        Prepayments: [{
+          Type: "RECEIVE-PREPAYMENT", Status: "AUTHORISED", PrepaymentID: "prepayment-1",
+          InvoiceNumber: "PP-100", Reference: "legacy-number", Contact: { ContactID: "contact-1" },
+          DateString: "2026-10-01T00:00:00", Total: 500, RemainingCredit: 200,
+          CurrencyCode: "AUD", LineItems: [{ Description: "Tuition deposit" }],
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Pagination: { PageNumber: 1, PageSize: 100, PageCount: 1, ItemCount: 1 },
+        Overpayments: [{
+          Type: "RECEIVE-OVERPAYMENT", Status: "PAID", OverpaymentID: "overpayment-1",
+          Reference: "Bank receipt 10", Contact: { ContactID: "contact-2" },
+          DateString: "2026-10-02T00:00:00", Total: 300, RemainingCredit: 0,
+          CurrencyCode: "AUD", LineItems: [],
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(new XeroClient().prepaymentPage("access", "tenant-1", 1)).resolves.toEqual({
+      items: [expect.objectContaining({
+        invoiceId: "prepayment-1", invoiceNumber: "PP-100", invoiceReference: null,
+        type: "RECEIVE-PREPAYMENT", amountPaid: 300, amountDue: 200,
+      })],
+      page: 1,
+      pageCount: 1,
+      itemCount: 1,
+    });
+    await expect(new XeroClient().overpaymentPage("access", "tenant-1", 1)).resolves.toEqual({
+      items: [expect.objectContaining({
+        invoiceId: "overpayment-1", invoiceNumber: "Bank receipt 10",
+        type: "RECEIVE-OVERPAYMENT", amountPaid: 300, amountDue: 0,
+      })],
+      page: 1,
+      pageCount: 1,
+      itemCount: 1,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/Prepayments?");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("RECEIVE-PREPAYMENT");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/Overpayments?");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("RECEIVE-OVERPAYMENT");
+  });
+
   it("uses incremental headers and stable paging for contacts", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       pagination: { page: 2, pageSize: 100, pageCount: 2, itemCount: 200 },
