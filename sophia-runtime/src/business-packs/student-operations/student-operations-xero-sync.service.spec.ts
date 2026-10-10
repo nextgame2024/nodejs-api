@@ -105,7 +105,8 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query).toHaveBeenLastCalledWith(expect.stringContaining("ORDER BY i.due_date DESC"), [
       tenantId, connectionId, "%ATI%", 25, 25,
     ]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status NOT IN ('VOIDED','DELETED')");
+    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status <> 'DELETED'");
+    expect(query.mock.calls.at(-1)?.[0]).not.toContain("i.invoice_status NOT IN ('VOIDED','DELETED')");
   });
 
   it("returns stored line items for invoice detail without calling Xero", async () => {
@@ -134,7 +135,8 @@ describe("StudentOperationsXeroSyncService", () => {
     const result = await service.invoice(tenantId, connectionId, invoiceId);
 
     expect(result.lineItems).toEqual([{ description: "Diploma tuition", quantity: 1, lineAmount: 2200 }]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status NOT IN ('VOIDED','DELETED')");
+    expect(query.mock.calls.at(-1)?.[0]).toContain("i.invoice_status <> 'DELETED'");
+    expect(query.mock.calls.at(-1)?.[0]).not.toContain("i.invoice_status NOT IN ('VOIDED','DELETED')");
     expect(xero.syncInvoicePage).not.toHaveBeenCalled();
   });
 
