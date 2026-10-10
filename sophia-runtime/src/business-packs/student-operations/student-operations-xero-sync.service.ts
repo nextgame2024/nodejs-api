@@ -304,11 +304,12 @@ export class StudentOperationsXeroSyncService {
     modifiedSince?: Date,
     contactIds: string[] = [],
     initialCount = 0,
+    compatibilityMode = false,
   ): Promise<number> {
     let invoiceCount = initialCount;
     for (let page = 1; page <= 10_000; page += 1) {
       const response = await this.xero.syncInvoicePage(
-        tenantId, run.xero_connection_id, page, modifiedSince, contactIds,
+        tenantId, run.xero_connection_id, page, modifiedSince, contactIds, compatibilityMode,
       );
       invoiceCount += response.items.length;
       await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
@@ -337,7 +338,7 @@ export class StudentOperationsXeroSyncService {
     let invoiceCount = 0;
     for (let index = 0; index < contactIds.length; index += 25) {
       invoiceCount = await this.importInvoicePages(
-        tenantId, run, owner, modifiedSince, contactIds.slice(index, index + 25), invoiceCount,
+        tenantId, run, owner, modifiedSince, contactIds.slice(index, index + 25), invoiceCount, true,
       );
     }
     return invoiceCount;

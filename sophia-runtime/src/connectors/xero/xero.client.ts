@@ -200,15 +200,18 @@ export class XeroClient {
     page: number,
     modifiedSince?: Date,
     contactIds: string[] = [],
+    compatibilityMode = false,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
-    const query = new URLSearchParams({
-      where: 'Type=="ACCREC"',
-      Statuses: "DRAFT,SUBMITTED,AUTHORISED,PAID",
-      page: String(page),
-      pageSize: String(XERO_INVOICE_PAGE_SIZE),
-      summaryOnly: "true",
-    });
+    const query = compatibilityMode
+      ? new URLSearchParams({ page: String(page) })
+      : new URLSearchParams({
+        where: 'Type=="ACCREC"',
+        Statuses: "DRAFT,SUBMITTED,AUTHORISED,PAID",
+        page: String(page),
+        pageSize: String(XERO_INVOICE_PAGE_SIZE),
+        summaryOnly: "true",
+      });
     if (contactIds.length) query.set("ContactIDs", contactIds.join(","));
     url.search = query.toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
@@ -234,7 +237,8 @@ export class XeroClient {
           amountDue: optionalNumber(value.AmountDue) ?? Math.max(0, total - amountPaid),
           updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
         };
-      }),
+      }).filter((invoice) => invoice.type === "ACCREC"
+        && !["VOIDED", "DELETED"].includes(invoice.status)),
       page,
       pageCount: paginationPageCount(payload, page, payload.Invoices.length, XERO_INVOICE_PAGE_SIZE),
     };

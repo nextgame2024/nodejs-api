@@ -244,8 +244,10 @@ describe("StudentOperationsXeroSyncService", () => {
 
     await service.process(tenantId, run.sync_run_id);
 
-    expect(xero.syncInvoicePage).toHaveBeenNthCalledWith(1, tenantId, connectionId, 1, undefined, []);
-    expect(xero.syncInvoicePage).toHaveBeenNthCalledWith(2, tenantId, connectionId, 1, undefined, [contactId]);
+    expect(xero.syncInvoicePage).toHaveBeenNthCalledWith(1, tenantId, connectionId, 1, undefined, [], false);
+    expect(xero.syncInvoicePage).toHaveBeenNthCalledWith(
+      2, tenantId, connectionId, 1, undefined, [contactId], true,
+    );
     expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status='succeeded'"), [
       tenantId, run.sync_run_id, expect.any(String), 0, 1, 1,
     ]);
