@@ -199,7 +199,10 @@ export class XeroConnectorService {
     const connection = await this.loadConnection(tenantId, connectionId);
     const missing = missingScopes(connection.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES);
     if (missing.length) {
-      throw new ConflictException("Reconnect Xero to allow read-only invoice and contact access.");
+      throw new ConflictException({
+        errorCode: "xero_authorization_rejected",
+        message: "Reconnect Xero to allow read-only invoice, payment and contact access.",
+      });
     }
     const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
     const result = await this.client.studentCandidates(accessToken, connection.xero_tenant_id);
@@ -281,7 +284,10 @@ export class XeroConnectorService {
     const connection = await this.loadConnection(tenantId, connectionId);
     const missing = missingScopes(connection.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES);
     if (missing.length) {
-      throw new ConflictException("Reconnect Xero to allow read-only invoice and contact access.");
+      throw new ConflictException({
+        errorCode: "xero_authorization_rejected",
+        message: "Reconnect Xero to allow read-only invoice, payment and contact access.",
+      });
     }
     const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
     return { connection, accessToken };

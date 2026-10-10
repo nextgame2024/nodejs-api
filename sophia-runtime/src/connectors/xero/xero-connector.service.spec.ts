@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from "@jest/globals";
 import { XeroConnectorService } from "./xero-connector.service.js";
+import { XERO_READ_ONLY_SCOPES } from "./xero.config.js";
 
 const originalDatabaseUrl = process.env.SOPHIA_RUNTIME_DATABASE_URL;
 beforeAll(() => { process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgresql://example.invalid/runtime"; });
@@ -9,6 +10,24 @@ afterAll(() => {
 });
 
 describe("XeroConnectorService", () => {
+  it("requests read-only payments permission for prepayments and overpayments", () => {
+    expect(XERO_READ_ONLY_SCOPES).toContain("accounting.payments.read");
+    expect(XERO_READ_ONLY_SCOPES).not.toContain("accounting.payments");
+  });
+
+  it("requires reconnection for invoice-enabled connections missing payments permission", async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [{
+      xero_connection_id: "44444444-4444-4444-8444-444444444444",
+      granted_scopes: ["accounting.settings.read", "accounting.invoices.read", "accounting.contacts.read", "offline_access"],
+    }], rowCount: 1 });
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) => work({ query })),
+    };
+    const service = new XeroConnectorService(database as never, {} as never, {} as never);
+    const result = await service.status("11111111-1111-4111-8111-111111111111");
+    expect(result.connections[0]?.missingStudentDiscoveryScopes).toEqual(["accounting.payments.read"]);
+  });
+
   it("reports the granular scopes missing from an existing connection", async () => {
     const query = jest.fn().mockResolvedValue({
       rows: [{
@@ -39,6 +58,7 @@ describe("XeroConnectorService", () => {
 
     expect(result.connections[0]?.missingStudentDiscoveryScopes).toEqual([
       "accounting.invoices.read",
+      "accounting.payments.read",
       "accounting.contacts.read",
     ]);
     expect(result.connections[0]?.organisationRole).toBe("trust");

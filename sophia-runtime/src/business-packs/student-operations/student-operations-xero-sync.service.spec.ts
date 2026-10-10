@@ -13,6 +13,24 @@ const tenantId = "11111111-1111-4111-8111-111111111111";
 const connectionId = "44444444-4444-4444-8444-444444444444";
 
 describe("StudentOperationsXeroSyncService", () => {
+  it("keeps the full reconciliation timestamp distinct from a later incremental check", async () => {
+    const query = jest.fn(async (sql: string) => ({ rows: sql.includes("sync_configurations") ? [{
+      organisation_role: "trust",
+      last_successful_sync_at: new Date("2026-10-10T10:23:00Z"),
+      last_reconciliation_sync_at: new Date("2026-10-10T08:22:00Z"),
+      next_sync_at: new Date("2026-10-10T11:23:00Z"),
+      last_error_code: null,
+    }] : [], rowCount: 1 }));
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) => work({ query })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+    expect(await service.status(tenantId, connectionId)).toEqual(expect.objectContaining({
+      lastSuccessfulSyncAt: "2026-10-10T10:23:00.000Z",
+      lastFullSyncAt: "2026-10-10T08:22:00.000Z",
+    }));
+  });
+
   it("pages and searches the local read model without calling Xero", async () => {
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
@@ -85,6 +103,8 @@ describe("StudentOperationsXeroSyncService", () => {
           student_id: null, total_count: 7793,
           invoice_total_count: 7545, credit_note_total_count: 200,
           prepayment_total_count: 30, overpayment_total_count: 18,
+          draft_total_count: 1277, submitted_total_count: 14,
+          authorised_total_count: 652, paid_total_count: 5850,
         }],
         rowCount: 1,
       };
@@ -103,6 +123,7 @@ describe("StudentOperationsXeroSyncService", () => {
       page: 2, limit: 25, total: 7793, totalPages: 312,
       invoiceTotal: 7545, creditNoteTotal: 200,
       prepaymentTotal: 30, overpaymentTotal: 18,
+      statusTotals: { draft: 1277, awaitingApproval: 14, awaitingPayment: 652, paid: 5850 },
     }));
     expect(result.invoices[0]).toEqual(expect.objectContaining({
       xeroInvoiceId: invoiceId, invoiceNumber: "INV-10035", reference: "ATI",
@@ -115,6 +136,7 @@ describe("StudentOperationsXeroSyncService", () => {
       "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
     );
     expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
+    expect(query.mock.calls.at(-1)?.[0]).toContain("count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()");
   });
 
   it("returns stored line items for invoice detail without calling Xero", async () => {

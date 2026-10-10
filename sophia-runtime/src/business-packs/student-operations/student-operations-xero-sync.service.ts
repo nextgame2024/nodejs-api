@@ -132,6 +132,10 @@ type InvoiceRow = {
   credit_note_total_count?: number;
   prepayment_total_count?: number;
   overpayment_total_count?: number;
+  draft_total_count?: number;
+  submitted_total_count?: number;
+  authorised_total_count?: number;
+  paid_total_count?: number;
 };
 
 @Injectable()
@@ -148,10 +152,12 @@ export class StudentOperationsXeroSyncService {
       const configuration = await db.query<{
         organisation_role: string;
         last_successful_sync_at: Date | null;
+        last_reconciliation_sync_at: Date | null;
         last_error_code: string | null;
         next_sync_at: Date;
       }>(
-        `SELECT organisation_role, last_successful_sync_at, last_error_code, next_sync_at
+        `SELECT organisation_role, last_successful_sync_at, last_reconciliation_sync_at,
+                last_error_code, next_sync_at
            FROM ${schema}.student_operations_xero_sync_configurations
           WHERE customer_id=$1 AND xero_connection_id=$2`,
         [tenantId, connectionId],
@@ -171,6 +177,7 @@ export class StudentOperationsXeroSyncService {
         configured: Boolean(row),
         organisationRole: row?.organisation_role ?? null,
         lastSuccessfulSyncAt: row?.last_successful_sync_at?.toISOString() ?? null,
+        lastFullSyncAt: row?.last_reconciliation_sync_at?.toISOString() ?? null,
         lastErrorCode: row?.last_error_code ?? null,
         nextScheduledSyncAt: row?.next_sync_at?.toISOString() ?? null,
         latestRun: run.rows[0] ? runProjection(run.rows[0]) : null,
@@ -375,7 +382,11 @@ export class StudentOperationsXeroSyncService {
                 count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
                 count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
                 count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
-                count(*) FILTER (WHERE i.invoice_type='RECEIVE-OVERPAYMENT') OVER()::int AS overpayment_total_count
+                count(*) FILTER (WHERE i.invoice_type='RECEIVE-OVERPAYMENT') OVER()::int AS overpayment_total_count,
+                count(*) FILTER (WHERE i.invoice_status='DRAFT') OVER()::int AS draft_total_count,
+                count(*) FILTER (WHERE i.invoice_status='SUBMITTED') OVER()::int AS submitted_total_count,
+                count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()::int AS authorised_total_count,
+                count(*) FILTER (WHERE i.invoice_status='PAID') OVER()::int AS paid_total_count
           FROM ${schema}.student_operations_xero_invoices i
           JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
@@ -412,6 +423,12 @@ export class StudentOperationsXeroSyncService {
         creditNoteTotal: Number(result.rows[0]?.credit_note_total_count ?? 0),
         prepaymentTotal: Number(result.rows[0]?.prepayment_total_count ?? 0),
         overpaymentTotal: Number(result.rows[0]?.overpayment_total_count ?? 0),
+        statusTotals: {
+          draft: Number(result.rows[0]?.draft_total_count ?? 0),
+          awaitingApproval: Number(result.rows[0]?.submitted_total_count ?? 0),
+          awaitingPayment: Number(result.rows[0]?.authorised_total_count ?? 0),
+          paid: Number(result.rows[0]?.paid_total_count ?? 0),
+        },
       };
     });
   }
