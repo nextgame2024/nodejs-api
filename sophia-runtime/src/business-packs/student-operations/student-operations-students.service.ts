@@ -43,7 +43,7 @@ const NullableShortTextSchema = z.union([
   z.null(),
 ]).transform((value) => value || null);
 
-const StudentWriteSchema = z.object({
+const StudentFieldsSchema = z.object({
   studentReference: z.string().trim().min(1).max(80)
     .regex(/^[A-Za-z0-9._\/-]+$/, "Use letters, numbers, dots, slashes, underscores or hyphens."),
   legalName: z.string().trim().min(1).max(200),
@@ -56,7 +56,16 @@ const StudentWriteSchema = z.object({
   collegeName: NullableShortTextSchema,
 }).strict();
 
-const StudentUpdateSchema = StudentWriteSchema.extend({
+const XeroCandidateSourceSchema = z.object({
+  connectionId: z.string().uuid(),
+  contactId: z.string().uuid(),
+}).strict();
+
+const StudentCreateSchema = StudentFieldsSchema.extend({
+  xeroCandidateSource: XeroCandidateSourceSchema.optional(),
+}).strict();
+
+const StudentUpdateSchema = StudentFieldsSchema.extend({
   recordVersion: z.number().int().positive(),
 }).strict();
 
@@ -74,7 +83,8 @@ const StudentIdSchema = z.string().uuid();
 const IdempotencyKeySchema = z.string().trim().min(8).max(160)
   .regex(/^[A-Za-z0-9._:-]+$/);
 
-type StudentWrite = z.infer<typeof StudentWriteSchema>;
+type StudentWrite = z.infer<typeof StudentFieldsSchema>;
+type StudentCreate = z.infer<typeof StudentCreateSchema>;
 type StudentUpdate = z.infer<typeof StudentUpdateSchema>;
 
 type StudentRow = {
@@ -202,7 +212,7 @@ export class StudentOperationsStudentsService {
     correlationId: string = randomUUID(),
   ) {
     assertManage(principal);
-    const value = parse(StudentWriteSchema, input, "Invalid student details.");
+    const value = parse(StudentCreateSchema, input, "Invalid student details.");
     const idempotencyKey = parse(
       IdempotencyKeySchema,
       idempotencyKeyInput,
@@ -231,6 +241,9 @@ export class StudentOperationsStudentsService {
       );
       const row = result.rows[0];
       if (!row) throw new ConflictException("A student with this reference already exists.");
+      if (value.xeroCandidateSource) {
+        await acceptXeroCandidate(client, schema, principal, row.student_id, value.xeroCandidateSource);
+      }
       const response = detailProjection(row, principal);
       await appendAudit(client, schema, principal, row, "student.created", writeFieldNames(), correlationId);
       await completeWrite(client, schema, principal, idempotencyKey, row);
@@ -375,7 +388,7 @@ function parse<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
   return parsed.data;
 }
 
-function writeValues(value: StudentWrite): unknown[] {
+function writeValues(value: StudentWrite | StudentCreate): unknown[] {
   return [
     value.studentReference,
     value.legalName,
@@ -386,6 +399,38 @@ function writeValues(value: StudentWrite): unknown[] {
     value.advisorIdentityUserId,
     value.collegeName,
   ];
+}
+
+async function acceptXeroCandidate(
+  client: PoolClient,
+  schema: string,
+  principal: StudentOperationsWorkspacePrincipal,
+  studentId: string,
+  source: { connectionId: string; contactId: string },
+): Promise<void> {
+  const result = await client.query(
+    `INSERT INTO ${schema}.student_operations_xero_candidate_reviews
+       (customer_id, xero_connection_id, xero_contact_id, review_status,
+        student_id, reviewed_by_identity, reviewed_at)
+     SELECT c.customer_id, c.xero_connection_id, c.xero_contact_id, 'accepted', $4, $5, now()
+       FROM ${schema}.student_operations_xero_contacts c
+       JOIN ${schema}.student_operations_xero_sync_configurations cfg
+         ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id
+        AND cfg.enabled AND cfg.organisation_role='trust'
+      WHERE c.customer_id=$1 AND c.xero_connection_id=$2 AND c.xero_contact_id=$3
+        AND EXISTS (
+          SELECT 1 FROM ${schema}.student_operations_xero_invoices i
+           WHERE i.customer_id=c.customer_id AND i.xero_connection_id=c.xero_connection_id
+             AND i.xero_contact_id=c.xero_contact_id AND i.invoice_type='ACCREC'
+             AND i.invoice_status NOT IN ('VOIDED','DELETED')
+        )
+     ON CONFLICT (customer_id, xero_connection_id, xero_contact_id) DO NOTHING
+     RETURNING 1`,
+    [principal.tenantId, source.connectionId, source.contactId, studentId, principal.identityUserId],
+  );
+  if (!result.rowCount) {
+    throw new ConflictException("This Xero candidate is no longer available. Refresh and try again.");
+  }
 }
 
 function writeFieldNames(): StudentOperationsField[] {

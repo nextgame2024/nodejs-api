@@ -11,7 +11,14 @@ import {
 import type { PoolClient } from "pg";
 import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
-import { XeroClient, type XeroOrganisation, type XeroTokenSet } from "./xero.client.js";
+import {
+  XeroClient,
+  type XeroOrganisation,
+  type XeroPage,
+  type XeroContactRecord,
+  type XeroInvoiceRecord,
+  type XeroTokenSet,
+} from "./xero.client.js";
 import { XeroCryptoService } from "./xero-crypto.service.js";
 import {
   XERO_CONNECTOR_KEY,
@@ -44,6 +51,7 @@ type ConnectionRow = {
   last_error_code: string | null;
   health_status: string;
   granted_scopes: unknown;
+  organisation_role: "trust" | "operating" | "unassigned" | null;
 };
 
 type AuthorizationRow = {
@@ -68,12 +76,14 @@ export class XeroConnectorService {
       `SELECT x.xero_connection_id, x.xero_authorization_id, x.connector_binding_id,
               x.provider_connection_id, x.xero_tenant_id, x.tenant_name, x.tenant_type,
               x.tenant_short_code, x.status, x.last_tested_at, x.last_error_code,
-              b.health_status, a.granted_scopes
+              b.health_status, a.granted_scopes, c.organisation_role
          FROM ${schema}.xero_connections x
          JOIN ${schema}.connector_bindings b
            ON b.connector_binding_id=x.connector_binding_id AND b.customer_id=x.customer_id
          JOIN ${schema}.xero_authorizations a
            ON a.xero_authorization_id=x.xero_authorization_id AND a.customer_id=x.customer_id
+         LEFT JOIN ${schema}.student_operations_xero_sync_configurations c
+           ON c.xero_connection_id=x.xero_connection_id AND c.customer_id=x.customer_id
         WHERE x.customer_id=$1
         ORDER BY lower(x.tenant_name), x.created_at`,
       [tenantId],
@@ -93,6 +103,7 @@ export class XeroConnectorService {
         healthStatus: row.health_status,
         lastTestedAt: row.last_tested_at?.toISOString() ?? null,
         lastErrorCode: row.last_error_code,
+        organisationRole: row.organisation_role,
         missingStudentDiscoveryScopes: missingScopes(row.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES),
       })),
     };
@@ -200,6 +211,38 @@ export class XeroConnectorService {
       generatedAt: new Date().toISOString(),
       ...result,
     };
+  }
+
+  async syncContactPage(
+    tenantId: string,
+    connectionId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroContactRecord>> {
+    const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
+    return this.client.contactPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+  }
+
+  async syncInvoicePage(
+    tenantId: string,
+    connectionId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
+    return this.client.invoicePage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+  }
+
+  private async syncAccess(tenantId: string, connectionId: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(connectionId)) throw new NotFoundException("Xero connection not found.");
+    const config = requiredConfig();
+    const connection = await this.loadConnection(tenantId, connectionId);
+    const missing = missingScopes(connection.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES);
+    if (missing.length) {
+      throw new ConflictException("Reconnect Xero to allow read-only invoice and contact access.");
+    }
+    const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
+    return { connection, accessToken };
   }
 
   private async consumeState(

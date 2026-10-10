@@ -58,6 +58,35 @@ describe("XeroClient", () => {
       .rejects.toThrow("Xero authorization could not be completed.");
   });
 
+  it("classifies a non-JSON provider failure before attempting to parse it", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response("upstream gateway", {
+      status: 502,
+      headers: { "content-type": "text/html", "xero-correlation-id": "correlation-1" },
+    }));
+
+    await expect(new XeroClient().invoicePage("access", "tenant-1", 1))
+      .rejects.toMatchObject({ response: expect.objectContaining({
+        errorCode: "xero_unavailable",
+        providerStatus: 502,
+        correlationId: "correlation-1",
+      }) });
+  });
+
+  it("uses incremental headers and stable paging for contacts", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      Pagination: { PageNumber: 2, PageCount: 3 },
+      Contacts: [{ ContactID: "44444444-4444-4444-8444-444444444444", Name: "Student One" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(new XeroClient().contactPage(
+      "access", "tenant-1", 2, new Date("2026-10-10T00:00:00Z"),
+    )).resolves.toEqual(expect.objectContaining({ page: 2, pageCount: 3 }));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("page=2");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "If-Modified-Since": "Sat, 10 Oct 2026 00:00:00 GMT",
+    });
+  });
+
   it("derives reviewable student candidates from sales invoices and Xero contacts", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({

@@ -57,6 +57,33 @@ export type XeroStudentCandidateResult = {
   truncated: boolean;
 };
 
+export type XeroContactRecord = {
+  contactId: string;
+  status: string | null;
+  legalName: string;
+  email: string | null;
+  contactNumber: string | null;
+  accountNumber: string | null;
+  updatedAt: string | null;
+};
+
+export type XeroInvoiceRecord = {
+  invoiceId: string;
+  contactId: string;
+  invoiceNumber: string | null;
+  type: string;
+  status: string;
+  invoiceDate: string | null;
+  dueDate: string | null;
+  currencyCode: string | null;
+  total: number;
+  amountPaid: number;
+  amountDue: number;
+  updatedAt: string | null;
+};
+
+export type XeroPage<T> = { items: T[]; page: number; pageCount: number };
+
 @Injectable()
 export class XeroClient {
   async exchangeCode(code: string, verifier: string, config: XeroConfig): Promise<XeroTokenSet> {
@@ -130,6 +157,80 @@ export class XeroClient {
         status: optionalString(value.Status),
         bankAccountType: optionalString(value.BankAccountType),
       }));
+  }
+
+  async contactPage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroContactRecord>> {
+    const url = new URL("https://api.xero.com/api.xro/2.0/Contacts");
+    url.search = new URLSearchParams({
+      page: String(page),
+      pageSize: "500",
+      includeArchived: "true",
+      order: "UpdatedDateUTC ASC",
+    }).toString();
+    const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
+    if (!Array.isArray(payload.Contacts)) {
+      throw new BadGatewayException("Xero returned an invalid contacts response.");
+    }
+    return {
+      items: payload.Contacts.map(record).map((value) => ({
+        contactId: requiredString(value.ContactID, "contact id"),
+        status: optionalString(value.ContactStatus),
+        legalName: requiredString(value.Name, "contact name"),
+        email: optionalString(value.EmailAddress),
+        contactNumber: optionalString(value.ContactNumber),
+        accountNumber: optionalString(value.AccountNumber),
+        updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
+      })),
+      page,
+      pageCount: paginationPageCount(payload, page, payload.Contacts.length, 500),
+    };
+  }
+
+  async invoicePage(
+    accessToken: string,
+    tenantId: string,
+    page: number,
+    modifiedSince?: Date,
+  ): Promise<XeroPage<XeroInvoiceRecord>> {
+    const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
+    url.search = new URLSearchParams({
+      page: String(page),
+      pageSize: "500",
+      summaryOnly: "true",
+      order: "UpdatedDateUTC ASC",
+    }).toString();
+    const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
+    if (!Array.isArray(payload.Invoices)) {
+      throw new BadGatewayException("Xero returned an invalid invoices response.");
+    }
+    return {
+      items: payload.Invoices.map(record).map((value) => {
+        const contact = record(value.Contact);
+        const total = optionalNumber(value.Total) ?? 0;
+        const amountPaid = optionalNumber(value.AmountPaid) ?? 0;
+        return {
+          invoiceId: requiredString(value.InvoiceID, "invoice id"),
+          contactId: requiredString(contact.ContactID, "contact id"),
+          invoiceNumber: optionalString(value.InvoiceNumber),
+          type: requiredString(value.Type, "invoice type"),
+          status: requiredString(value.Status, "invoice status"),
+          invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
+          dueDate: optionalDate(value.DueDateString) ?? optionalXeroDate(value.DueDate),
+          currencyCode: optionalString(value.CurrencyCode),
+          total,
+          amountPaid,
+          amountDue: optionalNumber(value.AmountDue) ?? Math.max(0, total - amountPaid),
+          updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
+        };
+      }),
+      page,
+      pageCount: paginationPageCount(payload, page, payload.Invoices.length, 500),
+    };
   }
 
   async studentCandidates(accessToken: string, tenantId: string): Promise<XeroStudentCandidateResult> {
@@ -274,22 +375,50 @@ export class XeroClient {
     };
   }
 
-  private async json(url: string, accessToken: string, tenantId?: string): Promise<unknown> {
+  private async json(
+    url: string,
+    accessToken: string,
+    tenantId?: string,
+    modifiedSince?: Date,
+  ): Promise<unknown> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
     };
     if (tenantId) headers["xero-tenant-id"] = tenantId;
+    if (modifiedSince) headers["If-Modified-Since"] = modifiedSince.toUTCString();
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-    const payload = await parseJson(response);
-    if (!response.ok) throw new BadGatewayException("Xero could not verify the connected organisation.");
-    return payload;
+    if (!response.ok) throw providerError(response);
+    return parseJson(response);
   }
 }
 
 async function parseJson(response: Response): Promise<unknown> {
   try { return await response.json(); }
   catch { throw new BadGatewayException("Xero returned an unreadable response."); }
+}
+
+function providerError(response: Response): BadGatewayException {
+  const correlationId = response.headers.get("xero-correlation-id");
+  const retryAfter = response.headers.get("retry-after");
+  const code = response.status === 429
+    ? "xero_rate_limited"
+    : response.status === 401 || response.status === 403
+      ? "xero_authorization_rejected"
+      : response.status >= 500
+        ? "xero_unavailable"
+        : "xero_request_rejected";
+  return new BadGatewayException({
+    message: response.status === 429
+      ? "Xero is temporarily rate limited. Try again later."
+      : response.status === 401 || response.status === 403
+        ? "The Xero authorization requires attention."
+        : "Xero could not complete the request.",
+    errorCode: code,
+    providerStatus: response.status,
+    correlationId,
+    retryAfterSeconds: retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null,
+  });
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -317,6 +446,32 @@ function optionalNumber(value: unknown): number | null {
 function optionalDate(value: unknown): string | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
   return value.slice(0, 10);
+}
+
+function optionalTimestamp(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function optionalXeroTimestamp(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /\/Date\((\d+)(?:[+-]\d+)?\)\//.exec(value);
+  return match?.[1] ? new Date(Number(match[1])).toISOString() : null;
+}
+
+function paginationPageCount(
+  payload: Record<string, unknown>,
+  page: number,
+  itemCount: number,
+  pageSize: number,
+): number {
+  const pagination = payload.Pagination && typeof payload.Pagination === "object"
+    ? record(payload.Pagination)
+    : null;
+  const count = pagination ? Number(pagination.PageCount) : Number.NaN;
+  if (Number.isInteger(count) && count >= page) return count;
+  return itemCount >= pageSize ? page + 1 : page;
 }
 
 function optionalXeroDate(value: unknown): string | null {

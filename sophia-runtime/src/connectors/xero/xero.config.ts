@@ -22,6 +22,7 @@ export type XeroConfig = {
   returnUrl: string;
   stateSecret: string;
   encryptionKey: Buffer;
+  webhookKey?: string;
 };
 
 export function xeroConfiguration(): XeroConfig | null {
@@ -41,7 +42,8 @@ export function xeroConfiguration(): XeroConfig | null {
   }
   requireHttpUrl(redirectUri, "XERO_REDIRECT_URI");
   requireHttpUrl(returnUrl, "XERO_RETURN_URL");
-  return { clientId, clientSecret, redirectUri, returnUrl, stateSecret, encryptionKey };
+  const webhookKey = process.env.XERO_WEBHOOK_KEY?.trim() || undefined;
+  return { clientId, clientSecret, redirectUri, returnUrl, stateSecret, encryptionKey, webhookKey };
 }
 
 function requireHttpUrl(value: string, name: string): void {

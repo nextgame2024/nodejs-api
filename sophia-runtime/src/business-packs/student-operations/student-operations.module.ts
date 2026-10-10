@@ -7,6 +7,9 @@ import { StudentOperationsWorkspaceService } from "./student-operations-workspac
 import { StudentOperationsStudentsService } from "./student-operations-students.service.js";
 import { ConnectorsModule } from "../../connectors/connectors.module.js";
 import { StudentOperationsXeroController } from "./student-operations-xero.controller.js";
+import { StudentOperationsXeroSyncService } from "./student-operations-xero-sync.service.js";
+import { StudentOperationsXeroSyncScheduler } from "./student-operations-xero-sync.scheduler.js";
+import { XeroWebhookController } from "../../connectors/xero/xero-webhook.controller.js";
 
 @Module({
   imports: [AdminModule, ConnectorsModule],
@@ -14,11 +17,14 @@ import { StudentOperationsXeroController } from "./student-operations-xero.contr
     StudentOperationsWorkspaceController,
     StudentOperationsCurrentWorkspaceController,
     StudentOperationsXeroController,
+    XeroWebhookController,
   ],
   providers: [
     StudentOperationsWorkspaceService,
     StudentOperationsWorkspaceGuard,
     StudentOperationsStudentsService,
+    StudentOperationsXeroSyncService,
+    StudentOperationsXeroSyncScheduler,
   ],
   exports: [StudentOperationsWorkspaceService],
 })

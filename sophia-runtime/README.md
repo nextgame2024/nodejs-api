@@ -55,18 +55,20 @@ The registered Xero callback must exactly match `XERO_REDIRECT_URI`; locally it 
 `http://localhost:3400/api/connectors/xero/v1/oauth/callback`.
 
 Configure `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_RETURN_URL`,
-`XERO_OAUTH_STATE_SECRET`, and `XERO_TOKEN_ENCRYPTION_KEY` only in the runtime environment.
+`XERO_OAUTH_STATE_SECRET`, `XERO_TOKEN_ENCRYPTION_KEY`, and `XERO_WEBHOOK_KEY` only in the runtime environment.
 The connector requests identity, offline access, `accounting.settings.read`, `accounting.invoices.read`, and
 `accounting.contacts.read`. It can verify the selected organisation, list bank-account metadata, and produce a
-bounded review-only student candidate preview from sales invoices and contacts. It cannot write accounting data.
+tenant-scoped read models from paged sales invoices and contacts. It cannot write accounting data.
 Existing connections must be re-authorized when the invoice/contact scopes are introduced. Each Xero
 organisation is persisted as a tenant-scoped connector binding, allowing one agency to connect TRUST and operating
 organisations independently and allowing other agencies to connect their own organisations later.
 
-`GET /api/business-packs/student-operations/v1/workspace/integrations/xero/connections/:connectionId/student-candidates`
-is Chief Executive-only, validates the connection against the authenticated tenant, and scans at most the 500 most
-recently updated non-void sales invoices. This endpoint is deliberately a review preview, not a bulk import or a
-durable sync. A subsequent resumable sync checkpoint must use local read models and incremental provider cursors.
+Normal Students page, search, and infinite-scroll requests read PostgreSQL only. A Chief Executive can enqueue a
+durable refresh with `POST .../student-sync`; the scheduler performs initial/incremental/reconciliation paging and
+the UI keeps the last successful projection when Xero is unavailable. Set `XERO_SYNC_SCHEDULER_ENABLED=true` on at
+least one runtime instance. Configure the Xero webhook endpoint as
+`/api/connectors/xero/v1/webhooks`; signed events coalesce into the same durable queue. Candidate acceptance links a
+Xero contact to a reviewed operational student without writing to Xero.
 
 ## Sophia subscription billing
 

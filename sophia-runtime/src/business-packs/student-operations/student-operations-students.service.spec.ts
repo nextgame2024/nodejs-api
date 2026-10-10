@@ -206,6 +206,58 @@ describe("StudentOperationsStudentsService", () => {
     expect(JSON.stringify(auditCall)).not.toContain("Synthetic Student");
   });
 
+  it("creates and links a reviewed Xero candidate in the same tenant transaction", async () => {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes("student_operations_write_requests") && sql.includes("INSERT INTO")) {
+        return { rows: [{ idempotency_key: "write-key-xero" }], rowCount: 1 };
+      }
+      if (sql.includes("student_operations_students") && sql.includes("INSERT INTO")) {
+        return { rows: [{
+          student_id: "44444444-4444-4444-8444-444444444444",
+          student_reference: "STU-XERO",
+          legal_name: "Xero Candidate",
+          preferred_name: null,
+          email: "candidate@example.invalid",
+          current_stage: "new_application",
+          status: "active",
+          college_name: null,
+          advisor_identity_user_id: null,
+          record_version: 1,
+          created_at: "2026-10-10T00:00:00.000Z",
+          updated_at: "2026-10-10T00:00:00.000Z",
+        }], rowCount: 1 };
+      }
+      return { rows: [{ accepted: 1 }], rowCount: 1 };
+    });
+    const database = {
+      tenantTransaction: jest.fn(async (_tenantId: string, work: any) => work({ query })),
+    };
+    const service = new StudentOperationsStudentsService(database as never);
+
+    await service.create(principal("chief_executive"), {
+      studentReference: "STU-XERO", legalName: "Xero Candidate",
+      preferredName: null, email: "candidate@example.invalid",
+      currentStage: "new_application", status: "active",
+      advisorIdentityUserId: null, collegeName: null,
+      xeroCandidateSource: {
+        connectionId: "66666666-6666-4666-8666-666666666666",
+        contactId: "77777777-7777-4777-8777-777777777777",
+      },
+    }, "write-key-xero");
+
+    expect(database.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("student_operations_xero_candidate_reviews"),
+      [
+        tenantId,
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+        "44444444-4444-4444-8444-444444444444",
+        "55555555-5555-4555-8555-555555555555",
+      ],
+    );
+  });
+
   it("rejects duplicate student references", async () => {
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("student_operations_write_requests")) {

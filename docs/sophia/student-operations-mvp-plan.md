@@ -1,7 +1,7 @@
 # Student Operations operations MVP — gap analysis and proposed plan
 
 Date: 5 October 2026  
-Status: architecture and delivery order approved; OFA-00A through OFA-01E complete; OFA-07A student discovery implemented in source and awaiting deployment review
+Status: architecture and delivery order approved; OFA-00A through OFA-01E complete; OFA-07A reviewed discovery superseded by OFA-07B durable Xero synchronization in source
 
 ## Product boundary
 
@@ -57,8 +57,9 @@ deployable service for the MVP:
    rules, RLS, permissions, audit events and APIs.
 3. Add the new Angular routes under Business Manager and call the Nest domain API
    through the established authenticated runtime boundary.
-4. Add Xero later through the connector-authority layer. Until credentials and
-   scopes are approved, use explicit manual/reference fields and fixtures only.
+4. Integrate Xero through the connector-authority layer and durable local read
+   models. Browser list/search requests never depend on provider availability;
+   scheduled, webhook and manual refresh triggers share the same leased queue.
 5. Add Sophia tools only after the deterministic APIs and authorization tests
    are stable.
 
@@ -169,6 +170,7 @@ deployment remains a separate decision.
 | OFA-06B — reviewed preparation | Sophia can prepare drafts/packs only through explicit review; financial and destructive execution is prohibited. | Review-gate, replay/idempotency, rejection and prohibited-action tests. |
 | OFA-07 — Xero read-only | Separately authorized TRUST and PTY connections synchronize verified read models with freshness and reconciliation evidence. | OAuth/scope, webhook or polling, idempotency, retry and TRUST/PTY isolation tests. |
 | OFA-07A — Xero student discovery | A Chief Executive can explicitly scan recent TRUST sales invoices, review distinct Xero contacts and prefill a student record without silently importing or overwriting operational data. | Granular read-scope, tenant/role denial, bounded-provider-read, candidate mapping and Angular review-flow tests. |
+| OFA-07B — durable Xero student read model | Normal page, search and infinite-scroll requests read tenant-scoped PostgreSQL projections; manual refresh enqueues a resumable sync, preserves stale data on failure and exposes freshness without repeated consent. | Migration/RLS, durable lease/idempotency, incremental paging, rate-limit/error classification, backend candidate search, Angular refresh/infinite-scroll and real-estate regression tests. |
 | OFA-08 — Xero reviewed writes | Any approved Xero write is individually scoped, MFA/review gated and auditable. | Sandbox end-to-end proof, replay protection, denial and reconciliation tests before any live authority. |
 
 ### Checkpoint review gate
@@ -201,6 +203,8 @@ At the end of each checkpoint, provide:
 - Manual/reference-only Xero IDs and payment schedule fields while Xero access is
   pending.
 - Seed only synthetic fixtures; no production student data in development.
+- Review invoice-derived Xero contacts from the local projection and explicitly
+  link accepted candidates; never infer that every accounting contact is a student.
 
 ### OFA-02 — dashboard and payments controls
 

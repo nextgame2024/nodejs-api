@@ -25,6 +25,7 @@ describe("XeroConnectorService", () => {
         last_error_code: null,
         health_status: "healthy",
         granted_scopes: ["openid", "offline_access", "accounting.settings.read"],
+        organisation_role: "trust",
       }],
       rowCount: 1,
     });
@@ -40,6 +41,7 @@ describe("XeroConnectorService", () => {
       "accounting.invoices.read",
       "accounting.contacts.read",
     ]);
+    expect(result.connections[0]?.organisationRole).toBe("trust");
     expect(query).toHaveBeenCalledWith(expect.stringContaining("a.granted_scopes"), [
       "11111111-1111-4111-8111-111111111111",
     ]);
