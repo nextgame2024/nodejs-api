@@ -276,15 +276,15 @@ export class StudentOperationsXeroSyncService {
       let contactCount = 0;
       for (let page = 1; page <= 10_000; page += 1) {
         const response = await this.xero.syncContactPage(tenantId, run.xero_connection_id, page, modifiedSince);
-        await this.persistContacts(tenantId, run, owner, response.items);
         contactCount += response.items.length;
+        await this.persistContacts(tenantId, run, owner, response.items, contactCount);
         if (page >= response.pageCount) break;
       }
       let invoiceCount = 0;
       for (let page = 1; page <= 10_000; page += 1) {
         const response = await this.xero.syncInvoicePage(tenantId, run.xero_connection_id, page, modifiedSince);
-        await this.persistInvoices(tenantId, run, owner, response.items);
         invoiceCount += response.items.length;
+        await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
         if (page >= response.pageCount) break;
       }
       await this.complete(tenantId, run, owner, contactCount, invoiceCount);
@@ -293,39 +293,83 @@ export class StudentOperationsXeroSyncService {
     }
   }
 
-  private persistContacts(tenantId: string, run: SyncRunRow, owner: string, contacts: XeroContactRecord[]) {
+  private persistContacts(
+    tenantId: string,
+    run: SyncRunRow,
+    owner: string,
+    contacts: XeroContactRecord[],
+    processedCount: number,
+  ) {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
-      for (const contact of contacts) {
+      if (contacts.length) {
         await db.query(
-          `INSERT INTO ${schema}.student_operations_xero_contacts
+          `WITH source AS (
+             SELECT
+               (item->>'contactId')::uuid AS xero_contact_id,
+               NULLIF(item->>'status', '') AS contact_status,
+               item->>'legalName' AS legal_name,
+               NULLIF(item->>'email', '') AS email,
+               NULLIF(item->>'contactNumber', '') AS contact_number,
+               NULLIF(item->>'accountNumber', '') AS account_number,
+               NULLIF(item->>'updatedAt', '')::timestamptz AS provider_updated_at
+             FROM jsonb_array_elements($4::jsonb) AS item
+           )
+           INSERT INTO ${schema}.student_operations_xero_contacts
              (customer_id, xero_connection_id, xero_contact_id, contact_status, legal_name,
               email, contact_number, account_number, provider_updated_at, last_seen_sync_run_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           SELECT $1::uuid, $2::uuid, xero_contact_id, contact_status, legal_name,
+                  email, contact_number, account_number, provider_updated_at, $3::uuid
+             FROM source
            ON CONFLICT (customer_id, xero_connection_id, xero_contact_id) DO UPDATE SET
              contact_status=EXCLUDED.contact_status, legal_name=EXCLUDED.legal_name,
              email=EXCLUDED.email, contact_number=EXCLUDED.contact_number,
              account_number=EXCLUDED.account_number, provider_updated_at=EXCLUDED.provider_updated_at,
              last_seen_sync_run_id=EXCLUDED.last_seen_sync_run_id, updated_at=now()`,
-          [tenantId, run.xero_connection_id, contact.contactId, contact.status, contact.legalName,
-            contact.email, contact.contactNumber, contact.accountNumber, contact.updatedAt, run.sync_run_id],
+          [tenantId, run.xero_connection_id, run.sync_run_id, JSON.stringify(contacts)],
         );
       }
+      await checkpointProgress(db, schema, tenantId, run.sync_run_id, owner, "contact_count", processedCount);
     });
   }
 
-  private persistInvoices(tenantId: string, run: SyncRunRow, owner: string, invoices: XeroInvoiceRecord[]) {
+  private persistInvoices(
+    tenantId: string,
+    run: SyncRunRow,
+    owner: string,
+    invoices: XeroInvoiceRecord[],
+    processedCount: number,
+  ) {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
-      for (const invoice of invoices) {
+      if (invoices.length) {
         await db.query(
-          `INSERT INTO ${schema}.student_operations_xero_invoices
+          `WITH source AS (
+             SELECT
+               (item->>'invoiceId')::uuid AS xero_invoice_id,
+               (item->>'contactId')::uuid AS xero_contact_id,
+               NULLIF(item->>'invoiceNumber', '') AS invoice_number,
+               item->>'type' AS invoice_type,
+               item->>'status' AS invoice_status,
+               NULLIF(item->>'invoiceDate', '')::date AS invoice_date,
+               NULLIF(item->>'dueDate', '')::date AS due_date,
+               NULLIF(item->>'currencyCode', '') AS currency_code,
+               COALESCE((item->>'total')::numeric, 0) AS total,
+               COALESCE((item->>'amountPaid')::numeric, 0) AS amount_paid,
+               COALESCE((item->>'amountDue')::numeric, 0) AS amount_due,
+               NULLIF(item->>'updatedAt', '')::timestamptz AS provider_updated_at
+             FROM jsonb_array_elements($4::jsonb) AS item
+           )
+           INSERT INTO ${schema}.student_operations_xero_invoices
              (customer_id, xero_connection_id, xero_invoice_id, xero_contact_id,
               invoice_number, invoice_type, invoice_status, invoice_date, due_date,
               currency_code, total, amount_paid, amount_due, provider_updated_at, last_seen_sync_run_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           SELECT $1::uuid, $2::uuid, xero_invoice_id, xero_contact_id,
+                  invoice_number, invoice_type, invoice_status, invoice_date, due_date,
+                  currency_code, total, amount_paid, amount_due, provider_updated_at, $3::uuid
+             FROM source
            ON CONFLICT (customer_id, xero_connection_id, xero_invoice_id) DO UPDATE SET
              xero_contact_id=EXCLUDED.xero_contact_id, invoice_number=EXCLUDED.invoice_number,
              invoice_type=EXCLUDED.invoice_type, invoice_status=EXCLUDED.invoice_status,
@@ -334,12 +378,10 @@ export class StudentOperationsXeroSyncService {
              amount_paid=EXCLUDED.amount_paid, amount_due=EXCLUDED.amount_due,
              provider_updated_at=EXCLUDED.provider_updated_at,
              last_seen_sync_run_id=EXCLUDED.last_seen_sync_run_id, updated_at=now()`,
-          [tenantId, run.xero_connection_id, invoice.invoiceId, invoice.contactId,
-            invoice.invoiceNumber, invoice.type, invoice.status, invoice.invoiceDate, invoice.dueDate,
-            invoice.currencyCode, invoice.total, invoice.amountPaid, invoice.amountDue,
-            invoice.updatedAt, run.sync_run_id],
+          [tenantId, run.xero_connection_id, run.sync_run_id, JSON.stringify(invoices)],
         );
       }
+      await checkpointProgress(db, schema, tenantId, run.sync_run_id, owner, "invoice_count", processedCount);
     });
   }
 
@@ -422,6 +464,25 @@ async function assertLease(db: PoolClient, schema: string, tenantId: string, run
       WHERE customer_id=$1 AND sync_run_id=$2 AND status='processing' AND lease_owner=$3
       RETURNING 1`,
     [tenantId, runId, owner],
+  );
+  if (!result.rowCount) throw new ConflictException("The Xero sync lease was lost.");
+}
+
+async function checkpointProgress(
+  db: PoolClient,
+  schema: string,
+  tenantId: string,
+  runId: string,
+  owner: string,
+  column: "contact_count" | "invoice_count",
+  processedCount: number,
+): Promise<void> {
+  const result = await db.query(
+    `UPDATE ${schema}.student_operations_xero_sync_runs
+        SET ${column}=$4, lease_expires_at=now()+interval '10 minutes'
+      WHERE customer_id=$1 AND sync_run_id=$2 AND status='processing' AND lease_owner=$3
+      RETURNING 1`,
+    [tenantId, runId, owner, processedCount],
   );
   if (!result.rowCount) throw new ConflictException("The Xero sync lease was lost.");
 }

@@ -1,7 +1,8 @@
 # OFA-07B checkpoint — durable Xero student read model
 
 Date: 10 October 2026  
-Decision: implemented in source; deployment, migration 067, scheduler/webhook configuration and live TRUST proof remain pending
+Decision: migration 067 and the signed webhook were operator-confirmed in production; initial-import performance
+hardening is implemented in source and awaits backend/frontend redeployment and live TRUST completion proof
 
 ## Outcome
 
@@ -17,6 +18,18 @@ restarts. Rate limits and provider correlation IDs are recorded without exposing
 Candidates remain review-only. Creating a student from a candidate records the explicit Xero-contact link so it is
 not offered repeatedly. The integration is read-only and does not infer colleges, advisors, stages or legal identity.
 
+### Initial-import recovery hardening
+
+Live operator review showed an initial TRUST import remaining in `processing` while the page polled every two
+seconds. The worker had been issuing one PostgreSQL statement per Xero record and only publishing counts when the
+entire run completed. It now performs one idempotent JSON batch upsert per provider page, checkpoints cumulative
+contact/invoice counts and renews its lease after each page. A reclaimed run safely restarts from page one because
+the provider identifiers remain the conflict keys and checkpoint counts are absolute rather than increments.
+
+The Students screen shows those page-level counts, progressively backs status polling off from two to fifteen
+seconds, and pauses browser polling after fifteen minutes with an actionable message. The durable worker continues
+independently; selecting **Check progress** reuses the active run rather than creating a duplicate.
+
 ## Deployment/configuration gate
 
 1. Deploy the backend source, then run `npm run migrate` once with a migration-capable database role.
@@ -26,8 +39,8 @@ not offered repeatedly. The integration is read-only and does not infer colleges
 4. Deploy the frontend, open Students as Chief Executive and select **Refresh** once for the initial TRUST import.
 5. Verify freshness, counts and a reviewed candidate against the connected TRUST organisation before enabling PTY.
 
-No production migration, deployment, Xero request or live customer-data operation was performed in this source
-checkpoint.
+No production deployment, Xero request or live customer-data mutation was performed by Codex in this hardening
+update. The operator separately confirmed migration 067 and Xero webhook intent delivery before this update.
 
 ## Evidence
 
@@ -40,3 +53,6 @@ checkpoint.
   warnings remain unchanged.
 - Protected real-estate regression: 8 suites, 38 tests passed.
 - Sophia boundary scan: passed across 271 new-product source files.
+- Initial-import hardening verification: 20 Xero/Student Operations backend suites and 63 tests passed; focused
+  Students Angular suite passed 13 tests; backend and frontend production builds passed. Existing Angular
+  bundle/font/CommonJS/PrimeIcons warnings remain unchanged.

@@ -104,6 +104,85 @@ describe("StudentOperationsXeroSyncService", () => {
     jest.useRealTimers();
   });
 
+  it("bulk upserts provider pages and checkpoints visible progress", async () => {
+    const now = new Date("2026-10-10T00:00:00.000Z");
+    const run = {
+      sync_run_id: "66666666-6666-4666-8666-666666666666",
+      xero_connection_id: connectionId,
+      mode: "initial",
+      trigger_type: "manual",
+      status: "processing",
+      modified_since: null,
+      contact_count: 0,
+      invoice_count: 0,
+      candidate_count: 0,
+      error_code: null,
+      created_at: now,
+      started_at: now,
+      completed_at: null,
+    };
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes("SET status='processing'")) return { rows: [run], rowCount: 1 };
+      if (sql.includes("count(DISTINCT i.xero_contact_id)")) return { rows: [{ count: 2 }], rowCount: 1 };
+      return { rows: [{ exists: 1 }], rowCount: 1 };
+    });
+    const database = {
+      tenantTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const contacts = [
+      {
+        contactId: "55555555-5555-4555-8555-555555555551", status: "ACTIVE",
+        legalName: "Student One", email: "one@example.invalid", contactNumber: "STU-1",
+        accountNumber: null, updatedAt: "2026-10-09T00:00:00.000Z",
+      },
+      {
+        contactId: "55555555-5555-4555-8555-555555555552", status: "ACTIVE",
+        legalName: "Student Two", email: "two@example.invalid", contactNumber: "STU-2",
+        accountNumber: null, updatedAt: "2026-10-09T00:00:00.000Z",
+      },
+    ];
+    const invoices = contacts.map((contact, index) => ({
+      invoiceId: `77777777-7777-4777-8777-77777777777${index + 1}`,
+      contactId: contact.contactId,
+      invoiceNumber: `INV-${index + 1}`,
+      type: "ACCREC",
+      status: "AUTHORISED",
+      invoiceDate: "2026-10-01",
+      dueDate: "2026-10-20",
+      currencyCode: "AUD",
+      total: 100,
+      amountPaid: 0,
+      amountDue: 100,
+      updatedAt: "2026-10-09T00:00:00.000Z",
+    }));
+    const xero = {
+      syncContactPage: jest.fn(async () => ({ items: contacts, page: 1, pageCount: 1 })),
+      syncInvoicePage: jest.fn(async () => ({ items: invoices, page: 1, pageCount: 1 })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, xero as never);
+
+    await service.process(tenantId, run.sync_run_id);
+
+    const contactUpserts = query.mock.calls.filter(([sql]) => String(sql).includes("jsonb_array_elements($4::jsonb)")
+      && String(sql).includes("student_operations_xero_contacts"));
+    const invoiceUpserts = query.mock.calls.filter(([sql]) => String(sql).includes("jsonb_array_elements($4::jsonb)")
+      && String(sql).includes("student_operations_xero_invoices"));
+    expect(contactUpserts).toHaveLength(1);
+    expect(invoiceUpserts).toHaveLength(1);
+    expect(JSON.parse(String(contactUpserts[0]?.[1]?.[3]))).toHaveLength(2);
+    expect(JSON.parse(String(invoiceUpserts[0]?.[1]?.[3]))).toHaveLength(2);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET contact_count=$4"), [
+      tenantId, run.sync_run_id, expect.any(String), 2,
+    ]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET invoice_count=$4"), [
+      tenantId, run.sync_run_id, expect.any(String), 2,
+    ]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status='succeeded'"), [
+      tenantId, run.sync_run_id, expect.any(String), 2, 2, 2,
+    ]);
+  });
+
   it("assigns one explicit TRUST source and disables the previous assignment", async () => {
     const query = jest.fn(async () => ({ rows: [{ exists: 1 }], rowCount: 1 }));
     const database = {
