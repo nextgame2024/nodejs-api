@@ -93,7 +93,21 @@ describe("XeroClient", () => {
 
     await expect(request).resolves.toEqual({ items: [], page: 1, pageCount: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("pageSize=100");
+    const requestUrl = String(fetchMock.mock.calls[1]?.[0]);
+    expect(requestUrl).toContain("pageSize=100");
+    expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
+    expect(requestUrl).toContain("Statuses=DRAFT%2CSUBMITTED%2CAUTHORISED%2CPAID");
+    expect(requestUrl).not.toContain("order=");
+  });
+
+  it("can scope invoice reads to an optimized contact batch", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      Invoices: [],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await new XeroClient().invoicePage("access", "tenant-1", 1, undefined, ["contact-1", "contact-2"]);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("ContactIDs=contact-1%2Ccontact-2");
   });
 
   it("uses incremental headers and stable paging for contacts", async () => {

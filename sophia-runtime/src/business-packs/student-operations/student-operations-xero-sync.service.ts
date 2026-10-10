@@ -25,6 +25,9 @@ type SyncRunRow = {
   invoice_count: number;
   candidate_count: number;
   error_code: string | null;
+  provider_status?: number | null;
+  provider_correlation_id?: string | null;
+  retry_after_seconds?: number | null;
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
@@ -80,7 +83,8 @@ export class StudentOperationsXeroSyncService {
       );
       const run = await db.query<SyncRunRow>(
         `SELECT sync_run_id, xero_connection_id, mode, trigger_type, status, modified_since,
-                contact_count, invoice_count, candidate_count, error_code,
+                contact_count, invoice_count, candidate_count, error_code, provider_status,
+                provider_correlation_id, retry_after_seconds,
                 created_at, started_at, completed_at
            FROM ${schema}.student_operations_xero_sync_runs
           WHERE customer_id=$1 AND xero_connection_id=$2
@@ -280,17 +284,63 @@ export class StudentOperationsXeroSyncService {
         await this.persistContacts(tenantId, run, owner, response.items, contactCount);
         if (page >= response.pageCount) break;
       }
-      let invoiceCount = 0;
-      for (let page = 1; page <= 10_000; page += 1) {
-        const response = await this.xero.syncInvoicePage(tenantId, run.xero_connection_id, page, modifiedSince);
-        invoiceCount += response.items.length;
-        await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
-        if (page >= response.pageCount) break;
+      let invoiceCount: number;
+      try {
+        invoiceCount = await this.importInvoicePages(tenantId, run, owner, modifiedSince);
+      } catch (error) {
+        if (!isXeroInternalError(error)) throw error;
+        invoiceCount = await this.importInvoicePagesByContact(tenantId, run, owner, modifiedSince);
       }
       await this.complete(tenantId, run, owner, contactCount, invoiceCount);
     } catch (error) {
       await this.fail(tenantId, runId, owner, safeProviderFailure(error));
     }
+  }
+
+  private async importInvoicePages(
+    tenantId: string,
+    run: SyncRunRow,
+    owner: string,
+    modifiedSince?: Date,
+    contactIds: string[] = [],
+    initialCount = 0,
+  ): Promise<number> {
+    let invoiceCount = initialCount;
+    for (let page = 1; page <= 10_000; page += 1) {
+      const response = await this.xero.syncInvoicePage(
+        tenantId, run.xero_connection_id, page, modifiedSince, contactIds,
+      );
+      invoiceCount += response.items.length;
+      await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
+      if (page >= response.pageCount) return invoiceCount;
+    }
+    return invoiceCount;
+  }
+
+  private async importInvoicePagesByContact(
+    tenantId: string,
+    run: SyncRunRow,
+    owner: string,
+    modifiedSince?: Date,
+  ): Promise<number> {
+    const schema = runtimeConfig().schema;
+    const contactIds = await this.database.tenantReadTransaction(tenantId, async (db) => {
+      const result = await db.query<{ xero_contact_id: string }>(
+        `SELECT xero_contact_id::text AS xero_contact_id
+           FROM ${schema}.student_operations_xero_contacts
+          WHERE customer_id=$1 AND xero_connection_id=$2
+          ORDER BY xero_contact_id`,
+        [tenantId, run.xero_connection_id],
+      );
+      return result.rows.map((row) => row.xero_contact_id);
+    });
+    let invoiceCount = 0;
+    for (let index = 0; index < contactIds.length; index += 25) {
+      invoiceCount = await this.importInvoicePages(
+        tenantId, run, owner, modifiedSince, contactIds.slice(index, index + 25), invoiceCount,
+      );
+    }
+    return invoiceCount;
   }
 
   private persistContacts(
@@ -498,6 +548,9 @@ function runProjection(row: SyncRunRow) {
     invoiceCount: Number(row.invoice_count),
     candidateCount: Number(row.candidate_count),
     errorCode: row.error_code,
+    providerStatus: row.provider_status ?? null,
+    providerCorrelationId: row.provider_correlation_id ?? null,
+    retryAfterSeconds: row.retry_after_seconds ?? null,
     createdAt: row.created_at.toISOString(),
     startedAt: row.started_at?.toISOString() ?? null,
     completedAt: row.completed_at?.toISOString() ?? null,
@@ -553,4 +606,11 @@ function safeProviderFailure(error: unknown): SafeProviderFailure {
     }
   }
   return fallback;
+}
+
+function isXeroInternalError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("getResponse" in error)) return false;
+  const response = (error as { getResponse(): unknown }).getResponse();
+  return Boolean(response && typeof response === "object"
+    && (response as Record<string, unknown>).providerStatus === 500);
 }

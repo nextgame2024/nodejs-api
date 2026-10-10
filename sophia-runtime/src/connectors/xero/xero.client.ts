@@ -199,14 +199,18 @@ export class XeroClient {
     tenantId: string,
     page: number,
     modifiedSince?: Date,
+    contactIds: string[] = [],
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
-    url.search = new URLSearchParams({
+    const query = new URLSearchParams({
+      where: 'Type=="ACCREC"',
+      Statuses: "DRAFT,SUBMITTED,AUTHORISED,PAID",
       page: String(page),
       pageSize: String(XERO_INVOICE_PAGE_SIZE),
       summaryOnly: "true",
-      order: "UpdatedDateUTC ASC",
-    }).toString();
+    });
+    if (contactIds.length) query.set("ContactIDs", contactIds.join(","));
+    url.search = query.toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Invoices)) {
       throw new BadGatewayException("Xero returned an invalid invoices response.");
