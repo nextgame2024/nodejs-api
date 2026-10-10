@@ -284,13 +284,7 @@ export class StudentOperationsXeroSyncService {
         await this.persistContacts(tenantId, run, owner, response.items, contactCount);
         if (page >= response.pageCount) break;
       }
-      let invoiceCount: number;
-      try {
-        invoiceCount = await this.importInvoicePages(tenantId, run, owner, modifiedSince);
-      } catch (error) {
-        if (!isXeroInternalError(error)) throw error;
-        invoiceCount = await this.importInvoicePagesByContact(tenantId, run, owner, modifiedSince);
-      }
+      const invoiceCount = await this.importInvoicePages(tenantId, run, owner, modifiedSince);
       await this.complete(tenantId, run, owner, contactCount, invoiceCount);
     } catch (error) {
       await this.fail(tenantId, runId, owner, safeProviderFailure(error));
@@ -302,44 +296,13 @@ export class StudentOperationsXeroSyncService {
     run: SyncRunRow,
     owner: string,
     modifiedSince?: Date,
-    contactIds: string[] = [],
-    initialCount = 0,
-    compatibilityMode = false,
   ): Promise<number> {
-    let invoiceCount = initialCount;
+    let invoiceCount = 0;
     for (let page = 1; page <= 10_000; page += 1) {
-      const response = await this.xero.syncInvoicePage(
-        tenantId, run.xero_connection_id, page, modifiedSince, contactIds, compatibilityMode,
-      );
+      const response = await this.xero.syncInvoicePage(tenantId, run.xero_connection_id, page, modifiedSince);
       invoiceCount += response.items.length;
       await this.persistInvoices(tenantId, run, owner, response.items, invoiceCount);
       if (page >= response.pageCount) return invoiceCount;
-    }
-    return invoiceCount;
-  }
-
-  private async importInvoicePagesByContact(
-    tenantId: string,
-    run: SyncRunRow,
-    owner: string,
-    modifiedSince?: Date,
-  ): Promise<number> {
-    const schema = runtimeConfig().schema;
-    const contactIds = await this.database.tenantReadTransaction(tenantId, async (db) => {
-      const result = await db.query<{ xero_contact_id: string }>(
-        `SELECT xero_contact_id::text AS xero_contact_id
-           FROM ${schema}.student_operations_xero_contacts
-          WHERE customer_id=$1 AND xero_connection_id=$2
-          ORDER BY xero_contact_id`,
-        [tenantId, run.xero_connection_id],
-      );
-      return result.rows.map((row) => row.xero_contact_id);
-    });
-    let invoiceCount = 0;
-    for (let index = 0; index < contactIds.length; index += 25) {
-      invoiceCount = await this.importInvoicePages(
-        tenantId, run, owner, modifiedSince, contactIds.slice(index, index + 25), invoiceCount, true,
-      );
     }
     return invoiceCount;
   }
@@ -625,13 +588,6 @@ function safeProviderFailure(error: unknown): SafeProviderFailure {
     }
   }
   return fallback;
-}
-
-function isXeroInternalError(error: unknown): boolean {
-  if (!error || typeof error !== "object" || !("getResponse" in error)) return false;
-  const response = (error as { getResponse(): unknown }).getResponse();
-  return Boolean(response && typeof response === "object"
-    && (response as Record<string, unknown>).providerStatus === 500);
 }
 
 function durableRetryDelay(providerDelaySeconds: number, previousFailureCount: number): number {

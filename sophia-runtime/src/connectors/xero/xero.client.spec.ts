@@ -95,22 +95,13 @@ describe("XeroClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const requestUrl = String(fetchMock.mock.calls[1]?.[0]);
     expect(requestUrl).toContain("pageSize=100");
-    expect(requestUrl).toContain("where=Type%3D%3D%22ACCREC%22");
-    expect(requestUrl).toContain("Statuses=DRAFT%2CSUBMITTED%2CAUTHORISED%2CPAID");
+    expect(requestUrl).toContain("summaryOnly=true");
+    expect(requestUrl).not.toContain("where=");
+    expect(requestUrl).not.toContain("Statuses=");
     expect(requestUrl).not.toContain("order=");
   });
 
-  it("can scope invoice reads to an optimized contact batch", async () => {
-    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      Invoices: [],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
-
-    await new XeroClient().invoicePage("access", "tenant-1", 1, undefined, ["contact-1", "contact-2"]);
-
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("ContactIDs=contact-1%2Ccontact-2");
-  });
-
-  it("uses a minimal legacy query and filters invoices locally in compatibility mode", async () => {
+  it("filters the unfiltered invoice page locally", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       Invoices: [
         {
@@ -124,30 +115,31 @@ describe("XeroClient", () => {
       ],
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
-    const result = await new XeroClient().invoicePage(
-      "access", "tenant-1", 1, undefined, ["contact-1"], true,
-    );
+    const result = await new XeroClient().invoicePage("access", "tenant-1", 1);
 
     const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
     expect(requestUrl).toContain("page=1");
-    expect(requestUrl).toContain("ContactIDs=contact-1");
     expect(requestUrl).not.toContain("where=");
     expect(requestUrl).not.toContain("Statuses=");
-    expect(requestUrl).not.toContain("pageSize=");
-    expect(requestUrl).not.toContain("summaryOnly=");
+    expect(requestUrl).toContain("pageSize=100");
+    expect(requestUrl).toContain("summaryOnly=true");
     expect(result.items).toEqual([expect.objectContaining({ invoiceId: "invoice-1", type: "ACCREC" })]);
   });
 
   it("uses incremental headers and stable paging for contacts", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      Pagination: { PageNumber: 2, PageCount: 3 },
+      pagination: { page: 2, pageSize: 100, pageCount: 2, itemCount: 200 },
       Contacts: [{ ContactID: "44444444-4444-4444-8444-444444444444", Name: "Student One" }],
     }), { status: 200, headers: { "content-type": "application/json" } }));
 
     await expect(new XeroClient().contactPage(
       "access", "tenant-1", 2, new Date("2026-10-10T00:00:00Z"),
-    )).resolves.toEqual(expect.objectContaining({ page: 2, pageCount: 3 }));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("page=2");
+    )).resolves.toEqual(expect.objectContaining({ page: 2, pageCount: 2 }));
+    const requestUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(requestUrl).toContain("page=2");
+    expect(requestUrl).toContain("pageSize=100");
+    expect(requestUrl).toContain("summaryOnly=true");
+    expect(requestUrl).not.toContain("order=");
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       "If-Modified-Since": "Sat, 10 Oct 2026 00:00:00 GMT",
     });

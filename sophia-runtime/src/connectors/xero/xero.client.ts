@@ -1,6 +1,8 @@
 import { BadGatewayException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 
+const XERO_CONTACT_PAGE_SIZE = 100;
+
 export type XeroTokenSet = {
   accessToken: string;
   refreshToken: string;
@@ -171,9 +173,9 @@ export class XeroClient {
     const url = new URL("https://api.xero.com/api.xro/2.0/Contacts");
     url.search = new URLSearchParams({
       page: String(page),
-      pageSize: "500",
+      pageSize: String(XERO_CONTACT_PAGE_SIZE),
       includeArchived: "true",
-      order: "UpdatedDateUTC ASC",
+      summaryOnly: "true",
     }).toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Contacts)) {
@@ -190,7 +192,7 @@ export class XeroClient {
         updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
       })),
       page,
-      pageCount: paginationPageCount(payload, page, payload.Contacts.length, 500),
+      pageCount: paginationPageCount(payload, page, payload.Contacts.length, XERO_CONTACT_PAGE_SIZE),
     };
   }
 
@@ -199,21 +201,13 @@ export class XeroClient {
     tenantId: string,
     page: number,
     modifiedSince?: Date,
-    contactIds: string[] = [],
-    compatibilityMode = false,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
-    const query = compatibilityMode
-      ? new URLSearchParams({ page: String(page) })
-      : new URLSearchParams({
-        where: 'Type=="ACCREC"',
-        Statuses: "DRAFT,SUBMITTED,AUTHORISED,PAID",
-        page: String(page),
-        pageSize: String(XERO_INVOICE_PAGE_SIZE),
-        summaryOnly: "true",
-      });
-    if (contactIds.length) query.set("ContactIDs", contactIds.join(","));
-    url.search = query.toString();
+    url.search = new URLSearchParams({
+      page: String(page),
+      pageSize: String(XERO_INVOICE_PAGE_SIZE),
+      summaryOnly: "true",
+    }).toString();
     const payload = record(await this.json(url.toString(), accessToken, tenantId, modifiedSince));
     if (!Array.isArray(payload.Invoices)) {
       throw new BadGatewayException("Xero returned an invalid invoices response.");
@@ -526,10 +520,13 @@ function paginationPageCount(
   itemCount: number,
   pageSize: number,
 ): number {
-  const pagination = payload.Pagination && typeof payload.Pagination === "object"
-    ? record(payload.Pagination)
+  const paginationValue = payload.Pagination ?? payload.pagination;
+  const pagination = paginationValue && typeof paginationValue === "object"
+    ? record(paginationValue)
     : null;
-  const count = pagination ? Number(pagination.PageCount) : Number.NaN;
+  const count = pagination
+    ? Number(pagination.PageCount ?? pagination.pageCount)
+    : Number.NaN;
   if (Number.isInteger(count) && count >= page) return count;
   return itemCount >= pageSize ? page + 1 : page;
 }

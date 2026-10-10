@@ -228,13 +228,9 @@ export class XeroConnectorService {
     connectionId: string,
     page: number,
     modifiedSince?: Date,
-    contactIds: string[] = [],
-    compatibilityMode = false,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.invoicePage(
-      accessToken, connection.xero_tenant_id, page, modifiedSince, contactIds, compatibilityMode,
-    );
+    return this.client.invoicePage(accessToken, connection.xero_tenant_id, page, modifiedSince);
   }
 
   private async syncAccess(tenantId: string, connectionId: string) {
