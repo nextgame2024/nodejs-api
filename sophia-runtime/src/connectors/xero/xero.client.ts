@@ -84,6 +84,9 @@ export type XeroInvoiceRecord = {
 
 export type XeroPage<T> = { items: T[]; page: number; pageCount: number };
 
+const XERO_INVOICE_PAGE_SIZE = 100;
+const XERO_GET_MAX_ATTEMPTS = 3;
+
 @Injectable()
 export class XeroClient {
   async exchangeCode(code: string, verifier: string, config: XeroConfig): Promise<XeroTokenSet> {
@@ -200,7 +203,7 @@ export class XeroClient {
     const url = new URL("https://api.xero.com/api.xro/2.0/Invoices");
     url.search = new URLSearchParams({
       page: String(page),
-      pageSize: "500",
+      pageSize: String(XERO_INVOICE_PAGE_SIZE),
       summaryOnly: "true",
       order: "UpdatedDateUTC ASC",
     }).toString();
@@ -229,7 +232,7 @@ export class XeroClient {
         };
       }),
       page,
-      pageCount: paginationPageCount(payload, page, payload.Invoices.length, 500),
+      pageCount: paginationPageCount(payload, page, payload.Invoices.length, XERO_INVOICE_PAGE_SIZE),
     };
   }
 
@@ -387,9 +390,26 @@ export class XeroClient {
     };
     if (tenantId) headers["xero-tenant-id"] = tenantId;
     if (modifiedSince) headers["If-Modified-Since"] = modifiedSince.toUTCString();
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-    if (!response.ok) throw providerError(response);
-    return parseJson(response);
+    for (let attempt = 0; attempt < XERO_GET_MAX_ATTEMPTS; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+      } catch {
+        if (attempt < XERO_GET_MAX_ATTEMPTS - 1) {
+          await wait(xeroRetryDelayMs(attempt));
+          continue;
+        }
+        throw xeroUnavailableError();
+      }
+      if (response.ok) return parseJson(response);
+      const retryDelay = retryableResponseDelayMs(response, attempt);
+      if (attempt < XERO_GET_MAX_ATTEMPTS - 1 && retryDelay !== null) {
+        await wait(retryDelay);
+        continue;
+      }
+      throw providerError(response);
+    }
+    throw xeroUnavailableError();
   }
 }
 
@@ -417,7 +437,39 @@ function providerError(response: Response): BadGatewayException {
     errorCode: code,
     providerStatus: response.status,
     correlationId,
-    retryAfterSeconds: retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null,
+    retryAfterSeconds: retryAfter && /^\d+$/.test(retryAfter)
+      ? Number(retryAfter)
+      : response.status >= 500 ? 300 : null,
+  });
+}
+
+function retryableResponseDelayMs(response: Response, attempt: number): number | null {
+  if (![408, 429, 500, 502, 503, 504].includes(response.status)) return null;
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after");
+    const retryAfterSeconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : 1;
+    // Long provider limits belong to the durable scheduler, not an HTTP worker.
+    if (retryAfterSeconds > 5) return null;
+    return Math.max(250, retryAfterSeconds * 1000);
+  }
+  return xeroRetryDelayMs(attempt);
+}
+
+function xeroRetryDelayMs(attempt: number): number {
+  return 500 * (2 ** attempt);
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function xeroUnavailableError(): BadGatewayException {
+  return new BadGatewayException({
+    message: "Xero could not complete the request.",
+    errorCode: "xero_unavailable",
+    providerStatus: null,
+    correlationId: null,
+    retryAfterSeconds: 300,
   });
 }
 

@@ -528,7 +528,7 @@ function safeProviderFailure(error: unknown): SafeProviderFailure {
     code: "xero_sync_failed",
     providerStatus: null,
     correlationId: null,
-    retryAfterSeconds: 900,
+    retryAfterSeconds: 300,
   };
   if (error && typeof error === "object" && "getResponse" in error) {
     const response = (error as { getResponse(): unknown }).getResponse();
@@ -543,7 +543,7 @@ function safeProviderFailure(error: unknown): SafeProviderFailure {
         : null;
       const requestedRetry = typeof value.retryAfterSeconds === "number"
         ? value.retryAfterSeconds
-        : providerStatus === 429 ? 900 : 900;
+        : providerStatus === 429 ? 60 : providerStatus !== null && providerStatus >= 500 ? 300 : 900;
       return {
         code,
         providerStatus,

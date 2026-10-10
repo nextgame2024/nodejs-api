@@ -11,7 +11,10 @@ const config: XeroConfig = {
   encryptionKey: Buffer.alloc(32, 1),
 };
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 describe("XeroClient", () => {
   it("exchanges an authorization code server-side with PKCE", async () => {
@@ -59,17 +62,38 @@ describe("XeroClient", () => {
   });
 
   it("classifies a non-JSON provider failure before attempting to parse it", async () => {
+    jest.useFakeTimers();
     jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response("upstream gateway", {
       status: 502,
       headers: { "content-type": "text/html", "xero-correlation-id": "correlation-1" },
     }));
 
-    await expect(new XeroClient().invoicePage("access", "tenant-1", 1))
+    const request = new XeroClient().invoicePage("access", "tenant-1", 1);
+    const expectation = expect(request)
       .rejects.toMatchObject({ response: expect.objectContaining({
         errorCode: "xero_unavailable",
         providerStatus: 502,
         correlationId: "correlation-1",
       }) });
+    await jest.runAllTimersAsync();
+    await expectation;
+  });
+
+  it("retries a transient Xero invoice failure and uses bounded invoice pages", async () => {
+    jest.useFakeTimers();
+    const fetchMock = jest.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("temporary Xero failure", { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ Invoices: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    const request = new XeroClient().invoicePage("access", "tenant-1", 1);
+    await jest.runAllTimersAsync();
+
+    await expect(request).resolves.toEqual({ items: [], page: 1, pageCount: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("pageSize=100");
   });
 
   it("uses incremental headers and stable paging for contacts", async () => {
