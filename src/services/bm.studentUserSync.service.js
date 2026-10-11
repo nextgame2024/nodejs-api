@@ -128,17 +128,14 @@ export async function syncOverview(actorId, query = {}) {
       FROM bm_xero_student_sync_candidates WHERE ${where} ORDER BY display_name,id LIMIT 25 OFFSET $4`,
       [scope.customer_id, status, search, (page - 1) * 25],
     );
-    const config = await db.query(
-      "SELECT automatic FROM bm_xero_student_sync_config WHERE customer_id=$1",
-      [scope.customer_id],
-    );
     return {
       records: records.rows,
       counts: Object.fromEntries(counts.rows.map((r) => [r.status, r.count])),
       runs: runs.rows,
       page,
       total: total.rows[0].count,
-      automatic: config.rows[0]?.automatic ?? false,
+      // Retain the response field for older clients. User sync is manual-only.
+      automatic: false,
     };
   });
 }
@@ -150,9 +147,9 @@ export async function enqueueSync(actorId, mode) {
     await installed(db);
     await db.query(
       `INSERT INTO bm_xero_student_sync_config(customer_id,company_id,actor_user_id,automatic)
-      VALUES($1,$2,$3,$4) ON CONFLICT(customer_id) DO UPDATE SET actor_user_id=$3,
-      automatic=bm_xero_student_sync_config.automatic OR $4`,
-      [scope.customer_id, scope.company_id, actorId, mode === "apply"],
+      VALUES($1,$2,$3,false) ON CONFLICT(customer_id) DO UPDATE SET actor_user_id=$3,
+      automatic=false`,
+      [scope.customer_id, scope.company_id, actorId],
     );
     const result = await db.query(
       `INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
@@ -586,26 +583,6 @@ export async function processSyncBatch() {
           error.code || error.status || "internal",
         );
       }
-    }
-    // Only companies that have explicitly run Apply opt into post-refresh reconciliation.
-    const configs = await db.query(
-      "SELECT * FROM bm_xero_student_sync_config WHERE automatic",
-    );
-    for (const config of configs.rows) {
-      await db.query("BEGIN");
-      await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [
-        config.customer_id,
-      ]);
-      await db.query(
-        `INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
-        SELECT $1,$2,'apply' WHERE EXISTS(SELECT 1 FROM sophia_runtime.student_operations_xero_sync_configurations
-        WHERE customer_id=$1 AND organisation_role='trust' AND enabled AND last_successful_sync_at>COALESCE(
-          (SELECT last_source_sync FROM bm_xero_student_sync_config WHERE customer_id=$1),'-infinity'))
-        AND NOT EXISTS(SELECT 1 FROM bm_xero_student_sync_runs WHERE customer_id=$1 AND status='failed' AND created_at>now()-interval '10 minutes')
-        ON CONFLICT DO NOTHING`,
-        [config.customer_id, config.actor_user_id],
-      );
-      await db.query("COMMIT");
     }
   } catch (error) {
     await db.query("ROLLBACK");

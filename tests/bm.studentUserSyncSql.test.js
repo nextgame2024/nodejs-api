@@ -222,17 +222,49 @@ suite("Student user sync — isolated PostgreSQL", () => {
       "pending",
     );
   });
-  test("successful Xero refresh schedules reconciliation without changing register totals", async () => {
+  test("Xero refresh does not sync users until a Chief Executive starts a run", async () => {
     const id = await addContact("C90 New Student", "new@example.test");
     const total = (
       await pool.query(
         "SELECT count(*)::int n FROM sophia_runtime.student_operations_xero_invoices",
       )
     ).rows[0].n;
+    // Existing installations may still have the former automatic flag enabled.
+    await pool.query(
+      "UPDATE bm_xero_student_sync_config SET automatic=true WHERE customer_id=$1",
+      [customer],
+    );
     await pool.query(
       "UPDATE sophia_runtime.student_operations_xero_sync_configurations SET last_successful_sync_at=now()",
     );
+    const runsBefore = (
+      await pool.query("SELECT count(*)::int n FROM bm_xero_student_sync_runs")
+    ).rows[0].n;
+    await processSyncBatch();
+    expect(
+      (
+        await pool.query("SELECT count(*)::int n FROM bm_xero_student_sync_runs")
+      ).rows[0].n,
+    ).toBe(runsBefore);
+    expect((await syncOverview(actor)).automatic).toBe(false);
+    expect(
+      (
+        await pool.query(
+          "SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1",
+          [id],
+        )
+      ).rows[0].student_id,
+    ).toBeNull();
+    await enqueueSync(actor, "apply");
     await drain();
+    expect(
+      (
+        await pool.query(
+          "SELECT automatic FROM bm_xero_student_sync_config WHERE customer_id=$1",
+          [customer],
+        )
+      ).rows[0].automatic,
+    ).toBe(false);
     expect(
       (
         await pool.query(
