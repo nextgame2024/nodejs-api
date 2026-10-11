@@ -217,7 +217,7 @@ export async function createUser({
   }
 }
 
-async function allocateStudentId(client) {
+export async function allocateStudentId(client) {
   const { rows } = await client.query(
     `UPDATE bm_student_id_counter SET last_value = last_value + 1
      WHERE id = true RETURNING last_value`,

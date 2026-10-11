@@ -26,6 +26,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Company",
     "Payments and Control",
     "Students",
+    "Sync users",
     "Sites",
     "Pallets",
     "Projects",

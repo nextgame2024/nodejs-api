@@ -2,6 +2,7 @@ import app from "./app.js";
 import { startInspectionWorkflow } from "./services/bm.inspectionWorkflow.service.js";
 import { pingDb } from "./config/db.js";
 import { ensureStartupMigrations } from "./config/startupMigrations.js";
+import { startStudentUserSyncWorker } from './services/bm.studentUserSync.service.js';
 
 const port = Number(process.env.PORT || 3300);
 
@@ -18,5 +19,6 @@ const port = Number(process.env.PORT || 3300);
   app.listen(port, () => {
     console.log(`API listening on :${port}`);
     startInspectionWorkflow();
+    startStudentUserSyncWorker();
   });
 })();

@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth.routes.js";
 import articleRoutes from "./routes/article.routes.js";
 import profileRoutes from "./routes/profile.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import studentUserSyncRoutes from "./routes/bm.studentUserSync.routes.js";
 import tagRoutes from "./routes/tag.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import healthRoutes from "./routes/health.routes.js";
@@ -63,6 +64,7 @@ app.use(express.json({ limit: jsonBodyLimit }));
 app.use(morgan("dev"));
 
 // Routes
+app.use('/api', studentUserSyncRoutes);
 app.use("/api", healthRoutes);
 app.use("/api", diagRoutes);
 app.use("/api", authRoutes);

@@ -1,4 +1,5 @@
 import * as modelNS from "../models/bm.navigation.links.model.js";
+import { canAccessStudentSync } from './bm.studentUserSync.service.js';
 
 const model = modelNS.default ?? modelNS;
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -42,9 +43,13 @@ export async function listActiveNavigationLinks(
   userId,
   { navigationType },
 ) {
-  const navigationLinks = await model.listActiveNavigationLinks(companyId, {
+  let navigationLinks = await model.listActiveNavigationLinks(companyId, {
     navigationType,
   });
+  if (navigationLinks.some(link => link.navigationLabel === 'Sync users') &&
+      !(await canAccessStudentSync(userId, companyId))) {
+    navigationLinks = navigationLinks.filter(link => link.navigationLabel !== 'Sync users');
+  }
   const includeSophiaAdmin =
     (!navigationType || navigationType === "header") &&
     (await model.hasActiveSophiaAdminEntitlement(companyId, userId));

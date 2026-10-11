@@ -1,0 +1,637 @@
+import pool from "../config/db.js";
+import bcrypt from "bcryptjs";
+import { allocateStudentId } from "../models/user.model.js";
+import {
+  groupContacts,
+  candidateReason,
+  normalizeStudentName,
+  usernameBase,
+  validEmail,
+} from "./bm.studentUserSync.normalization.js";
+
+const fail = (message, status = 409) =>
+  Object.assign(new Error(message), { status });
+const clean = (value) => String(value ?? "").trim();
+const SOURCE = `FROM sophia_runtime.student_operations_xero_invoices i
+ JOIN sophia_runtime.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
+ JOIN sophia_runtime.student_operations_xero_sync_runs seen ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
+ WHERE i.customer_id=$1 AND i.xero_connection_id=$2
+ AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
+ AND i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')
+ AND seen.created_at>=COALESCE((SELECT max(f.created_at) FROM sophia_runtime.student_operations_xero_sync_runs f
+ WHERE f.customer_id=i.customer_id AND f.xero_connection_id=i.xero_connection_id AND f.status='succeeded'
+ AND f.mode IN ('initial','reconciliation')),seen.created_at)`;
+
+export async function authorizeSync(db, actorId) {
+  const { rows } = await db.query(
+    `SELECT c.company_id,rc.customer_id FROM users u
+    JOIN bm_company c ON c.company_id=u.company_id
+    JOIN sophia_runtime.customers rc ON rc.external_company_id=c.company_id::text AND rc.status='active'
+    WHERE u.id=$1 AND u.status='active' AND c.status='active' AND c.workspace_profile='student_operations'`,
+    [actorId],
+  );
+  if (rows.length !== 1)
+    throw fail(
+      "Sync users is only available in your student operations company.",
+      403,
+    );
+  const scope = rows[0];
+  await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [
+    scope.customer_id,
+  ]);
+  const access = await db.query(
+    `SELECT 1 FROM sophia_runtime.business_pack_entitlements
+    WHERE customer_id=$1 AND identity_user_id=$2 AND pack_id='student-operations'
+    AND status='active' AND role_key='chief_executive'`,
+    [scope.customer_id, actorId],
+  );
+  if (!access.rowCount)
+    throw fail(
+      "Only a Chief Executive can sync or resolve Student users.",
+      403,
+    );
+  return scope;
+}
+async function transaction(fn) {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (error) {
+    await db.query("ROLLBACK");
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+export async function canAccessStudentSync(actorId, companyId) {
+  try {
+    return await transaction(
+      async (db) => (await authorizeSync(db, actorId)).company_id === companyId,
+    );
+  } catch (error) {
+    if (error.status === 403) return false;
+    throw error;
+  }
+}
+async function installed(db) {
+  const r = await db.query(
+    "SELECT to_regclass('public.bm_xero_student_sync_runs') AS table_name",
+  );
+  if (!r.rows[0].table_name)
+    throw fail(
+      "Sync users is not installed yet. Ask your administrator to apply the database migration.",
+      503,
+    );
+}
+async function audit(db, scope, actor, action, candidate = null, details = {}) {
+  await db.query(
+    `INSERT INTO bm_xero_student_sync_audit(customer_id,actor_user_id,candidate_id,action,details)
+    VALUES($1,$2,$3,$4,$5)`,
+    [scope.customer_id, actor, candidate, action, JSON.stringify(details)],
+  );
+}
+export async function syncOverview(actorId, query = {}) {
+  return transaction(async (db) => {
+    const scope = await authorizeSync(db, actorId);
+    await installed(db);
+    const page = Math.max(
+      1,
+      Math.min(10000, Number.parseInt(query.page, 10) || 1),
+    );
+    const status = ["ready", "pending", "linked", "excluded"].includes(
+      query.status,
+    )
+      ? query.status
+      : "";
+    const search = clean(query.q).slice(0, 200);
+    const runs = await db.query(
+      `SELECT id,mode,status,phase,created_count,processed_count,error,created_at,updated_at
+      FROM bm_xero_student_sync_runs WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 10`,
+      [scope.customer_id],
+    );
+    const filter = `customer_id=$1 AND scan_run_id=(SELECT id FROM bm_xero_student_sync_runs
+      WHERE customer_id=$1 AND phase IN ('apply','done') ORDER BY created_at DESC LIMIT 1)`;
+    const counts = await db.query(
+      `SELECT status,count(*)::int count FROM bm_xero_student_sync_candidates WHERE ${filter} GROUP BY status`,
+      [scope.customer_id],
+    );
+    const where = `${filter} AND ($2='' OR status=$2) AND ($3='' OR display_name ILIKE '%'||$3||'%' OR source_names::text ILIKE '%'||$3||'%')`;
+    const total = await db.query(
+      `SELECT count(*)::int count FROM bm_xero_student_sync_candidates WHERE ${where}`,
+      [scope.customer_id, status, search],
+    );
+    const records = await db.query(
+      `SELECT id,display_name,source_names,emails,record_count,status,reason,student_id,resolution_name,resolution_email
+      FROM bm_xero_student_sync_candidates WHERE ${where} ORDER BY display_name,id LIMIT 25 OFFSET $4`,
+      [scope.customer_id, status, search, (page - 1) * 25],
+    );
+    const config = await db.query(
+      "SELECT automatic FROM bm_xero_student_sync_config WHERE customer_id=$1",
+      [scope.customer_id],
+    );
+    return {
+      records: records.rows,
+      counts: Object.fromEntries(counts.rows.map((r) => [r.status, r.count])),
+      runs: runs.rows,
+      page,
+      total: total.rows[0].count,
+      automatic: config.rows[0]?.automatic ?? false,
+    };
+  });
+}
+export async function enqueueSync(actorId, mode) {
+  if (!["preview", "apply"].includes(mode))
+    throw fail("Choose preview or apply.", 400);
+  return transaction(async (db) => {
+    const scope = await authorizeSync(db, actorId);
+    await installed(db);
+    await db.query(
+      `INSERT INTO bm_xero_student_sync_config(customer_id,company_id,actor_user_id,automatic)
+      VALUES($1,$2,$3,$4) ON CONFLICT(customer_id) DO UPDATE SET actor_user_id=$3,
+      automatic=bm_xero_student_sync_config.automatic OR $4`,
+      [scope.customer_id, scope.company_id, actorId, mode === "apply"],
+    );
+    const result = await db.query(
+      `INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
+      VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,
+      [scope.customer_id, actorId, mode],
+    );
+    await audit(db, scope, actorId, `sync.${mode}.requested`);
+    return { queued: !!result.rowCount };
+  });
+}
+export async function resolveCandidate(actorId, id, input) {
+  return transaction(async (db) => {
+    const scope = await authorizeSync(db, actorId);
+    await installed(db);
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `student-sync:${scope.customer_id}`,
+    ]);
+    const r = await db.query(
+      "SELECT * FROM bm_xero_student_sync_candidates WHERE customer_id=$1 AND id=$2 FOR UPDATE",
+      [scope.customer_id, id],
+    );
+    if (!r.rowCount) throw fail("Record not found.", 404);
+    const row = r.rows[0];
+    if (row.student_id && input.action !== "correct")
+      throw fail(
+        "This record is already linked. Existing student links cannot be replaced here.",
+      );
+    if (input.action === "exclude") {
+      await db.query(
+        "UPDATE bm_xero_student_sync_candidates SET status='excluded',reason='Excluded by Chief Executive',resolved_by=$3 WHERE customer_id=$1 AND id=$2",
+        [scope.customer_id, id, actorId],
+      );
+    } else if (input.action === "link") {
+      const user = await db.query(
+        "SELECT id,student_id FROM users WHERE company_id=$1 AND student_id=$2 AND type='student' AND status='active'",
+        [scope.company_id, clean(input.studentId)],
+      );
+      if (user.rowCount !== 1)
+        throw fail("Enter an active Student ID from your company.", 400);
+      await linkStudent(db, scope, row, user.rows[0].student_id);
+    } else if (input.action === "correct") {
+      const name = normalizeStudentName(input.name).name;
+      const email = clean(input.email).toLowerCase();
+      if (
+        !name ||
+        name.length > 500 ||
+        !/\p{L}/u.test(name) ||
+        !validEmail(email)
+      )
+        throw fail("Enter a student name and valid email.", 400);
+      await db.query(
+        `UPDATE bm_xero_student_sync_candidates SET resolution_name=$3,resolution_email=$4,
+        status='ready',reason=NULL,resolved_by=$5,processed_run_id=NULL WHERE customer_id=$1 AND id=$2`,
+        [scope.customer_id, id, name, email, actorId],
+      );
+    } else throw fail("Choose correct, link or exclude.", 400);
+    await audit(db, scope, actorId, `candidate.${input.action}`, id, {
+      studentId: input.action === "link" ? clean(input.studentId) : undefined,
+    });
+    return { saved: true };
+  });
+}
+async function linkStudent(db, scope, row, studentId) {
+  await db.query(
+    `INSERT INTO bm_xero_student_identities(customer_id,company_id,student_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+    [scope.customer_id, scope.company_id, studentId],
+  );
+  const conflict = await db.query(
+    `SELECT 1 FROM bm_xero_student_contact_links WHERE customer_id=$1 AND connection_id=$2
+    AND contact_id=ANY($3::uuid[]) AND student_id<>$4
+    UNION ALL SELECT 1 FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1
+    AND xero_connection_id=$2 AND xero_contact_id=ANY($3::uuid[]) AND student_id<>$4`,
+    [scope.customer_id, row.connection_id, row.contact_ids, studentId],
+  );
+  if (conflict.rowCount)
+    throw fail("These contacts already belong to another student.");
+  await db.query(
+    `INSERT INTO bm_xero_student_contact_links(customer_id,connection_id,contact_id,student_id)
+    SELECT $1,$2,unnest($3::uuid[]),$4 ON CONFLICT DO NOTHING`,
+    [scope.customer_id, row.connection_id, row.contact_ids, studentId],
+  );
+  await db.query(
+    `UPDATE sophia_runtime.student_operations_xero_invoices SET student_id=$4
+    WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=ANY($3::uuid[]) AND student_id IS NULL`,
+    [scope.customer_id, row.connection_id, row.contact_ids, studentId],
+  );
+  await db.query(
+    `UPDATE bm_xero_student_sync_candidates SET student_id=$3,status='linked',reason=NULL WHERE customer_id=$1 AND id=$2`,
+    [scope.customer_id, row.id, studentId],
+  );
+}
+
+async function scan(db, run, scope) {
+  const refreshing = await db.query(
+    `SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs
+    WHERE customer_id=$1 AND status IN ('queued','processing')`,
+    [scope.customer_id],
+  );
+  if (refreshing.rowCount)
+    throw fail(
+      "Xero is still refreshing. Retry Sync users when the refresh finishes.",
+    );
+  const connection = await db.query(
+    `SELECT xero_connection_id,last_successful_sync_at FROM sophia_runtime.student_operations_xero_sync_configurations
+    WHERE customer_id=$1 AND enabled AND organisation_role='trust'`,
+    [scope.customer_id],
+  );
+  if (connection.rowCount !== 1 || !connection.rows[0].last_successful_sync_at)
+    throw fail("Refresh Xero successfully before syncing users.");
+  const source = connection.rows[0];
+  const contacts = await db.query(
+    `SELECT c.xero_contact_id,c.legal_name,c.email,count(*)::int records ${SOURCE}
+    GROUP BY c.xero_contact_id,c.legal_name,c.email`,
+    [scope.customer_id, source.xero_connection_id],
+  );
+  const groups = groupContacts(contacts.rows);
+  const owners = new Map();
+  for (const g of groups)
+    for (const email of g.emails) {
+      const names = owners.get(email) || new Set();
+      names.add(g.key);
+      owners.set(email, names);
+    }
+  const existing = (
+    await db.query(
+      "SELECT company_id,type,status,name,email,student_id FROM users WHERE lower(email)=ANY($1::text[])",
+      [[...owners.keys()]],
+    )
+  ).rows;
+  const payload = groups.map((g) => {
+    let reason = candidateReason(g, owners);
+    const users = existing.filter((u) =>
+      g.emails.includes(u.email.toLowerCase()),
+    );
+    if (
+      !reason &&
+      users.length &&
+      !(
+        users.length === 1 &&
+        users[0].company_id === scope.company_id &&
+        users[0].type === "student" &&
+        users[0].status === "active" &&
+        normalizeStudentName(users[0].name).key === g.key
+      )
+    )
+      reason =
+        "Email already belongs to an account; review or link an existing Student ID";
+    return {
+      name_key: g.key,
+      display_name: g.name,
+      source_names: g.names,
+      emails: g.emails,
+      contact_ids: g.contacts,
+      record_count: g.records,
+      status: reason ? "pending" : "ready",
+      reason,
+    };
+  });
+  await db.query(
+    `INSERT INTO bm_xero_student_sync_candidates(customer_id,connection_id,name_key,display_name,source_names,emails,contact_ids,record_count,status,reason,scan_run_id)
+    SELECT $1,$2,p.name_key,p.display_name,p.source_names,p.emails,p.contact_ids,p.record_count,p.status,p.reason,$3
+    FROM jsonb_to_recordset($4::jsonb) AS p(name_key text,display_name text,source_names jsonb,emails jsonb,contact_ids uuid[],record_count int,status text,reason text)
+    ON CONFLICT(customer_id,name_key) DO UPDATE SET connection_id=EXCLUDED.connection_id,display_name=EXCLUDED.display_name,
+    source_names=EXCLUDED.source_names,emails=EXCLUDED.emails,contact_ids=EXCLUDED.contact_ids,record_count=EXCLUDED.record_count,scan_run_id=$3,
+    status=CASE WHEN bm_xero_student_sync_candidates.student_id IS NOT NULL THEN 'linked'
+      WHEN bm_xero_student_sync_candidates.status='excluded' THEN 'excluded'
+      WHEN bm_xero_student_sync_candidates.resolved_by IS NOT NULL THEN 'ready' ELSE EXCLUDED.status END,
+    reason=CASE WHEN bm_xero_student_sync_candidates.student_id IS NOT NULL OR bm_xero_student_sync_candidates.resolved_by IS NOT NULL THEN NULL ELSE EXCLUDED.reason END`,
+    [
+      scope.customer_id,
+      source.xero_connection_id,
+      run.id,
+      JSON.stringify(payload),
+    ],
+  );
+  // Keep PostgreSQL timestamp precision; round-tripping through JS Date can cause endless refresh jobs.
+  await db.query(
+    `UPDATE bm_xero_student_sync_runs SET source_sync=(SELECT last_successful_sync_at
+    FROM sophia_runtime.student_operations_xero_sync_configurations WHERE customer_id=$2 AND xero_connection_id=$3),
+    phase=$4,status=$5,processed_count=$6,updated_at=now() WHERE id=$1`,
+    [
+      run.id,
+      scope.customer_id,
+      source.xero_connection_id,
+      run.mode === "preview" ? "done" : "apply",
+      run.mode === "preview" ? "succeeded" : "processing",
+      run.mode === "preview" ? groups.length : 0,
+    ],
+  );
+}
+async function applyCandidate(db, run, scope, row) {
+  const mapped = await db.query(
+    `SELECT contact_id, student_id FROM bm_xero_student_contact_links
+    WHERE customer_id=$1 AND connection_id=$2 AND contact_id=ANY($3::uuid[])`,
+    [scope.customer_id, row.connection_id, row.contact_ids],
+  );
+  const ids = new Set(mapped.rows.map((r) => r.student_id));
+  if (row.student_id) ids.add(row.student_id);
+  if (ids.size > 1)
+    throw fail("Contacts are linked to different students; review required.");
+  if (ids.size === 1) {
+    const knownContacts = new Set(mapped.rows.map((link) => link.contact_id));
+    if (
+      row.contact_ids.some((id) => !knownContacts.has(id)) &&
+      !row.resolution_email
+    ) {
+      const linkedUser = await db.query(
+        "SELECT email FROM users WHERE company_id=$1 AND student_id=$2",
+        [scope.company_id, [...ids][0]],
+      );
+      if (
+        row.emails.some(
+          (email) =>
+            email.toLowerCase() !== linkedUser.rows[0]?.email.toLowerCase(),
+        )
+      ) {
+        throw fail(
+          "New contacts have a different email from the linked student. Confirm the name and email before linking them.",
+        );
+      }
+    }
+    await linkStudent(db, scope, row, [...ids][0]);
+    return false;
+  }
+  if (row.status !== "ready") return false;
+  const name = row.resolution_name || row.display_name;
+  const key = normalizeStudentName(name).key;
+  const email = row.resolution_email || row.emails[0];
+  if (!validEmail(email)) throw fail("Email is missing or invalid.");
+  const siblings = await db.query(
+    `SELECT id,display_name,resolution_name FROM bm_xero_student_sync_candidates
+    WHERE customer_id=$1 AND id<>$2 AND status<>'excluded' AND scan_run_id=$3
+    AND (resolution_email=$4 OR (resolution_email IS NULL AND emails ? $4))`,
+    [scope.customer_id, row.id, run.id, email],
+  );
+  if (
+    siblings.rows.some(
+      (r) =>
+        normalizeStudentName(r.resolution_name || r.display_name).key !== key,
+    )
+  )
+    throw fail(
+      "Email is shared by different names; correct the email or link an existing Student ID.",
+    );
+  const users = await db.query(
+    `SELECT id,company_id,name,email,type,status,student_id FROM users
+    WHERE company_id=$1 OR lower(email)=$2`,
+    [scope.company_id, email],
+  );
+  const matches = users.rows.filter(
+    (u) =>
+      u.company_id === scope.company_id &&
+      u.type === "student" &&
+      normalizeStudentName(u.name).key === key,
+  );
+  const emailMatches = users.rows.filter(
+    (u) => u.email.toLowerCase() === email,
+  );
+  if (matches.length > 1)
+    throw fail(
+      "Multiple Student users have this name; link the correct Student ID.",
+    );
+  if (matches.length === 1) {
+    const user = matches[0];
+    if (
+      user.status !== "active" ||
+      user.email.toLowerCase() !== email ||
+      emailMatches.length !== 1
+    )
+      throw fail(
+        "Existing Student details differ; review and link the correct Student ID.",
+      );
+    let studentId = user.student_id;
+    if (!studentId) {
+      studentId = await allocateStudentId(db);
+      await db.query("UPDATE users SET student_id=$2 WHERE id=$1", [
+        user.id,
+        studentId,
+      ]);
+    }
+    await linkStudent(db, scope, row, studentId);
+    return false;
+  }
+  if (emailMatches.length)
+    throw fail(
+      "Email already belongs to an account; correct it or link an existing Student ID.",
+    );
+  // Serialize allocation across imports. Database uniqueness remains the final race guard.
+  await db.query(
+    "SELECT pg_advisory_xact_lock(hashtext('student-sync:account-allocation'))",
+  );
+  const base = usernameBase(name);
+  let username = base;
+  let suffix = 2;
+  while (
+    (await db.query("SELECT 1 FROM users WHERE lower(username)=$1", [username]))
+      .rowCount
+  )
+    username = `${base}${suffix++}`;
+  const studentId = await allocateStudentId(db);
+  const hash = await bcrypt.hash("openAustralia*", 10);
+  await db.query(
+    `INSERT INTO users(id,company_id,name,email,username,password,type,status,student_id,student_name_in_xero,image,bio)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,'student','active',$6,$7,'','')`,
+    [
+      scope.company_id,
+      name,
+      email,
+      username,
+      hash,
+      studentId,
+      row.source_names[0],
+    ],
+  );
+  await linkStudent(db, scope, row, studentId);
+  await audit(db, scope, run.actor_user_id, "student.created", row.id, {
+    studentId,
+    normalizationVersion: 1,
+    temporaryPassword: true,
+  });
+  return true;
+}
+
+// Transaction-scoped locks also work with transaction-pooling database URLs.
+// Each bounded batch commits accounts, mappings and checkpoints together.
+export async function processSyncBatch() {
+  const db = await pool.connect();
+  try {
+    const available = await db.query(
+      "SELECT to_regclass('public.bm_xero_student_sync_runs') AS name",
+    );
+    if (!available.rows[0].name) return;
+    const runs = await db.query(
+      "SELECT * FROM bm_xero_student_sync_runs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 10",
+    );
+    for (const queuedRun of runs.rows) {
+      try {
+        await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+        if (
+          !(
+            await db.query(
+              "SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired",
+              [`student-sync:${queuedRun.customer_id}`],
+            )
+          ).rows[0].acquired
+        ) {
+          await db.query("ROLLBACK");
+          continue;
+        }
+        const current = await db.query(
+          "SELECT * FROM bm_xero_student_sync_runs WHERE id=$1 AND status IN ('queued','processing') FOR UPDATE",
+          [queuedRun.id],
+        );
+        if (!current.rowCount) {
+          await db.query("ROLLBACK");
+          continue;
+        }
+        const run = current.rows[0];
+        const scope = await authorizeSync(db, run.actor_user_id);
+        if (scope.customer_id !== run.customer_id)
+          throw fail(
+            "The requesting user no longer belongs to this company.",
+            403,
+          );
+        if (run.phase === "scan") {
+          await scan(db, run, scope);
+          await db.query("COMMIT");
+          continue;
+        }
+        const candidates = await db.query(
+          `SELECT * FROM bm_xero_student_sync_candidates WHERE customer_id=$1 AND scan_run_id=$2
+          AND processed_run_id IS DISTINCT FROM $2 ORDER BY name_key,id LIMIT 20`,
+          [run.customer_id, run.id],
+        );
+        for (const row of candidates.rows) {
+          await db.query("SAVEPOINT candidate");
+          let created = false;
+          try {
+            if (row.status !== "excluded")
+              created = await applyCandidate(db, run, scope, row);
+          } catch (error) {
+            await db.query("ROLLBACK TO SAVEPOINT candidate");
+            if (!error.status && error.code !== "23505") throw error;
+            await db.query(
+              "UPDATE bm_xero_student_sync_candidates SET status='pending',reason=$3 WHERE customer_id=$1 AND id=$2",
+              [
+                scope.customer_id,
+                row.id,
+                error.status
+                  ? error.message
+                  : "Account details were used by another account. Review and retry.",
+              ],
+            );
+          }
+          await db.query(
+            "UPDATE bm_xero_student_sync_candidates SET processed_run_id=$3 WHERE customer_id=$1 AND id=$2",
+            [scope.customer_id, row.id, run.id],
+          );
+          await db.query(
+            "UPDATE bm_xero_student_sync_runs SET processed_count=processed_count+1,created_count=created_count+$2,updated_at=now() WHERE id=$1",
+            [run.id, created ? 1 : 0],
+          );
+          await db.query("RELEASE SAVEPOINT candidate");
+        }
+        if (!candidates.rowCount) {
+          await db.query(
+            "UPDATE bm_xero_student_sync_runs SET status='succeeded',phase='done',updated_at=now() WHERE id=$1",
+            [run.id],
+          );
+          await db.query(
+            "UPDATE bm_xero_student_sync_config SET last_source_sync=(SELECT source_sync FROM bm_xero_student_sync_runs WHERE id=$2) WHERE customer_id=$1",
+            [scope.customer_id, run.id],
+          );
+        }
+        await db.query("COMMIT");
+      } catch (error) {
+        await db.query("ROLLBACK");
+        // Another worker/manual user update can legitimately cause a serialization retry.
+        if (error.code === "40001" || error.code === "40P01") continue;
+        await db.query(
+          "UPDATE bm_xero_student_sync_runs SET status='failed',error=$2,updated_at=now() WHERE id=$1 AND status IN ('queued','processing')",
+          [
+            queuedRun.id,
+            error.status
+              ? error.message
+              : "Sync could not finish. Completed accounts are saved; retry the run.",
+          ],
+        );
+        console.error(
+          "Student user sync failed",
+          error.code || error.status || "internal",
+        );
+      }
+    }
+    // Only companies that have explicitly run Apply opt into post-refresh reconciliation.
+    const configs = await db.query(
+      "SELECT * FROM bm_xero_student_sync_config WHERE automatic",
+    );
+    for (const config of configs.rows) {
+      await db.query("BEGIN");
+      await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [
+        config.customer_id,
+      ]);
+      await db.query(
+        `INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
+        SELECT $1,$2,'apply' WHERE EXISTS(SELECT 1 FROM sophia_runtime.student_operations_xero_sync_configurations
+        WHERE customer_id=$1 AND organisation_role='trust' AND enabled AND last_successful_sync_at>COALESCE(
+          (SELECT last_source_sync FROM bm_xero_student_sync_config WHERE customer_id=$1),'-infinity'))
+        AND NOT EXISTS(SELECT 1 FROM bm_xero_student_sync_runs WHERE customer_id=$1 AND status='failed' AND created_at>now()-interval '10 minutes')
+        ON CONFLICT DO NOTHING`,
+        [config.customer_id, config.actor_user_id],
+      );
+      await db.query("COMMIT");
+    }
+  } catch (error) {
+    await db.query("ROLLBACK");
+    console.error("Student sync worker unavailable", error.code || "internal");
+  } finally {
+    db.release();
+  }
+}
+export function startStudentUserSyncWorker() {
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await processSyncBatch();
+    } catch (error) {
+      console.error(
+        "Student sync connection unavailable",
+        error.code || "internal",
+      );
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = setInterval(tick, 2000);
+  timer.unref();
+  void tick();
+  return timer;
+}
