@@ -466,15 +466,30 @@ export async function unsubscribeUserFromEmails(userId) {
 }
 
 /** List users by company (company‑scoped) */
+const USER_LIST_SORT_EXPRESSIONS = Object.freeze({
+  name: "LOWER(COALESCE(name, username, ''))",
+  username: "LOWER(COALESCE(username, ''))",
+  email: "LOWER(COALESCE(email, ''))",
+  company: "LOWER(COALESCE((SELECT c.company_name FROM bm_company c WHERE c.company_id = users.company_id LIMIT 1), ''))",
+  type: "LOWER(COALESCE(type, ''))",
+  status: "LOWER(COALESCE(status, 'active'))",
+});
+
 export async function listUsersByCompany({
   companyId,
   q,
   status,
   type,
+  sort = "name",
+  direction = "asc",
   limit,
   offset,
 }) {
   await ensureUsersSiteSchema();
+  const sortExpression = Object.hasOwn(USER_LIST_SORT_EXPRESSIONS, sort)
+    ? USER_LIST_SORT_EXPRESSIONS[sort]
+    : USER_LIST_SORT_EXPRESSIONS.name;
+  const sortDirection = direction === "desc" ? "DESC" : "ASC";
   const filters = [];
   const params = [];
   let i = 1;
@@ -567,8 +582,10 @@ export async function listUsersByCompany({
      ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
      ORDER BY
        (COALESCE(status, 'active') = 'archived') ASC,
+       ${sortExpression} ${sortDirection},
        LOWER(COALESCE(name, username, '')) ASC,
-       createdat DESC
+       createdat DESC,
+       id ASC
      LIMIT $${i++} OFFSET $${i}`,
     params,
   );

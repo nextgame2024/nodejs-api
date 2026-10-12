@@ -12,7 +12,7 @@ jest.unstable_mockModule('../src/models/bm.sites.model.js', () => ({
   ensureSitesSchema: jest.fn(async () => {}),
 }));
 
-const { createUser, updateUserById } = await import('../src/models/user.model.js');
+const { createUser, updateUserById, listUsersByCompany } = await import('../src/models/user.model.js');
 const { normalizeStudentNameInXero } = await import('../src/utils/userStudentFields.js');
 const companyId = '11111111-1111-4111-8111-111111111111';
 const actorUserId = '22222222-2222-4222-8222-222222222222';
@@ -27,6 +27,19 @@ describe('Business Manager student user fields', () => {
     query.mockReset();
     release.mockClear();
     connect.mockClear();
+    poolQuery.mockReset();
+    poolQuery.mockResolvedValue({});
+  });
+
+  test('sorts the server-side user page with an allowed column and stable tie-breaker', async () => {
+    poolQuery.mockImplementation(async () => ({ rows: [] }));
+
+    await listUsersByCompany({ companyId, status: 'active', sort: 'email', direction: 'desc', limit: 25, offset: 25 });
+
+    const listQuery = poolQuery.mock.calls.find(([sql]) => sql.includes('ORDER BY') && sql.includes('FROM users'));
+    expect(listQuery[0]).toContain("LOWER(COALESCE(email, '')) DESC");
+    expect(listQuery[0]).toContain('id ASC');
+    expect(listQuery[1]).toEqual([companyId, 'active', 25, 25]);
   });
 
   test('stores a Xero student name only for Student type in Student Operations', () => {

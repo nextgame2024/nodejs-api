@@ -27,6 +27,7 @@ const DEFAULT_REGISTRATION_COMPANY_ID =
 const isSuperAdmin = (req) => req.user?.id === SUPER_ADMIN_ID;
 const USER_TYPES = new Set(["employee", "supplier", "client", "student", "advisor"]);
 const USER_STATUSES = new Set(["active", "archived"]);
+const USER_LIST_SORTS = new Set(["name", "username", "email", "company", "type", "status"]);
 
 const isUniqueViolation = (e) =>
   e?.code === "23505" || e?.code === "ER_DUP_ENTRY"; // PG + legacy MySQL check
@@ -316,6 +317,11 @@ export const listUsers = asyncHandler(async (req, res) => {
 
   const q = (req.query.q || "").toString().trim();
   const status = (req.query.status || "").toString().trim() || null;
+  const sort = (req.query.sort || "name").toString().trim().toLowerCase();
+  const direction = (req.query.direction || "asc").toString().trim().toLowerCase();
+  if (!USER_LIST_SORTS.has(sort) || !["asc", "desc"].includes(direction)) {
+    return res.status(400).json({ error: "Invalid user sort order" });
+  }
   const rawType =
     req.query.type === undefined
       ? undefined
@@ -331,6 +337,8 @@ export const listUsers = asyncHandler(async (req, res) => {
       q,
       status,
       type,
+      sort,
+      direction,
       limit,
       offset,
     }),
