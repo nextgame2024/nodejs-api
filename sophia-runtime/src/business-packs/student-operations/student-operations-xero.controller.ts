@@ -55,6 +55,15 @@ export class StudentOperationsXeroController {
     return this.sync.invoices(principal.tenantId, connectionId, query);
   }
 
+  @Get("connections/:connectionId/student-invoices/payment-tracks")
+  studentInvoicePaymentTracks(
+    @Req() request: WorkspaceRequest,
+    @Param("connectionId") connectionId: string,
+  ) {
+    const principal = this.authorize(request);
+    return this.sync.invoicePaymentTracks(principal.tenantId, connectionId);
+  }
+
   @Get("connections/:connectionId/student-invoices/:invoiceId")
   studentInvoice(
     @Req() request: WorkspaceRequest,

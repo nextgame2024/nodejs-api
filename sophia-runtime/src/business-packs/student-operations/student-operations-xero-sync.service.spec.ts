@@ -139,6 +139,52 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(query.mock.calls.at(-1)?.[0]).toContain("count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()");
   });
 
+  it("applies status, inclusive invoice dates, and payment track before pagination", async () => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => ({
+      rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{ exists: 1 }] : [],
+      rowCount: sql.includes("FROM sophia_runtime.xero_connections") ? 1 : 0,
+    }));
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+
+    await service.invoices(tenantId, connectionId, {
+      page: "2", limit: "25", q: "Fabian", status: "DRAFT",
+      dateFrom: "2026-01-01", dateTo: "2026-12-31", paymentTrack: "Pending",
+    });
+
+    const [sql, params] = query.mock.calls.at(-1)!;
+    expect(sql).toContain("i.invoice_status = $4");
+    expect(sql).toContain("i.invoice_date >= $5::date");
+    expect(sql).toContain("i.invoice_date <= $6::date");
+    expect(sql).toContain("lower(btrim(i.payment_track)) = lower($7)");
+    expect(params).toEqual([tenantId, connectionId, "%Fabian%", "DRAFT", "2026-01-01", "2026-12-31", "Pending", 25, 25]);
+    await expect(service.invoices(tenantId, connectionId, {
+      dateFrom: "2026-12-31", dateTo: "2026-01-01",
+    })).rejects.toThrow("Invalid Xero invoice query.");
+  });
+
+  it("lists distinct payment tracks from the tenant's current invoice register", async () => {
+    const query = jest.fn(async (sql: string) => ({
+      rows: sql.includes("FROM sophia_runtime.xero_connections")
+        ? [{ exists: 1 }] : [{ payment_track: "Pending" }, { payment_track: "Review" }],
+      rowCount: 2,
+    }));
+    const database = {
+      tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
+        work({ query })),
+    };
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+
+    expect(await service.invoicePaymentTracks(tenantId, connectionId)).toEqual({
+      paymentTracks: ["Pending", "Review"],
+    });
+    expect(query).toHaveBeenLastCalledWith(expect.stringContaining("GROUP BY lower(btrim(i.payment_track))"),
+      [tenantId, connectionId]);
+  });
+
   it("returns stored line items for invoice detail without calling Xero", async () => {
     const invoiceId = "77777777-7777-4777-8777-777777777771";
     const query = jest.fn(async (sql: string) => {

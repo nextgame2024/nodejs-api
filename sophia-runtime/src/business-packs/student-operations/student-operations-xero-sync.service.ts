@@ -33,9 +33,14 @@ const InvoiceQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).optional(),
+  status: z.enum(["DRAFT", "SUBMITTED", "AUTHORISED", "PAID"]).optional(),
+  dateFrom: z.iso.date().optional(),
+  dateTo: z.iso.date().optional(),
+  paymentTrack: z.string().trim().min(1).max(200).optional(),
   sort: z.enum(["invoiceNumber", "reference", "student", "date", "dueDate", "paid", "due", "status", "sent", "advisor", "paymentTrack"]).default("date"),
   direction: z.enum(["asc", "desc"]).default("desc"),
-}).strict();
+}).strict().refine((value) => !value.dateFrom || !value.dateTo || value.dateFrom <= value.dateTo,
+  { message: "The start date must be on or before the end date." });
 
 const InvoiceSortExpressions = {
   invoiceNumber: "lower(COALESCE(i.invoice_number, ''))",
@@ -357,17 +362,39 @@ export class StudentOperationsXeroSyncService {
   async invoices(tenantId: string, connectionId: string, input: unknown) {
     const parsed = InvoiceQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
-    const { page, limit, q, sort, direction } = parsed.data;
+    const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction } = parsed.data;
     const schema = runtimeConfig().schema;
     return this.database.tenantReadTransaction(tenantId, async (db) => {
       await assertConnection(db, schema, tenantId, connectionId);
       const params: unknown[] = [tenantId, connectionId];
-      const search = q ? `AND (
-        i.invoice_number ILIKE $3 OR i.invoice_reference ILIKE $3 OR c.legal_name ILIKE $3
-        OR c.email ILIKE $3 OR c.contact_number ILIKE $3 OR c.account_number ILIKE $3
-        OR i.concept ILIKE $3 OR i.advisor_name ILIKE $3 OR i.payment_track ILIKE $3
-      )` : "";
-      if (q) params.push(`%${q}%`);
+      const filters: string[] = [];
+      if (q) {
+        params.push(`%${q}%`);
+        const position = params.length;
+        filters.push(`AND (
+          i.invoice_number ILIKE $${position} OR i.invoice_reference ILIKE $${position}
+          OR c.legal_name ILIKE $${position} OR c.email ILIKE $${position}
+          OR c.contact_number ILIKE $${position} OR c.account_number ILIKE $${position}
+          OR i.concept ILIKE $${position} OR i.advisor_name ILIKE $${position}
+          OR i.payment_track ILIKE $${position}
+        )`);
+      }
+      if (status) {
+        params.push(status);
+        filters.push(`AND i.invoice_status = $${params.length}`);
+      }
+      if (dateFrom) {
+        params.push(dateFrom);
+        filters.push(`AND i.invoice_date >= $${params.length}::date`);
+      }
+      if (dateTo) {
+        params.push(dateTo);
+        filters.push(`AND i.invoice_date <= $${params.length}::date`);
+      }
+      if (paymentTrack) {
+        params.push(paymentTrack);
+        filters.push(`AND lower(btrim(i.payment_track)) = lower($${params.length})`);
+      }
       params.push(limit, (page - 1) * limit);
       const limitPosition = params.length - 1;
       const order = `${InvoiceSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
@@ -407,7 +434,7 @@ export class StudentOperationsXeroSyncService {
                  AND full_run.status='succeeded'
                  AND full_run.mode IN ('initial','reconciliation')
             ), seen.created_at)
-            ${search}
+            ${filters.join("\n            ")}
           ORDER BY ${order}
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
         params,
@@ -430,6 +457,35 @@ export class StudentOperationsXeroSyncService {
           paid: Number(result.rows[0]?.paid_total_count ?? 0),
         },
       };
+    });
+  }
+
+  async invoicePaymentTracks(tenantId: string, connectionId: string) {
+    const schema = runtimeConfig().schema;
+    return this.database.tenantReadTransaction(tenantId, async (db) => {
+      await assertConnection(db, schema, tenantId, connectionId);
+      const result = await db.query<{ payment_track: string }>(
+        `SELECT min(btrim(i.payment_track)) AS payment_track
+           FROM ${schema}.student_operations_xero_invoices i
+           JOIN ${schema}.student_operations_xero_sync_runs seen
+             ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
+          WHERE i.customer_id=$1 AND i.xero_connection_id=$2
+            AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
+            AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
+            AND NULLIF(btrim(i.payment_track), '') IS NOT NULL
+            AND seen.created_at >= COALESCE((
+              SELECT max(full_run.created_at)
+                FROM ${schema}.student_operations_xero_sync_runs full_run
+               WHERE full_run.customer_id=i.customer_id
+                 AND full_run.xero_connection_id=i.xero_connection_id
+                 AND full_run.status='succeeded'
+                 AND full_run.mode IN ('initial','reconciliation')
+            ), seen.created_at)
+          GROUP BY lower(btrim(i.payment_track))
+          ORDER BY lower(btrim(i.payment_track))`,
+        [tenantId, connectionId],
+      );
+      return { paymentTracks: result.rows.map((row) => row.payment_track) };
     });
   }
 
