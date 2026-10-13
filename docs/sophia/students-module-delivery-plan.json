@@ -1,0 +1,264 @@
+{
+  "planId": "students-module-case-register",
+  "version": 1,
+  "updatedOn": "2026-10-13",
+  "status": "in_progress",
+  "currentTask": null,
+  "nextReadyTask": "STU-02",
+  "scope": "Implement the Students register and the minimum case model and actions needed by the supplied prototype, using existing Business Manager controls and Student Operations authorization.",
+  "currentTurnBoundary": "STU-01 is locally implemented and verified; STU-02 is next. No deployed migration or backfill has run.",
+  "progressRule": "Update this plan after each task with actual changed files, verification, migration requirements, remaining work and the next ready task. A task is complete only when its acceptance criteria are demonstrated.",
+  "discovery": {
+    "status": "complete",
+    "basis": "Local source inspection, not live database inspection or a deployed-system audit.",
+    "findings": [
+      "The /manager/students route is a placeholder in frontend/src/app/manager/students/.",
+      "The Payments and Control route uses frontend/src/app/manager/student-operations/students/; its historical component name does not mean it is the new Students register.",
+      "public.users already stores Student accounts and unique STD-N student_id values. These identities must be reused.",
+      "The runtime student_operations_students table has a separate UUID identity and currently stores a single stage, advisor and college. It is not the imported Student-user roster.",
+      "Xero invoice student_id is a text STD-N reference through public.bm_xero_student_identities; existing candidate reviews reference the separate operational-student UUID.",
+      "No student_operations_cases or student_operations_colleges foundation was found in the active migrations inspected.",
+      "Existing authorization distinguishes Chief Executive, Operations and assigned Advisor access. Payment amounts are not currently included in the student list projection.",
+      "Users provides compact, sortable server-paginated rows. Payments and Control provides the existing PrimeNG date-range picker and fixed-header/filter layout.",
+      "Existing uncommitted frontend changes are present in the Payments and Control component and service; preserve them. Backend and frontend are separate Git repositories."
+    ],
+    "references": [
+      "../../sophia-runtime/src/database/migrations/062_open_for_australia_students.sql",
+      "../../sophia-runtime/src/database/migrations/063_student_operations_domain.sql",
+      "../../sophia-runtime/src/database/migrations/064_student_operations_student_writes.sql",
+      "../../sophia-runtime/src/database/migrations/067_xero_student_read_model.sql",
+      "../../scripts/sql/bm_user_student_fields.sql",
+      "../../scripts/sql/bm_xero_student_user_sync.sql",
+      "../../sophia-runtime/src/business-packs/student-operations/student-operations-policy.ts",
+      "xero-student-user-sync.md",
+      "../../../frontend/src/app/manager/students/manager-students.page.ts",
+      "../../../frontend/src/app/manager/components/users/manager-users.page.ts",
+      "../../../frontend/src/app/manager/student-operations/students/student-operations-students.page.ts"
+    ]
+  },
+  "architecture": {
+    "frontend": "Existing /manager/students Angular page inside the Business Manager shell.",
+    "backend": "Existing NestJS Student Operations business pack owns case operations and register APIs; the Express Business Manager remains the owner of user accounts and student-ID allocation.",
+    "identity": "One operational profile per tenant and existing Student user. Keep the internal profile UUID distinct from the existing STD-N display/account identifier. Expose unambiguous userId, studentProfileId and studentReference fields in new contracts.",
+    "userBoundary": "Use a narrowly scoped, tenant-checked identity bridge/projection for runtime roster reads. Do not grant general access to user credentials or use an owner connection for runtime requests.",
+    "compatibility": "Extend and map the existing operational profile rather than creating another competing student identity. Preserve existing endpoints, UUID references, STD-N values, reviewed Xero links and import behavior during migration.",
+    "database": "Additive PostgreSQL migrations, tenant-scoped foreign keys and indexes, forced RLS where applicable, restricted runtime grants, versioned writes and audit events.",
+    "readPath": "List, filter, summary and insight reads use local PostgreSQL data. Reading the Students page never starts Xero refresh, Student-user sync or AI extraction.",
+    "relationships": [
+      { "entity": "Student user/profile", "relationship": "One profile references one existing Student user; a student can initially have zero cases, then one or many." },
+      { "entity": "Case", "relationship": "Belongs to one student and owns its case number, type, lifecycle status, current workflow stage, dates and version." },
+      { "entity": "Case advisors", "relationship": "A case can have several assigned staff members, with one primary advisor. Assignments determine scoped access." },
+      { "entity": "Colleges and case colleges", "relationship": "A reusable college directory with one or more case relationships, a primary college and optional course details." },
+      { "entity": "Case invoice links", "relationship": "Links a case to existing local Xero transactions using tenant, connection and transaction identity. Student-level invoice links remain valid when the case is not yet known." },
+      { "entity": "Payment schedule items", "relationship": "Case-owned due dates, amounts, currency and state, with provenance distinguishing approved offer terms from imported invoice balances." },
+      { "entity": "Stage history and activity", "relationship": "Append-only case events record transitions, assignments, edits and archive actions with actor and time." },
+      { "entity": "Document versions and associations", "relationship": "Later document storage tracks originals and versions; case links associate offers and evidence with their process, while reusable student-level documents can link to multiple cases." }
+    ]
+  },
+  "prototypeContract": {
+    "header": ["Students title", "Manage active student records and operational status subtitle", "Current date", "Last updated time", "Period preset selector"],
+    "cards": ["Active Students", "New Applications", "Action Required", "No Vigente", "Sophia Insight with View students action"],
+    "filters": ["Search by name, student ID or email", "All status", "All advisors", "All colleges", "Date range"],
+    "tableColumns": ["Student avatar or initials, name and email", "Student ID", "Advisor", "College", "Current Stage", "Next Payment date and amount", "Status", "Cases", "Actions"],
+    "actions": ["New Case", "Add student", "Case links", "Edit", "Delete with archive semantics"],
+    "sharedPatterns": [
+      "ManagerSelectComponent, existing date-range picker, shared button/icon treatment and timed validation toasts.",
+      "Fixed page header and filters, sticky table headings, compact rows and available-height table body without collapsing the scroll area.",
+      "Server pagination, selectable page size, ASC/DESC sorting and stable ID tie-breakers; no infinite scroll.",
+      "Persistent page chrome during loading and explicit loading, empty, failure and retry states.",
+      "Desktop/mobile and light/dark layouts with accessible labels, keyboard actions and touch targets."
+    ]
+  },
+  "proposedProductRules": {
+    "state": "Planning defaults to make the first implementation precise; product terminology can be refined before dependent tasks.",
+    "oneRowPerStudent": "Never duplicate a student row because of multiple cases, advisors, colleges or invoices. Count distinct students, not joined rows.",
+    "caseSummary": "Display the newest open case by opened date and stable case-ID tie-breaker; if none is open, display the latest case. Identify the displayed case next to its stage and show links to all authorized cases. Primary advisor and college belong to this same case.",
+    "caseFilters": "When advisor/college/date filters apply, require one authorized case to satisfy the combined case filters, and select the displayed case from those matches. Never combine an advisor from one case with a college from another to create a false match.",
+    "dateRange": "Proposed date meaning is case-opened date. The header period preset and calendar represent one shared interval, not two competing filters. Students without a case use profile-created date. Default to All time so existing imported students remain discoverable; include Last 30 days and other presets.",
+    "status": "Keep login/account state, case lifecycle, workflow stage and operational health separate. Healthy, Action Required, Overdue and No Vigente are register labels, not public.users.status values. Proposed No Vigente means no current case after all cases become inactive/closed; it does not assert immigration or visa validity. A student with no case shows Not started.",
+    "health": "Derive health from authorized current cases and confirmed schedule data, with overdue taking precedence over action required and healthy. Show the responsible case/reason when a different case drives the student's attention state.",
+    "cards": "Active Students counts distinct students with an open case; New Applications counts students with a case opened in the selected interval; Action Required includes open-case blockers and overdue obligations; No Vigente counts students with case history but no current case. These counts overlap and must not be added together.",
+    "cardScope": "Cards and table share tenant/role scope and the selected search, advisor, college and date cohort. The status selector narrows the table; card totals remain a breakdown of the cohort so other statuses stay discoverable.",
+    "trends": "Use a comparable preceding interval only when recorded history supports the calculation. Display unavailable comparison text when no reliable baseline exists; never render the prototype's sample percentages as real data.",
+    "insight": "Initially show a deterministic count of students requiring attention this week, with View students applying the same attention criteria to the table. AI generation is not required for this panel.",
+    "nextPayment": "Show the earliest unpaid non-cancelled obligation across authorized open cases, including an overdue item if present. Include its case and currency; never sum different currencies or count a linked schedule and its invoice twice. Unknown schedules show an em dash, not a guessed amount.",
+    "archived": "Exclude archived Student accounts/profiles from the default register and counts. No Vigente remains visible and is not synonymous with archive.",
+    "delete": "The prototype Delete action performs a confirmed, audited archive through the existing user boundary, preserving cases, invoices, documents, student IDs and Xero associations. Restoration and account effects must be stated in the action contract.",
+    "noCaseInference": "Do not automatically turn every invoice, school name or imported contact into a case. Existing students appear with No cases until a case is explicitly created or a verified migration mapping exists.",
+    "permissions": "Chief Executive and Operations use existing manage permissions. Advisors see only their authorized cases, counts and links; full payment amounts remain restricted by current payment permissions. Students do not receive staff entitlements."
+  },
+  "tasks": [
+    {
+      "id": "STU-01",
+      "title": "Student identity and case database foundation",
+      "status": "completed_local",
+      "dependsOn": [],
+      "deliverables": [
+        "Finalize the schema and API identity contract against existing migrations, user account columns and runtime grants.",
+        "Add the unique Student-user-to-profile relationship and case, college, case-advisor, case-college, invoice-link, payment-schedule and case-history/activity tables needed by this register.",
+        "Keep future document associations defined in the model; create their storage/extraction tables in the document task when those contracts are known.",
+        "Create an explicit, resumable identity backfill command with preview counts and a conflict report. Reuse existing users/STD IDs and operational profiles only on verified tenant/user matches; leave ambiguity unresolved.",
+        "Define ongoing profile availability for manually created and newly synced Students through the account boundary, without triggering bulk user sync on reads.",
+        "Document migration order, owner-only application commands, narrow runtime grants and deployment requirements."
+      ],
+      "acceptance": [
+        "One Student can own two independent cases and each case can own multiple advisor/college relationships.",
+        "Existing imported Student IDs and transaction associations remain unchanged; no duplicate users, passwords or staff entitlements are created.",
+        "Backfill reruns are idempotent; conflicts are visible and no cases are fabricated.",
+        "Cross-tenant references and access are rejected; archival preserves referential integrity.",
+        "Migration and backfill checks pass against disposable data before any deployed migration is proposed."
+      ],
+      "verification": [
+        "PASS: PostgreSQL 17 disposable-database integration suite, 5 tests: preview/apply/retry, multi-case relationships, cross-tenant constraints, role-scoped roster RLS, and explicit on-demand profile creation.",
+        "PASS: owner-only preview command returned existing links plus one pending legacy-profile conflict in the disposable fixture.",
+        "PASS: Sophia Runtime npm run typecheck and npm run build.",
+        "PASS: 14 existing Student Operations tests, 38 real-estate regression tests and v2 boundary check.",
+        "LIMITATION: broad spec-only TypeScript sweep reports unrelated errors in existing repository specs; the new integration suite passes under Jest.",
+        "NOT RUN: production migration and backfill; deployed schema/data have not been inspected."
+      ],
+      "changedFiles": [
+        "sophia-runtime/src/database/migrations/069_student_case_foundation.sql",
+        "sophia-runtime/scripts/backfill-student-profiles.ts",
+        "sophia-runtime/src/database/student-case-foundation-migration.spec.ts",
+        "docs/sophia/student-operations-mvp-plan.md",
+        "docs/sophia/implementation-progress.json",
+        "docs/sophia/students-module-delivery-plan.json"
+      ]
+    },
+    {
+      "id": "STU-02",
+      "title": "Students register backend and aggregates",
+      "status": "not_started",
+      "dependsOn": ["STU-01"],
+      "deliverables": [
+        "Tenant-authorized register endpoint with bounded server pagination, whitelisted sort fields and search/status/advisor/college/date filters.",
+        "Summary, trend-availability, last-updated, attention-reason and authorized filter-option contracts.",
+        "One-row-per-student projection, displayed-case context, all authorized case links and permission-aware next-payment projection.",
+        "Indexed queries and batched relationship reads; avoid per-row queries and provider calls. Validate query plans against representative synthetic volumes."
+      ],
+      "acceptance": [
+        "Multiple cases do not inflate totals; zero-case Students are visible and archived Students are excluded.",
+        "Combined case filters match a single case, dates have defined inclusive boundaries and invalid/incomplete ranges are rejected.",
+        "Sorting is global and stable across pages; empty and out-of-range pages retain accurate total counts.",
+        "Unauthorized cases do not leak through dropdowns, totals, insight text or payment summaries."
+      ],
+      "verification": [],
+      "changedFiles": []
+    },
+    {
+      "id": "STU-03",
+      "title": "Prototype-aligned Students list frontend",
+      "status": "not_started",
+      "dependsOn": ["STU-02"],
+      "deliverables": [
+        "Replace the Students placeholder with every header, card, insight, filter and table element in the prototype contract.",
+        "Use the current Users and Payments and Control design patterns, shared dropdowns and date-range control.",
+        "Debounce search, suppress duplicate queries, cancel stale requests and apply a date filter only after both dates are valid; clearing restores the unfiltered interval.",
+        "Implement available-height table scrolling, fixed header/filters, sticky column headings, compact actions, sorting and pagination.",
+        "Render action entry points with accurate permission/readiness states until STU-04 connects the write flows; do not treat this UI checkpoint as a complete module release."
+      ],
+      "acceptance": [
+        "The supplied prototype's elements appear with real API values and functional filters/pagination.",
+        "Rapid input cannot overwrite newer results with stale responses or trigger a request for a half-selected date range.",
+        "The table remains visible and uses the remaining height at desktop and narrow viewport sizes in both themes.",
+        "Sophia Insight View students shows exactly the students counted by its attention rule."
+      ],
+      "verification": [],
+      "changedFiles": []
+    },
+    {
+      "id": "STU-04",
+      "title": "Student actions and minimum case workflow",
+      "status": "not_started",
+      "dependsOn": ["STU-03"],
+      "deliverables": [
+        "Connect Add student and Edit to the authoritative Student user/profile path with return navigation and refreshed list data.",
+        "Implement confirmed archive for Delete with preserved associations and clear account effects.",
+        "Implement New Case with student selection, case type, primary advisor/college, optional additional assignments, opened date, initial stage and status.",
+        "Open each case link in a minimal case overview with its identity, stage, assignments and activity; a second case does not overwrite the first.",
+        "Use audited, idempotent writes and optimistic concurrency for edits and transitions."
+      ],
+      "acceptance": [
+        "All prototype actions have an implemented, authorized outcome and no dead links.",
+        "Creating a second case preserves the first case and updates the one student row and case links.",
+        "Student creation reuses the existing STD-N allocator; retries do not create duplicate accounts or cases.",
+        "Editing identity data does not silently overwrite reviewed case or Xero data; archive removes the row without deleting its history."
+      ],
+      "verification": [],
+      "changedFiles": []
+    },
+    {
+      "id": "STU-05",
+      "title": "Case financial associations and next-payment integration",
+      "status": "not_started",
+      "dependsOn": ["STU-04"],
+      "deliverables": [
+        "Allow authorized staff to associate an existing student's imported invoice with the correct case; retain a visible unassigned state until resolved.",
+        "Expose case payment schedules and derive next-payment/overdue information with source, currency and case provenance.",
+        "Reject ambiguous case attribution and duplicate counting; use one case per invoice initially and flag any required cross-case allocation for a separate design.",
+        "Verify Xero refresh updates imported accounting values without clearing student/case links or recreating profiles."
+      ],
+      "acceptance": [
+        "Payment date, amount and case are traceable to an actual linked obligation.",
+        "Paid, voided and cancelled obligations are excluded; partial payments use the remaining balance and currencies are preserved.",
+        "Repeated refreshes retain reviewed mappings and do not start user creation or document extraction."
+      ],
+      "verification": [],
+      "changedFiles": []
+    },
+    {
+      "id": "STU-06",
+      "title": "Initial module acceptance and deployment handoff",
+      "status": "not_started",
+      "dependsOn": ["STU-05"],
+      "deliverables": [
+        "Verify representative zero/one/multiple-case journeys, duplicate prevention, role isolation, archive, combined filters and payment aggregation.",
+        "Run focused backend/frontend tests, type checks, builds and affected existing-module regressions, including the established real-estate boundary checks.",
+        "Validate desktop/mobile light/dark layouts, keyboard navigation, sticky regions, loading/error/empty states and representative query performance.",
+        "Record actual commands/results, migration/backfill instructions, deployment order, rollback/disable strategy and remaining limitations."
+      ],
+      "acceptance": [
+        "Every prototype element is present and every released action works against the real local API contract.",
+        "No production deployment, database migration or live-provider execution is implied by local test results.",
+        "The plan and checkpoint list complete work and any unresolved limitations accurately."
+      ],
+      "verification": [],
+      "changedFiles": []
+    },
+    {
+      "id": "STU-07",
+      "title": "Documents and reviewed OpenAI extraction",
+      "status": "deferred",
+      "dependsOn": ["STU-06"],
+      "deliverables": [
+        "Plan and implement Xero invoice PDF/attachment retrieval and new uploads through a storage boundary that can later use private S3.",
+        "Add document versions, student/case associations, extraction runs and reviewed field proposals with source-page evidence.",
+        "Use the OpenAI document/structured-output capability through an adapter; validate reviewed offer terms before updating case and payment-schedule fields.",
+        "Track pending/failed/reviewed records and content hashes so duplicate documents and ordinary Xero refreshes do not cause repeated extraction."
+      ],
+      "acceptance": [
+        "Detailed scope and extraction fields are specified separately after the initial register and case foundation work.",
+        "Document revisions and reviewed corrections remain traceable and never silently overwrite approved case/payment terms."
+      ],
+      "verification": [],
+      "changedFiles": []
+    }
+  ],
+  "planningValidation": {
+    "implementationChanges": true,
+    "databaseConnectionsOrMutations": false,
+    "liveProviderCalls": false,
+    "checks": [
+      "PASS: Node JSON parsing and assertions verified 7 unique ordered tasks, prerequisite ordering, nonempty acceptance criteria, source-reference paths and matching next-task pointers in the progress checkpoint.",
+      "PASS: git diff --check in backend; planning-only changes reviewed.",
+      "PASS: isolated PostgreSQL 17 migration/backfill integration suite, 5 cases; runtime typecheck and build.",
+      "PASS: 14 existing Student Operations tests, 38 real-estate tests and v2 boundary check.",
+      "Production migration and backfill not run."
+    ],
+    "limitations": [
+      "Exact live schema/data reconciliation will require an explicitly scoped read-only or migration preview step during STU-01; screenshots do not prove current database state.",
+      "No Vigente semantics, case-opened date filtering and displayed-case selection are proposed product defaults, not facts established by the existing code.",
+      "Historical trend data may be unavailable for periods before case event tracking starts."
+    ]
+  }
+}

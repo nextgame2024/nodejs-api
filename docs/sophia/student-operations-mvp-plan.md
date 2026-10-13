@@ -3,6 +3,78 @@
 Date: 5 October 2026  
 Status: architecture and delivery order approved; OFA-00A through OFA-01E complete; OFA-07A reviewed discovery superseded by OFA-07B durable Xero synchronization in source
 
+## Current Students register delivery plan — 13 October 2026
+
+The new `/manager/students` module is tracked in
+[students-module-delivery-plan.json](students-module-delivery-plan.json).
+STU-01 is implemented locally and verified on an isolated PostgreSQL fixture;
+STU-02 through STU-06 are not started, and document/OpenAI extraction is the
+later STU-07 task. The next task is STU-02: the register backend and aggregates.
+
+This updates the Students scope to the supplied multi-case register prototype.
+Existing Student users and their `STD-N` identifiers remain authoritative for
+identity. The current runtime operational-student UUID is a separate identity
+that must be explicitly mapped. Cases own workflow, advisor/college relationships,
+documents and financial associations. The register has one row per student,
+server-side pagination, summary cards, an attention panel and case links.
+
+The renamed Payments and Control page remains the Xero transaction register.
+Its component is still located under `student-operations/students`, whereas the
+new Students route currently renders the placeholder under `manager/students`.
+Older missing-capability statements and checkpoint descriptions below are the
+original phased baseline; consult the new plan's source findings for this
+register's current state. No production migration or user backfill has run.
+
+### STU-01 schema and identity handoff
+
+Migration `sophia-runtime/src/database/migrations/069_student_case_foundation.sql`
+adds a constrained `public.users` → runtime profile link, case, college, case
+advisor/college, reviewed invoice-to-case, payment schedule and append-only
+case activity tables. All new runtime tables enforce tenant RLS. Existing
+`STD-N` IDs, invoices, and operational student UUIDs are left unchanged. The
+runtime receives a narrow, tenant-filtered roster view, without access to
+`public.users` credentials. The `ensure_student_operations_profile(uuid)`
+function supports explicit, authorized case creation for newly created Student
+accounts; list reads and Xero refresh do not invoke it. STU-04 must call it
+inside a tenant-scoped transaction after application permission checks.
+
+The repeatable backfill is `sophia-runtime/scripts/backfill-student-profiles.ts`.
+It links a legacy operational profile only when its `STD-N` reference, legal
+name and email all agree with the Student account. A legacy profile with a
+matching name or email but a different reference is reported as pending for
+manual review. It never creates users or cases. A new profile is created only
+when no candidate profile exists. The command reports counts and unresolved
+account IDs without printing personal names or email addresses.
+
+Before any deployed backfill, apply runtime migrations using the configured
+database owner. The deployed image must contain migration 069; verify it exists
+in the built migrations directory and that the prior Business Manager Student
+ID and Xero sync migrations were applied. Supply `OWNER_DATABASE_URL` securely
+in the backend shell, then from the `sophia-runtime` source directory run:
+
+```sh
+./node_modules/.bin/tsx scripts/backfill-student-profiles.ts --preview
+./node_modules/.bin/tsx scripts/backfill-student-profiles.ts --apply
+```
+
+Use `--customer-id UUID` to scope either command to one tenant. Preview first;
+resolve its pending and unmapped-company report before treating backfill as
+complete. Applying again is safe: already linked users keep their profile UUID.
+The script uses only `OWNER_DATABASE_URL`; ordinary runtime database credentials
+must not be used. Neither command is automatically triggered by page reads,
+sync runs or service startup.
+
+Local STU-01 evidence: five integration cases passed against a fresh, disposable
+PostgreSQL 17 database, covering preview/apply/retry, two cases per student,
+separate advisors and colleges, foreign-key isolation, roster RLS, and an
+explicit on-demand profile. The backfill command's `--preview --customer-id`
+path returned a pending legacy match without changing it. Fourteen existing
+Student Operations tests, 38 real-estate regression tests, the v2 boundary
+check, Runtime typecheck and build passed. The broad spec-only TypeScript sweep
+still reports errors in unrelated existing specs; it is not a build failure.
+Production data was not inspected; the operator must review preview conflicts
+against the deployed schema before running `--apply`.
+
 ## Product boundary
 
 Student Operations will be a client-specific operations workspace inside

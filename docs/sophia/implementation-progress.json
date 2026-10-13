@@ -4,6 +4,21 @@
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C4-GENUINE-CUSTOMER-AUTH-SMOKE-PASSED-NO-EMAIL-NO-CHARGE",
   "updatedAt": "2026-10-04T15:01:59+10:00",
+  "studentsRegisterWorkstream": {
+    "updatedOn": "2026-10-13",
+    "plan": "students-module-delivery-plan.json",
+    "checkpoint": "STU-01-LOCAL-SCHEMA-AND-BACKFILL-VERIFIED",
+    "nextReadyTask": "STU-02",
+    "evidence": "Migration 069 adds tenant-scoped case relationships and a constrained Student user/profile link; owner-only backfill preview/apply and an explicit on-demand profile function verified on disposable PostgreSQL 17. Existing frontend edits preserved. No production database access or migrations.",
+    "verification": [
+      "PASS: Node parsed both JSON artifacts and validated all seven task IDs, dependency order, acceptance criteria, reference paths and next-task pointers.",
+      "PASS: 5 disposable PostgreSQL integration tests for STU-01 schema, preview/apply/retry, authorization and identity conflicts.",
+      "PASS: 14 existing Student Operations tests, 38 real-estate regression tests and v2 boundary check.",
+      "PASS: Sophia Runtime npm run typecheck and npm run build. Production migration and backfill not run.",
+      "LIMITATION: broad spec-only TypeScript sweep reports errors in unrelated existing specs; the new integration suite passes under Jest."
+    ],
+    "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."
+  },
   "tasks": {
     "P0-01": {
       "status": "complete",
