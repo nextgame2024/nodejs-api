@@ -5,17 +5,19 @@
   "checkpoint": "P6-A06C4-GENUINE-CUSTOMER-AUTH-SMOKE-PASSED-NO-EMAIL-NO-CHARGE",
   "updatedAt": "2026-10-04T15:01:59+10:00",
   "studentsRegisterWorkstream": {
-    "updatedOn": "2026-10-13",
+    "updatedOn": "2026-10-14",
     "plan": "students-module-delivery-plan.json",
-    "checkpoint": "STU-02-LOCAL-REGISTER-API-VERIFIED",
-    "nextReadyTask": "STU-03",
-    "evidence": "Read-only, tenant-scoped Students register API with one row per account, case-consistent filters, scoped case links, permission-aware payments, summary/insight counts and stable pagination. Migration 070 adds a narrow advisor-name projection. Existing frontend edits preserved. Operator reported applying migration 069; this was not independently verified. Migration 070 and the API remain local only.",
+    "checkpoint": "STU-03-LOCAL-STUDENTS-LIST-VERIFIED",
+    "nextReadyTask": "STU-04",
+    "evidence": "Prototype-aligned Students list now uses the tenant-scoped register API with real cards, insight, filters, sortable paginated table, mobile cards, loading/empty/error states, and explicitly disabled future write actions. The operator reported applying migration 070; this was not independently verified. STU-04 actions and case workflow remain pending.",
     "verification": [
       "PASS: Node parsed both JSON artifacts and validated all seven task IDs, dependency order, acceptance criteria, reference paths and next-task pointers.",
       "PASS: 7 disposable PostgreSQL integration tests for schema, identity, register authorization/filters/pagination and 1,000-student EXPLAIN ANALYZE.",
       "PASS: 30 focused Student Operations tests, 38 real-estate regression tests and v2 boundary check.",
       "PASS: Sophia Runtime npm run typecheck and npm run build. No production data accessed or backfill run by this task.",
-      "LIMITATION: broad spec-only TypeScript sweep reports errors in unrelated existing specs; the new integration suite passes under Jest."
+      "LIMITATION: broad spec-only TypeScript sweep reports errors in unrelated existing specs; the new integration suite passes under Jest.",
+      "PASS: Angular production build with Node 20.19.1; 23 targeted ChromeHeadless Students list and service tests passed.",
+      "LIMITATION: No authenticated browser smoke against deployed production data in this task."
     ],
     "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."
   },

@@ -8,8 +8,10 @@ Status: architecture and delivery order approved; OFA-00A through OFA-01E comple
 The new `/manager/students` module is tracked in
 [students-module-delivery-plan.json](students-module-delivery-plan.json).
 STU-01 and STU-02 are implemented locally and verified on isolated PostgreSQL
-fixtures; STU-03 through STU-06 are not started, and document/OpenAI extraction
-is the later STU-07 task. The next task is STU-03: the prototype-aligned frontend.
+fixtures. STU-03's prototype-aligned frontend is implemented locally and passes
+the Angular build and targeted browser tests. STU-04 through STU-06 are not
+started, and document/OpenAI extraction is the later STU-07 task. The next task
+is STU-04: Student actions and the minimum case workflow.
 
 This updates the Students scope to the supplied multi-case register prototype.
 Existing Student users and their `STD-N` identifiers remain authoritative for

@@ -1,12 +1,12 @@
 {
   "planId": "students-module-case-register",
   "version": 1,
-  "updatedOn": "2026-10-13",
+  "updatedOn": "2026-10-14",
   "status": "in_progress",
   "currentTask": null,
-  "nextReadyTask": "STU-03",
+  "nextReadyTask": "STU-04",
   "scope": "Implement the Students register and the minimum case model and actions needed by the supplied prototype, using existing Business Manager controls and Student Operations authorization.",
-  "currentTurnBoundary": "STU-02 backend register is locally implemented and verified; STU-03 frontend is next. The operator reports migration 069 ran in Render; this was not independently verified. New migration 070 is local only and must be applied before the register endpoint is used. Profile backfill has not been reported as run.",
+  "currentTurnBoundary": "STU-03 Students register frontend is locally implemented and verified by Angular build and targeted browser tests. The operator reports migration 070 ran in Render; this was not independently verified. STU-04 actions and case workflow are next. Profile backfill has not been reported as run.",
   "progressRule": "Update this plan after each task with actual changed files, verification, migration requirements, remaining work and the next ready task. A task is complete only when its acceptance criteria are demonstrated.",
   "discovery": {
     "status": "complete",
@@ -161,7 +161,7 @@
     {
       "id": "STU-03",
       "title": "Prototype-aligned Students list frontend",
-      "status": "not_started",
+      "status": "complete",
       "dependsOn": ["STU-02"],
       "deliverables": [
         "Replace the Students placeholder with every header, card, insight, filter and table element in the prototype contract.",
@@ -176,8 +176,23 @@
         "The table remains visible and uses the remaining height at desktop and narrow viewport sizes in both themes.",
         "Sophia Insight View students shows exactly the students counted by its attention rule."
       ],
-      "verification": [],
-      "changedFiles": []
+      "verification": [
+        "PASS: Angular production build with Node 20.19.1 and a local placeholder Google Maps key; only pre-existing bundle/style warnings remain.",
+        "PASS: 23 targeted ChromeHeadless page and service tests, including empty and disabled actions, debounced search, complete-only date range, stale request cancellation, insight/pagination behavior, and authorized register query serialization.",
+        "PASS: Frontend register response and filter fields checked against the STU-02 backend endpoint contract."
+      ],
+      "changedFiles": [
+        "frontend/src/app/manager/students/manager-students.page.ts",
+        "frontend/src/app/manager/students/manager-students.page.html",
+        "frontend/src/app/manager/students/manager-students.page.css",
+        "frontend/src/app/manager/students/manager-students.page.spec.ts",
+        "frontend/src/app/manager/student-operations/student-operations.service.ts",
+        "frontend/src/app/manager/student-operations/student-operations.service.spec.ts",
+        "frontend/src/app/manager/student-operations/student-operations.types.ts",
+        "backend/docs/sophia/implementation-progress.json",
+        "backend/docs/sophia/students-module-delivery-plan.json",
+        "backend/docs/sophia/student-operations-mvp-plan.md"
+      ]
     },
     {
       "id": "STU-04",
