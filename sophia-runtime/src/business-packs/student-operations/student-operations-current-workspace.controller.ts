@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { STUDENT_OPERATIONS_PACK_CONTRACT } from "./student-operations.pack.js";
 import { StudentOperationsStudentsService } from "./student-operations-students.service.js";
+import { StudentOperationsRegisterService } from "./student-operations-register.service.js";
 import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
 import {
   STUDENT_OPERATIONS_DASHBOARD_CONTEXT,
@@ -29,7 +30,10 @@ type WorkspaceRequest = {
 @Controller("business-packs/student-operations/v1/workspace")
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCurrentWorkspaceController {
-  constructor(private readonly students: StudentOperationsStudentsService) {}
+  constructor(
+    private readonly students: StudentOperationsStudentsService,
+    private readonly register: StudentOperationsRegisterService,
+  ) {}
 
   @Get()
   workspace(@Req() request: WorkspaceRequest) {
@@ -47,6 +51,11 @@ export class StudentOperationsCurrentWorkspaceController {
   @Get("students")
   listStudents(@Req() request: WorkspaceRequest, @Query() query: unknown) {
     return this.students.list(request.studentOperationsPrincipal, query);
+  }
+
+  @Get("student-register")
+  studentRegister(@Req() request: WorkspaceRequest, @Query() query: unknown) {
+    return this.register.list(request.studentOperationsPrincipal, query);
   }
 
   @Get("advisors")

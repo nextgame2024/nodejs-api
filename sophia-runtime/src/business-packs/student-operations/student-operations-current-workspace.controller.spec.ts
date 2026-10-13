@@ -12,7 +12,7 @@ const principal = {
 
 describe("StudentOperationsCurrentWorkspaceController", () => {
   it("returns the identity-derived workspace context", () => {
-    const controller = new StudentOperationsCurrentWorkspaceController({ list: jest.fn() } as never);
+    const controller = new StudentOperationsCurrentWorkspaceController({ list: jest.fn() } as never, {} as never);
     expect(controller.workspace({ studentOperationsPrincipal: principal })).toEqual(expect.objectContaining({
       packId: "student-operations",
       tenantId: principal.tenantId,
@@ -29,7 +29,7 @@ describe("StudentOperationsCurrentWorkspaceController", () => {
       actionRequired: 2,
       onHold: 1,
     };
-    const controller = new StudentOperationsCurrentWorkspaceController({} as never);
+    const controller = new StudentOperationsCurrentWorkspaceController({} as never, {} as never);
     await expect(controller.dashboard({
       studentOperationsPrincipal: principal,
       studentOperationsDashboardSummary: summary,
@@ -41,10 +41,19 @@ describe("StudentOperationsCurrentWorkspaceController", () => {
 
   it("passes the authenticated principal to the student list", async () => {
     const list = jest.fn().mockResolvedValue({ students: [], page: 1, limit: 20, total: 0 });
-    const controller = new StudentOperationsCurrentWorkspaceController({ list } as never);
+    const controller = new StudentOperationsCurrentWorkspaceController({ list } as never, {} as never);
     await expect(controller.listStudents(
       { studentOperationsPrincipal: principal }, { q: "synthetic" },
     )).resolves.toEqual({ students: [], page: 1, limit: 20, total: 0 });
     expect(list).toHaveBeenCalledWith(principal, { q: "synthetic" });
+  });
+
+  it("passes the authenticated principal to the register without taking tenant scope from filters", async () => {
+    const list = jest.fn().mockResolvedValue({ students: [], total: 0 });
+    const controller = new StudentOperationsCurrentWorkspaceController({} as never, { list } as never);
+    await expect(controller.studentRegister(
+      { studentOperationsPrincipal: principal }, { q: "sample" },
+    )).resolves.toEqual({ students: [], total: 0 });
+    expect(list).toHaveBeenCalledWith(principal, { q: "sample" });
   });
 });

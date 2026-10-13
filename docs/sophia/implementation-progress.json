@@ -7,14 +7,14 @@
   "studentsRegisterWorkstream": {
     "updatedOn": "2026-10-13",
     "plan": "students-module-delivery-plan.json",
-    "checkpoint": "STU-01-LOCAL-SCHEMA-AND-BACKFILL-VERIFIED",
-    "nextReadyTask": "STU-02",
-    "evidence": "Migration 069 adds tenant-scoped case relationships and a constrained Student user/profile link; owner-only backfill preview/apply and an explicit on-demand profile function verified on disposable PostgreSQL 17. Existing frontend edits preserved. No production database access or migrations.",
+    "checkpoint": "STU-02-LOCAL-REGISTER-API-VERIFIED",
+    "nextReadyTask": "STU-03",
+    "evidence": "Read-only, tenant-scoped Students register API with one row per account, case-consistent filters, scoped case links, permission-aware payments, summary/insight counts and stable pagination. Migration 070 adds a narrow advisor-name projection. Existing frontend edits preserved. Operator reported applying migration 069; this was not independently verified. Migration 070 and the API remain local only.",
     "verification": [
       "PASS: Node parsed both JSON artifacts and validated all seven task IDs, dependency order, acceptance criteria, reference paths and next-task pointers.",
-      "PASS: 5 disposable PostgreSQL integration tests for STU-01 schema, preview/apply/retry, authorization and identity conflicts.",
-      "PASS: 14 existing Student Operations tests, 38 real-estate regression tests and v2 boundary check.",
-      "PASS: Sophia Runtime npm run typecheck and npm run build. Production migration and backfill not run.",
+      "PASS: 7 disposable PostgreSQL integration tests for schema, identity, register authorization/filters/pagination and 1,000-student EXPLAIN ANALYZE.",
+      "PASS: 30 focused Student Operations tests, 38 real-estate regression tests and v2 boundary check.",
+      "PASS: Sophia Runtime npm run typecheck and npm run build. No production data accessed or backfill run by this task.",
       "LIMITATION: broad spec-only TypeScript sweep reports errors in unrelated existing specs; the new integration suite passes under Jest."
     ],
     "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."

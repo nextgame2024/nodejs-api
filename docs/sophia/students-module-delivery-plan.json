@@ -4,9 +4,9 @@
   "updatedOn": "2026-10-13",
   "status": "in_progress",
   "currentTask": null,
-  "nextReadyTask": "STU-02",
+  "nextReadyTask": "STU-03",
   "scope": "Implement the Students register and the minimum case model and actions needed by the supplied prototype, using existing Business Manager controls and Student Operations authorization.",
-  "currentTurnBoundary": "STU-01 is locally implemented and verified; STU-02 is next. No deployed migration or backfill has run.",
+  "currentTurnBoundary": "STU-02 backend register is locally implemented and verified; STU-03 frontend is next. The operator reports migration 069 ran in Render; this was not independently verified. New migration 070 is local only and must be applied before the register endpoint is used. Profile backfill has not been reported as run.",
   "progressRule": "Update this plan after each task with actual changed files, verification, migration requirements, remaining work and the next ready task. A task is complete only when its acceptance criteria are demonstrated.",
   "discovery": {
     "status": "complete",
@@ -128,7 +128,7 @@
     {
       "id": "STU-02",
       "title": "Students register backend and aggregates",
-      "status": "not_started",
+      "status": "completed_local",
       "dependsOn": ["STU-01"],
       "deliverables": [
         "Tenant-authorized register endpoint with bounded server pagination, whitelisted sort fields and search/status/advisor/college/date filters.",
@@ -142,8 +142,21 @@
         "Sorting is global and stable across pages; empty and out-of-range pages retain accurate total counts.",
         "Unauthorized cases do not leak through dropdowns, totals, insight text or payment summaries."
       ],
-      "verification": [],
-      "changedFiles": []
+      "verification": [
+        "PASS: seven disposable PostgreSQL integration tests, including tenant/advisor scope, combined case filters, archived exclusion, out-of-range pagination, calendar-date serialization, attention filtering and EXPLAIN ANALYZE on a synthetic 1,000-student cohort (under five seconds).",
+        "PASS: 30 focused Student Operations tests, Sophia Runtime typecheck and build, 38 real-estate regression tests and v2 boundary check.",
+        "DEPLOYMENT: migration 070 and the new runtime API are not deployed; the operator reported migration 069 completed, without independent verification. No production data or backfill was accessed by this task."
+      ],
+      "changedFiles": [
+        "sophia-runtime/src/database/migrations/070_student_register_advisor_projection.sql",
+        "sophia-runtime/src/business-packs/student-operations/student-operations-register.service.ts",
+        "sophia-runtime/src/business-packs/student-operations/student-operations-current-workspace.controller.ts",
+        "sophia-runtime/src/business-packs/student-operations/student-operations-current-workspace.controller.spec.ts",
+        "sophia-runtime/src/business-packs/student-operations/student-operations.module.ts",
+        "sophia-runtime/src/database/student-case-foundation-migration.spec.ts",
+        "docs/sophia/implementation-progress.json",
+        "docs/sophia/students-module-delivery-plan.json"
+      ]
     },
     {
       "id": "STU-03",

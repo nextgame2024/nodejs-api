@@ -5,6 +5,7 @@ import { StudentOperationsCurrentWorkspaceController } from "./student-operation
 import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
 import { StudentOperationsWorkspaceService } from "./student-operations-workspace.service.js";
 import { StudentOperationsStudentsService } from "./student-operations-students.service.js";
+import { StudentOperationsRegisterService } from "./student-operations-register.service.js";
 import { ConnectorsModule } from "../../connectors/connectors.module.js";
 import { StudentOperationsXeroController } from "./student-operations-xero.controller.js";
 import { StudentOperationsXeroSyncService } from "./student-operations-xero-sync.service.js";
@@ -23,6 +24,7 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
     StudentOperationsWorkspaceService,
     StudentOperationsWorkspaceGuard,
     StudentOperationsStudentsService,
+    StudentOperationsRegisterService,
     StudentOperationsXeroSyncService,
     StudentOperationsXeroSyncScheduler,
   ],

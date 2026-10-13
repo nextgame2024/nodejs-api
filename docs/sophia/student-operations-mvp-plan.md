@@ -7,9 +7,9 @@ Status: architecture and delivery order approved; OFA-00A through OFA-01E comple
 
 The new `/manager/students` module is tracked in
 [students-module-delivery-plan.json](students-module-delivery-plan.json).
-STU-01 is implemented locally and verified on an isolated PostgreSQL fixture;
-STU-02 through STU-06 are not started, and document/OpenAI extraction is the
-later STU-07 task. The next task is STU-02: the register backend and aggregates.
+STU-01 and STU-02 are implemented locally and verified on isolated PostgreSQL
+fixtures; STU-03 through STU-06 are not started, and document/OpenAI extraction
+is the later STU-07 task. The next task is STU-03: the prototype-aligned frontend.
 
 This updates the Students scope to the supplied multi-case register prototype.
 Existing Student users and their `STD-N` identifiers remain authoritative for
@@ -23,7 +23,32 @@ Its component is still located under `student-operations/students`, whereas the
 new Students route currently renders the placeholder under `manager/students`.
 Older missing-capability statements and checkpoint descriptions below are the
 original phased baseline; consult the new plan's source findings for this
-register's current state. No production migration or user backfill has run.
+register's current state. The operator reports migration 069 was applied in
+Render; we have not independently verified that or run the user/profile backfill.
+The STU-02 migration 070 and API have not been deployed.
+
+### STU-02 register API handoff
+
+The guarded `GET /business-packs/student-operations/v1/workspace/student-register`
+endpoint reads the tenant-scoped Student roster, case model and payment schedule
+without creating profiles or starting provider sync. It accepts bounded
+`page`/`limit`, `q`, `status`, `advisorId`, `collegeId`, complete `from`/`to`
+date pairs, `attentionThisWeek=true`, and whitelisted `sortBy`/`sortDir` values.
+Dates filter case `opened_on`; Students without cases use their account-created
+date. Its response includes one row per Student account, authorized case links,
+same-case advisor/college context, a permission-aware next payment, exact total,
+summary cards, deterministic attention count, unavailable-trend marker and
+authorized filter options. A Student can be listed without a runtime profile;
+the case action in STU-04 will establish one on demand.
+
+Migration `070_student_register_advisor_projection.sql` creates a narrow,
+tenant-filtered advisor-name view and a user-name sorting index. Deploy this
+migration with the new API before using the Students register. The normal
+runtime database role must remain restricted; the migration runner needs the
+database-owner URL. No data backfill is required merely to list existing
+Student users. The isolated SQL suite includes a 1,000-student `EXPLAIN ANALYZE`
+check and cross-tenant/advisor regression tests; production data and plans were
+not inspected.
 
 ### STU-01 schema and identity handoff
 

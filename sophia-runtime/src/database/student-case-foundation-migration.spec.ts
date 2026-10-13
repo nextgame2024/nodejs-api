@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
 import { runStudentProfileBackfill } from "../../scripts/backfill-student-profiles.js";
+import { buildStudentRegisterCohortSql, StudentOperationsRegisterService } from "../business-packs/student-operations/student-operations-register.service.js";
+import type { StudentOperationsWorkspacePrincipal } from "../business-packs/student-operations/student-operations-workspace.service.js";
 
 const url = process.env.LOCAL_STUDENT_CASE_TEST_DATABASE_URL;
 if (url && !["localhost", "127.0.0.1"].includes(new URL(url).hostname)) {
@@ -37,6 +39,9 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.customers(
         customer_id uuid PRIMARY KEY, external_company_id text, status text);
+      CREATE TABLE sophia_runtime.business_pack_entitlements(
+        customer_id uuid NOT NULL, identity_user_id text NOT NULL,
+        pack_id text NOT NULL, status text NOT NULL, role_key text NOT NULL);
       CREATE TABLE public.bm_company(company_id uuid PRIMARY KEY, workspace_profile text);
       CREATE TABLE public.users(
         id uuid PRIMARY KEY, company_id uuid NOT NULL, student_id text,
@@ -71,6 +76,8 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     `);
     const sql = await readFile(new URL("./migrations/069_student_case_foundation.sql", import.meta.url), "utf8");
     await pool.query(sql.replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"));
+    const registerSql = await readFile(new URL("./migrations/070_student_register_advisor_projection.sql", import.meta.url), "utf8");
+    await pool.query(registerSql.replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"));
     await pool.query(
       `INSERT INTO sophia_runtime.customers VALUES
         ($1,$2,'active'),($3,$4,'active')`,
@@ -97,6 +104,14 @@ suite("Student case foundation on disposable PostgreSQL", () => {
         [id, company, sid, name, email, type, status],
       );
     }
+    await pool.query(
+      `INSERT INTO sophia_runtime.business_pack_entitlements
+       (customer_id,identity_user_id,pack_id,status,role_key) VALUES
+       ($1,$2,'student-operations','active','advisor'),
+       ($1,$3,'student-operations','active','advisor'),
+       ($4,$5,'student-operations','active','advisor')`,
+      [tenantA, advisorA, advisorB, tenantB, advisorOther],
+    );
     await pool.query(
       `INSERT INTO sophia_runtime.student_operations_students
        (student_id,customer_id,student_reference,legal_name,email) VALUES
@@ -279,5 +294,121 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       "SELECT count(*)::int AS n FROM sophia_runtime.student_operations_student_user_links WHERE user_id = $1",
       [newUser],
     )).rows[0].n).toBe(1);
+  });
+
+  test("register keeps one row per user, enforces case scope, and paginates exact totals", async () => {
+    const database = {
+      tenantReadTransaction: async <T>(tenantId: string, work: (client: PoolClient) => Promise<T>): Promise<T> => {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          await client.query("SET LOCAL ROLE sophia_runtime_app");
+          await client.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenantId]);
+          const result = await work(client);
+          await client.query("COMMIT");
+          return result;
+        } catch (error) { await client.query("ROLLBACK"); throw error; }
+        finally { client.release(); }
+      },
+    };
+    const service = new StudentOperationsRegisterService(database as never);
+    const principal = (role: "operations" | "advisor", userId: string): StudentOperationsWorkspacePrincipal => ({
+      tenantId: tenantA, externalCompanyId: companyA, identityUserId: userId,
+      role, entitlementId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", authorizationRevision: 1,
+    });
+    const manager = principal("operations", advisorA);
+    const all = await service.list(manager, { limit: 2 });
+    expect(all.total).toBe(4); // archived account excluded; four active accounts incl. new Student
+    expect(all.students).toHaveLength(2);
+    expect(all.summary.total).toBe(4);
+    expect(all.summary.activeStudents).toBe(1);
+    expect(all.options.advisors.map((row) => row.userId)).toEqual([advisorA, advisorB]);
+    const farPage = await service.list(manager, { page: 20, limit: 2 });
+    expect(farPage.students).toEqual([]);
+    expect(farPage.total).toBe(4);
+    const descending = await service.list(manager, { sortBy: "name", sortDir: "desc", limit: 1 });
+    expect(descending.students[0].legalName).toBe("Older Student");
+    const joselin = await service.list(manager, { q: "STD-1" });
+    expect(joselin.total).toBe(1);
+    expect(joselin.students[0].cases).toHaveLength(2);
+    expect(joselin.students[0].caseId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2");
+    expect(joselin.students[0].nextPayment).toMatchObject({ amount: "4500.0000", currency: "AUD" });
+    const advisor = await service.list(principal("advisor", advisorA), {});
+    expect(advisor.total).toBe(1);
+    expect(advisor.students[0].cases).toHaveLength(1);
+    expect(advisor.students[0].nextPayment).toMatchObject({ dueOn: "2026-12-01" });
+    expect(advisor.students[0].nextPayment).not.toHaveProperty("amount");
+    expect(advisor.options.advisors.map((row) => row.userId)).toEqual([advisorA, advisorB]);
+    const noMatch = await service.list(manager, {
+      advisorId: advisorA, collegeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+      from: "2027-01-01", to: "2027-12-31",
+    });
+    expect(noMatch.total).toBe(0); // advisor A is on case 1, date is for case 2
+    const otherTenant = await service.list({
+      ...manager, tenantId: tenantB, externalCompanyId: companyB,
+    }, {});
+    expect(otherTenant.total).toBe(1);
+    expect(otherTenant.students[0].studentReference).toBe("STD-5");
+    expect(otherTenant.options.advisors).toEqual([]);
+    await pool.query(
+      `UPDATE sophia_runtime.student_operations_case_payment_schedule
+          SET due_on = CURRENT_DATE - 1
+        WHERE case_id = $1`, ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"],
+    );
+    const attention = await service.list(manager, { status: "overdue", attentionThisWeek: "true" });
+    expect(attention.total).toBe(1);
+    expect(attention.summary.attentionThisWeek).toBe(1);
+    expect(attention.students[0].attentionReason).toBe("Payment overdue");
+    await expect(service.list(manager, { from: "2026-01-01" })).rejects.toThrow();
+    await expect(service.list(manager, { from: "2026-12-31", to: "2026-01-01" })).rejects.toThrow();
+  });
+
+  test("register aggregate has a bounded plan on a synthetic thousand-student cohort", async () => {
+    await pool.query(
+      `INSERT INTO public.users(id,company_id,student_id,name,email,type,status)
+       SELECT gen_random_uuid(), $1, 'STD-' || (20000 + n)::text,
+              'Load Student ' || n::text, 'load' || n::text || '@example.test',
+              'student','active'
+         FROM generate_series(1,1000) n`, [companyA],
+    );
+    await pool.query(
+      `INSERT INTO sophia_runtime.student_operations_students
+       (customer_id,student_reference,legal_name,email)
+       SELECT $1, u.student_id, u.name, u.email FROM public.users u
+        WHERE u.company_id=$2 AND u.name LIKE 'Load Student %'`,
+      [tenantA, companyA],
+    );
+    await pool.query(
+      `INSERT INTO sophia_runtime.student_operations_student_user_links
+       (customer_id,student_id,company_id,user_id,student_reference)
+       SELECT $1,s.student_id,$2,u.id,u.student_id
+         FROM sophia_runtime.student_operations_students s
+         JOIN public.users u ON u.company_id=$2 AND u.student_id=s.student_reference
+        WHERE s.customer_id=$1 AND s.legal_name LIKE 'Load Student %'`,
+      [tenantA, companyA],
+    );
+    await pool.query(
+      `INSERT INTO sophia_runtime.student_operations_cases
+       (customer_id,student_id,case_reference,case_kind,opened_on)
+       SELECT $1,s.student_id,'LOAD-' || s.student_reference,'english',CURRENT_DATE
+         FROM sophia_runtime.student_operations_students s
+        WHERE s.customer_id=$1 AND s.legal_name LIKE 'Load Student %'`, [tenantA],
+    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE sophia_runtime_app");
+      await client.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenantA]);
+      const result = await client.query<{ "QUERY PLAN": Array<{ "Execution Time": number }> }>(
+        `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${buildStudentRegisterCohortSql("sophia_runtime")}
+         SELECT count(*) FROM cohort c`,
+        [tenantA, null, null, null, null, null, null],
+      );
+      const executionMs = result.rows[0]["QUERY PLAN"][0]["Execution Time"];
+      expect(Number.isFinite(executionMs)).toBe(true);
+      expect(executionMs).toBeLessThan(5000);
+      await client.query("ROLLBACK");
+    } finally { client.release(); }
   });
 });
