@@ -27,18 +27,23 @@ Older missing-capability statements and checkpoint descriptions below are the
 original phased baseline; consult the new plan's source findings for this
 register's current state. The operator reports migration 069 was applied in
 Render; we have not independently verified that or run the user/profile backfill.
-The STU-02 migration 070 and API have not been deployed.
+The operator reported applying the STU-02 migration 070; this was not
+independently verified. The latest register and UI changes remain local until
+deployed.
 
 ### STU-02 register API handoff
 
 The guarded `GET /business-packs/student-operations/v1/workspace/student-register`
 endpoint reads the tenant-scoped Student roster, case model and payment schedule
 without creating profiles or starting provider sync. It accepts bounded
-`page`/`limit`, `q`, `status`, `advisorId`, `collegeId`, complete `from`/`to`
+`page`/`limit`, `q`, `status`, `advisorId`, `collegeId`, `advisorName`,
+`collegeName`, complete `from`/`to`
 date pairs, `attentionThisWeek=true`, and whitelisted `sortBy`/`sortDir` values.
 Dates filter case `opened_on`; Students without cases use their account-created
 date. Its response includes one row per Student account, authorized case links,
-same-case advisor/college context, a permission-aware next payment, exact total,
+same-case advisor/college context, with the latest linked Xero invoice as a
+read-only advisor/college fallback only when no case exists, a permission-aware
+next payment, exact total,
 summary cards, deterministic attention count, unavailable-trend marker and
 authorized filter options. A Student can be listed without a runtime profile;
 the case action in STU-04 will establish one on demand.

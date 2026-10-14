@@ -67,8 +67,15 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(
         customer_id uuid NOT NULL, xero_connection_id uuid NOT NULL,
         xero_invoice_id uuid NOT NULL, student_id text,
-        invoice_status text NOT NULL,
+        invoice_status text NOT NULL, invoice_date date,
+        invoice_reference text, advisor_name text, college_name text,
         PRIMARY KEY(customer_id, xero_connection_id, xero_invoice_id));
+      ALTER TABLE sophia_runtime.student_operations_xero_invoices ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE sophia_runtime.student_operations_xero_invoices FORCE ROW LEVEL SECURITY;
+      CREATE POLICY xero_invoices_tenant ON sophia_runtime.student_operations_xero_invoices
+        USING (customer_id = NULLIF(current_setting('sophia.tenant_id', true), '')::uuid)
+        WITH CHECK (customer_id = NULLIF(current_setting('sophia.tenant_id', true), '')::uuid);
+      GRANT SELECT ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
       CREATE FUNCTION sophia_runtime.protect_student_operations_student_audit_event()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         RAISE EXCEPTION 'append-only';
@@ -297,6 +304,13 @@ suite("Student case foundation on disposable PostgreSQL", () => {
   });
 
   test("register keeps one row per user, enforces case scope, and paginates exact totals", async () => {
+    await pool.query(
+      `INSERT INTO sophia_runtime.student_operations_xero_invoices
+       (customer_id,xero_connection_id,xero_invoice_id,student_id,invoice_status,
+        invoice_date,invoice_reference,advisor_name,college_name)
+       VALUES ($1,$2,$3,'STD-2','DRAFT','2026-10-01','ATI','S15 Paulina','Other college')`,
+      [tenantA, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-ddddddddddde"],
+    );
     const database = {
       tenantReadTransaction: async <T>(tenantId: string, work: (client: PoolClient) => Promise<T>): Promise<T> => {
         const client = await pool.connect();
@@ -323,7 +337,7 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     expect(all.students).toHaveLength(2);
     expect(all.summary.total).toBe(4);
     expect(all.summary.activeStudents).toBe(1);
-    expect(all.options.advisors.map((row) => row.userId)).toEqual([advisorA, advisorB]);
+    expect(all.options.advisors.map((row) => row.userId).filter(Boolean)).toEqual([advisorA, advisorB]);
     const farPage = await service.list(manager, { page: 20, limit: 2 });
     expect(farPage.students).toEqual([]);
     expect(farPage.total).toBe(4);
@@ -334,12 +348,19 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     expect(joselin.students[0].cases).toHaveLength(2);
     expect(joselin.students[0].caseId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2");
     expect(joselin.students[0].nextPayment).toMatchObject({ amount: "4500.0000", currency: "AUD" });
+    const imported = await service.list(manager, { q: "STD-2" });
+    expect(imported.students[0]).toMatchObject({ advisorName: "S15 Paulina", collegeName: "ATI" });
+    expect(imported.options.advisors).toContainEqual({ userId: null, name: "S15 Paulina" });
+    expect(imported.options.colleges).toContainEqual({ collegeId: null, name: "ATI" });
+    const importedFiltered = await service.list(manager, { advisorName: "S15 Paulina", collegeName: "ATI" });
+    expect(importedFiltered.total).toBe(1);
+    expect(importedFiltered.students[0].studentReference).toBe("STD-2");
     const advisor = await service.list(principal("advisor", advisorA), {});
     expect(advisor.total).toBe(1);
     expect(advisor.students[0].cases).toHaveLength(1);
     expect(advisor.students[0].nextPayment).toMatchObject({ dueOn: "2026-12-01" });
     expect(advisor.students[0].nextPayment).not.toHaveProperty("amount");
-    expect(advisor.options.advisors.map((row) => row.userId)).toEqual([advisorA, advisorB]);
+    expect(advisor.options.advisors.map((row) => row.userId).filter(Boolean)).toEqual([advisorA, advisorB]);
     const noMatch = await service.list(manager, {
       advisorId: advisorA, collegeId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
       from: "2027-01-01", to: "2027-12-31",
@@ -403,7 +424,7 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       const result = await client.query<{ "QUERY PLAN": Array<{ "Execution Time": number }> }>(
         `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${buildStudentRegisterCohortSql("sophia_runtime")}
          SELECT count(*) FROM cohort c`,
-        [tenantA, null, null, null, null, null, null],
+        [tenantA, null, null, null, null, null, null, null, null],
       );
       const executionMs = result.rows[0]["QUERY PLAN"][0]["Execution Time"];
       expect(Number.isFinite(executionMs)).toBe(true);

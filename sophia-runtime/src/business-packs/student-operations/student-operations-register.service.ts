@@ -15,6 +15,8 @@ const QuerySchema = z.object({
   status: z.enum(["healthy", "action_required", "overdue", "no_vigente", "not_started"]).optional(),
   advisorId: z.string().uuid().optional(),
   collegeId: z.string().uuid().optional(),
+  advisorName: z.string().trim().min(1).max(200).optional(),
+  collegeName: z.string().trim().min(1).max(500).optional(),
   from: DateSchema.optional(),
   to: DateSchema.optional(),
   attentionThisWeek: z.enum(["true"]).optional(),
@@ -43,7 +45,7 @@ const SORT_COLUMNS: Record<RegisterQuery["sortBy"], string> = {
 type SummaryRow = {
   total: number; active_students: number; new_applications: number;
   action_required: number; no_vigente: number; attention_this_week: number;
-  last_updated: string | Date | null;
+  summary_last_updated: string | Date | null;
 };
 type RegisterRow = {
   user_id: string; profile_id: string | null; student_reference: string;
@@ -56,6 +58,7 @@ type RegisterRow = {
   next_currency: string | null; next_case_id: string | null;
   case_count: number; account_created_at: string | Date;
 };
+type RegisterResultRow = RegisterRow & SummaryRow & { filtered_total: number };
 type CaseLinkRow = { user_id: string; case_id: string; case_reference: string;
   lifecycle_status: string; opened_on: string };
 
@@ -72,37 +75,39 @@ export class StudentOperationsRegisterService {
     const params: unknown[] = [
       principal.tenantId, advisorScope, query.q ? `%${escapeLike(query.q)}%` : null,
       query.advisorId ?? null, query.collegeId ?? null, query.from ?? null, query.to ?? null,
+      query.advisorName ?? null, query.collegeName ?? null,
     ];
     const cohortSql = buildStudentRegisterCohortSql(schema);
     return this.database.tenantReadTransaction(principal.tenantId, async (client) => {
-      // The cohort is identical for totals and page rows. Status only narrows the table;
-      // cards remain a breakdown of the same search/case/date cohort.
-      const summary = await client.query<SummaryRow>(`${cohortSql}
-        SELECT count(*)::int AS total,
-               count(*) FILTER (WHERE has_current_case)::int AS active_students,
-               count(*) FILTER (WHERE newest_case_opened_in_range)::int AS new_applications,
-               count(*) FILTER (WHERE register_status IN ('action_required', 'overdue'))::int AS action_required,
-               count(*) FILTER (WHERE register_status = 'no_vigente')::int AS no_vigente,
-               count(*) FILTER (WHERE attention_this_week)::int AS attention_this_week,
-               max(last_updated) AS last_updated
-          FROM cohort c`, params);
-      const filteredTotal = query.status || query.attentionThisWeek
-        ? Number((await client.query<{ total: number }>(`${cohortSql}
-          SELECT count(*)::int AS total FROM cohort c
-           WHERE ($8::text IS NULL OR c.register_status = $8)
-             AND ($9::boolean IS NOT TRUE OR c.attention_this_week)`,
-        [...params, query.status ?? null, query.attentionThisWeek === "true"])).rows[0]?.total ?? 0)
-        : Number(summary.rows[0]?.total ?? 0);
-      const pageRows = await client.query<RegisterRow>(`${cohortSql}
-        SELECT c.* FROM cohort c
-         WHERE ($8::text IS NULL OR c.register_status = $8)
-           AND ($9::boolean IS NOT TRUE OR c.attention_this_week)
-         ORDER BY ${SORT_COLUMNS[query.sortBy]} ${query.sortDir.toUpperCase()} NULLS LAST,
-                  lower(c.legal_name) ASC, c.user_id ASC
-         LIMIT $10 OFFSET $11`,
+      // Materialize the roster/case/Xero cohort once, then derive both cards and
+      // the filtered page from that snapshot. Pagination never fetches all rows.
+      const register = await client.query<RegisterResultRow>(`${cohortSql},
+        filtered AS MATERIALIZED (
+          SELECT c.* FROM cohort c
+           WHERE ($10::text IS NULL OR c.register_status = $10)
+             AND ($11::boolean IS NOT TRUE OR c.attention_this_week)
+        ), summary AS (
+          SELECT count(*)::int AS total,
+                 count(*) FILTER (WHERE has_current_case)::int AS active_students,
+                 count(*) FILTER (WHERE newest_case_opened_in_range)::int AS new_applications,
+                 count(*) FILTER (WHERE register_status IN ('action_required', 'overdue'))::int AS action_required,
+                 count(*) FILTER (WHERE register_status = 'no_vigente')::int AS no_vigente,
+                 count(*) FILTER (WHERE attention_this_week)::int AS attention_this_week,
+                 max(last_updated) AS summary_last_updated
+            FROM cohort c
+        )
+        SELECT summary.*, (SELECT count(*)::int FROM filtered) AS filtered_total, page.*
+          FROM summary
+          LEFT JOIN LATERAL (
+            SELECT c.* FROM filtered c
+             ORDER BY ${SORT_COLUMNS[query.sortBy]} ${query.sortDir.toUpperCase()} NULLS LAST,
+                      lower(c.legal_name) ASC, c.user_id ASC
+             LIMIT $12 OFFSET $13
+          ) page ON true`,
       [...params, query.status ?? null, query.attentionThisWeek === "true",
         query.limit, (query.page - 1) * query.limit]);
-      const cases = await loadCaseLinks(client, schema, principal, pageRows.rows);
+      const pageRows = register.rows.filter((row) => Boolean(row.user_id));
+      const cases = await loadCaseLinks(client, schema, principal, pageRows);
       const caseMap = new Map<string, CaseLinkRow[]>();
       for (const row of cases) {
         const list = caseMap.get(row.user_id) ?? [];
@@ -111,9 +116,9 @@ export class StudentOperationsRegisterService {
       }
       const options = await loadOptions(client, schema, principal);
       const fullPayment = principal.role !== "advisor";
-      const totals = summary.rows[0];
+      const totals = register.rows[0];
       return {
-        students: pageRows.rows.map((row) => ({
+        students: pageRows.map((row) => ({
           userId: row.user_id, studentProfileId: row.profile_id,
           studentReference: row.student_reference, legalName: row.legal_name,
           email: row.email, caseId: row.case_id, caseReference: row.case_reference,
@@ -130,7 +135,7 @@ export class StudentOperationsRegisterService {
             ...(fullPayment ? { amount: row.next_amount, currency: row.next_currency } : {}),
           } : null,
         })),
-        page: query.page, limit: query.limit, total: filteredTotal,
+        page: query.page, limit: query.limit, total: Number(totals?.filtered_total ?? 0),
         summary: {
           total: Number(totals?.total ?? 0),
           activeStudents: Number(totals?.active_students ?? 0),
@@ -138,7 +143,7 @@ export class StudentOperationsRegisterService {
           actionRequired: Number(totals?.action_required ?? 0),
           noVigente: Number(totals?.no_vigente ?? 0),
           attentionThisWeek: Number(totals?.attention_this_week ?? 0),
-          lastUpdated: totals?.last_updated ?? null,
+          lastUpdated: totals?.summary_last_updated ?? null,
           trend: { available: false, reason: "Historical comparison is not yet available." },
         },
         options,
@@ -148,7 +153,7 @@ export class StudentOperationsRegisterService {
 }
 
 export function buildStudentRegisterCohortSql(schema: string): string {
-  return `WITH visible_cases AS MATERIALIZED (
+  return `WITH visible_cases AS NOT MATERIALIZED (
       SELECT c.* FROM ${schema}.student_operations_cases c
        WHERE c.customer_id = $1
          AND ($2::text IS NULL OR EXISTS (
@@ -163,11 +168,13 @@ export function buildStudentRegisterCohortSql(schema: string): string {
               OR r.email ILIKE $3 ESCAPE '\\')
          AND ($2::text IS NULL OR EXISTS (
            SELECT 1 FROM visible_cases vc WHERE vc.student_id = r.profile_id))
-    ), cohort AS (
+    ), cohort AS MATERIALIZED (
       SELECT r.user_id, r.profile_id, r.student_reference, r.legal_name, r.email,
              r.account_created_at, greatest(r.account_updated_at, coalesce(cs.last_case_update, r.account_updated_at)) AS last_updated,
              d.case_id, d.case_reference, d.current_stage, ad.advisor_user_id,
-             ar.display_name AS advisor_name, cl.college_id, cl.college_name,
+             coalesce(ar.display_name, CASE WHEN cs.case_count = 0 THEN xi.advisor_name END) AS advisor_name,
+             cl.college_id,
+             coalesce(cl.college_name, CASE WHEN cs.case_count = 0 THEN xi.college_name END) AS college_name,
              coalesce(cs.case_count, 0)::int AS case_count,
              coalesce(cs.has_current_case, false) AS has_current_case,
              coalesce(cs.newest_case_opened_in_range, false) AS newest_case_opened_in_range,
@@ -203,6 +210,18 @@ export function buildStudentRegisterCohortSql(schema: string): string {
                SELECT 1 FROM ${schema}.student_operations_case_colleges cc
                 WHERE cc.customer_id = v.customer_id AND cc.case_id = v.case_id
                   AND cc.college_id = $5))
+             AND ($8::text IS NULL OR EXISTS (
+               SELECT 1 FROM ${schema}.student_operations_case_advisors ca
+               JOIN ${schema}.student_operations_advisor_roster advisor
+                 ON advisor.customer_id = ca.customer_id AND advisor.user_id = ca.advisor_user_id
+                WHERE ca.customer_id = v.customer_id AND ca.case_id = v.case_id
+                  AND lower(btrim(advisor.display_name)) = lower($8)))
+             AND ($9::text IS NULL OR EXISTS (
+               SELECT 1 FROM ${schema}.student_operations_case_colleges cc
+               JOIN ${schema}.student_operations_colleges college
+                 ON college.customer_id = cc.customer_id AND college.college_id = cc.college_id
+                WHERE cc.customer_id = v.customer_id AND cc.case_id = v.case_id
+                  AND lower(btrim(college.college_name)) = lower($9)))
              AND ($6::date IS NULL OR v.opened_on BETWEEN $6::date AND $7::date)
            ORDER BY (v.lifecycle_status = 'open') DESC,
                     v.opened_on DESC, v.case_id DESC LIMIT 1
@@ -223,6 +242,18 @@ export function buildStudentRegisterCohortSql(schema: string): string {
            ORDER BY cc.is_primary DESC, cc.created_at ASC, cc.college_id ASC LIMIT 1
         ) cl ON true
         LEFT JOIN LATERAL (
+          SELECT nullif(btrim(i.advisor_name), '') AS advisor_name,
+                 coalesce(nullif(btrim(i.invoice_reference), ''),
+                          nullif(btrim(i.college_name), '')) AS college_name
+            FROM ${schema}.student_operations_xero_invoices i
+           WHERE i.customer_id = $1 AND i.student_id = r.student_reference
+             AND cs.case_count = 0
+             AND i.invoice_status NOT IN ('DELETED', 'VOIDED')
+             AND (i.advisor_name IS NOT NULL OR i.invoice_reference IS NOT NULL
+                  OR i.college_name IS NOT NULL)
+           ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC LIMIT 1
+        ) xi ON cs.case_count = 0
+        LEFT JOIN LATERAL (
           SELECT ps.case_id, ps.due_on, ps.amount, ps.currency_code
             FROM ${schema}.student_operations_case_payment_schedule ps
             JOIN visible_cases vc ON vc.case_id = ps.case_id
@@ -231,9 +262,10 @@ export function buildStudentRegisterCohortSql(schema: string): string {
            ORDER BY ps.due_on ASC, ps.payment_schedule_id ASC LIMIT 1
         ) pay ON true
        WHERE d.case_id IS NOT NULL
-          OR ($4::uuid IS NULL AND $5::uuid IS NULL
-              AND cs.case_count = 0
-              AND ($6::date IS NULL OR r.account_created_at::date BETWEEN $6::date AND $7::date))
+          OR ($4::uuid IS NULL AND $5::uuid IS NULL AND cs.case_count = 0
+              AND ($6::date IS NULL OR r.account_created_at::date BETWEEN $6::date AND $7::date)
+              AND ($8::text IS NULL OR lower(xi.advisor_name) = lower($8))
+              AND ($9::text IS NULL OR lower(xi.college_name) = lower($9)))
     )`;
 }
 
@@ -265,8 +297,10 @@ async function loadOptions(client: PoolClient, schema: string,
   principal: StudentOperationsWorkspacePrincipal) {
   const advisorScope = principal.role === "advisor" ? principal.identityUserId : null;
   const [advisors, colleges] = await Promise.all([
-    client.query<{ user_id: string; display_name: string }>(
-      `SELECT DISTINCT ar.user_id, ar.display_name
+    client.query<{ user_id: string | null; display_name: string }>(
+      `SELECT min(source.user_id) AS user_id, source.display_name
+         FROM (
+        SELECT ar.user_id::text AS user_id, ar.display_name
          FROM ${schema}.student_operations_advisor_roster ar
          JOIN ${schema}.student_operations_case_advisors ca
            ON ca.customer_id = ar.customer_id AND ca.advisor_user_id = ar.user_id
@@ -282,11 +316,24 @@ async function loadOptions(client: PoolClient, schema: string,
             SELECT 1 FROM ${schema}.student_operations_case_advisors mine
              WHERE mine.customer_id = c.customer_id AND mine.case_id = c.case_id
                AND mine.advisor_user_id::text = $2))
-        ORDER BY ar.display_name, ar.user_id`,
+        UNION ALL
+        SELECT NULL::text AS user_id, btrim(i.advisor_name) AS display_name
+          FROM ${schema}.student_operations_xero_invoices i
+          JOIN ${schema}.student_operations_student_roster roster
+            ON roster.customer_id = i.customer_id AND roster.student_reference = i.student_id
+         WHERE i.customer_id = $1 AND $2::text IS NULL
+           AND roster.account_status <> 'archived'
+           AND i.invoice_status NOT IN ('DELETED', 'VOIDED')
+           AND nullif(btrim(i.advisor_name), '') IS NOT NULL
+         ) source
+        GROUP BY source.display_name
+        ORDER BY source.display_name`,
       [principal.tenantId, advisorScope],
     ),
-    client.query<{ college_id: string; college_name: string }>(
-      `SELECT DISTINCT col.college_id, col.college_name
+    client.query<{ college_id: string | null; college_name: string }>(
+      `SELECT min(source.college_id) AS college_id, source.college_name
+         FROM (
+        SELECT col.college_id::text AS college_id, col.college_name
          FROM ${schema}.student_operations_colleges col
          JOIN ${schema}.student_operations_case_colleges cc
            ON cc.customer_id = col.customer_id AND cc.college_id = col.college_id
@@ -302,7 +349,21 @@ async function loadOptions(client: PoolClient, schema: string,
             SELECT 1 FROM ${schema}.student_operations_case_advisors mine
              WHERE mine.customer_id = c.customer_id AND mine.case_id = c.case_id
                AND mine.advisor_user_id::text = $2))
-        ORDER BY col.college_name, col.college_id`,
+        UNION ALL
+        SELECT NULL::text AS college_id,
+               coalesce(nullif(btrim(i.invoice_reference), ''),
+                        nullif(btrim(i.college_name), '')) AS college_name
+          FROM ${schema}.student_operations_xero_invoices i
+          JOIN ${schema}.student_operations_student_roster roster
+            ON roster.customer_id = i.customer_id AND roster.student_reference = i.student_id
+         WHERE i.customer_id = $1 AND $2::text IS NULL
+           AND roster.account_status <> 'archived'
+           AND i.invoice_status NOT IN ('DELETED', 'VOIDED')
+           AND coalesce(nullif(btrim(i.invoice_reference), ''),
+                        nullif(btrim(i.college_name), '')) IS NOT NULL
+         ) source
+        GROUP BY source.college_name
+        ORDER BY source.college_name`,
       [principal.tenantId, advisorScope],
     ),
   ]);
