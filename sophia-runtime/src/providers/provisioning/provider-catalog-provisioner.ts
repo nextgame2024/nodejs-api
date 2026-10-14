@@ -28,8 +28,8 @@ export class ProviderCatalogProvisioner {
       throw new Error("A stable provider catalog version is required.");
     }
     const config = runtimeConfig();
-    const personaId = config.tavus.personaId;
-    if (!personaId) throw new Error("TAVUS_PERSONA_ID is required for Tavus catalog provisioning.");
+    const palId = config.tavus.palId;
+    if (!palId) throw new Error("TAVUS_PAL_ID is required for Tavus catalog provisioning.");
     const definitions = this.tools.listDefinitionsForMode(config.providerCatalogMode)
       .filter(({ name }) => name !== "researchBusiness" && name !== "research.public");
     const digest = createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
@@ -69,13 +69,13 @@ export class ProviderCatalogProvisioner {
            environment_key, provider_key, provider_resource_id, customer_id
          ) VALUES ($1, 'tavus-full', $2, $3)
          ON CONFLICT DO NOTHING`,
-        [config.deploymentEnvironment, personaId, customerId],
+        [config.deploymentEnvironment, palId, customerId],
       );
       const ownership = await client.query(
         `SELECT 1 FROM ${schema}.provider_resource_owners
          WHERE environment_key = $1 AND provider_key = 'tavus-full'
            AND provider_resource_id = $2 AND customer_id = $3`,
-        [config.deploymentEnvironment, personaId, customerId],
+        [config.deploymentEnvironment, palId, customerId],
       );
       if (ownership.rowCount !== 1) {
         throw new ConflictException("The configured provider resource belongs to another tenant in this environment.");
@@ -87,7 +87,7 @@ export class ProviderCatalogProvisioner {
          ) VALUES ($1, $2, 'tavus-full', $3, $4, $5, '{"toolIds":{}}'::jsonb,
                    now() + interval '15 minutes')
          RETURNING deployment_id, status, catalog_digest, resource_ids, operation_lease_until`,
-        [customerId, config.deploymentEnvironment, catalogVersion, digest, personaId],
+        [customerId, config.deploymentEnvironment, catalogVersion, digest, palId],
       );
       return { deployment: inserted.rows[0], alreadyActive: false };
     });
@@ -98,7 +98,7 @@ export class ProviderCatalogProvisioner {
     ).implementation;
     try {
       const provisioned = await provider.provisionCatalog({
-        personaId,
+        palId,
         definitions,
         existingToolIds: prepared.deployment.resource_ids.toolIds ?? {},
         onToolAllocated: (name, id) => this.recordTool(customerId, prepared.deployment.deployment_id, name, id),

@@ -93,8 +93,8 @@ export type RuntimeConfig = {
   tavus: {
     apiKey?: string;
     apiBaseUrl: string;
-    personaId?: string;
-    replicaId?: string;
+    palId?: string;
+    faceId?: string;
     nativeLlmOnly: boolean;
     internetSearchEnabled: boolean;
   };
@@ -290,8 +290,10 @@ export function runtimeConfig(): RuntimeConfig {
     tavus: {
       apiKey: emptyToUndefined(process.env.TAVUS_API_KEY),
       apiBaseUrl: process.env.TAVUS_API_BASE_URL || "https://tavusapi.com",
-      personaId: emptyToUndefined(process.env.TAVUS_PERSONA_ID),
-      replicaId: emptyToUndefined(process.env.TAVUS_REPLICA_ID),
+      palId: emptyToUndefined(process.env.TAVUS_PAL_ID)
+        || emptyToUndefined(process.env.TAVUS_PERSONA_ID),
+      faceId: emptyToUndefined(process.env.TAVUS_FACE_ID)
+        || emptyToUndefined(process.env.TAVUS_REPLICA_ID),
       nativeLlmOnly: parseBoolean(process.env.TAVUS_NATIVE_LLM_ONLY, false),
       internetSearchEnabled: parseBoolean(
         process.env.TAVUS_INTERNET_SEARCH_ENABLED,

@@ -7,8 +7,10 @@ describe("TavusFullProvider", () => {
   beforeEach(() => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.TAVUS_API_KEY = "tavus-key";
-    process.env.TAVUS_PERSONA_ID = "persona-1";
-    process.env.TAVUS_REPLICA_ID = "replica-1";
+    delete process.env.TAVUS_PAL_ID;
+    delete process.env.TAVUS_FACE_ID;
+    process.env.TAVUS_PERSONA_ID = "pal-1";
+    process.env.TAVUS_REPLICA_ID = "face-1";
     process.env.TAVUS_NATIVE_LLM_ONLY = "true";
     process.env.TAVUS_INTERNET_SEARCH_ENABLED = "true";
   });
@@ -16,6 +18,8 @@ describe("TavusFullProvider", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.TAVUS_API_KEY;
+    delete process.env.TAVUS_PAL_ID;
+    delete process.env.TAVUS_FACE_ID;
     delete process.env.TAVUS_PERSONA_ID;
     delete process.env.TAVUS_REPLICA_ID;
     delete process.env.TAVUS_NATIVE_LLM_ONLY;
@@ -48,11 +52,14 @@ describe("TavusFullProvider", () => {
       }),
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      persona_id: "persona-1",
-      replica_id: "replica-1",
+      pal_id: "pal-1",
+      face_id: "face-1",
       require_auth: true,
       max_participants: 2,
     });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toEqual(
+      expect.objectContaining({ persona_id: expect.anything(), replica_id: expect.anything() }),
+    );
     expect(
       JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
         .conversational_context,
@@ -63,6 +70,26 @@ describe("TavusFullProvider", () => {
       model: "tavus-gpt-oss",
       meetingToken: "meeting-token",
     });
+  });
+
+  it("prefers the current PAL and face environment names over legacy aliases", async () => {
+    process.env.TAVUS_PAL_ID = "current-pal";
+    process.env.TAVUS_FACE_ID = "current-face";
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        conversation_id: "conversation-current",
+        conversation_url: "https://tavus.daily.co/conversation-current",
+        meeting_token: "meeting-token-current",
+      }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    await new TavusFullProvider().createSession({ customerId: "customer-1" });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(
+      expect.objectContaining({ pal_id: "current-pal", face_id: "current-face" }),
+    );
   });
 
   it("never mutates skills or remote tool definitions during session creation", async () => {
@@ -110,14 +137,14 @@ describe("TavusFullProvider", () => {
     global.fetch = fetchMock;
 
     await expect(new TavusFullProvider().provisionCatalog({
-      personaId: "persona-1",
+      palId: "pal-1",
       definitions: [{ name: "getInventory", description: "Inventory", parameters: {} }],
       onToolAllocated: allocated,
     })).resolves.toMatchObject({ toolIds: { getInventory: "tool-1" } });
 
     expect(allocated).toHaveBeenCalledWith("getInventory", "tool-1");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://tavusapi.com/v2/pals/persona-1/skills/internet_search",
+      "https://tavusapi.com/v2/pals/pal-1/skills/internet_search",
       expect.objectContaining({ method: "PUT" }),
     );
   });

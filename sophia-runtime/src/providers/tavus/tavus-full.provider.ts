@@ -25,7 +25,7 @@ export type TavusFullSession = {
 };
 
 export type TavusCatalogProvisionRequest = {
-  personaId: string;
+  palId: string;
   definitions: RuntimeToolDefinition[];
   existingToolIds?: Record<string, string>;
   onToolAllocated?: (toolName: string, toolId: string) => Promise<void>;
@@ -53,16 +53,16 @@ export class TavusFullProvider {
   ): Promise<TavusFullSession> {
     const startedAt = Date.now();
     const config = runtimeConfig();
-    const { apiKey, apiBaseUrl, personaId, replicaId } = config.tavus;
+    const { apiKey, apiBaseUrl, palId, faceId } = config.tavus;
 
-    if (!apiKey || !personaId) {
+    if (!apiKey || !palId) {
       throw new ServiceUnavailableException(
-        "TAVUS_API_KEY and TAVUS_PERSONA_ID are required for Tavus Full sessions.",
+        "TAVUS_API_KEY and TAVUS_PAL_ID are required for Tavus Full sessions.",
       );
     }
     if (!config.tavus.nativeLlmOnly) {
       throw new ServiceUnavailableException(
-        "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus Persona uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
+        "Set TAVUS_NATIVE_LLM_ONLY=true after confirming the Tavus PAL uses tavus-gpt-oss and has no custom OpenAI LLM layer.",
       );
     }
     let response: Response;
@@ -75,8 +75,8 @@ export class TavusFullProvider {
           },
           signal: AbortSignal.timeout(20_000),
           body: JSON.stringify({
-            persona_id: personaId,
-            ...(replicaId ? { replica_id: replicaId } : {}),
+            pal_id: palId,
+            ...(faceId ? { face_id: faceId } : {}),
             conversation_name: `Sophia - ${request.storeId || request.customerId}`,
             conversational_context: [
               request.instructions ?? sophiaConversationInstructions(),
@@ -159,33 +159,33 @@ export class TavusFullProvider {
   }
 
   async provisionCatalog(request: TavusCatalogProvisionRequest): Promise<{
-    personaId: string;
+    palId: string;
     toolIds: Record<string, string>;
     internetSearchEnabled: boolean;
   }> {
     const config = runtimeConfig();
     if (!config.tavus.apiKey) throw new Error("TAVUS_API_KEY is required for catalog provisioning.");
     if (config.tavus.internetSearchEnabled) {
-      await this.ensureInternetSearchSkill(config.tavus.apiBaseUrl, config.tavus.apiKey, request.personaId);
+      await this.ensureInternetSearchSkill(config.tavus.apiBaseUrl, config.tavus.apiKey, request.palId);
     }
     const toolIds = await this.ensureRuntimeTools(
       config.tavus.apiBaseUrl,
       config.tavus.apiKey,
-      request.personaId,
+      request.palId,
       request.definitions,
       request.existingToolIds ?? {},
       request.onToolAllocated,
     );
-    return { personaId: request.personaId, toolIds, internetSearchEnabled: config.tavus.internetSearchEnabled };
+    return { palId: request.palId, toolIds, internetSearchEnabled: config.tavus.internetSearchEnabled };
   }
 
   private async ensureInternetSearchSkill(
     apiBaseUrl: string,
     apiKey: string,
-    personaId: string,
+    palId: string,
   ): Promise<void> {
     const response = await fetch(
-      `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/skills/internet_search`,
+      `${apiBaseUrl}/v2/pals/${encodeURIComponent(palId)}/skills/internet_search`,
       {
         method: "PUT",
         headers: {
@@ -208,7 +208,7 @@ export class TavusFullProvider {
   private async ensureRuntimeTools(
     apiBaseUrl: string,
     apiKey: string,
-    personaId: string,
+    palId: string,
     definitions: RuntimeToolDefinition[],
     existingToolIds: Record<string, string>,
     onToolAllocated?: (toolName: string, toolId: string) => Promise<void>,
@@ -241,7 +241,7 @@ export class TavusFullProvider {
     }
 
     const attachedResponse = await fetch(
-      `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/tools`,
+      `${apiBaseUrl}/v2/pals/${encodeURIComponent(palId)}/tools`,
       {
         headers: { "x-api-key": apiKey },
         signal: AbortSignal.timeout(12_000),
@@ -263,7 +263,7 @@ export class TavusFullProvider {
     const missingIds = Object.values(toolIds).filter((id) => !attachedIds.has(id));
     if (missingIds.length) {
       const attachResponse = await fetch(
-        `${apiBaseUrl}/v2/pals/${encodeURIComponent(personaId)}/tools`,
+        `${apiBaseUrl}/v2/pals/${encodeURIComponent(palId)}/tools`,
         {
           method: "POST",
           headers: { "content-type": "application/json", "x-api-key": apiKey },

@@ -35,6 +35,8 @@ describe("Sophia Runtime v2 contracts", () => {
     "modelId",
     "voiceName",
     "providerApiKey",
+    "palId",
+    "faceId",
     "personaId",
     "replicaId",
     "toolAllowlist",

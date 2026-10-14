@@ -2549,6 +2549,13 @@
       "node": "repository Runtime",
       "result": "platform-operator-tenant-header-cors-fix-ready",
       "detail": "The successful Sophia Admin shell and organisation list proved authentication and platform authority were valid. The subsequent tenant organisation request introduced X-Sophia-Admin-Tenant-Id, but the Runtime CORS policy did not allow that header, so the browser blocked its preflight and Angular reported status 0 Unknown Error before the controller ran. The Runtime now centrally allows the tenant-selection header and has regression coverage for the case-insensitive CORS contract. Typecheck, all 139 suites/512 tests and the production build passed. No production schema/data, email, provider, Stripe or billing mutation occurred; live billing switches remain disabled."
+    },
+    {
+      "command": "repair seeded property-photo media allowlist; migrate Tavus conversation creation from persona_id/replica_id to pal_id/face_id with deployment-variable aliases; focused frontend/provider tests; frontend and Runtime typechecks/builds",
+      "repository": "frontend + sophia-runtime",
+      "node": "20.19.1 and 22.23.2",
+      "result": "real-estate-photos-and-current-tavus-contract-fix-ready",
+      "detail": "The real-estate demo seeds listing media from images.unsplash.com, but the browser presentation policy permitted only the legacy S3 hostname and filtered every seeded image before rendering. The seeded host is now explicitly allowlisted with regression coverage. Tavus's current Create Conversation contract accepts pal_id and face_id, while Runtime still sent the retired persona_id and replica_id fields; Runtime now sends the current fields and accepts TAVUS_PAL_ID/TAVUS_FACE_ID while retaining the old environment names as deployment-compatible aliases. Three focused Runtime suites passed 16 tests, Runtime typecheck/build passed, the focused Angular renderer suite passed 5 ChromeHeadless tests, and Angular typecheck/production build passed with existing non-blocking warnings. No live Tavus conversation, provider catalog mutation, production deployment, database write, email or billing action was performed."
     }
   ],
   "blockers": [

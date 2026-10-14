@@ -7,7 +7,7 @@ describe("ProviderCatalogProvisioner", () => {
     process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgres://example";
     process.env.SOPHIA_RUNTIME_SCHEMA = "sophia_runtime";
     process.env.SOPHIA_DEPLOYMENT_ENV = "test";
-    process.env.TAVUS_PERSONA_ID = "persona-owned-elsewhere";
+    process.env.TAVUS_PAL_ID = "pal-owned-elsewhere";
     process.env.SOPHIA_PROVIDER_CATALOG_MODE = "legacy";
   });
 
