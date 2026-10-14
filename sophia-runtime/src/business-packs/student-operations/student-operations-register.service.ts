@@ -163,9 +163,6 @@ export function buildStudentRegisterCohortSql(schema: string): string {
     ), eligible AS (
       SELECT r.* FROM ${schema}.student_operations_student_roster r
        WHERE r.customer_id = $1 AND r.account_status <> 'archived'
-         AND ($3::text IS NULL OR r.legal_name ILIKE $3 ESCAPE '\\'
-              OR r.student_reference ILIKE $3 ESCAPE '\\'
-              OR r.email ILIKE $3 ESCAPE '\\')
          AND ($2::text IS NULL OR EXISTS (
            SELECT 1 FROM visible_cases vc WHERE vc.student_id = r.profile_id))
     ), cohort AS MATERIALIZED (
@@ -261,11 +258,16 @@ export function buildStudentRegisterCohortSql(schema: string): string {
              AND ps.customer_id = $1 AND ps.status IN ('pending', 'partially_paid')
            ORDER BY ps.due_on ASC, ps.payment_schedule_id ASC LIMIT 1
         ) pay ON true
-       WHERE d.case_id IS NOT NULL
+       WHERE (d.case_id IS NOT NULL
           OR ($4::uuid IS NULL AND $5::uuid IS NULL AND cs.case_count = 0
               AND ($6::date IS NULL OR r.account_created_at::date BETWEEN $6::date AND $7::date)
               AND ($8::text IS NULL OR lower(xi.advisor_name) = lower($8))
-              AND ($9::text IS NULL OR lower(xi.college_name) = lower($9)))
+              AND ($9::text IS NULL OR lower(xi.college_name) = lower($9))))
+         AND ($3::text IS NULL OR r.legal_name ILIKE $3 ESCAPE '\\'
+              OR r.student_reference ILIKE $3 ESCAPE '\\'
+              OR r.email ILIKE $3 ESCAPE '\\'
+              OR coalesce(cl.college_name, CASE WHEN cs.case_count = 0 THEN xi.college_name END)
+                 ILIKE $3 ESCAPE '\\')
     )`;
 }
 

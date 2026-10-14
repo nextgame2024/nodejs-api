@@ -350,6 +350,12 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     expect(joselin.students[0].nextPayment).toMatchObject({ amount: "4500.0000", currency: "AUD" });
     const imported = await service.list(manager, { q: "STD-2" });
     expect(imported.students[0]).toMatchObject({ advisorName: "S15 Paulina", collegeName: "ATI" });
+    const byReference = await service.list(manager, { q: "ati" });
+    expect(byReference.students.map((row) => row.studentReference)).toEqual(["STD-2"]);
+    const hiddenCollege = await service.list(manager, { q: "Other college" });
+    expect(hiddenCollege.total).toBe(0); // search matches the displayed reference, not the hidden fallback
+    const byCaseCollege = await service.list(manager, { q: "College Two" });
+    expect(byCaseCollege.students.map((row) => row.studentReference)).toEqual(["STD-1"]);
     expect(imported.options.advisors).toContainEqual({ userId: null, name: "S15 Paulina" });
     expect(imported.options.colleges).toContainEqual({ collegeId: null, name: "ATI" });
     const importedFiltered = await service.list(manager, { advisorName: "S15 Paulina", collegeName: "ATI" });

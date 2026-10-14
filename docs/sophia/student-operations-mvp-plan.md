@@ -57,6 +57,11 @@ Student users. The isolated SQL suite includes a 1,000-student `EXPLAIN ANALYZE`
 check and cross-tenant/advisor regression tests; production data and plans were
 not inspected.
 
+The Students UI labels the mixed invoice-reference/college field as
+`Ref / College`, does not offer it as a college-only filter, and includes the
+displayed value in debounced server-side search. The API retains its existing
+college filters for compatibility. This follow-up requires no migration.
+
 ### STU-01 schema and identity handoff
 
 Migration `sophia-runtime/src/database/migrations/069_student_case_foundation.sql`

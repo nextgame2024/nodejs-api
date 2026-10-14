@@ -9,7 +9,7 @@
     "plan": "students-module-delivery-plan.json",
     "checkpoint": "STU-03-LOCAL-STUDENTS-LIST-VERIFIED",
     "nextReadyTask": "STU-04",
-    "evidence": "Prototype-aligned Students list is implemented. Follow-up fixes align its range picker with Payments and Control, project linked Xero advisor/college names for students without cases, and expose those names in filters while case assignments remain authoritative. The register now computes its cohort once for summary and page. Chief Executive Payments and Control loading no longer waits for unrelated student/dashboard reads. The operator reported applying migration 070; this was not independently verified. No new migration is needed for these fixes. STU-04 actions and case workflow remain pending.",
+    "evidence": "Prototype-aligned Students list is implemented. Follow-up fixes align its range picker with Payments and Control, project linked Xero advisor and Ref / College values for students without cases, and retain case assignments as authoritative. The Students UI now labels the mixed value Ref / College, removes the misleading college filter, and searches the displayed value. The register computes its cohort once for summary and page. Chief Executive Payments and Control loading no longer waits for unrelated student/dashboard reads. The operator reported applying migration 070; this was not independently verified. No new migration is needed for these fixes. STU-04 actions and case workflow remain pending.",
     "verification": [
       "PASS: Node parsed both JSON artifacts and validated all seven task IDs, dependency order, acceptance criteria, reference paths and next-task pointers.",
       "PASS: 7 disposable PostgreSQL integration tests for schema, identity, register authorization/filters/pagination and 1,000-student EXPLAIN ANALYZE.",
@@ -19,7 +19,8 @@
       "PASS: Angular production build with Node 20.19.1; 23 targeted ChromeHeadless Students list and service tests passed.",
       "LIMITATION: No authenticated browser smoke against deployed production data in this task.",
       "PASS: Follow-up fixes passed 7 disposable PostgreSQL integration tests, 44 targeted ChromeHeadless tests, Sophia Runtime and Angular production builds, and a date-picker alignment browser test.",
-      "OBSERVATION: Complete Students register response measured about 0.5 seconds twice on a disposable dataset of about 2,000 students and 8,000 linked invoices; production latency remains unverified."
+      "OBSERVATION: Complete Students register response measured about 0.5 seconds twice on a disposable dataset of about 2,000 students and 8,000 linked invoices; production latency remains unverified.",
+      "PASS: Ref / College search and label follow-up passed 7 disposable PostgreSQL integration tests, 8 focused ChromeHeadless Students page tests, backend/frontend TypeScript checks, and both production builds. No production data accessed."
     ],
     "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."
   },
