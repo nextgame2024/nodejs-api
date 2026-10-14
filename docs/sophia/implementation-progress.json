@@ -20,7 +20,8 @@
       "LIMITATION: No authenticated browser smoke against deployed production data in this task.",
       "PASS: Follow-up fixes passed 7 disposable PostgreSQL integration tests, 44 targeted ChromeHeadless tests, Sophia Runtime and Angular production builds, and a date-picker alignment browser test.",
       "OBSERVATION: Complete Students register response measured about 0.5 seconds twice on a disposable dataset of about 2,000 students and 8,000 linked invoices; production latency remains unverified.",
-      "PASS: Ref / College search and label follow-up passed 7 disposable PostgreSQL integration tests, 8 focused ChromeHeadless Students page tests, backend/frontend TypeScript checks, and both production builds. No production data accessed."
+      "PASS: Ref / College search and label follow-up passed 7 disposable PostgreSQL integration tests, 8 focused ChromeHeadless Students page tests, backend/frontend TypeScript checks, and both production builds. No production data accessed.",
+      "PASS: Opt-in Student Operations server timing diagnostics passed Sophia Runtime npm run typecheck, npm run build, and 62 Student Operations Jest tests. No production data accessed; live request timings remain to be collected after deployment."
     ],
     "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."
   },

@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { XeroConnectorService } from "../../connectors/xero/xero-connector.service.js";
@@ -7,6 +8,7 @@ import type { XeroContactRecord, XeroInvoiceRecord } from "../../connectors/xero
 import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
+import { elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
 
 const CandidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -359,13 +361,20 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
-  async invoices(tenantId: string, connectionId: string, input: unknown) {
+  async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string) {
     const parsed = InvoiceQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
     const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction } = parsed.data;
     const schema = runtimeConfig().schema;
-    return this.database.tenantReadTransaction(tenantId, async (db) => {
+    const startedAt = performance.now();
+    const durations: Record<string, number | undefined> = {};
+    let outcome: "ok" | "error" = "error";
+    try {
+      const invoiceResult = await this.database.tenantReadTransaction(tenantId, async (db) => {
+      durations.transactionSetupMs = elapsedMs(startedAt);
+      const connectionStartedAt = performance.now();
       await assertConnection(db, schema, tenantId, connectionId);
+      durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
       if (q) {
@@ -398,6 +407,7 @@ export class StudentOperationsXeroSyncService {
       params.push(limit, (page - 1) * limit);
       const limitPosition = params.length - 1;
       const order = `${InvoiceSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
+      const queryStartedAt = performance.now();
       const result = await db.query<InvoiceRow>(
         `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_type, i.invoice_number, i.invoice_reference,
                 c.legal_name, c.email, c.contact_number, c.account_number,
@@ -439,6 +449,7 @@ export class StudentOperationsXeroSyncService {
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
         params,
       );
+      durations.invoiceQueryMs = elapsedMs(queryStartedAt);
       const total = Number(result.rows[0]?.total_count ?? 0);
       return {
         invoices: result.rows.map(invoiceProjection),
@@ -457,7 +468,14 @@ export class StudentOperationsXeroSyncService {
           paid: Number(result.rows[0]?.paid_total_count ?? 0),
         },
       };
-    });
+      });
+      outcome = "ok";
+      return invoiceResult;
+    } finally {
+      logStudentOperationsTiming("xero-invoices", correlationId, outcome, {
+        ...durations, totalMs: elapsedMs(startedAt),
+      });
+    }
   }
 
   async invoicePaymentTracks(tenantId: string, connectionId: string) {

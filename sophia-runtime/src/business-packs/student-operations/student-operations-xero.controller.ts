@@ -4,8 +4,12 @@ import { hasStudentOperationsPermission } from "./student-operations-policy.js";
 import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
 import { StudentOperationsXeroSyncService } from "./student-operations-xero-sync.service.js";
+import { timeStudentOperations } from "./student-operations-timing.js";
 
-type WorkspaceRequest = { studentOperationsPrincipal: StudentOperationsWorkspacePrincipal };
+type WorkspaceRequest = {
+  studentOperationsPrincipal: StudentOperationsWorkspacePrincipal;
+  studentOperationsCorrelationId?: string;
+};
 
 @Controller("business-packs/student-operations/v1/workspace/integrations/xero")
 @UseGuards(StudentOperationsWorkspaceGuard)
@@ -18,7 +22,8 @@ export class StudentOperationsXeroController {
   @Get()
   status(@Req() request: WorkspaceRequest) {
     const principal = this.authorize(request);
-    return this.xero.status(principal.tenantId);
+    return timeStudentOperations("xero-status", request.studentOperationsCorrelationId,
+      () => this.xero.status(principal.tenantId));
   }
 
   @Post("authorization")
@@ -52,7 +57,8 @@ export class StudentOperationsXeroController {
     @Query() query: unknown,
   ) {
     const principal = this.authorize(request);
-    return this.sync.invoices(principal.tenantId, connectionId, query);
+    return this.sync.invoices(principal.tenantId, connectionId, query,
+      request.studentOperationsCorrelationId);
   }
 
   @Get("connections/:connectionId/student-invoices/payment-tracks")
@@ -61,7 +67,8 @@ export class StudentOperationsXeroController {
     @Param("connectionId") connectionId: string,
   ) {
     const principal = this.authorize(request);
-    return this.sync.invoicePaymentTracks(principal.tenantId, connectionId);
+    return timeStudentOperations("xero-payment-tracks", request.studentOperationsCorrelationId,
+      () => this.sync.invoicePaymentTracks(principal.tenantId, connectionId));
   }
 
   @Get("connections/:connectionId/student-invoices/:invoiceId")

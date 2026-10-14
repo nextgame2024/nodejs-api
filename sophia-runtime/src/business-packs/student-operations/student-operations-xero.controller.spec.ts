@@ -54,7 +54,7 @@ describe("StudentOperationsXeroController", () => {
     const principal = { ...basePrincipal, role: "chief_executive" as const };
 
     await controller.studentInvoices(
-      { studentOperationsPrincipal: principal },
+      { studentOperationsPrincipal: principal, studentOperationsCorrelationId: "test-correlation" },
       "44444444-4444-4444-8444-444444444444",
       { page: "1", limit: "25" },
     );
@@ -64,7 +64,7 @@ describe("StudentOperationsXeroController", () => {
       "77777777-7777-4777-8777-777777777777",
     );
 
-    expect(invoices).toHaveBeenCalledWith(principal.tenantId, expect.any(String), { page: "1", limit: "25" });
+    expect(invoices).toHaveBeenCalledWith(principal.tenantId, expect.any(String), { page: "1", limit: "25" }, "test-correlation");
     expect(invoice).toHaveBeenCalledWith(
       principal.tenantId,
       "44444444-4444-4444-8444-444444444444",

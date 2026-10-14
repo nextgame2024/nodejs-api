@@ -55,7 +55,8 @@ export class StudentOperationsCurrentWorkspaceController {
 
   @Get("student-register")
   studentRegister(@Req() request: WorkspaceRequest, @Query() query: unknown) {
-    return this.register.list(request.studentOperationsPrincipal, query);
+    return this.register.list(request.studentOperationsPrincipal, query,
+      request.studentOperationsCorrelationId);
   }
 
   @Get("advisors")

@@ -52,8 +52,8 @@ describe("StudentOperationsCurrentWorkspaceController", () => {
     const list = jest.fn().mockResolvedValue({ students: [], total: 0 });
     const controller = new StudentOperationsCurrentWorkspaceController({} as never, { list } as never);
     await expect(controller.studentRegister(
-      { studentOperationsPrincipal: principal }, { q: "sample" },
+      { studentOperationsPrincipal: principal, studentOperationsCorrelationId: "test-correlation" }, { q: "sample" },
     )).resolves.toEqual({ students: [], total: 0 });
-    expect(list).toHaveBeenCalledWith(principal, { q: "sample" });
+    expect(list).toHaveBeenCalledWith(principal, { q: "sample" }, "test-correlation");
   });
 });

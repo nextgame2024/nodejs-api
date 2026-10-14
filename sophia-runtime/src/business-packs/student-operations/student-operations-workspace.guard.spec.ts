@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import {
   ForbiddenException,
+  Logger,
   UnauthorizedException,
   type ExecutionContext,
 } from "@nestjs/common";
@@ -24,6 +25,7 @@ function harness(input: {
     headers: input.headers ?? {},
     params: { tenantId: input.tenantId ?? principal.tenantId },
   };
+  const response = { setHeader: jest.fn() };
   const identity = { authenticate: jest.fn().mockResolvedValue({
     userId: "user-1",
     companyId: principal.externalCompanyId,
@@ -43,10 +45,10 @@ function harness(input: {
     new Reflector(),
   );
   const context = {
-    switchToHttp: () => ({ getRequest: () => request }),
+    switchToHttp: () => ({ getRequest: () => request, getResponse: () => response }),
     getHandler: () => function workspaceHandler() {},
   } as unknown as ExecutionContext;
-  return { guard, context, request, identity, workspace };
+  return { guard, context, request, response, identity, workspace };
 }
 
 describe("StudentOperationsWorkspaceGuard", () => {
@@ -96,5 +98,31 @@ describe("StudentOperationsWorkspaceGuard", () => {
     request.params = {};
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.studentOperationsPrincipal).toEqual(principal);
+  });
+
+  it("emits guarded phase timings and a response correlation ID only when enabled", async () => {
+    const previous = process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
+    process.env.SOPHIA_STUDENT_OPERATIONS_TIMING = "1";
+    const log = jest.spyOn(Logger, "log").mockImplementation(() => undefined);
+    try {
+      const { guard, context, response } = harness({
+        headers: { authorization: "Bearer business-manager-token", "x-correlation-id": "ofa-test-1" },
+      });
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(response.setHeader).toHaveBeenCalledWith("X-Correlation-ID", "ofa-test-1");
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual(expect.objectContaining({
+        phase: "workspace-guard",
+        operation: "workspaceHandler",
+        correlationId: "ofa-test-1",
+        outcome: "ok",
+        identityMs: expect.any(Number),
+        entitlementMs: expect.any(Number),
+        totalMs: expect.any(Number),
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
+      else process.env.SOPHIA_STUDENT_OPERATIONS_TIMING = previous;
+      log.mockRestore();
+    }
   });
 });

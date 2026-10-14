@@ -1,8 +1,10 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { performance } from "node:perf_hooks";
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
+import { elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
 
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(
   (value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
@@ -66,7 +68,7 @@ type CaseLinkRow = { user_id: string; case_id: string; case_reference: string;
 export class StudentOperationsRegisterService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
-  async list(principal: StudentOperationsWorkspacePrincipal, input: unknown) {
+  async list(principal: StudentOperationsWorkspacePrincipal, input: unknown, correlationId?: string) {
     const parsed = QuerySchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException("Invalid Students register filters.");
     const query = parsed.data;
@@ -78,9 +80,15 @@ export class StudentOperationsRegisterService {
       query.advisorName ?? null, query.collegeName ?? null,
     ];
     const cohortSql = buildStudentRegisterCohortSql(schema);
-    return this.database.tenantReadTransaction(principal.tenantId, async (client) => {
+    const startedAt = performance.now();
+    const durations: Record<string, number | undefined> = {};
+    let outcome: "ok" | "error" = "error";
+    try {
+      const result = await this.database.tenantReadTransaction(principal.tenantId, async (client) => {
+      durations.transactionSetupMs = elapsedMs(startedAt);
       // Materialize the roster/case/Xero cohort once, then derive both cards and
       // the filtered page from that snapshot. Pagination never fetches all rows.
+      const registerStartedAt = performance.now();
       const register = await client.query<RegisterResultRow>(`${cohortSql},
         filtered AS MATERIALIZED (
           SELECT c.* FROM cohort c
@@ -106,15 +114,20 @@ export class StudentOperationsRegisterService {
           ) page ON true`,
       [...params, query.status ?? null, query.attentionThisWeek === "true",
         query.limit, (query.page - 1) * query.limit]);
+      durations.registerQueryMs = elapsedMs(registerStartedAt);
       const pageRows = register.rows.filter((row) => Boolean(row.user_id));
+      const caseLinksStartedAt = performance.now();
       const cases = await loadCaseLinks(client, schema, principal, pageRows);
+      durations.caseLinksMs = elapsedMs(caseLinksStartedAt);
       const caseMap = new Map<string, CaseLinkRow[]>();
       for (const row of cases) {
         const list = caseMap.get(row.user_id) ?? [];
         list.push(row);
         caseMap.set(row.user_id, list);
       }
+      const optionsStartedAt = performance.now();
       const options = await loadOptions(client, schema, principal);
+      durations.optionsMs = elapsedMs(optionsStartedAt);
       const fullPayment = principal.role !== "advisor";
       const totals = register.rows[0];
       return {
@@ -148,7 +161,14 @@ export class StudentOperationsRegisterService {
         },
         options,
       };
-    });
+      });
+      outcome = "ok";
+      return result;
+    } finally {
+      logStudentOperationsTiming("student-register", correlationId, outcome, {
+        ...durations, totalMs: elapsedMs(startedAt),
+      });
+    }
   }
 }
 
