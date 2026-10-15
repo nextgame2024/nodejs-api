@@ -22,6 +22,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
   ],
   menu: [
     "Clients",
+    "Colleges",
     "Users",
     "Company",
     "Payments and Control",
