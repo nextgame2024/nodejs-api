@@ -5,7 +5,7 @@
   "checkpoint": "P6-A06C4-GENUINE-CUSTOMER-AUTH-SMOKE-PASSED-NO-EMAIL-NO-CHARGE",
   "updatedAt": "2026-10-04T15:01:59+10:00",
   "studentsRegisterWorkstream": {
-    "updatedOn": "2026-10-14",
+    "updatedOn": "2026-10-15",
     "plan": "students-module-delivery-plan.json",
     "checkpoint": "STU-03-LOCAL-STUDENTS-LIST-VERIFIED",
     "nextReadyTask": "STU-04",
@@ -21,7 +21,8 @@
       "PASS: Follow-up fixes passed 7 disposable PostgreSQL integration tests, 44 targeted ChromeHeadless tests, Sophia Runtime and Angular production builds, and a date-picker alignment browser test.",
       "OBSERVATION: Complete Students register response measured about 0.5 seconds twice on a disposable dataset of about 2,000 students and 8,000 linked invoices; production latency remains unverified.",
       "PASS: Ref / College search and label follow-up passed 7 disposable PostgreSQL integration tests, 8 focused ChromeHeadless Students page tests, backend/frontend TypeScript checks, and both production builds. No production data accessed.",
-      "PASS: Opt-in Student Operations server timing diagnostics passed Sophia Runtime npm run typecheck, npm run build, and 62 Student Operations Jest tests. No production data accessed; live request timings remain to be collected after deployment."
+      "PASS: Opt-in Student Operations server timing diagnostics passed Sophia Runtime npm run typecheck, npm run build, and 62 Student Operations Jest tests. No production data accessed; live request timings remain to be collected after deployment.",
+      "PASS: Finer pool-acquisition, transaction-step, and workspace-entitlement timing passed Sophia Runtime npm run typecheck, npm run build, 64 Student Operations Jest tests, and 26 focused database/workspace tests. Operator-provided production logs motivated this read-only instrumentation; no production database access or query-plan inspection was performed in this task."
     ],
     "note": "Separate product workstream; existing platform task statuses and release gates remain unchanged."
   },
@@ -2563,6 +2564,13 @@
       "node": "22.23.2",
       "result": "tavus-production-catalog-root-cause-confirmed-operator-fix-ready",
       "detail": "The deployed health endpoint confirmed revision 5603f809ed98 contains the current Tavus pal_id/face_id request contract. A read-only production query found zero provider_catalog_deployments and zero provider_resource_owners, proving Premium is failing at the intentional pre-provisioned-catalog gate. The existing provider operation was unusable in the production container because it lived under scripts as TypeScript while the runtime image copies only dist and omits tsx. The confirmation-gated operation now compiles to dist/operators/run-provider-operations.js and both npm provider commands invoke that production artifact. Runtime typecheck/build passed, and a no-authority smoke rejected before application bootstrap with the expected matching-tenant confirmation error. Deployment and one explicitly confirmed Tavus catalog provisioning run for tenant 11111111-1111-4111-8111-111111111111 remain required. No live Tavus request, provider mutation or database write was performed."
+    },
+    {
+      "command": "diagnose authorised Tavus catalog provisioning conflict; recover existing tools by exact name; focused provider test; Runtime typecheck/build",
+      "repository": "deployed Sophia Runtime operator output + sophia-runtime",
+      "node": "22.23.3 in production; repository Runtime locally",
+      "result": "tavus-existing-tool-conflict-recovery-fix-ready",
+      "detail": "The explicitly authorised production provisioning operation reached Tavus but Tavus rejected creation of searchProperties with HTTP 409 because that account already owns a tool with the same name. Runtime previously had no discovery path when a tool predated its deployment ledger. On a creation conflict, provisioning now calls Tavus's filtered user-tool listing endpoint, adopts only an exact name match, PATCHes it to the current versioned definition, records the recovered ID in the resumable deployment, and continues with PAL attachment. The focused Tavus provider suite passed 8 tests, including protection against adopting a substring-only match; the full Runtime suite passed 159 suites/593 tests with one suite/seven tests skipped, and Runtime typecheck/build plus git diff validation passed. The failed live operation did not activate the catalog and must be retried after this fix is deployed. No additional live Tavus request or production database mutation was initiated during this repair."
     }
   ],
   "blockers": [
@@ -2573,7 +2581,7 @@
     "Sophia Admin memberships are not auto-seeded. One explicitly authorised billing_administrator bootstrap and genuine MFA proof now exist; other initial owner onboarding still requires an authorised operational database step.",
     "The server-authorised multi-organisation context-selection contract is implemented but deployment-pending. Migration 059, backend and frontend must deploy together before internal Admin-company operators can be assigned platform authority or switch customer organisations.",
     "Scoped Business Manager binding allowlists are server-owned JSON configuration; an atomic distribution/rotation mechanism remains operational work.",
-    "A read-only production check confirmed that no Tavus catalog or provider resource owner has been provisioned. Premium correctly fails closed until the newly production-compiled, explicit versioned operation is deployed and run for tenant 11111111-1111-4111-8111-111111111111. Provider cleanup reconciliation is implemented but still needs per-tenant deployment scheduler wiring.",
+    "The explicitly authorised Tavus provisioning run created a failed deployment record and exposed a pre-existing searchProperties tool conflict. Exact-name conflict recovery is implemented and must be deployed before retrying the same catalog version for tenant 11111111-1111-4111-8111-111111111111. Premium correctly remains fail-closed until that retry activates the catalog. Provider cleanup reconciliation is implemented but still needs per-tenant deployment scheduler wiring.",
     "The v2 path is implemented but remains disabled until a tenant is explicitly allowlisted, a 32+ character installation key is configured, and compatible published profile and active agent-release data exist. Existing v1 sessions remain intentionally isolated on their original path.",
     "Direct Angular v2 bootstrap is prohibited because it would expose the installation key. P4-01 keeps server-authoritative v1 behind the facade; v2 browser activation requires an installation backend or managed kiosk credential broker that returns only a short-lived one-time bootstrap token.",
     "The current v2 SessionDescriptor identifies a server lifecycle adapter, not a complete browser conversation/presentation composition. P4-02 uses distinct browser manifest keys and a bounded v1 translator; brokered v2 browser activation must add explicit browser adapter envelopes before the frontend switches paths.",

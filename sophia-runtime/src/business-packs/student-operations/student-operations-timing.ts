@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 
 export type StudentOperationsTimingPhase =
   | "workspace-guard"
+  | "workspace-resolution"
   | "student-register"
   | "xero-status"
   | "xero-invoices"
@@ -14,6 +15,17 @@ export function studentOperationsTimingEnabled(): boolean {
 
 export function elapsedMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
+export function addDatabaseTimings(
+  durations: Record<string, number | undefined>,
+  timings: object,
+): void {
+  for (const [name, value] of Object.entries(timings)) {
+    if (typeof value === "number") {
+      durations[`db${name.charAt(0).toUpperCase()}${name.slice(1)}`] = value;
+    }
+  }
 }
 
 export function logStudentOperationsTiming(

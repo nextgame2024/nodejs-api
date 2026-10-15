@@ -8,7 +8,7 @@ import type { XeroContactRecord, XeroInvoiceRecord } from "../../connectors/xero
 import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
-import { elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
+import { addDatabaseTimings, elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
 
 const CandidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -468,7 +468,7 @@ export class StudentOperationsXeroSyncService {
           paid: Number(result.rows[0]?.paid_total_count ?? 0),
         },
       };
-      });
+      }, (timings) => addDatabaseTimings(durations, timings));
       outcome = "ok";
       return invoiceResult;
     } finally {

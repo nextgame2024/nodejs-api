@@ -232,6 +232,19 @@ export class TavusFullProvider {
       });
       const detail = await response.text();
       if (!response.ok) {
+        if (response.status === 409) {
+          const conflictingToolId = await this.findTavusToolIdByName(
+            apiBaseUrl,
+            apiKey,
+            definition.name,
+          );
+          if (conflictingToolId) {
+            await this.updateTavusTool(apiBaseUrl, apiKey, conflictingToolId, definition);
+            toolIds[definition.name] = conflictingToolId;
+            await onToolAllocated?.(definition.name, conflictingToolId);
+            continue;
+          }
+        }
         throw new Error(`Tavus tool creation failed for ${definition.name}: ${response.status} ${detail}`);
       }
       const created = JSON.parse(detail) as { tool_id?: string };
@@ -278,6 +291,31 @@ export class TavusFullProvider {
     }
 
     return toolIds;
+  }
+
+  private async findTavusToolIdByName(
+    apiBaseUrl: string,
+    apiKey: string,
+    toolName: string,
+  ): Promise<string | undefined> {
+    const query = new URLSearchParams({
+      type: "user",
+      name_or_uuid: toolName,
+      limit: "100",
+      page: "1",
+    });
+    const response = await fetch(`${apiBaseUrl}/v2/tools?${query.toString()}`, {
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Tavus tool discovery failed for ${toolName}: ${response.status} ${detail}`);
+    }
+    const payload = await response.json() as {
+      data?: Array<{ tool_id?: string; name?: string }>;
+    };
+    return payload.data?.find((tool) => tool.name === toolName)?.tool_id;
   }
 
   private async updateTavusTool(

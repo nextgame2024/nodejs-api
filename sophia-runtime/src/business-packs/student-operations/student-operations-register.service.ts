@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import { z } from "zod";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
-import { elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
+import { addDatabaseTimings, elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
 
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(
   (value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
@@ -161,7 +161,7 @@ export class StudentOperationsRegisterService {
         },
         options,
       };
-      });
+      }, (timings) => addDatabaseTimings(durations, timings));
       outcome = "ok";
       return result;
     } finally {

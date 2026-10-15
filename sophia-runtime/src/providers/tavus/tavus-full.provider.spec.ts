@@ -149,6 +149,49 @@ describe("TavusFullProvider", () => {
     );
   });
 
+  it("reuses and updates an existing Tavus tool when creation conflicts", async () => {
+    const allocated = jest.fn().mockResolvedValue(undefined);
+    const fetchMock = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce({ ok: true, text: async () => "" } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: async () => JSON.stringify({ error: "Bad Request. A tool with this name already exists" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { tool_id: "similarly-named-tool", name: "searchPropertiesOld" },
+            { tool_id: "existing-tool", name: "searchProperties" },
+          ],
+          total_count: 2,
+        }),
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => "" } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, text: async () => "" } as Response);
+    global.fetch = fetchMock;
+
+    await expect(new TavusFullProvider().provisionCatalog({
+      palId: "pal-1",
+      definitions: [{ name: "searchProperties", description: "Search properties", parameters: {} }],
+      onToolAllocated: allocated,
+    })).resolves.toMatchObject({ toolIds: { searchProperties: "existing-tool" } });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "https://tavusapi.com/v2/tools?type=user&name_or_uuid=searchProperties&limit=100&page=1",
+      expect.objectContaining({ headers: { "x-api-key": "tavus-key" } }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "https://tavusapi.com/v2/tools/existing-tool",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    expect(allocated).toHaveBeenCalledWith("searchProperties", "existing-tool");
+  });
+
   it("ends the Tavus conversation when Sophia finishes", async () => {
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue({
       ok: true,

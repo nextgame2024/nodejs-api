@@ -1,9 +1,11 @@
 import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { PoolClient } from "pg";
 import { DatabaseService } from "../../database/database.service.js";
 import type { VerifiedBusinessManagerIdentity } from "../../admin/identity/business-manager-identity.bridge.js";
 import type { StudentOperationsRole } from "./student-operations-policy.js";
+import { addDatabaseTimings, elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
 
 const PACK_ID = "student-operations";
 
@@ -74,7 +76,12 @@ export class StudentOperationsWorkspaceService {
     summary?: StudentOperationsDashboardSummary;
   }> {
     const schema = runtimeSchema();
-    const resolution = await this.database.transaction(async (client) => {
+    const startedAt = performance.now();
+    const durations: Record<string, number | undefined> = {};
+    let outcome: "ok" | "error" = "error";
+    try {
+      const resolution = await this.database.transaction(async (client) => {
+      let stageStartedAt = performance.now();
       const customer = await client.query<CustomerRow>(
         `SELECT customer_id, external_company_id
            FROM ${schema}.customers
@@ -82,10 +89,14 @@ export class StudentOperationsWorkspaceService {
           LIMIT 2`,
         [identity.companyId],
       );
+      durations.customerLookupMs = elapsedMs(stageStartedAt);
       if (customer.rows.length !== 1) return { kind: "customer_invalid" as const };
 
       const tenant = customer.rows[0];
+      stageStartedAt = performance.now();
       await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [tenant.customer_id]);
+      durations.tenantContextMs = elapsedMs(stageStartedAt);
+      stageStartedAt = performance.now();
       const entitlement = await client.query<EntitlementRow>(
         `SELECT entitlement_id, customer_id, identity_user_id, role_key, authorization_revision
            FROM ${schema}.business_pack_entitlements
@@ -94,19 +105,26 @@ export class StudentOperationsWorkspaceService {
           LIMIT 2`,
         [tenant.customer_id, identity.userId, PACK_ID],
       );
+      durations.entitlementLookupMs = elapsedMs(stageStartedAt);
       if (entitlement.rows.length !== 1) {
+        stageStartedAt = performance.now();
         await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
           "denied", correlationId, { reason: "entitlement_missing" });
+        durations.auditInsertMs = elapsedMs(stageStartedAt);
         return { kind: "entitlement_missing" as const };
       }
 
       const row = entitlement.rows[0];
+      stageStartedAt = performance.now();
       await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
         "allowed", correlationId, {});
+      durations.auditInsertMs = elapsedMs(stageStartedAt);
+      stageStartedAt = performance.now();
       const summary = includeDashboardSummary
         ? await this.loadStudentSummary(client, schema, tenant.customer_id,
           row.role_key, row.identity_user_id)
         : undefined;
+      if (includeDashboardSummary) durations.dashboardSummaryMs = elapsedMs(stageStartedAt);
       return {
         kind: "resolved" as const,
         principal: {
@@ -119,21 +137,27 @@ export class StudentOperationsWorkspaceService {
         },
         ...(summary ? { summary } : {}),
       };
-    });
+      }, (timings) => addDatabaseTimings(durations, timings));
 
-    if (resolution.kind === "customer_invalid") {
-      throw new ForbiddenException(
-        "An active, unambiguous Student Operations organisation is required.",
-      );
+      if (resolution.kind === "customer_invalid") {
+        throw new ForbiddenException(
+          "An active, unambiguous Student Operations organisation is required.",
+        );
+      }
+      if (resolution.kind === "entitlement_missing") {
+        throw new ForbiddenException(
+          "Student Operations workspace entitlement is required.",
+        );
+      }
+      outcome = "ok";
+      return { principal: resolution.principal, ...(resolution.summary
+        ? { summary: resolution.summary }
+        : {}) };
+    } finally {
+      logStudentOperationsTiming("workspace-resolution", correlationId, outcome, {
+        ...durations, totalMs: elapsedMs(startedAt),
+      }, includeDashboardSummary ? "dashboard" : "principal");
     }
-    if (resolution.kind === "entitlement_missing") {
-      throw new ForbiddenException(
-        "Student Operations workspace entitlement is required.",
-      );
-    }
-    return { principal: resolution.principal, ...(resolution.summary
-      ? { summary: resolution.summary }
-      : {}) };
   }
 
   async recordAccess(

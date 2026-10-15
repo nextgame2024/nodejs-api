@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { Logger } from "@nestjs/common";
-import { logStudentOperationsTiming, timeStudentOperations } from "./student-operations-timing.js";
+import { addDatabaseTimings, logStudentOperationsTiming, timeStudentOperations } from "./student-operations-timing.js";
 
 const originalFlag = process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
 
@@ -11,6 +11,12 @@ afterEach(() => {
 });
 
 describe("Student Operations timing diagnostics", () => {
+  it("prefixes database stages without copying non-numeric data", () => {
+    const durations: Record<string, number | undefined> = {};
+    addDatabaseTimings(durations, { poolAcquireMs: 12.5, roleMs: 3, privateDetail: "discard" });
+    expect(durations).toEqual({ dbPoolAcquireMs: 12.5, dbRoleMs: 3 });
+  });
+
   it("emits nothing unless explicitly enabled", () => {
     delete process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
     const log = jest.spyOn(Logger, "log").mockImplementation(() => undefined);

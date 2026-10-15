@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, Logger } from "@nestjs/common";
 import { StudentOperationsWorkspaceService } from "./student-operations-workspace.service.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
@@ -26,8 +26,14 @@ function harness(entitled = true) {
     })
     .mockImplementation(auditQuery);
   const database = {
-    transaction: jest.fn(async (work: (client: unknown) => Promise<unknown>) =>
-      work({ query: clientQuery })),
+    transaction: jest.fn(async (
+      work: (client: unknown) => Promise<unknown>,
+      onTiming?: (timings: { poolAcquireMs: number }) => void,
+    ) => {
+      const result = await work({ query: clientQuery });
+      onTiming?.({ poolAcquireMs: 5 });
+      return result;
+    }),
     tenantTransaction: jest.fn(async (_tenant: string, work: (client: unknown) => Promise<unknown>) =>
       work({ query: auditQuery })),
   };
@@ -54,6 +60,31 @@ describe("StudentOperationsWorkspaceService", () => {
       role: "chief_executive",
       authorizationRevision: 3,
     });
+  });
+
+  it("reports entitlement stages under the request correlation ID when enabled", async () => {
+    const previous = process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
+    process.env.SOPHIA_STUDENT_OPERATIONS_TIMING = "1";
+    const log = jest.spyOn(Logger, "log").mockImplementation(() => undefined);
+    try {
+      const { service } = harness();
+      await service.resolvePrincipal({ userId: "user-1", companyId, status: "active" }, "correlation-3");
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual(expect.objectContaining({
+        phase: "workspace-resolution",
+        correlationId: "correlation-3",
+        outcome: "ok",
+        customerLookupMs: expect.any(Number),
+        tenantContextMs: expect.any(Number),
+        entitlementLookupMs: expect.any(Number),
+        auditInsertMs: expect.any(Number),
+        dbPoolAcquireMs: 5,
+        totalMs: expect.any(Number),
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
+      else process.env.SOPHIA_STUDENT_OPERATIONS_TIMING = previous;
+      log.mockRestore();
+    }
   });
 
   it("fails an unentitled identity closed and records the denial", async () => {
