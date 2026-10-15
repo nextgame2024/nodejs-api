@@ -1,7 +1,8 @@
 import { describe, expect, jest, test } from '@jest/globals';
 
 const query = jest.fn();
-jest.unstable_mockModule('../src/config/db.js', () => ({ default: { query } }));
+const connect = jest.fn();
+jest.unstable_mockModule('../src/config/db.js', () => ({ default: { query, connect } }));
 const colleges = await import('../src/models/bm.colleges.model.js');
 
 describe('Business Manager college data isolation', () => {
@@ -28,5 +29,98 @@ describe('Business Manager college data isolation', () => {
     await colleges.update('company-1', 'college-1', { college_name: 'New name', company_id: 'other-company' });
     expect(query.mock.calls.at(-1)[0]).not.toContain('company_id = $3');
     expect(query.mock.calls.at(-1)[1]).toEqual(['company-1', 'college-1', 'New name']);
+  });
+
+  test('creates a college without site fields', async () => {
+    query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1', city: null, category: null }] });
+    const result = await colleges.create('company-1', {
+      college_name: 'ATI', city: 'Brisbane', category: 'English language',
+    });
+    expect(result).toEqual({ collegeId: 'college-1', city: null, category: null });
+    const [sql, params] = query.mock.calls.at(-1);
+    expect(sql).toContain('(company_id, college_name, owner_name, abn, notes)');
+    expect(sql).toContain('city, category');
+    expect(params).toEqual(['company-1', 'ATI', null, null, null]);
+  });
+
+  test('College Details cannot overwrite the primary site projection', async () => {
+    query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1', city: 'Sydney', category: 'University' }] });
+    await colleges.update('company-1', 'college-1', { city: 'Sydney', category: 'University' });
+    const [sql, params] = query.mock.calls.at(-1);
+    expect(sql).toContain('WHERE company_id = $1 AND college_id = $2');
+    expect(sql).not.toContain('city = $3');
+    expect(params).toEqual(['company-1', 'college-1']);
+  });
+
+  test('creating a first site makes it primary and updates College Details atomically', async () => {
+    const db = { query: jest.fn(), release: jest.fn() };
+    connect.mockResolvedValueOnce(db);
+    db.query.mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ college_id: 'college-1' }] })
+      .mockResolvedValueOnce({ rows: [{ has_sites: false }] })
+      .mockResolvedValueOnce({}) // unset existing primary
+      .mockResolvedValueOnce({ rows: [{ siteId: 'site-1', isPrimary: true }] })
+      .mockResolvedValueOnce({}) // project primary
+      .mockResolvedValueOnce({}) // clear projection when no primary (no-op)
+      .mockResolvedValueOnce({}); // COMMIT
+    const site = await colleges.createSite('company-1', 'college-1', { city: 'Melbourne', email: 'info@example.edu.au' });
+    expect(site.isPrimary).toBe(true);
+    expect(db.query.mock.calls[1][0]).toContain('FOR UPDATE');
+    expect(db.query.mock.calls[4][1]).toEqual([
+      'company-1', 'college-1', 'info@example.edu.au', null, null, null, 'Melbourne', null, true,
+    ]);
+    expect(db.query.mock.calls[5][0]).toContain('UPDATE bm_colleges');
+    expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(db.release).toHaveBeenCalled();
+  });
+
+  test('a primary site cannot be changed to No without selecting another primary', async () => {
+    const db = { query: jest.fn(), release: jest.fn() };
+    connect.mockResolvedValueOnce(db);
+    db.query.mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [{ college_id: 'college-1' }] })
+      .mockResolvedValueOnce({ rows: [{ siteId: 'site-1', isPrimary: true }] })
+      .mockResolvedValueOnce({});
+    await expect(colleges.updateSite('company-1', 'college-1', 'site-1', { is_primary: false }))
+      .rejects.toMatchObject({ code: 'PRIMARY_SITE_REQUIRED' });
+    expect(db.query.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+    expect(db.release).toHaveBeenCalled();
+  });
+
+  test('choosing another primary site clears the old primary in one transaction', async () => {
+    const db = { query: jest.fn(), release: jest.fn() };
+    connect.mockResolvedValueOnce(db);
+    db.query.mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [{ college_id: 'college-1' }] })
+      .mockResolvedValueOnce({ rows: [{ siteId: 'site-2', isPrimary: false }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [{ siteId: 'site-2', isPrimary: true }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const site = await colleges.updateSite('company-1', 'college-1', 'site-2', {
+      city: 'Sydney', is_primary: true,
+    });
+    expect(site.isPrimary).toBe(true);
+    expect(db.query.mock.calls[3][0]).toContain('SET is_primary = false');
+    expect(db.query.mock.calls[4][0]).toContain('is_primary = $5');
+    expect(db.query.mock.calls[4][1]).toEqual(['company-1', 'college-1', 'site-2', 'Sydney', true]);
+    expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  test('deleting the primary site promotes another site and refreshes Details', async () => {
+    const db = { query: jest.fn(), release: jest.fn() };
+    connect.mockResolvedValueOnce(db);
+    db.query.mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [{ college_id: 'college-1' }] })
+      .mockResolvedValueOnce({ rows: [{ isPrimary: true }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    expect(await colleges.deleteSite('company-1', 'college-1', 'site-1')).toBe(true);
+    expect(db.query.mock.calls[3][0]).toContain('SET is_primary = true');
+    expect(db.query.mock.calls[4][0]).toContain('UPDATE bm_colleges');
+    expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 });

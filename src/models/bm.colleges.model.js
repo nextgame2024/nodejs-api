@@ -1,12 +1,15 @@
 import pool from '../config/db.js';
 
 const fields = `college_id AS "collegeId", company_id AS "companyId",
-  college_name AS "collegeName", owner_name AS "ownerName", abn, address,
+  college_name AS "collegeName", owner_name AS "ownerName", abn, address, city, category,
   email, cel, tel, notes, status, createdat AS "createdAt", updatedat AS "updatedAt"`;
 const contactFields = `id AS "contactId", college_id AS "collegeId", name,
   role_title AS "roleTitle", email, cel, tel, createdat AS "createdAt"`;
-const editable = ['college_name', 'owner_name', 'abn', 'address', 'email', 'cel', 'tel', 'notes', 'status'];
+const siteFields = `site_id AS "siteId", college_id AS "collegeId", email, address,
+  phone, mobile, city, category, is_primary AS "isPrimary"`;
+const editable = ['college_name', 'owner_name', 'abn', 'notes', 'status'];
 const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel'];
+const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category'];
 
 export async function list(companyId, { q, status, page, limit }) {
   const where = ['company_id = $1'];
@@ -34,11 +37,10 @@ export async function get(companyId, collegeId) {
 
 export async function create(companyId, value) {
   const result = await pool.query(`INSERT INTO bm_colleges
-    (company_id, college_name, owner_name, abn, address, email, cel, tel, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${fields}`,
+    (company_id, college_name, owner_name, abn, notes)
+    VALUES ($1,$2,$3,$4,$5) RETURNING ${fields}`,
     [companyId, value.college_name, value.owner_name ?? null, value.abn ?? null,
-      value.address ?? null, value.email ?? null, value.cel ?? null,
-      value.tel ?? null, value.notes ?? null]);
+      value.notes ?? null]);
   return result.rows[0];
 }
 
@@ -86,4 +88,119 @@ export async function deleteContact(companyId, collegeId, contactId) {
   const result = await pool.query(`DELETE FROM bm_college_contacts
     WHERE company_id = $1 AND college_id = $2 AND id = $3`, [companyId, collegeId, contactId]);
   return result.rowCount > 0;
+}
+
+async function inLockedCollege(companyId, collegeId, operation) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const parent = await db.query(
+      'SELECT college_id FROM bm_colleges WHERE company_id = $1 AND college_id = $2 FOR UPDATE',
+      [companyId, collegeId],
+    );
+    if (!parent.rows.length) {
+      await db.query('ROLLBACK');
+      return null;
+    }
+    const result = await operation(db);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
+async function projectPrimarySite(db, companyId, collegeId) {
+  await db.query(`UPDATE bm_colleges c SET
+      email = s.email, address = s.address, tel = s.phone, cel = s.mobile,
+      city = s.city, category = s.category, updatedat = now()
+    FROM (SELECT email, address, phone, mobile, city, category
+      FROM bm_college_sites WHERE company_id = $1 AND college_id = $2 AND is_primary) s
+    WHERE c.company_id = $1 AND c.college_id = $2`, [companyId, collegeId]);
+  await db.query(`UPDATE bm_colleges c SET
+      email = NULL, address = NULL, tel = NULL, cel = NULL,
+      city = NULL, category = NULL, updatedat = now()
+    WHERE c.company_id = $1 AND c.college_id = $2
+      AND NOT EXISTS (SELECT 1 FROM bm_college_sites s
+        WHERE s.company_id = $1 AND s.college_id = $2 AND s.is_primary)`, [companyId, collegeId]);
+}
+
+export async function sites(companyId, collegeId) {
+  const parent = await get(companyId, collegeId);
+  if (!parent) return null;
+  const result = await pool.query(`SELECT ${siteFields} FROM bm_college_sites
+    WHERE company_id = $1 AND college_id = $2
+    ORDER BY is_primary DESC, lower(coalesce(city, '')), createdat, site_id`, [companyId, collegeId]);
+  return result.rows;
+}
+
+export async function createSite(companyId, collegeId, value) {
+  return inLockedCollege(companyId, collegeId, async (db) => {
+    const existing = await db.query(
+      'SELECT EXISTS (SELECT 1 FROM bm_college_sites WHERE company_id = $1 AND college_id = $2) AS has_sites',
+      [companyId, collegeId],
+    );
+    const primary = !existing.rows[0].has_sites || value.is_primary === true;
+    if (primary) await db.query(
+      'UPDATE bm_college_sites SET is_primary = false WHERE company_id = $1 AND college_id = $2 AND is_primary',
+      [companyId, collegeId],
+    );
+    const result = await db.query(`INSERT INTO bm_college_sites
+      (company_id, college_id, email, address, phone, mobile, city, category, is_primary)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${siteFields}`,
+    [companyId, collegeId, value.email ?? null, value.address ?? null,
+      value.phone ?? null, value.mobile ?? null, value.city ?? null,
+      value.category ?? null, primary]);
+    if (primary) await projectPrimarySite(db, companyId, collegeId);
+    return result.rows[0];
+  });
+}
+
+export async function updateSite(companyId, collegeId, siteId, value) {
+  return inLockedCollege(companyId, collegeId, async (db) => {
+    const current = await db.query(
+      `SELECT ${siteFields} FROM bm_college_sites WHERE company_id = $1 AND college_id = $2 AND site_id = $3`,
+      [companyId, collegeId, siteId],
+    );
+    if (!current.rows.length) return null;
+    if (current.rows[0].isPrimary && value.is_primary === false) {
+      const error = new Error('Choose another primary site first.');
+      error.code = 'PRIMARY_SITE_REQUIRED';
+      throw error;
+    }
+    const primary = value.is_primary === true || current.rows[0].isPrimary;
+    if (value.is_primary === true && !current.rows[0].isPrimary) await db.query(
+      'UPDATE bm_college_sites SET is_primary = false WHERE company_id = $1 AND college_id = $2 AND is_primary',
+      [companyId, collegeId],
+    );
+    const keys = siteEditable.filter((key) => value[key] !== undefined);
+    const args = [companyId, collegeId, siteId, ...keys.map((key) => value[key])];
+    const sets = keys.map((key, index) => `${key} = $${index + 4}`);
+    args.push(primary);
+    sets.push(`is_primary = $${args.length}`, 'updatedat = now()');
+    const result = await db.query(`UPDATE bm_college_sites SET ${sets.join(', ')}
+      WHERE company_id = $1 AND college_id = $2 AND site_id = $3 RETURNING ${siteFields}`, args);
+    if (primary) await projectPrimarySite(db, companyId, collegeId);
+    return result.rows[0];
+  });
+}
+
+export async function deleteSite(companyId, collegeId, siteId) {
+  return inLockedCollege(companyId, collegeId, async (db) => {
+    const removed = await db.query(`DELETE FROM bm_college_sites
+      WHERE company_id = $1 AND college_id = $2 AND site_id = $3 RETURNING is_primary AS "isPrimary"`,
+    [companyId, collegeId, siteId]);
+    if (!removed.rows.length) return false;
+    if (removed.rows[0].isPrimary) {
+      await db.query(`UPDATE bm_college_sites SET is_primary = true, updatedat = now()
+        WHERE site_id = (SELECT site_id FROM bm_college_sites
+          WHERE company_id = $1 AND college_id = $2
+          ORDER BY createdat, site_id LIMIT 1)`, [companyId, collegeId]);
+      await projectPrimarySite(db, companyId, collegeId);
+    }
+    return true;
+  });
 }
