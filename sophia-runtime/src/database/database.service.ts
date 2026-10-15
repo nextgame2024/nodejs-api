@@ -4,7 +4,7 @@ import { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 import { runtimeConfig } from "../config/runtime-config.js";
 
 export type DatabaseTransactionTimings = Partial<Record<
-  "poolAcquireMs" | "beginMs" | "isolationMs" | "roleMs" |
+  "poolAcquireMs" | "setupMs" | "beginMs" | "isolationMs" | "roleMs" |
   "tenantContextMs" | "workMs" | "commitMs" | "rollbackMs" | "totalMs",
   number
 >>;
@@ -77,11 +77,10 @@ export class DatabaseService implements OnModuleDestroy {
     }
     try {
       stageStartedAt = performance.now();
-      await client.query("BEGIN");
-      timings.beginMs = performance.now() - stageStartedAt;
-      stageStartedAt = performance.now();
-      await this.assumeRuntimeRole(client);
-      timings.roleMs = performance.now() - stageStartedAt;
+      await client.query(this.databaseRole
+        ? `BEGIN; SET LOCAL ROLE "${this.databaseRole}"`
+        : "BEGIN");
+      timings.setupMs = performance.now() - stageStartedAt;
       stageStartedAt = performance.now();
       const result = await work(client);
       timings.workMs = performance.now() - stageStartedAt;
@@ -137,17 +136,13 @@ export class DatabaseService implements OnModuleDestroy {
     }
     try {
       stageStartedAt = performance.now();
-      await client.query("BEGIN");
-      timings.beginMs = performance.now() - stageStartedAt;
-      stageStartedAt = performance.now();
-      await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      timings.isolationMs = performance.now() - stageStartedAt;
-      stageStartedAt = performance.now();
-      await this.assumeRuntimeRole(client);
-      timings.roleMs = performance.now() - stageStartedAt;
-      stageStartedAt = performance.now();
-      await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [tenantId]);
-      timings.tenantContextMs = performance.now() - stageStartedAt;
+      await client.query([
+        "BEGIN",
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        ...(this.databaseRole ? [`SET LOCAL ROLE "${this.databaseRole}"`] : []),
+        `SET LOCAL sophia.tenant_id = '${tenantId}'`,
+      ].join("; "));
+      timings.setupMs = performance.now() - stageStartedAt;
       stageStartedAt = performance.now();
       const result = await work(client);
       timings.workMs = performance.now() - stageStartedAt;

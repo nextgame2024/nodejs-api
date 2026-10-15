@@ -22,13 +22,12 @@ describe("DatabaseService tenant transactions", () => {
     });
 
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
-      "BEGIN",
-      'SET LOCAL ROLE "sophia_runtime_app"',
+      'BEGIN; SET LOCAL ROLE "sophia_runtime_app"',
       "SELECT set_config('sophia.tenant_id', $1, true)",
       "SELECT 1",
       "COMMIT",
     ]);
-    expect(query.mock.calls[2]?.[1]).toEqual([tenantId]);
+    expect(query.mock.calls[1]?.[1]).toEqual([tenantId]);
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -43,14 +42,10 @@ describe("DatabaseService tenant transactions", () => {
     await service.tenantReadTransaction(tenantId, (scopedClient) => scopedClient.query("SELECT count(*) FROM evidence"));
 
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
-      "BEGIN",
-      "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
-      'SET LOCAL ROLE "sophia_runtime_app"',
-      "SELECT set_config('sophia.tenant_id', $1, true)",
+      `BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL ROLE "sophia_runtime_app"; SET LOCAL sophia.tenant_id = '${tenantId}'`,
       "SELECT count(*) FROM evidence",
       "COMMIT",
     ]);
-    expect(query.mock.calls[3]?.[1]).toEqual([tenantId]);
     expect(client.release).toHaveBeenCalled();
   });
 
@@ -70,19 +65,13 @@ describe("DatabaseService tenant transactions", () => {
 
     expect(timings).toEqual([expect.objectContaining({
       poolAcquireMs: expect.any(Number),
-      beginMs: expect.any(Number),
-      isolationMs: expect.any(Number),
-      roleMs: expect.any(Number),
-      tenantContextMs: expect.any(Number),
+      setupMs: expect.any(Number),
       workMs: expect.any(Number),
       commitMs: expect.any(Number),
       totalMs: expect.any(Number),
     })]);
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
-      "BEGIN",
-      "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
-      'SET LOCAL ROLE "sophia_runtime_app"',
-      "SELECT set_config('sophia.tenant_id', $1, true)",
+      'BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL ROLE "sophia_runtime_app"; SET LOCAL sophia.tenant_id = \'11111111-1111-4111-8111-111111111111\'',
       "SELECT 1",
       "COMMIT",
     ]);
@@ -100,8 +89,7 @@ describe("DatabaseService tenant transactions", () => {
       () => { throw new Error("diagnostic failure"); },
     )).resolves.toBe("ok");
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
-      "BEGIN",
-      'SET LOCAL ROLE "sophia_runtime_app"',
+      'BEGIN; SET LOCAL ROLE "sophia_runtime_app"',
       "COMMIT",
     ]);
     expect(client.release).toHaveBeenCalled();

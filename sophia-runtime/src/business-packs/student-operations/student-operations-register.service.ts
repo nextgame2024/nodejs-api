@@ -185,6 +185,10 @@ export function buildStudentRegisterCohortSql(schema: string): string {
        WHERE r.customer_id = $1 AND r.account_status <> 'archived'
          AND ($2::text IS NULL OR EXISTS (
            SELECT 1 FROM visible_cases vc WHERE vc.student_id = r.profile_id))
+    ), advisor_roster AS MATERIALIZED (
+      SELECT ar.customer_id, ar.user_id, ar.display_name
+        FROM ${schema}.student_operations_advisor_roster ar
+       WHERE ar.customer_id = $1
     ), cohort AS MATERIALIZED (
       SELECT r.user_id, r.profile_id, r.student_reference, r.legal_name, r.email,
              r.account_created_at, greatest(r.account_updated_at, coalesce(cs.last_case_update, r.account_updated_at)) AS last_updated,
@@ -248,7 +252,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
            WHERE ca.customer_id = $1 AND ca.case_id = d.case_id
            ORDER BY ca.is_primary DESC, ca.assigned_at ASC, ca.advisor_user_id ASC LIMIT 1
         ) ad ON true
-        LEFT JOIN ${schema}.student_operations_advisor_roster ar
+        LEFT JOIN advisor_roster ar
           ON ar.customer_id = $1 AND ar.user_id = ad.advisor_user_id
         LEFT JOIN LATERAL (
           SELECT cc.college_id, col.college_name

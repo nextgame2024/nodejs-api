@@ -392,6 +392,7 @@ suite("Student case foundation on disposable PostgreSQL", () => {
   });
 
   test("register aggregate has a bounded plan on a synthetic thousand-student cohort", async () => {
+    expect(buildStudentRegisterCohortSql("sophia_runtime")).toContain("advisor_roster AS MATERIALIZED");
     await pool.query(
       `INSERT INTO public.users(id,company_id,student_id,name,email,type,status)
        SELECT gen_random_uuid(), $1, 'STD-' || (20000 + n)::text,
@@ -427,14 +428,25 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       await client.query("BEGIN");
       await client.query("SET LOCAL ROLE sophia_runtime_app");
       await client.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenantA]);
-      const result = await client.query<{ "QUERY PLAN": Array<{ "Execution Time": number }> }>(
+      const result = await client.query<{ "QUERY PLAN": Array<{
+        "Execution Time": number;
+        Plan: Record<string, unknown>;
+      }> }>(
         `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${buildStudentRegisterCohortSql("sophia_runtime")}
          SELECT count(*) FROM cohort c`,
         [tenantA, null, null, null, null, null, null, null, null],
       );
-      const executionMs = result.rows[0]["QUERY PLAN"][0]["Execution Time"];
+      const plan = result.rows[0]["QUERY PLAN"][0];
+      const executionMs = plan["Execution Time"];
       expect(Number.isFinite(executionMs)).toBe(true);
       expect(executionMs).toBeLessThan(5000);
+      const entitlementLoops = (function countEntitlementLoops(node: Record<string, unknown>): number {
+        const own = node["Relation Name"] === "business_pack_entitlements"
+          ? Number(node["Actual Loops"] ?? 0) : 0;
+        const children = (node["Plans"] as Array<Record<string, unknown>> | undefined) ?? [];
+        return own + children.reduce((sum, child) => sum + countEntitlementLoops(child), 0);
+      })(plan.Plan);
+      expect(entitlementLoops).toBeLessThan(5000);
       await client.query("ROLLBACK");
     } finally { client.release(); }
   });
