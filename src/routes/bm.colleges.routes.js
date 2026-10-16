@@ -26,8 +26,12 @@ router.get('/bm/colleges', asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 20));
   const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
   const status = req.query.status;
+  const sort = typeof req.query.sort === 'string' ? req.query.sort : 'name';
+  const direction = typeof req.query.direction === 'string' ? req.query.direction : 'asc';
   if (status && !['active', 'archived'].includes(status)) return bad(res, 'Invalid status');
-  res.json(await colleges.list(req.user.companyId, { q, status, page, limit }));
+  if (!['name', 'email', 'mobile', 'status'].includes(sort)) return bad(res, 'Invalid sort');
+  if (!['asc', 'desc'].includes(direction)) return bad(res, 'Invalid direction');
+  res.json(await colleges.list(req.user.companyId, { q, status, page, limit, sort, direction }));
 }));
 
 router.post('/bm/colleges', asyncHandler(async (req, res) => {

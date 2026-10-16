@@ -12,8 +12,16 @@ describe('Business Manager college data isolation', () => {
     const result = await colleges.list('company-1', { q: 'ATI', status: 'active', page: 1, limit: 20 });
     expect(result.total).toBe(1);
     expect(query.mock.calls[0][0]).toContain('company_id = $1');
+    expect(query.mock.calls[0][0]).toContain('ORDER BY lower(college_name) ASC NULLS LAST, college_id ASC');
     expect(query.mock.calls[0][1]).toEqual(['company-1', 'active', '%ATI%', 20, 0]);
     expect(query.mock.calls[1][1]).toEqual(['company-1', 'active', '%ATI%']);
+  });
+
+  test('sorts the whole company list on the server with a stable tie-breaker', async () => {
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ total: 0 }] });
+    await colleges.list('company-1', { q: '', page: 2, limit: 25, sort: 'email', direction: 'desc' });
+    expect(query.mock.calls.at(-2)[0]).toContain('ORDER BY lower(email) DESC NULLS LAST, college_id ASC');
+    expect(query.mock.calls.at(-2)[1]).toEqual(['company-1', 25, 25]);
   });
 
   test('contact creation checks the parent in the same company', async () => {

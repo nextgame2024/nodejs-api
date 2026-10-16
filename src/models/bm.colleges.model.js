@@ -11,7 +11,14 @@ const editable = ['college_name', 'owner_name', 'abn', 'notes', 'status'];
 const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel'];
 const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category'];
 
-export async function list(companyId, { q, status, page, limit }) {
+const listSortColumns = {
+  name: 'lower(college_name)',
+  email: 'lower(email)',
+  mobile: 'lower(cel)',
+  status: 'lower(status)',
+};
+
+export async function list(companyId, { q, status, page, limit, sort = 'name', direction = 'asc' }) {
   const where = ['company_id = $1'];
   const args = [companyId];
   if (status) { args.push(status); where.push(`status = $${args.length}`); }
@@ -21,9 +28,11 @@ export async function list(companyId, { q, status, page, limit }) {
   }
   const predicate = where.join(' AND ');
   const offset = (page - 1) * limit;
+  const orderColumn = listSortColumns[sort] || listSortColumns.name;
+  const orderDirection = direction === 'desc' ? 'DESC' : 'ASC';
   const [items, count] = await Promise.all([
     pool.query(`SELECT ${fields} FROM bm_colleges WHERE ${predicate}
-      ORDER BY (status = 'archived'), lower(college_name), college_id
+      ORDER BY ${orderColumn} ${orderDirection} NULLS LAST, college_id ASC
       LIMIT $${args.length + 1} OFFSET $${args.length + 2}`, [...args, limit, offset]),
     pool.query(`SELECT count(*)::int AS total FROM bm_colleges WHERE ${predicate}`, args),
   ]);
