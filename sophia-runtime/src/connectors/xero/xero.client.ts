@@ -2,6 +2,13 @@ import { BadGatewayException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 
 const XERO_CONTACT_PAGE_SIZE = 100;
+export type XeroAttachmentSource = 'Invoices' | 'CreditNotes' | 'Contacts';
+export type XeroAttachment = { attachmentId: string; fileName: string; mimeType: string; sizeBytes: number };
+function attachmentPath(source: XeroAttachmentSource, sourceId: string, attachmentId?: string): string {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!['Invoices','CreditNotes','Contacts'].includes(source) || !uuid.test(sourceId) || (attachmentId && !uuid.test(attachmentId))) throw new BadGatewayException('Invalid Xero attachment identity.');
+  return `https://api.xero.com/api.xro/2.0/${source}/${sourceId}/Attachments${attachmentId ? '/' + attachmentId : ''}`;
+}
 
 export type XeroTokenSet = {
   accessToken: string;
@@ -120,6 +127,39 @@ const XERO_GET_MAX_ATTEMPTS = 3;
 
 @Injectable()
 export class XeroClient {
+  async attachments(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string): Promise<XeroAttachment[]> {
+    const payload = record(await this.json(attachmentPath(source, sourceId), accessToken, tenantId));
+    if (!Array.isArray(payload.Attachments)) throw new BadGatewayException('Xero returned an invalid attachment list.');
+    return payload.Attachments.map(record).map(item => {
+      const size = Number(item.ContentLength);
+      if (!Number.isSafeInteger(size) || size < 0 || size > 25 * 1024 * 1024) throw new BadGatewayException('Xero attachment size is unsupported.');
+      const attachmentId = requiredString(item.AttachmentID, 'attachment id');
+      attachmentPath(source, sourceId, attachmentId);
+      return { attachmentId, fileName: requiredString(item.FileName, 'attachment filename').slice(0,255), mimeType: (optionalString(item.MimeType) || 'application/octet-stream').slice(0,200), sizeBytes: size };
+    });
+  }
+
+  async attachmentContent(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string): Promise<Buffer> {
+    const response = await fetch(attachmentPath(source,sourceId,attachmentId), {
+      headers: { Authorization: `Bearer ${accessToken}`, 'xero-tenant-id': tenantId, Accept: 'application/octet-stream' },
+      redirect: 'error', signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw providerError(response);
+    if (!response.body) throw new BadGatewayException('Xero returned no attachment content.');
+    const reader=response.body.getReader();
+    const chunks: Uint8Array[]=[];
+    let size=0;
+    try {
+      while(true) {
+        const chunk=await reader.read(); if(chunk.done) break;
+        size+=chunk.value.length;
+        if(size>25*1024*1024) throw new BadGatewayException('Attachment exceeds the download limit.');
+        chunks.push(chunk.value);
+      }
+    } finally { await reader.cancel(); }
+    return Buffer.concat(chunks);
+  }
+
   async exchangeCode(code: string, verifier: string, config: XeroConfig): Promise<XeroTokenSet> {
     return this.tokenRequest(new URLSearchParams({
       grant_type: "authorization_code",

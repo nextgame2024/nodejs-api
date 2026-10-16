@@ -18,6 +18,7 @@ import {
   type XeroContactRecord,
   type XeroInvoiceRecord,
   type XeroTokenSet,
+  type XeroAttachmentSource,
 } from "./xero.client.js";
 import { XeroCryptoService } from "./xero-crypto.service.js";
 import {
@@ -291,6 +292,26 @@ export class XeroConnectorService {
     }
     const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
     return { connection, accessToken };
+  }
+
+  private async attachmentAccess(tenantId: string, connectionId: string) {
+    const config = requiredConfig();
+    const connection = await this.loadConnection(tenantId, connectionId);
+    if (missingScopes(connection.granted_scopes, ['accounting.attachments.read']).length) {
+      throw new ConflictException({ errorCode: 'xero_attachment_scope_missing', message: 'An integration administrator must reconnect Xero with read-only attachment access.' });
+    }
+    const accessToken = await this.accessToken(tenantId,connection.xero_authorization_id,config);
+    return {connection,accessToken};
+  }
+
+  async attachments(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string) {
+    const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
+    return this.client.attachments(accessToken,connection.xero_tenant_id,source,sourceId);
+  }
+
+  async attachmentContent(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string) {
+    const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
+    return this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId);
   }
 
   private async consumeState(

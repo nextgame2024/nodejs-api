@@ -17,6 +17,23 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('lists attachment metadata by source identity without exposing provider URLs', async () => {
+    const id='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Attachments:[{AttachmentID:id,FileName:'passport.pdf',MimeType:'application/pdf',ContentLength:42,Url:'https://untrusted.example/file'}]}),{status:200}));
+    await expect(new XeroClient().attachments('token','tenant','Contacts',id)).resolves.toEqual([{attachmentId:id,fileName:'passport.pdf',mimeType:'application/pdf',sizeBytes:42}]);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://api.xero.com/api.xro/2.0/Contacts/${id}/Attachments`);
+    await expect(new XeroClient().attachments('token','tenant','Contacts','../other')).rejects.toThrow('identity');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('downloads bounded binary content and rejects provider errors', async () => {
+    const id='11111111-1111-4111-8111-111111111111';
+    jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response('pdf-content',{status:200}))
+      .mockResolvedValueOnce(new Response('private upstream error',{status:403}));
+    expect((await new XeroClient().attachmentContent('token','tenant','Invoices',id,id)).toString()).toBe('pdf-content');
+    await expect(new XeroClient().attachmentContent('token','tenant','Invoices',id,id)).rejects.toThrow('authorization requires attention');
+  });
+
   it("exchanges an authorization code server-side with PKCE", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       access_token: "access",

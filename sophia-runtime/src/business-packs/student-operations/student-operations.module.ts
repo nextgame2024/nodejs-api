@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { StudentOperationsCasesController } from './student-operations-cases.controller.js';
+import { StudentOperationsCasesService } from './student-operations-cases.service.js';
+import { StudentOperationsCaseDocumentsService } from './student-operations-case-documents.service.js';
 import { AdminModule } from "../../admin/admin.module.js";
 import { StudentOperationsWorkspaceController } from "./student-operations-workspace.controller.js";
 import { StudentOperationsCurrentWorkspaceController } from "./student-operations-current-workspace.controller.js";
@@ -15,12 +18,15 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
 @Module({
   imports: [AdminModule, ConnectorsModule],
   controllers: [
+    StudentOperationsCasesController,
     StudentOperationsWorkspaceController,
     StudentOperationsCurrentWorkspaceController,
     StudentOperationsXeroController,
     XeroWebhookController,
   ],
   providers: [
+    StudentOperationsCasesService,
+    StudentOperationsCaseDocumentsService,
     StudentOperationsWorkspaceService,
     StudentOperationsWorkspaceGuard,
     StudentOperationsStudentsService,

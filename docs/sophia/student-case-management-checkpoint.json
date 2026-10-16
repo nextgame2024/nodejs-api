@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-16",
+  "status": "implemented_locally_and_tested_not_deployed_or_applied_to_production",
+  "scope": "Student Operations backend cases, repeatable initial migration and Xero document discovery/download foundation",
+  "tenant": {"customerId": "33ed40a6-7f2b-407c-aab2-de76b1cb45a8", "companyId": "80d5e42f-2de1-4792-86b5-54c7cdeb2660"},
+  "liveReadOnlyPreview": {
+    "students": 1069,
+    "plannedCases": 1068,
+    "archivedStudentsRequiringReview": 1,
+    "existingCases": 0,
+    "unlinkedSalesInvoices": 95,
+    "unlinkedCreditNotes": 3,
+    "unknownPopulatedStudentReferences": 0,
+    "collegeAssignments": 71,
+    "conflictingCollegeMatchesLeftEmpty": 3,
+    "unresolvedAdvisorLabels": 1043,
+    "privateReport": "/private/tmp/student-case-migration-preview.json",
+    "warning": "Snapshot only; rerun preview immediately before apply. The private report contains identifiers and must not be committed."
+  },
+  "migrationRules": {
+    "caseNumber": "CASE-<database sequence number>",
+    "stage": "imported_pending_review",
+    "stageLabel": "Imported — Pending Review",
+    "status": "in_progress (stored as open)",
+    "courseName": null,
+    "advisor": "First nonempty advisor label ordered by invoice date, then invoice UUID; only a unique eligible account match is assigned. Raw label remains on case.",
+    "college": "Normalized Levenshtein score >= 0.70; competing candidates within 0.05 or different matched colleges across invoices are left unassigned.",
+    "invoices": "DRAFT, SUBMITTED, AUTHORISED and PAID cached transactions with verified matching student reference. Deleted/voided excluded; unlinked transactions reported, never guessed.",
+    "repeatSafety": "Tenant migration lock, per-student savepoints, existing-case skip, unique migration key and invoice association constraints.",
+    "documentDiscovery": "Apply queues deduplicated invoice, credit note and contact discovery jobs. No live Xero requests occur in migration."
+  },
+  "endpoints": {
+    "base": "/api/business-packs/student-operations/v1/workspace/cases",
+    "routes": ["GET /options", "GET /", "POST /", "GET /:caseId", "PATCH /:caseId", "GET /:caseId/invoices", "POST /:caseId/invoices", "GET /:caseId/activity", "GET /:caseId/documents", "POST /:caseId/documents/discovery", "GET /:caseId/documents/:documentId/content"],
+    "writeContract": "Create/update/link require Idempotency-Key; update also requires recordVersion. Lists accept page/limit (maximum 100).",
+    "security": "Tenant RLS using sophia_runtime_app; case management permission; assigned primary advisor access; separate document metadata/content permissions; downloads reauthorize after provider request and are audited."
+  },
+  "documents": {
+    "implemented": "Xero originals with Sophia metadata, source identity/provenance, durable leased retry jobs and authorized bounded download proxy. No public provider URLs exposed.",
+    "blocker": "Current Xero authorization lacks accounting.attachments.read. Reconnect after deployment; actual attachment availability/count remains unverified.",
+    "coverage": "Accounting API invoice, credit note and contact attachments only. Prepayments/overpayments retain contact discovery, not invented attachment endpoints. Other Xero Files/bank-transaction associations require separate inventory and scopes.",
+    "s3Recommendation": "Later private operational mirror, retaining Xero originals: Block Public Access, SSE-KMS, checksum/version provenance, malware quarantine, retention rules and authorized short-lived access. Not provisioned or implemented in this change.",
+    "limitations": "Download endpoint is attachment-only, not an inline preview. No upload/delete, automatic document classification, required-document checklist, S3 mirror or full workflow automation yet."
+  },
+  "rollout": [
+    "Use Node 22 and install locked dependencies in a trusted operator checkout; operator scripts require the tsx development dependency.",
+    "Review pending migrations and take the normal backup before running the existing migration runner with owner credentials. 071_student_case_management.sql requires the earlier case foundation migrations and BM colleges schema. Do not use owner credentials for the API/worker.",
+    "Build/deploy Runtime with migration 071 applied. No deployment was performed during this task.",
+    "From sophia-runtime, with OWNER_DATABASE_URL securely configured: npm run cases:migrate -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 --report /private/tmp/cases-preview.json",
+    "Review missing invoice links, archived student, advisor mapping and college decisions before applying. Then use the same command with --apply and a separate private report path. Inspect requires_review results; repeat safely after correcting conflicts.",
+    "Reconnect Xero to grant accounting.attachments.read. Run npm run cases:documents -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 using Runtime non-BYPASSRLS credentials and Xero encryption configuration.",
+    "Schedule the bounded worker repeatedly with a single worker per tenant/connection and monitor discovery job errors/rate limits. If it ran before reconnect, requeue failed discovery through the case endpoint.",
+    "Verify live case/invoice counts, access boundaries and real documents before enabling the case UI. UI implementation is separate."
+  ],
+  "verification": {
+    "build": "npm run build",
+    "unitCommand": "npm test -- --runTestsByPath src/business-packs/student-operations/student-case-matching.spec.ts src/connectors/xero/xero.client.spec.ts src/connectors/xero/xero-connector.service.spec.ts",
+    "unitTestsPassed": 18,
+    "integrationCommand": "LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL=<disposable localhost database> npm test -- --runTestsByPath src/database/student-case-management.spec.ts",
+    "integrationTestsPassed": 3,
+    "integrationCoverage": "Actual PostgreSQL migration, preview/apply/rerun, multiple cases, idempotency, optimistic concurrency, tenant/advisor isolation, invoice link protection, document queue processing, paginated metadata and authorized download with mocked Xero.",
+    "notVerified": ["Production migration/apply", "Live Xero attachment inventory/download", "Render worker scheduling", "Case UI"]
+  },
+  "sources": ["https://developer.xero.com/documentation/api/accounting/attachments/", "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/xero_accounting.yaml", "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "https://docs.aws.amazon.com/AmazonS3/latest/userguide/serv-side-encryption.html"]
+}

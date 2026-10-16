@@ -1,0 +1,28 @@
+import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards } from '@nestjs/common';
+import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
+import { StudentOperationsCasesService } from './student-operations-cases.service.js';
+import { StudentOperationsCaseDocumentsService } from './student-operations-case-documents.service.js';
+import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
+type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
+@Controller('business-packs/student-operations/v1/workspace/cases')
+@UseGuards(StudentOperationsWorkspaceGuard)
+export class StudentOperationsCasesController {
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService) {}
+  @Get('options') options(){return this.cases.options();}
+  @Get() list(@Req() r:Request,@Query() query:unknown){return this.cases.list(r.studentOperationsPrincipal,query);}
+  @Post() create(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.create(r.studentOperationsPrincipal,body,key);}
+  @Get(':caseId') get(@Req() r:Request,@Param('caseId') id:string){return this.cases.get(r.studentOperationsPrincipal,id);}
+  @Patch(':caseId') update(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.update(r.studentOperationsPrincipal,id,body,key);}
+  @Get(':caseId/invoices') invoices(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.invoices(r.studentOperationsPrincipal,id,query);}
+  @Post(':caseId/invoices') linkInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.linkInvoice(r.studentOperationsPrincipal,id,body,key);}
+  @Get(':caseId/activity') activity(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.activities(r.studentOperationsPrincipal,id,query);}
+  @Get(':caseId/documents') listDocuments(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.documents.list(r.studentOperationsPrincipal,id,query);}
+  @Post(':caseId/documents/discovery') discover(@Req() r:Request,@Param('caseId') id:string){return this.documents.enqueue(r.studentOperationsPrincipal,id);}
+  @Get(':caseId/documents/:documentId/content')
+  @Header('Cache-Control','private, no-store')
+  @Header('X-Content-Type-Options','nosniff')
+  async content(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') documentId:string){
+    const file=await this.documents.content(r.studentOperationsPrincipal,id,documentId);
+    return new StreamableFile(file.buffer,{type:'application/octet-stream',disposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,length:file.buffer.length});
+  }
+}

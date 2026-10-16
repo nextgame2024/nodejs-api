@@ -18,6 +18,8 @@
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
     "migrate": "node dist/database/migrate.js",
     "migrate:dev": "tsx src/database/migrate.ts",
+    "cases:migrate": "tsx scripts/migrate-student-cases.ts",
+    "cases:documents": "tsx scripts/process-case-documents.ts",
     "providers:provision": "node dist/operators/run-provider-operations.js provision",
     "providers:reconcile": "node dist/operators/run-provider-operations.js reconcile",
     "operations:check-service-objectives": "node scripts/audit-service-objectives.mjs --preflight",

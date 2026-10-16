@@ -1,0 +1,194 @@
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { z } from 'zod';
+import { DatabaseService } from '../../database/database.service.js';
+import { hasStudentOperationsPermission } from './student-operations-policy.js';
+import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
+
+export const CASE_STAGES = ['imported_pending_review', 'new_application', 'pre_payment_audit', 'student_payment_received', 'reconciliation', 'cover_letter', 'college_payment', 'collections', 'commission_recovery', 'completed'] as const;
+export const CASE_STATUSES = ['in_progress', 'on_hold', 'completed', 'cancelled'] as const;
+const fields = z.object({
+  title: z.string().trim().min(1).max(200).nullable().optional(),
+  courseName: z.string().trim().min(1).max(200).nullable().optional(),
+  advisorUserId: z.string().uuid().nullable().optional(),
+  collegeId: z.string().uuid().nullable().optional(),
+  currentStage: z.enum(CASE_STAGES).optional(),
+  status: z.enum(CASE_STATUSES).optional(),
+}).strict();
+const createSchema = fields.extend({ userId: z.string().uuid() });
+const updateSchema = fields.extend({ recordVersion: z.number().int().positive() });
+const querySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25), userId: z.string().uuid().optional() }).strict();
+export function caseSchema(): string {
+  const schema = process.env.SOPHIA_RUNTIME_SCHEMA?.trim() || 'sophia_runtime';
+  if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) throw new Error('Invalid runtime schema');
+  return schema;
+}
+function parse<T>(schema: z.ZodType<T>, input: unknown): T {
+  const result = schema.safeParse(input);
+  if (!result.success) throw new BadRequestException('Invalid case request.');
+  return result.data;
+}
+export function caseId(value: string): string { return parse(z.string().uuid(), value); }
+function assertManage(p: Principal) {
+  if (!hasStudentOperationsPermission(p.role, 'cases.manage')) throw new ForbiddenException('Case management permission required.');
+}
+
+@Injectable()
+export class StudentOperationsCasesService {
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
+
+  options() {
+    return { statuses: CASE_STATUSES, stages: CASE_STAGES, migratedStageLabel: 'Imported — Pending Review', caseNumberFormat: 'CASE-1' };
+  }
+
+  async list(p: Principal, input: unknown) {
+    const q = parse(querySchema, input);
+    return this.database.tenantReadTransaction(p.tenantId, async db => {
+      const s = caseSchema();
+      const where = `c.customer_id=$1 AND ($2::uuid IS NULL OR l.user_id=$2)
+        AND ($3::boolean OR EXISTS (SELECT 1 FROM ${s}.student_operations_case_advisors a WHERE a.customer_id=c.customer_id AND a.case_id=c.case_id AND a.is_primary AND a.advisor_user_id::text=$4))`;
+      const params = [p.tenantId, q.userId ?? null, hasStudentOperationsPermission(p.role, 'cases.read_all'), p.identityUserId];
+      const count = await db.query(`SELECT count(*)::int total FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id WHERE ${where}`, params);
+      const rows = await db.query(`SELECT c.case_id AS "caseId",c.case_reference AS "caseNumber",l.user_id AS "userId", l.student_reference AS "studentReference", c.title, c.course_name AS "courseName",c.current_stage AS "currentStage",CASE WHEN c.lifecycle_status='open' THEN 'in_progress' ELSE c.lifecycle_status END AS status,c.record_version AS "recordVersion"
+        FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id
+        WHERE ${where} ORDER BY c.created_at DESC,c.case_id LIMIT $5 OFFSET $6`, [...params, q.limit, (q.page - 1) * q.limit]);
+      return { cases: rows.rows, page: q.page, limit: q.limit, total: count.rows[0].total };
+    });
+  }
+
+  async authorizedCase(db: PoolClient, p: Principal, id: string, lock = false) {
+    const s = caseSchema();
+    const rows = await db.query(`SELECT c.*,l.user_id,l.student_reference FROM ${s}.student_operations_cases c
+      JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id
+      WHERE c.customer_id=$1 AND c.case_id=$2
+        AND ($3::boolean OR EXISTS (SELECT 1 FROM ${s}.student_operations_case_advisors a WHERE a.customer_id=c.customer_id AND a.case_id=c.case_id AND a.is_primary AND a.advisor_user_id::text=$4)) ${lock ? 'FOR UPDATE OF c' : ''}`,
+    [p.tenantId, caseId(id), hasStudentOperationsPermission(p.role, 'cases.read_all'), p.identityUserId]);
+    if (!rows.rows[0]) throw new NotFoundException('Case not found.');
+    return rows.rows[0];
+  }
+
+  async get(p: Principal, id: string) {
+    return this.database.tenantReadTransaction(p.tenantId, async db => {
+      const row = await this.authorizedCase(db, p, id);
+      const s = caseSchema();
+      const advisors = await db.query(`SELECT a.advisor_user_id AS "userId",r.display_name AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_advisors a LEFT JOIN ${s}.student_operations_advisor_roster r ON r.customer_id=a.customer_id AND r.user_id=a.advisor_user_id WHERE a.customer_id=$1 AND a.case_id=$2 ORDER BY a.is_primary DESC,a.assigned_at,a.advisor_user_id`, [p.tenantId,id]);
+      const colleges = await db.query(`SELECT a.college_id AS "collegeId",coalesce(d.college_name,c.college_name) AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_colleges a JOIN ${s}.student_operations_colleges c ON c.customer_id=a.customer_id AND c.college_id=a.college_id LEFT JOIN ${s}.student_operations_college_directory d ON d.customer_id=a.customer_id AND d.college_id=a.college_id WHERE a.customer_id=$1 AND a.case_id=$2`, [p.tenantId,id]);
+      return { caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, title: row.title, courseName: row.course_name, advisorName: row.advisor_name, status: row.lifecycle_status === 'open' ? 'in_progress' : row.lifecycle_status, currentStage: row.current_stage, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
+    });
+  }
+
+  async create(p: Principal, input: unknown, key?: string) {
+    assertManage(p);
+    const value = parse(createSchema, input);
+    return this.write(p, 'case.create', value, key, async db => {
+      const s = caseSchema();
+      const profile = await db.query(`SELECT ${s}.ensure_student_operations_profile($1) AS id`, [value.userId]);
+      const row = await db.query(`INSERT INTO ${s}.student_operations_cases(customer_id,student_id,case_reference,case_kind,title,course_name,current_stage,lifecycle_status,closed_on)
+        VALUES($1,$2,'CASE-' || nextval('${s}.student_operations_case_number_seq')::text,'student_operations',$3,$4,$5,$6,CASE WHEN $6 IN ('completed','cancelled') THEN CURRENT_DATE END) RETURNING case_id`,
+      [p.tenantId,profile.rows[0].id,value.title ?? null,value.courseName ?? null,value.currentStage ?? 'new_application',value.status === 'in_progress' || !value.status ? 'open' : value.status]);
+      const id = row.rows[0].case_id;
+      await this.assign(db,p,id,value);
+      await this.activity(db,p,id,'case.created','Case created');
+      return { caseId: id, recordVersion: 1 };
+    });
+  }
+
+  async update(p: Principal, id: string, input: unknown, key?: string) {
+    assertManage(p); caseId(id);
+    const value = parse(updateSchema,input);
+    return this.write(p,'case.update',{caseId:id,...value},key,async db => {
+      const row = await this.authorizedCase(db,p,id,true);
+      if (row.record_version !== value.recordVersion) throw new ConflictException('Case changed. Reload before saving.');
+      const status = value.status === 'in_progress' ? 'open' : value.status ?? row.lifecycle_status;
+      await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET title=$3,course_name=$4,current_stage=$5,lifecycle_status=$6,closed_on=CASE WHEN $6 IN ('completed','cancelled') THEN coalesce(closed_on,CURRENT_DATE) END,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,
+      [p.tenantId,id,value.title === undefined ? row.title : value.title,value.courseName === undefined ? row.course_name : value.courseName,value.currentStage ?? row.current_stage,status]);
+      await this.assign(db,p,id,value);
+      await this.activity(db,p,id,'case.updated','Case details updated');
+      return {caseId:id,recordVersion:row.record_version+1};
+    });
+  }
+
+  private async assign(db: PoolClient,p: Principal,id: string,value: z.infer<typeof fields>) {
+    const s=caseSchema();
+    if (value.advisorUserId !== undefined) {
+      let name: string | null=null;
+      if(value.advisorUserId) {
+        const advisor=await db.query(`SELECT display_name FROM ${s}.student_operations_advisor_roster WHERE customer_id=$1 AND user_id=$2`,[p.tenantId,value.advisorUserId]);
+        if(!advisor.rows[0]) throw new BadRequestException('Advisor is not eligible in this workspace.');
+        name=advisor.rows[0].display_name;
+      }
+      // Historical assignments remain available for audit, but only the primary
+      // advisor grants access (see the access predicate below).
+      await db.query(`UPDATE ${s}.student_operations_case_advisors SET is_primary=false WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
+      if(value.advisorUserId) await db.query(`INSERT INTO ${s}.student_operations_case_advisors(customer_id,case_id,company_id,advisor_user_id,is_primary) VALUES($1,$2,$3,$4,true) ON CONFLICT(customer_id,case_id,advisor_user_id) DO UPDATE SET is_primary=true`,[p.tenantId,id,p.externalCompanyId,value.advisorUserId]);
+      await db.query(`UPDATE ${s}.student_operations_cases SET advisor_name=$3 WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id,name]);
+    }
+    if(value.collegeId !== undefined) {
+      if(value.collegeId) {
+        const college=await db.query(`SELECT college_name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,value.collegeId]);
+        if(!college.rows[0]) throw new BadRequestException('College is not available in this workspace.');
+        await db.query(`INSERT INTO ${s}.student_operations_colleges(customer_id,college_id,college_name) VALUES($1,$2,$3) ON CONFLICT(customer_id,college_id) DO UPDATE SET college_name=excluded.college_name`,[p.tenantId,value.collegeId,college.rows[0].college_name]);
+      }
+      await db.query(`UPDATE ${s}.student_operations_case_colleges SET is_primary=false WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
+      if(value.collegeId) await db.query(`INSERT INTO ${s}.student_operations_case_colleges(customer_id,case_id,college_id,is_primary) VALUES($1,$2,$3,true) ON CONFLICT(customer_id,case_id,college_id) DO UPDATE SET is_primary=true`,[p.tenantId,id,value.collegeId]);
+    }
+  }
+
+  async invoices(p: Principal,id: string,input: unknown) {
+    const q=parse(querySchema.omit({userId:true}),input);
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.authorizedCase(db,p,id);
+      const s=caseSchema();
+      const financial=hasStudentOperationsPermission(p.role,'payments.read_all');
+      const rows=await db.query(`SELECT i.xero_invoice_id AS "invoiceId",i.invoice_number AS "invoiceNumber",i.invoice_status AS status,i.invoice_type AS type,i.invoice_date AS date,i.due_date AS "dueDate"${financial ? ',i.currency_code AS currency,i.total,i.amount_paid AS "amountPaid",i.amount_due AS "amountDue"' : ''} FROM ${s}.student_operations_case_invoice_links l JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=l.customer_id AND i.xero_connection_id=l.xero_connection_id AND i.xero_invoice_id=l.xero_invoice_id WHERE l.customer_id=$1 AND l.case_id=$2 ORDER BY i.invoice_date DESC NULLS LAST,i.xero_invoice_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
+      const count=await db.query(`SELECT count(*)::int total FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
+      return {invoices:rows.rows,total:count.rows[0].total,page:q.page,limit:q.limit};
+    });
+  }
+
+  async linkInvoice(p: Principal,id: string,input: unknown,key?: string) {
+    assertManage(p);caseId(id);
+    const value=parse(z.object({connectionId:z.string().uuid(),invoiceId:z.string().uuid()}).strict(),input);
+    return this.write(p,'case.link_invoice',{caseId:id,...value},key,async db=>{
+      const row=await this.authorizedCase(db,p,id,true);
+      const s=caseSchema();
+      const invoice=await db.query(`SELECT student_id FROM ${s}.student_operations_xero_invoices WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,value.connectionId,value.invoiceId]);
+      if(invoice.rows[0]?.student_id !== row.student_reference) throw new BadRequestException('Invoice must be linked to this student first.');
+      const existing=await db.query(`SELECT case_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,value.connectionId,value.invoiceId]);
+      if(existing.rows[0] && existing.rows[0].case_id !== id) throw new ConflictException('Invoice is already assigned to another case.');
+      await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,[p.tenantId,id,row.student_id,row.student_reference,value.connectionId,value.invoiceId,p.identityUserId]);
+      await this.activity(db,p,id,'case.invoice_linked','Invoice associated with case');
+      return {caseId:id,invoiceId:value.invoiceId};
+    });
+  }
+
+  async activities(p:Principal,id:string,input:unknown) {
+    const q=parse(querySchema.omit({userId:true}),input);
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.authorizedCase(db,p,id);
+      const result=await db.query(`SELECT activity_id AS "activityId",event_type AS "eventType",summary,created_at AS "createdAt" FROM ${caseSchema()}.student_operations_case_activity WHERE customer_id=$1 AND case_id=$2 ORDER BY created_at DESC,activity_id DESC LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
+      return {activity:result.rows,page:q.page,limit:q.limit};
+    });
+  }
+
+  async activity(db:PoolClient,p:Principal,id:string,event:string,summary:string) {
+    await db.query(`INSERT INTO ${caseSchema()}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary) VALUES($1,$2,$3,$4,$5)`,[p.tenantId,id,p.identityUserId,event,summary]);
+  }
+
+  private async write(p:Principal,operation:string,value:unknown,key:string|undefined,work:(db:PoolClient)=>Promise<Record<string,unknown>>) {
+    const token=parse(z.string().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/),key);
+    const fingerprint=createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    return this.database.tenantTransaction(p.tenantId,async db=>{
+      const s=caseSchema();
+      await db.query(`INSERT INTO ${s}.student_operations_write_requests(customer_id,actor_identity_user_id,idempotency_key,operation,request_fingerprint) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,[p.tenantId,p.identityUserId,token,operation,fingerprint]);
+      const saved=await db.query(`SELECT operation,request_fingerprint,response FROM ${s}.student_operations_write_requests WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,token]);
+      const row=saved.rows[0];
+      if(row.operation!==operation || row.request_fingerprint!==fingerprint) throw new ConflictException('Idempotency key has already been used for another request.');
+      if(row.response) return row.response;
+      const response=await work(db);
+      await db.query(`UPDATE ${s}.student_operations_write_requests SET response=$4::jsonb WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3`,[p.tenantId,p.identityUserId,token,JSON.stringify(response)]);
+      return response;
+    });
+  }
+}

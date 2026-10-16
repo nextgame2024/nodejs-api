@@ -9,6 +9,7 @@ export const XERO_READ_ONLY_SCOPES = [
   "accounting.invoices.read",
   "accounting.payments.read",
   "accounting.contacts.read",
+  "accounting.attachments.read",
 ] as const;
 
 export const XERO_STUDENT_DISCOVERY_SCOPES = [
