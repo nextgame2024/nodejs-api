@@ -14,7 +14,7 @@ const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).default(""),
-  status: z.enum(["healthy", "action_required", "overdue", "no_vigente", "not_started"]).optional(),
+  status: z.enum(["in_progress", "on_hold", "completed", "cancelled", "not_started"]).optional(),
   advisorId: z.string().uuid().optional(),
   collegeId: z.string().uuid().optional(),
   advisorName: z.string().trim().min(1).max(200).optional(),
@@ -98,8 +98,8 @@ export class StudentOperationsRegisterService {
           SELECT count(*)::int AS total,
                  count(*) FILTER (WHERE has_current_case)::int AS active_students,
                  count(*) FILTER (WHERE newest_case_opened_in_range)::int AS new_applications,
-                 count(*) FILTER (WHERE register_status IN ('action_required', 'overdue'))::int AS action_required,
-                 count(*) FILTER (WHERE register_status = 'no_vigente')::int AS no_vigente,
+                 count(*) FILTER (WHERE attention_reason IS NOT NULL)::int AS action_required,
+                 count(*) FILTER (WHERE case_count > 0 AND NOT has_current_case)::int AS no_vigente,
                  count(*) FILTER (WHERE attention_this_week)::int AS attention_this_week,
                  max(last_updated) AS summary_last_updated
             FROM cohort c
@@ -179,7 +179,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
          AND ($2::text IS NULL OR EXISTS (
            SELECT 1 FROM ${schema}.student_operations_case_advisors ca
             WHERE ca.customer_id = c.customer_id AND ca.case_id = c.case_id
-              AND ca.advisor_user_id::text = $2))
+              AND ca.advisor_user_id::text = $2 AND ca.is_primary))
     ), eligible AS (
       SELECT r.* FROM ${schema}.student_operations_student_roster r
        WHERE r.customer_id = $1 AND r.account_status <> 'archived'
@@ -193,29 +193,28 @@ export function buildStudentRegisterCohortSql(schema: string): string {
       SELECT r.user_id, r.profile_id, r.student_reference, r.legal_name, r.email,
              r.account_created_at, greatest(r.account_updated_at, coalesce(cs.last_case_update, r.account_updated_at)) AS last_updated,
              d.case_id, d.case_reference, d.current_stage, ad.advisor_user_id,
-             coalesce(ar.display_name, CASE WHEN cs.case_count = 0 THEN xi.advisor_name END) AS advisor_name,
+             coalesce(ar.display_name, nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name) AS advisor_name,
              cl.college_id,
-             coalesce(cl.college_name, CASE WHEN cs.case_count = 0 THEN xi.college_name END) AS college_name,
+             coalesce(cl.college_name, ci.college_name, xi.college_name) AS college_name,
              coalesce(cs.case_count, 0)::int AS case_count,
              coalesce(cs.has_current_case, false) AS has_current_case,
              coalesce(cs.newest_case_opened_in_range, false) AS newest_case_opened_in_range,
-             pay.due_on::text AS next_due_on, pay.amount::text AS next_amount,
-             pay.currency_code AS next_currency, pay.case_id AS next_case_id,
-             CASE WHEN pay.due_on < CURRENT_DATE THEN 'overdue'
-                  WHEN coalesce(cs.has_on_hold, false) THEN 'action_required'
-                  WHEN coalesce(cs.has_current_case, false) THEN 'healthy'
-                  WHEN coalesce(cs.case_count, 0) > 0 THEN 'no_vigente'
+             coalesce(pay.due_on, invoice_pay.due_date)::text AS next_due_on,
+             coalesce(pay.amount, invoice_pay.amount_due)::text AS next_amount,
+             coalesce(pay.currency_code, invoice_pay.currency_code) AS next_currency,
+             coalesce(pay.case_id, invoice_pay.case_id) AS next_case_id,
+             CASE WHEN d.lifecycle_status = 'open' THEN 'in_progress'
+                  WHEN d.lifecycle_status IS NOT NULL THEN d.lifecycle_status
                   ELSE 'not_started' END AS register_status,
-             CASE WHEN pay.due_on < CURRENT_DATE THEN 'Payment overdue'
-                  WHEN coalesce(cs.has_on_hold, false) THEN 'Case on hold'
+             CASE WHEN coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE THEN 'Payment overdue'
+                  WHEN d.lifecycle_status = 'on_hold' THEN 'Case on hold'
                   ELSE NULL END AS attention_reason,
-             (pay.due_on < CURRENT_DATE + 7 OR coalesce(cs.has_on_hold, false)) AS attention_this_week
+             (coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE + 7 OR d.lifecycle_status = 'on_hold') AS attention_this_week
         FROM eligible r
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS case_count,
                  bool_or(v.lifecycle_status IN ('open', 'on_hold')) AS has_current_case,
-                 bool_or(v.lifecycle_status = 'on_hold') AS has_on_hold,
-                 bool_or(v.opened_on BETWEEN coalesce($6::date, '-infinity'::date)
+                 bool_or(v.current_stage = 'new_application' AND v.opened_on BETWEEN coalesce($6::date, '-infinity'::date)
                         AND coalesce($7::date, 'infinity'::date)) AS newest_case_opened_in_range,
                  max(v.updated_at) AS last_case_update
             FROM visible_cases v WHERE v.student_id = r.profile_id
@@ -223,29 +222,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
         LEFT JOIN LATERAL (
           SELECT v.* FROM visible_cases v
            WHERE v.student_id = r.profile_id
-             AND ($4::uuid IS NULL OR EXISTS (
-               SELECT 1 FROM ${schema}.student_operations_case_advisors ca
-                WHERE ca.customer_id = v.customer_id AND ca.case_id = v.case_id
-                  AND ca.advisor_user_id = $4))
-             AND ($5::uuid IS NULL OR EXISTS (
-               SELECT 1 FROM ${schema}.student_operations_case_colleges cc
-                WHERE cc.customer_id = v.customer_id AND cc.case_id = v.case_id
-                  AND cc.college_id = $5))
-             AND ($8::text IS NULL OR EXISTS (
-               SELECT 1 FROM ${schema}.student_operations_case_advisors ca
-               JOIN ${schema}.student_operations_advisor_roster advisor
-                 ON advisor.customer_id = ca.customer_id AND advisor.user_id = ca.advisor_user_id
-                WHERE ca.customer_id = v.customer_id AND ca.case_id = v.case_id
-                  AND lower(btrim(advisor.display_name)) = lower($8)))
-             AND ($9::text IS NULL OR EXISTS (
-               SELECT 1 FROM ${schema}.student_operations_case_colleges cc
-               JOIN ${schema}.student_operations_colleges college
-                 ON college.customer_id = cc.customer_id AND college.college_id = cc.college_id
-                WHERE cc.customer_id = v.customer_id AND cc.case_id = v.case_id
-                  AND lower(btrim(college.college_name)) = lower($9)))
-             AND ($6::date IS NULL OR v.opened_on BETWEEN $6::date AND $7::date)
-           ORDER BY (v.lifecycle_status = 'open') DESC,
-                    v.opened_on DESC, v.case_id DESC LIMIT 1
+           ORDER BY v.created_at DESC, v.case_id DESC LIMIT 1
         ) d ON true
         LEFT JOIN LATERAL (
           SELECT ca.advisor_user_id FROM ${schema}.student_operations_case_advisors ca
@@ -266,6 +243,21 @@ export function buildStudentRegisterCohortSql(schema: string): string {
           SELECT nullif(btrim(i.advisor_name), '') AS advisor_name,
                  coalesce(nullif(btrim(i.invoice_reference), ''),
                           nullif(btrim(i.college_name), '')) AS college_name
+            FROM ${schema}.student_operations_case_invoice_links link
+            JOIN ${schema}.student_operations_xero_invoices i
+              ON i.customer_id = link.customer_id
+             AND i.xero_connection_id = link.xero_connection_id
+             AND i.xero_invoice_id = link.xero_invoice_id
+           WHERE link.customer_id = $1 AND link.case_id = d.case_id
+             AND i.invoice_status NOT IN ('DELETED', 'VOIDED')
+             AND (i.advisor_name IS NOT NULL OR i.invoice_reference IS NOT NULL
+                  OR i.college_name IS NOT NULL)
+           ORDER BY i.invoice_date DESC NULLS LAST, i.xero_invoice_id DESC LIMIT 1
+        ) ci ON d.case_id IS NOT NULL
+        LEFT JOIN LATERAL (
+          SELECT nullif(btrim(i.advisor_name), '') AS advisor_name,
+                 coalesce(nullif(btrim(i.invoice_reference), ''),
+                          nullif(btrim(i.college_name), '')) AS college_name
             FROM ${schema}.student_operations_xero_invoices i
            WHERE i.customer_id = $1 AND i.student_id = r.student_reference
              AND cs.case_count = 0
@@ -277,20 +269,40 @@ export function buildStudentRegisterCohortSql(schema: string): string {
         LEFT JOIN LATERAL (
           SELECT ps.case_id, ps.due_on, ps.amount, ps.currency_code
             FROM ${schema}.student_operations_case_payment_schedule ps
-            JOIN visible_cases vc ON vc.case_id = ps.case_id
-           WHERE vc.student_id = r.profile_id AND vc.lifecycle_status = 'open'
-             AND ps.customer_id = $1 AND ps.status IN ('pending', 'partially_paid')
+           WHERE ps.customer_id = $1 AND ps.case_id = d.case_id
+             AND d.lifecycle_status = 'open' AND ps.status IN ('pending', 'partially_paid')
            ORDER BY ps.due_on ASC, ps.payment_schedule_id ASC LIMIT 1
         ) pay ON true
+        LEFT JOIN LATERAL (
+          SELECT d.case_id, i.due_date, i.amount_due, i.currency_code
+            FROM ${schema}.student_operations_case_invoice_links link
+            JOIN ${schema}.student_operations_xero_invoices i
+              ON i.customer_id = link.customer_id
+             AND i.xero_connection_id = link.xero_connection_id
+             AND i.xero_invoice_id = link.xero_invoice_id
+           WHERE link.customer_id = $1 AND link.case_id = d.case_id
+             AND d.lifecycle_status = 'open' AND pay.case_id IS NULL
+             AND i.invoice_type = 'ACCREC'
+             AND i.invoice_status IN ('DRAFT', 'SUBMITTED', 'AUTHORISED', 'PAID')
+             AND i.amount_due > 0 AND i.due_date IS NOT NULL
+           ORDER BY i.due_date ASC, i.xero_invoice_id ASC LIMIT 1
+        ) invoice_pay ON true
        WHERE (d.case_id IS NOT NULL
           OR ($4::uuid IS NULL AND $5::uuid IS NULL AND cs.case_count = 0
               AND ($6::date IS NULL OR r.account_created_at::date BETWEEN $6::date AND $7::date)
               AND ($8::text IS NULL OR lower(xi.advisor_name) = lower($8))
               AND ($9::text IS NULL OR lower(xi.college_name) = lower($9))))
+         AND ($4::uuid IS NULL OR EXISTS (
+           SELECT 1 FROM ${schema}.student_operations_case_advisors ca
+            WHERE ca.customer_id = $1 AND ca.case_id = d.case_id AND ca.advisor_user_id = $4))
+         AND ($5::uuid IS NULL OR cl.college_id = $5)
+         AND ($6::date IS NULL OR cs.case_count = 0 OR d.opened_on BETWEEN $6::date AND $7::date)
+         AND ($8::text IS NULL OR lower(coalesce(ar.display_name, nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name)) = lower($8))
+         AND ($9::text IS NULL OR lower(coalesce(cl.college_name, ci.college_name, xi.college_name)) = lower($9))
          AND ($3::text IS NULL OR r.legal_name ILIKE $3 ESCAPE '\\'
               OR r.student_reference ILIKE $3 ESCAPE '\\'
               OR r.email ILIKE $3 ESCAPE '\\'
-              OR coalesce(cl.college_name, CASE WHEN cs.case_count = 0 THEN xi.college_name END)
+              OR coalesce(cl.college_name, ci.college_name, xi.college_name)
                  ILIKE $3 ESCAPE '\\')
     )`;
 }
@@ -311,8 +323,8 @@ async function loadCaseLinks(
         AND ($3::text IS NULL OR EXISTS (
           SELECT 1 FROM ${schema}.student_operations_case_advisors ca
            WHERE ca.customer_id = c.customer_id AND ca.case_id = c.case_id
-             AND ca.advisor_user_id::text = $3))
-      ORDER BY c.opened_on DESC, c.case_id DESC`,
+             AND ca.advisor_user_id::text = $3 AND ca.is_primary))
+      ORDER BY c.created_at DESC, c.case_id DESC`,
     [principal.tenantId, profileIds,
       principal.role === "advisor" ? principal.identityUserId : null],
   );

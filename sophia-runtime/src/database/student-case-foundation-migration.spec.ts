@@ -67,7 +67,8 @@ suite("Student case foundation on disposable PostgreSQL", () => {
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(
         customer_id uuid NOT NULL, xero_connection_id uuid NOT NULL,
         xero_invoice_id uuid NOT NULL, student_id text,
-        invoice_status text NOT NULL, invoice_date date,
+        invoice_type text, invoice_status text NOT NULL, invoice_date date,
+        due_date date, amount_due numeric, currency_code text,
         invoice_reference text, advisor_name text, college_name text,
         PRIMARY KEY(customer_id, xero_connection_id, xero_invoice_id));
       ALTER TABLE sophia_runtime.student_operations_xero_invoices ENABLE ROW LEVEL SECURITY;
@@ -85,6 +86,9 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     await pool.query(sql.replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"));
     const registerSql = await readFile(new URL("./migrations/070_student_register_advisor_projection.sql", import.meta.url), "utf8");
     await pool.query(registerSql.replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"));
+    // Migration 071 adds the imported advisor label to each case. This fixture
+    // omits 071's document/college dependencies but must retain its case shape.
+    await pool.query("ALTER TABLE sophia_runtime.student_operations_cases ADD COLUMN advisor_name text");
     await pool.query(
       `INSERT INTO sophia_runtime.customers VALUES
         ($1,$2,'active'),($3,$4,'active')`,
@@ -306,9 +310,9 @@ suite("Student case foundation on disposable PostgreSQL", () => {
   test("register keeps one row per user, enforces case scope, and paginates exact totals", async () => {
     await pool.query(
       `INSERT INTO sophia_runtime.student_operations_xero_invoices
-       (customer_id,xero_connection_id,xero_invoice_id,student_id,invoice_status,
-        invoice_date,invoice_reference,advisor_name,college_name)
-       VALUES ($1,$2,$3,'STD-2','DRAFT','2026-10-01','ATI','S15 Paulina','Other college')`,
+       (customer_id,xero_connection_id,xero_invoice_id,student_id,invoice_type,invoice_status,
+        invoice_date,due_date,amount_due,currency_code,invoice_reference,advisor_name,college_name)
+       VALUES ($1,$2,$3,'STD-2','ACCREC','DRAFT','2026-10-01',CURRENT_DATE+30,200,'AUD','ATI','S15 Paulina','Other college')`,
       [tenantA, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-ddddddddddde"],
     );
     const database = {
@@ -347,9 +351,28 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     expect(joselin.total).toBe(1);
     expect(joselin.students[0].cases).toHaveLength(2);
     expect(joselin.students[0].caseId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2");
-    expect(joselin.students[0].nextPayment).toMatchObject({ amount: "4500.0000", currency: "AUD" });
+    expect(joselin.students[0]).toMatchObject({ advisorName: "Advisor B", collegeName: "College Two", status: "in_progress" });
+    expect(joselin.students[0].nextPayment).toMatchObject({ amount: "5500.0000", currency: "AUD", caseId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2" });
     const imported = await service.list(manager, { q: "STD-2" });
     expect(imported.students[0]).toMatchObject({ advisorName: "S15 Paulina", collegeName: "ATI" });
+    const importedProfile = (await pool.query<{ student_id: string }>(
+      "SELECT student_id FROM sophia_runtime.student_operations_student_user_links WHERE user_id=$1", [user2],
+    )).rows[0].student_id;
+    const importedCase = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_cases
+      (case_id,customer_id,student_id,case_reference,case_kind,current_stage,advisor_name)
+      VALUES($1,$2,$3,'CASE-3','student_operations','imported_pending_review','S15 Paulina')`,
+      [importedCase,tenantA,importedProfile]);
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_case_invoice_links
+      (customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
+      VALUES($1,$2,$3,'STD-2',$4,$5,'migration:test')`,
+      [tenantA,importedCase,importedProfile,"cccccccc-cccc-4ccc-8ccc-cccccccccccc","dddddddd-dddd-4ddd-8ddd-ddddddddddde"]);
+    const migrated = await service.list(manager, { q: "STD-2" });
+    expect(migrated.students[0]).toMatchObject({
+      advisorName: "S15 Paulina", collegeName: "ATI", status: "in_progress",
+      caseReference: "CASE-3", caseCount: 1,
+    });
+    expect(migrated.students[0].nextPayment).toMatchObject({caseId:importedCase,amount:"200",currency:"AUD"});
     const byReference = await service.list(manager, { q: "ati" });
     expect(byReference.students.map((row) => row.studentReference)).toEqual(["STD-2"]);
     const hiddenCollege = await service.list(manager, { q: "Other college" });
@@ -381,12 +404,15 @@ suite("Student case foundation on disposable PostgreSQL", () => {
     await pool.query(
       `UPDATE sophia_runtime.student_operations_case_payment_schedule
           SET due_on = CURRENT_DATE - 1
-        WHERE case_id = $1`, ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"],
+        WHERE case_id = $1`, ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
     );
-    const attention = await service.list(manager, { status: "overdue", attentionThisWeek: "true" });
+    const attention = await service.list(manager, { status: "in_progress", attentionThisWeek: "true" });
     expect(attention.total).toBe(1);
     expect(attention.summary.attentionThisWeek).toBe(1);
     expect(attention.students[0].attentionReason).toBe("Payment overdue");
+    await pool.query("UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='on_hold' WHERE case_id=$1", ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"]);
+    const latestOnHold = await service.list(manager, { q: "STD-1" });
+    expect(latestOnHold.students[0]).toMatchObject({status:"on_hold",caseReference:"CASE-2",nextPayment:null});
     await expect(service.list(manager, { from: "2026-01-01" })).rejects.toThrow();
     await expect(service.list(manager, { from: "2026-12-31", to: "2026-01-01" })).rejects.toThrow();
   });

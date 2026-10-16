@@ -1,6 +1,6 @@
 {
   "date": "2026-10-16",
-  "status": "implemented_locally_and_tested_not_deployed_or_applied_to_production",
+  "status": "migration_071_and_1068_case_backfill_applied_by_operator;_register_fix_local_not_deployed",
   "scope": "Student Operations backend cases, repeatable initial migration and Xero document discovery/download foundation",
   "tenant": {"customerId": "33ed40a6-7f2b-407c-aab2-de76b1cb45a8", "companyId": "80d5e42f-2de1-4792-86b5-54c7cdeb2660"},
   "liveReadOnlyPreview": {
@@ -16,6 +16,25 @@
     "unresolvedAdvisorLabels": 1043,
     "privateReport": "/private/tmp/student-case-migration-preview.json",
     "warning": "Snapshot only; rerun preview immediately before apply. The private report contains identifiers and must not be committed."
+  },
+  "postBackfillReadOnlyCheck": {
+    "cases": 1068,
+    "openCases": 1068,
+    "casesWithSavedAdvisorName": 1066,
+    "casesWithAssignedAdvisorAccount": 23,
+    "casesWithoutSourceAdvisorOnLinkedInvoices": 2,
+    "casesWithLinkedUnpaidInvoiceAndDueDate": 478,
+    "casesWithPendingPaymentSchedule": 0,
+    "observation": "Operator screenshots show migration 071 and initial case backfill completed. These counts came from read-only database queries."
+  },
+  "studentRegisterFix": {
+    "deployment": "Local backend and frontend changes only; deploy both to see them in the Students page.",
+    "selection": "Student row uses its most recently created visible case for advisor, college/reference, stage, next payment and status. Other cases remain available in the cases list. Advisor visibility follows primary case assignment.",
+    "advisor": "Show the assigned eligible account name, then the saved case advisor label, then a label from a linked case invoice. No inferred staff assignments or production writes.",
+    "college": "Show the assigned college, then the Ref / College label from a linked invoice in that same case.",
+    "nextPayment": "Show the selected case payment schedule; when absent, show the earliest linked unpaid sales invoice with a due date. Never use another case's payment.",
+    "status": "Map selected case open to In progress; show on hold, completed and cancelled directly. The separate attention calculation does not replace case status.",
+    "verification": "Runtime build; seven real PostgreSQL case foundation/register tests; frontend build; twelve focused ChromeHeadless Students page tests; git diff --check."
   },
   "migrationRules": {
     "caseNumber": "CASE-<database sequence number>",
@@ -45,7 +64,7 @@
   "rollout": [
     "Use Node 22 and install locked dependencies in a trusted operator checkout; operator scripts require the tsx development dependency.",
     "Review pending migrations and take the normal backup before running the existing migration runner with owner credentials. 071_student_case_management.sql requires the earlier case foundation migrations and BM colleges schema. Do not use owner credentials for the API/worker.",
-    "Build/deploy Runtime with migration 071 applied. No deployment was performed during this task.",
+    "Migration 071 and the initial 1068 case backfill were applied by the operator after the first implementation. Deploy the later register backend and frontend fix to show restored case information.",
     "From sophia-runtime, with OWNER_DATABASE_URL securely configured: npm run cases:migrate -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 --report /private/tmp/cases-preview.json",
     "Review missing invoice links, archived student, advisor mapping and college decisions before applying. Then use the same command with --apply and a separate private report path. Inspect requires_review results; repeat safely after correcting conflicts.",
     "Reconnect Xero to grant accounting.attachments.read. Run npm run cases:documents -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 using Runtime non-BYPASSRLS credentials and Xero encryption configuration.",
