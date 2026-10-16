@@ -26,6 +26,7 @@ describe("XeroConnectorService", () => {
     const service = new XeroConnectorService(database as never, {} as never, {} as never);
     const result = await service.status("11111111-1111-4111-8111-111111111111");
     expect(result.connections[0]?.missingStudentDiscoveryScopes).toEqual(["accounting.payments.read"]);
+    expect(result.connections[0]?.missingAttachmentScopes).toEqual(["accounting.attachments.read"]);
   });
 
   it("reports the granular scopes missing from an existing connection", async () => {
@@ -62,6 +63,7 @@ describe("XeroConnectorService", () => {
       "accounting.contacts.read",
     ]);
     expect(result.connections[0]?.organisationRole).toBe("trust");
+    expect(result.connections[0]?.missingAttachmentScopes).toEqual(["accounting.attachments.read"]);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("a.granted_scopes"), [
       "11111111-1111-4111-8111-111111111111",
     ]);

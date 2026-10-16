@@ -1,6 +1,6 @@
 {
   "date": "2026-10-16",
-  "status": "migration_071_and_1068_case_backfill_applied_by_operator;_register_fix_local_not_deployed",
+  "status": "case_backfill_applied;_document_worker_and_reconnect_warning_local_not_deployed_or_activated",
   "scope": "Student Operations backend cases, repeatable initial migration and Xero document discovery/download foundation",
   "tenant": {"customerId": "33ed40a6-7f2b-407c-aab2-de76b1cb45a8", "companyId": "80d5e42f-2de1-4792-86b5-54c7cdeb2660"},
   "liveReadOnlyPreview": {
@@ -56,10 +56,17 @@
   },
   "documents": {
     "implemented": "Xero originals with Sophia metadata, source identity/provenance, durable leased retry jobs and authorized bounded download proxy. No public provider URLs exposed.",
-    "blocker": "Current Xero authorization lacks accounting.attachments.read. Reconnect after deployment; actual attachment availability/count remains unverified.",
+    "blocker": "Xero authorization must be re-consented with accounting.attachments.read by an integration administrator; actual attachment availability/count remains unverified.",
     "coverage": "Accounting API invoice, credit note and contact attachments only. Prepayments/overpayments retain contact discovery, not invented attachment endpoints. Other Xero Files/bank-transaction associations require separate inventory and scopes.",
     "s3Recommendation": "Later private operational mirror, retaining Xero originals: Block Public Access, SSE-KMS, checksum/version provenance, malware quarantine, retention rules and authorized short-lived access. Not provisioned or implemented in this change.",
     "limitations": "Download endpoint is attachment-only, not an inline preview. No upload/delete, automatic document classification, required-document checklist, S3 mirror or full workflow automation yet."
+  },
+  "documentWorkerRollout": {
+    "implementation": "Production image now includes dist/operators/process-case-documents.js and npm run cases:documents. Worker preflights attachment scope for all connections with pending jobs, processes at most 25 jobs per run, waits 1.5 seconds between jobs and reports safe error codes only.",
+    "scheduleDefinition": "backend/render.yaml defines an hourly UTC Docker cron with secret environment variables prompted at Blueprint creation. It is not activated in Render.",
+    "reconnection": "Backend status now exposes missingAttachmentScopes; Company UI flags missing attachment permission and shows Reconnect Xero. Human Xero consent is still required after deployment.",
+    "localVerification": "Runtime build, three Xero connector tests, frontend build, two focused ChromeHeadless UI tests, Render YAML syntax and git diff --check. PostgreSQL integration tests were skipped because the disposable test database was not configured.",
+    "liveVerification": "No live Xero reauthorization, production worker run or Render cron activation performed from this workspace."
   },
   "rollout": [
     "Use Node 22 and install locked dependencies in a trusted operator checkout; operator scripts require the tsx development dependency.",
@@ -67,8 +74,8 @@
     "Migration 071 and the initial 1068 case backfill were applied by the operator after the first implementation. Deploy the later register backend and frontend fix to show restored case information.",
     "From sophia-runtime, with OWNER_DATABASE_URL securely configured: npm run cases:migrate -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 --report /private/tmp/cases-preview.json",
     "Review missing invoice links, archived student, advisor mapping and college decisions before applying. Then use the same command with --apply and a separate private report path. Inspect requires_review results; repeat safely after correcting conflicts.",
-    "Reconnect Xero to grant accounting.attachments.read. Run npm run cases:documents -- --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8 using Runtime non-BYPASSRLS credentials and Xero encryption configuration.",
-    "Schedule the bounded worker repeatedly with a single worker per tenant/connection and monitor discovery job errors/rate limits. If it ran before reconnect, requeue failed discovery through the case endpoint.",
+    "Deploy the backend with the compiled cases:documents operator. Reconnect all Xero organisations with queued document jobs from Company > Xero connection, granting accounting.attachments.read. Check that each connection reports missingAttachmentScopes: [].",
+    "Create/sync backend/render.yaml as a Render Blueprint only after entering the seven runtime/Xero environment secrets (same values as sophia-runtime-api, never owner database credentials). The cron runs hourly in UTC, up to 25 jobs/run, with 1.5 seconds between jobs. Trigger one run after reconnect, then monitor Render logs for outcome and document-job counts. The Blueprint has not been synced or activated in Render by this code change.",
     "Verify live case/invoice counts, access boundaries and real documents before enabling the case UI. UI implementation is separate."
   ],
   "verification": {
@@ -78,7 +85,7 @@
     "integrationCommand": "LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL=<disposable localhost database> npm test -- --runTestsByPath src/database/student-case-management.spec.ts",
     "integrationTestsPassed": 3,
     "integrationCoverage": "Actual PostgreSQL migration, preview/apply/rerun, multiple cases, idempotency, optimistic concurrency, tenant/advisor isolation, invoice link protection, document queue processing, paginated metadata and authorized download with mocked Xero.",
-    "notVerified": ["Production migration/apply", "Live Xero attachment inventory/download", "Render worker scheduling", "Case UI"]
+    "notVerified": ["Live Xero reauthorization and attachment inventory/download", "Render Blueprint activation and worker scheduling", "Case UI"]
   },
   "sources": ["https://developer.xero.com/documentation/api/accounting/attachments/", "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/xero_accounting.yaml", "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html", "https://docs.aws.amazon.com/AmazonS3/latest/userguide/serv-side-encryption.html"]
 }

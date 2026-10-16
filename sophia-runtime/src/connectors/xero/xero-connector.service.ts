@@ -106,6 +106,7 @@ export class XeroConnectorService {
         lastErrorCode: row.last_error_code,
         organisationRole: row.organisation_role,
         missingStudentDiscoveryScopes: missingScopes(row.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES),
+        missingAttachmentScopes: missingScopes(row.granted_scopes, ['accounting.attachments.read']),
       })),
     };
   }

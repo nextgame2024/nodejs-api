@@ -1,0 +1,25 @@
+services:
+  - type: cron
+    name: sophia-case-document-discovery
+    runtime: docker
+    dockerfilePath: ./sophia-runtime/Dockerfile
+    dockerContext: ./sophia-runtime
+    dockerCommand: node dist/operators/process-case-documents.js --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8
+    schedule: "0 * * * *"
+    envVars:
+      # Copy the same values used by sophia-runtime-api. Never use a database
+      # owner URL here: the worker must assume sophia_runtime_app and tenant RLS.
+      - key: SOPHIA_RUNTIME_DATABASE_URL
+        sync: false
+      - key: XERO_CLIENT_ID
+        sync: false
+      - key: XERO_CLIENT_SECRET
+        sync: false
+      - key: XERO_REDIRECT_URI
+        sync: false
+      - key: XERO_RETURN_URL
+        sync: false
+      - key: XERO_OAUTH_STATE_SECRET
+        sync: false
+      - key: XERO_TOKEN_ENCRYPTION_KEY
+        sync: false
