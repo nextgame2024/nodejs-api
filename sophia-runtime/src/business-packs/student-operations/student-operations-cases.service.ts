@@ -4,10 +4,9 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
+import { ALLOWED_STAGE_STATUSES, CASE_STAGE_LABELS, CASE_STAGES, CASE_STATUS_LABELS, CASE_STATUSES, NEW_CASE_STAGES, publicCaseStatus, resolveCaseWorkflow } from './student-operations-case-workflow.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 
-export const CASE_STAGES = ['imported_pending_review', 'new_application', 'pre_payment_audit', 'student_payment_received', 'reconciliation', 'cover_letter', 'college_payment', 'collections', 'commission_recovery', 'completed'] as const;
-export const CASE_STATUSES = ['in_progress', 'on_hold', 'completed', 'cancelled'] as const;
 const fields = z.object({
   title: z.string().trim().min(1).max(200).nullable().optional(),
   courseName: z.string().trim().min(1).max(200).nullable().optional(),
@@ -39,7 +38,7 @@ export class StudentOperationsCasesService {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
   options() {
-    return { statuses: CASE_STATUSES, stages: CASE_STAGES, migratedStageLabel: 'Imported — Pending Review', caseNumberFormat: 'CASE-1' };
+    return { statuses: CASE_STATUSES, stages: NEW_CASE_STAGES, stageLabels: CASE_STAGE_LABELS, statusLabels: CASE_STATUS_LABELS, allowedStatuses: ALLOWED_STAGE_STATUSES, migratedStageLabel: CASE_STAGE_LABELS.imported_pending_review, caseNumberFormat: 'CASE-1' };
   }
 
   async list(p: Principal, input: unknown) {
@@ -50,7 +49,7 @@ export class StudentOperationsCasesService {
         AND ($3::boolean OR EXISTS (SELECT 1 FROM ${s}.student_operations_case_advisors a WHERE a.customer_id=c.customer_id AND a.case_id=c.case_id AND a.is_primary AND a.advisor_user_id::text=$4))`;
       const params = [p.tenantId, q.userId ?? null, hasStudentOperationsPermission(p.role, 'cases.read_all'), p.identityUserId];
       const count = await db.query(`SELECT count(*)::int total FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id WHERE ${where}`, params);
-      const rows = await db.query(`SELECT c.case_id AS "caseId",c.case_reference AS "caseNumber",l.user_id AS "userId", l.student_reference AS "studentReference", c.title, c.course_name AS "courseName",c.current_stage AS "currentStage",CASE WHEN c.lifecycle_status='open' THEN 'in_progress' ELSE c.lifecycle_status END AS status,c.record_version AS "recordVersion"
+      const rows = await db.query(`SELECT c.case_id AS "caseId",c.case_reference AS "caseNumber",l.user_id AS "userId", l.student_reference AS "studentReference", c.title, c.course_name AS "courseName",c.current_stage AS "currentStage",CASE WHEN c.lifecycle_status='open' THEN 'in_progress' WHEN c.lifecycle_status='completed' THEN 'closed' ELSE c.lifecycle_status END AS status,c.record_version AS "recordVersion"
         FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id
         WHERE ${where} ORDER BY c.created_at DESC,c.case_id LIMIT $5 OFFSET $6`, [...params, q.limit, (q.page - 1) * q.limit]);
       return { cases: rows.rows, page: q.page, limit: q.limit, total: count.rows[0].total };
@@ -72,21 +71,28 @@ export class StudentOperationsCasesService {
     return this.database.tenantReadTransaction(p.tenantId, async db => {
       const row = await this.authorizedCase(db, p, id);
       const s = caseSchema();
+      const student = await db.query(`SELECT profile.legal_name AS "legalName",profile.email,
+        coalesce(contact.mobile,contact.phone) AS "studentPhone"
+        FROM ${s}.student_operations_students profile
+        LEFT JOIN ${s}.student_operations_case_contact contact
+          ON contact.customer_id=profile.customer_id AND contact.case_id=$3
+        WHERE profile.customer_id=$1 AND profile.student_id=$2`, [p.tenantId,row.student_id,id]);
       const advisors = await db.query(`SELECT a.advisor_user_id AS "userId",r.display_name AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_advisors a LEFT JOIN ${s}.student_operations_advisor_roster r ON r.customer_id=a.customer_id AND r.user_id=a.advisor_user_id WHERE a.customer_id=$1 AND a.case_id=$2 ORDER BY a.is_primary DESC,a.assigned_at,a.advisor_user_id`, [p.tenantId,id]);
       const colleges = await db.query(`SELECT a.college_id AS "collegeId",coalesce(d.college_name,c.college_name) AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_colleges a JOIN ${s}.student_operations_colleges c ON c.customer_id=a.customer_id AND c.college_id=a.college_id LEFT JOIN ${s}.student_operations_college_directory d ON d.customer_id=a.customer_id AND d.college_id=a.college_id WHERE a.customer_id=$1 AND a.case_id=$2`, [p.tenantId,id]);
-      return { caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, title: row.title, courseName: row.course_name, advisorName: row.advisor_name, status: row.lifecycle_status === 'open' ? 'in_progress' : row.lifecycle_status, currentStage: row.current_stage, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
+      return { caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, studentName: student.rows[0]?.legalName ?? null, studentEmail: student.rows[0]?.email ?? null, studentPhone: student.rows[0]?.studentPhone ?? null, title: row.title, courseName: row.course_name, advisorName: row.advisor_name, status: publicCaseStatus(row.lifecycle_status), currentStage: row.current_stage, openedOn: row.opened_on, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
     });
   }
 
   async create(p: Principal, input: unknown, key?: string) {
     assertManage(p);
     const value = parse(createSchema, input);
+    const workflow = resolveCaseWorkflow(null, null, value.currentStage, value.status);
     return this.write(p, 'case.create', value, key, async db => {
       const s = caseSchema();
       const profile = await db.query(`SELECT ${s}.ensure_student_operations_profile($1) AS id`, [value.userId]);
       const row = await db.query(`INSERT INTO ${s}.student_operations_cases(customer_id,student_id,case_reference,case_kind,title,course_name,current_stage,lifecycle_status,closed_on)
-        VALUES($1,$2,'CASE-' || nextval('${s}.student_operations_case_number_seq')::text,'student_operations',$3,$4,$5,$6,CASE WHEN $6 IN ('completed','cancelled') THEN CURRENT_DATE END) RETURNING case_id`,
-      [p.tenantId,profile.rows[0].id,value.title ?? null,value.courseName ?? null,value.currentStage ?? 'new_application',value.status === 'in_progress' || !value.status ? 'open' : value.status]);
+        VALUES($1,$2,'CASE-' || nextval('${s}.student_operations_case_number_seq')::text,'student_operations',$3,$4,$5,$6,CASE WHEN $6 IN ('closed','completed','cancelled') THEN CURRENT_DATE END) RETURNING case_id`,
+      [p.tenantId,profile.rows[0].id,value.title ?? null,value.courseName ?? null,workflow.stage,workflow.status]);
       const id = row.rows[0].case_id;
       await this.assign(db,p,id,value);
       await this.activity(db,p,id,'case.created','Case created');
@@ -100,9 +106,9 @@ export class StudentOperationsCasesService {
     return this.write(p,'case.update',{caseId:id,...value},key,async db => {
       const row = await this.authorizedCase(db,p,id,true);
       if (row.record_version !== value.recordVersion) throw new ConflictException('Case changed. Reload before saving.');
-      const status = value.status === 'in_progress' ? 'open' : value.status ?? row.lifecycle_status;
-      await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET title=$3,course_name=$4,current_stage=$5,lifecycle_status=$6,closed_on=CASE WHEN $6 IN ('completed','cancelled') THEN coalesce(closed_on,CURRENT_DATE) END,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,
-      [p.tenantId,id,value.title === undefined ? row.title : value.title,value.courseName === undefined ? row.course_name : value.courseName,value.currentStage ?? row.current_stage,status]);
+      const workflow = resolveCaseWorkflow(row.current_stage,row.lifecycle_status,value.currentStage,value.status);
+      await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET title=$3,course_name=$4,current_stage=$5,lifecycle_status=$6,closed_on=CASE WHEN $6 IN ('closed','completed','cancelled') THEN coalesce(closed_on,CURRENT_DATE) ELSE NULL END,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,
+      [p.tenantId,id,value.title === undefined ? row.title : value.title,value.courseName === undefined ? row.course_name : value.courseName,workflow.stage,workflow.status]);
       await this.assign(db,p,id,value);
       await this.activity(db,p,id,'case.updated','Case details updated');
       return {caseId:id,recordVersion:row.record_version+1};

@@ -14,7 +14,7 @@ const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).default(""),
-  status: z.enum(["in_progress", "on_hold", "completed", "cancelled", "not_started"]).optional(),
+  status: z.enum(["pre_sale", "on_hold", "in_progress", "payment_overdue", "collections", "payment_done", "closed", "cancelled", "not_started"]).optional(),
   advisorId: z.string().uuid().optional(),
   collegeId: z.string().uuid().optional(),
   advisorName: z.string().trim().min(1).max(200).optional(),
@@ -204,17 +204,20 @@ export function buildStudentRegisterCohortSql(schema: string): string {
              coalesce(pay.currency_code, invoice_pay.currency_code) AS next_currency,
              coalesce(pay.case_id, invoice_pay.case_id) AS next_case_id,
              CASE WHEN d.lifecycle_status = 'open' THEN 'in_progress'
+                  WHEN d.lifecycle_status = 'completed' THEN 'closed'
                   WHEN d.lifecycle_status IS NOT NULL THEN d.lifecycle_status
                   ELSE 'not_started' END AS register_status,
              CASE WHEN coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE THEN 'Payment overdue'
+                  WHEN d.lifecycle_status = 'payment_overdue' THEN 'Payment overdue'
+                  WHEN d.lifecycle_status = 'collections' THEN 'In collections'
                   WHEN d.lifecycle_status = 'on_hold' THEN 'Case on hold'
                   ELSE NULL END AS attention_reason,
-             (coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE + 7 OR d.lifecycle_status = 'on_hold') AS attention_this_week
+             (coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE + 7 OR d.lifecycle_status IN ('on_hold', 'payment_overdue', 'collections')) AS attention_this_week
         FROM eligible r
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS case_count,
-                 bool_or(v.lifecycle_status IN ('open', 'on_hold')) AS has_current_case,
-                 bool_or(v.current_stage = 'new_application' AND v.opened_on BETWEEN coalesce($6::date, '-infinity'::date)
+                 bool_or(v.lifecycle_status NOT IN ('closed', 'completed', 'cancelled')) AS has_current_case,
+                 bool_or(v.current_stage = 'documents_requested' AND v.opened_on BETWEEN coalesce($6::date, '-infinity'::date)
                         AND coalesce($7::date, 'infinity'::date)) AS newest_case_opened_in_range,
                  max(v.updated_at) AS last_case_update
             FROM visible_cases v WHERE v.student_id = r.profile_id
@@ -270,7 +273,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
           SELECT ps.case_id, ps.due_on, ps.amount, ps.currency_code
             FROM ${schema}.student_operations_case_payment_schedule ps
            WHERE ps.customer_id = $1 AND ps.case_id = d.case_id
-             AND d.lifecycle_status = 'open' AND ps.status IN ('pending', 'partially_paid')
+             AND d.lifecycle_status NOT IN ('closed', 'completed', 'cancelled') AND ps.status IN ('pending', 'partially_paid')
            ORDER BY ps.due_on ASC, ps.payment_schedule_id ASC LIMIT 1
         ) pay ON true
         LEFT JOIN LATERAL (
@@ -281,7 +284,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
              AND i.xero_connection_id = link.xero_connection_id
              AND i.xero_invoice_id = link.xero_invoice_id
            WHERE link.customer_id = $1 AND link.case_id = d.case_id
-             AND d.lifecycle_status = 'open' AND pay.case_id IS NULL
+             AND d.lifecycle_status NOT IN ('closed', 'completed', 'cancelled') AND pay.case_id IS NULL
              AND i.invoice_type = 'ACCREC'
              AND i.invoice_status IN ('DRAFT', 'SUBMITTED', 'AUTHORISED', 'PAID')
              AND i.amount_due > 0 AND i.due_date IS NOT NULL

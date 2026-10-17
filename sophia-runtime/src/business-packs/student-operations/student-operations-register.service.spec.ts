@@ -10,4 +10,12 @@ describe("Student Operations register query", () => {
     expect(sql).toContain("LEFT JOIN advisor_roster ar");
     expect(sql).not.toContain("LEFT JOIN sophia_runtime.student_operations_advisor_roster ar");
   });
+
+  it("projects the latest case workflow status without treating active pre-sale and payment cases as closed", () => {
+    const sql = buildStudentRegisterCohortSql("sophia_runtime");
+    expect(sql).toContain("WHEN d.lifecycle_status = 'completed' THEN 'closed'");
+    expect(sql).toContain("bool_or(v.lifecycle_status NOT IN ('closed', 'completed', 'cancelled'))");
+    expect(sql).toContain("v.current_stage = 'documents_requested'");
+    expect(sql).toContain("d.lifecycle_status = 'collections' THEN 'In collections'");
+  });
 });

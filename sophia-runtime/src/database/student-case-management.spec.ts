@@ -25,7 +25,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sophia_runtime_app') THEN CREATE ROLE sophia_runtime_app NOLOGIN; END IF; END $$;
       CREATE SCHEMA sophia_runtime; GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
-      CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text,name text,email text,type text,status text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
+      CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text,name text,email text,cel text,tel text,type text,status text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
       CREATE TABLE public.bm_colleges(college_id uuid PRIMARY KEY,company_id uuid,college_name text,status text);
       CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,pack_id text,status text,role_key text);
       CREATE TABLE sophia_runtime.student_operations_students(student_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),customer_id uuid,student_reference text,legal_name text,email text,UNIQUE(student_id,customer_id),UNIQUE(customer_id,student_reference));
@@ -33,11 +33,11 @@ suite('Case management against disposable PostgreSQL',()=>{
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       GRANT SELECT ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
     `);
-    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql']) {
+    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql']) {
       await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     }
     await pool.query(`INSERT INTO sophia_runtime.customers VALUES($1,$2,'active')`,[tenant,company]);
-    await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,type,status) VALUES($1,$2,'STD-1','Example Student','student@example.test','student','active'),($3,$2,NULL,'Advisor One','advisor@example.test','advisor','active')`,[user,company,advisor]);
+    await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,cel,tel,type,status) VALUES($1,$2,'STD-1','Example Student','student@example.test','0412 345 678','07 3333 4444','student','active'),($3,$2,NULL,'Advisor One','advisor@example.test',NULL,NULL,'advisor','active')`,[user,company,advisor]);
     await pool.query(`INSERT INTO sophia_runtime.business_pack_entitlements VALUES($1,$2,'student-operations','active','advisor')`,[tenant,advisor]);
     await pool.query(`INSERT INTO public.bm_colleges VALUES($1,$2,'York Business','active')`,[college,company]);
     await pool.query(`INSERT INTO sophia_runtime.xero_connections VALUES($1,$2)`,[connection,tenant]);
@@ -56,6 +56,10 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(list.total).toBe(1);
     const detail=await service.get(p,list.cases[0].caseId);
     expect(detail.status).toBe('in_progress');
+    expect(detail.studentName).toBe('Example Student');
+    expect(detail.studentEmail).toBe('student@example.test');
+    expect(detail.studentPhone).toBe('0412 345 678');
+    expect(detail.openedOn).toBeTruthy();
     expect(detail.currentStage).toBe('imported_pending_review');
     expect(detail.courseName).toBeNull();
     expect(detail.colleges[0].collegeId).toBe(college);
@@ -69,8 +73,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect((await service.list(p,{})).total).toBe(2);
     await expect(service.create(p,{userId:user,title:'Different'},'create-case-2')).rejects.toThrow('Idempotency');
     await expect(service.update(p,id,{recordVersion:4,title:'Conflict'},'update-case-2')).rejects.toThrow('Case changed');
-    await service.update(p,id,{recordVersion:1,status:'completed'},'complete-case-2');
-    expect((await service.get(p,id)).status).toBe('completed');
+    await service.update(p,id,{recordVersion:1,currentStage:'payments_complete',status:'closed'},'complete-case-2');
+    expect((await service.get(p,id)).status).toBe('closed');
     expect((await service.get({...p,role:'advisor'},id)).caseId).toBe(id);
     await expect(service.get({...p,role:'advisor',identityUserId:user},id)).rejects.toThrow('Case not found');
     await expect(service.get({...p,tenantId:'88888888-8888-4888-8888-888888888888'},id)).rejects.toThrow('Case not found');
