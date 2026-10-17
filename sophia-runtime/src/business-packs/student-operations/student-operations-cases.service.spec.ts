@@ -4,6 +4,41 @@ import { StudentOperationsCasesService } from './student-operations-cases.servic
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
 describe('Case view data', () => {
+  it('returns invoice reference and payment track only to roles with full payment access', async () => {
+    const tenantId = '11111111-1111-4111-8111-111111111111';
+    const caseId = '22222222-2222-4222-8222-222222222222';
+    const queries: string[] = [];
+    const db = {
+      query: jest.fn(async (sql: string) => {
+        queries.push(sql);
+        if (sql.includes('student_operations_student_user_links')) {
+          return { rows: [{ case_id: caseId, student_id: '33333333-3333-4333-8333-333333333333',
+            student_reference: 'STD-1' }] };
+        }
+        if (sql.includes('student_operations_case_invoice_links l JOIN')) {
+          return { rows: [{ invoiceId: 'invoice-1', invoiceNumber: 'INV-8602', status: 'PAID',
+            ...(sql.includes('i.invoice_reference AS reference') ? { reference: 'ECA COLLEGE', paymentTrack: 'Pending' } : {}) }] };
+        }
+        if (sql.includes('count(*)::int total')) return { rows: [{ total: 1 }] };
+        return { rows: [] };
+      }),
+    };
+    const database = { tenantReadTransaction: async (_tenant: string, work: (client: typeof db) => Promise<unknown>) => work(db) } as unknown as DatabaseService;
+    const principal: StudentOperationsWorkspacePrincipal = {
+      tenantId, externalCompanyId: tenantId, identityUserId: tenantId,
+      entitlementId: tenantId, role: 'chief_executive', authorizationRevision: 1,
+    };
+    const service = new StudentOperationsCasesService(database);
+    const full = await service.invoices(principal, caseId, {});
+    expect(full.invoices[0]).toMatchObject({ reference: 'ECA COLLEGE', paymentTrack: 'Pending' });
+    expect(queries.find(sql => sql.includes('student_operations_case_invoice_links l JOIN'))).toContain('i.payment_track AS "paymentTrack"');
+
+    queries.length = 0;
+    const limited = await service.invoices({ ...principal, role: 'advisor' }, caseId, {});
+    expect(limited.invoices[0]).not.toHaveProperty('reference');
+    expect(limited.invoices[0]).not.toHaveProperty('paymentTrack');
+    expect(queries.find(sql => sql.includes('student_operations_case_invoice_links l JOIN'))).not.toContain('i.invoice_reference AS reference');
+  });
   it('authorizes the case before returning its student identity and related details', async () => {
     const tenantId = '11111111-1111-4111-8111-111111111111';
     const caseId = '22222222-2222-4222-8222-222222222222';
