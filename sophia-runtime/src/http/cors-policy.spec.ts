@@ -7,4 +7,7 @@ describe("Sophia Runtime CORS policy", () => {
       SOPHIA_CORS_ALLOWED_HEADERS.map((header) => header.toLowerCase()),
     ).toContain("x-sophia-admin-tenant-id");
   });
+  it("allows idempotent case updates from the browser", () => {
+    expect(SOPHIA_CORS_ALLOWED_HEADERS.map((header) => header.toLowerCase())).toContain("idempotency-key");
+  });
 });
