@@ -14,8 +14,12 @@ const fields = z.object({
   collegeId: z.string().uuid().nullable().optional(),
   currentStage: z.enum(CASE_STAGES).optional(),
   status: z.enum(CASE_STATUSES).optional(),
+  studentName: z.string().trim().min(1).max(200).optional(),
+  studentEmail: z.string().trim().email().max(320).optional(),
+  mobile: z.string().trim().max(80).nullable().optional(),
+  phone: z.string().trim().max(80).nullable().optional(),
 }).strict();
-const createSchema = fields.extend({ userId: z.string().uuid() });
+const createSchema = fields.omit({ studentName: true, studentEmail: true, mobile: true, phone: true }).extend({ userId: z.string().uuid() });
 const updateSchema = fields.extend({ recordVersion: z.number().int().positive() });
 const querySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25), userId: z.string().uuid().optional() }).strict();
 export function caseSchema(): string {
@@ -39,6 +43,18 @@ export class StudentOperationsCasesService {
 
   options() {
     return { statuses: CASE_STATUSES, stages: NEW_CASE_STAGES, stageLabels: CASE_STAGE_LABELS, statusLabels: CASE_STATUS_LABELS, allowedStatuses: ALLOWED_STAGE_STATUSES, migratedStageLabel: CASE_STAGE_LABELS.imported_pending_review, caseNumberFormat: 'CASE-1' };
+  }
+
+  async editOptions(p: Principal) {
+    assertManage(p);
+    return this.database.tenantReadTransaction(p.tenantId, async db => {
+      const s = caseSchema();
+      const [advisors, colleges] = await Promise.all([
+        db.query(`SELECT user_id AS "userId",display_name AS name FROM ${s}.student_operations_advisor_roster WHERE customer_id=$1 ORDER BY lower(display_name),user_id`, [p.tenantId]),
+        db.query(`SELECT college_id AS "collegeId",college_name AS name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`, [p.tenantId]),
+      ]);
+      return { advisors: advisors.rows, colleges: colleges.rows };
+    });
   }
 
   async list(p: Principal, input: unknown) {
@@ -72,14 +88,14 @@ export class StudentOperationsCasesService {
       const row = await this.authorizedCase(db, p, id);
       const s = caseSchema();
       const student = await db.query(`SELECT profile.legal_name AS "legalName",profile.email,
-        coalesce(contact.mobile,contact.phone) AS "studentPhone"
+        contact.mobile AS "studentMobile",contact.phone AS "studentPhone"
         FROM ${s}.student_operations_students profile
         LEFT JOIN ${s}.student_operations_case_contact contact
           ON contact.customer_id=profile.customer_id AND contact.case_id=$3
         WHERE profile.customer_id=$1 AND profile.student_id=$2`, [p.tenantId,row.student_id,id]);
       const advisors = await db.query(`SELECT a.advisor_user_id AS "userId",r.display_name AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_advisors a LEFT JOIN ${s}.student_operations_advisor_roster r ON r.customer_id=a.customer_id AND r.user_id=a.advisor_user_id WHERE a.customer_id=$1 AND a.case_id=$2 ORDER BY a.is_primary DESC,a.assigned_at,a.advisor_user_id`, [p.tenantId,id]);
       const colleges = await db.query(`SELECT a.college_id AS "collegeId",coalesce(d.college_name,c.college_name) AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_colleges a JOIN ${s}.student_operations_colleges c ON c.customer_id=a.customer_id AND c.college_id=a.college_id LEFT JOIN ${s}.student_operations_college_directory d ON d.customer_id=a.customer_id AND d.college_id=a.college_id WHERE a.customer_id=$1 AND a.case_id=$2`, [p.tenantId,id]);
-      return { caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, studentName: student.rows[0]?.legalName ?? null, studentEmail: student.rows[0]?.email ?? null, studentPhone: student.rows[0]?.studentPhone ?? null, title: row.title, courseName: row.course_name, advisorName: row.advisor_name, status: publicCaseStatus(row.lifecycle_status), currentStage: row.current_stage, openedOn: row.opened_on, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
+      return { caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, studentName: student.rows[0]?.legalName ?? null, studentEmail: student.rows[0]?.email ?? null, studentMobile: student.rows[0]?.studentMobile ?? null, studentPhone: student.rows[0]?.studentPhone ?? null, title: row.title, courseName: row.course_name, advisorName: row.advisor_name, status: publicCaseStatus(row.lifecycle_status), currentStage: row.current_stage, openedOn: row.opened_on, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
     });
   }
 
@@ -110,6 +126,16 @@ export class StudentOperationsCasesService {
       await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET title=$3,course_name=$4,current_stage=$5,lifecycle_status=$6,closed_on=CASE WHEN $6 IN ('closed','completed','cancelled') THEN coalesce(closed_on,CURRENT_DATE) ELSE NULL END,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,
       [p.tenantId,id,value.title === undefined ? row.title : value.title,value.courseName === undefined ? row.course_name : value.courseName,workflow.stage,workflow.status]);
       await this.assign(db,p,id,value);
+      if (value.studentName !== undefined || value.studentEmail !== undefined || value.mobile !== undefined || value.phone !== undefined) {
+        const profile = await db.query(`SELECT s.legal_name AS name,s.email,contact.mobile,contact.phone FROM ${caseSchema()}.student_operations_students s JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=s.customer_id AND c.student_id=s.student_id LEFT JOIN ${caseSchema()}.student_operations_case_contact contact ON contact.customer_id=c.customer_id AND contact.case_id=c.case_id WHERE c.customer_id=$1 AND c.case_id=$2`, [p.tenantId,id]);
+        if (!profile.rows[0]) throw new NotFoundException('Case student profile unavailable.');
+        try {
+          await db.query(`SELECT ${caseSchema()}.update_student_case_profile($1,$2,$3,$4,$5)`, [id,value.studentName ?? profile.rows[0].name,value.studentEmail ?? profile.rows[0].email,value.mobile === undefined ? profile.rows[0].mobile : value.mobile,value.phone === undefined ? profile.rows[0].phone : value.phone]);
+        } catch (error) {
+          if ((error as { code?: string }).code === '23505') throw new ConflictException('Student email is already in use.');
+          throw error;
+        }
+      }
       await this.activity(db,p,id,'case.updated','Case details updated');
       return {caseId:id,recordVersion:row.record_version+1};
     });

@@ -9,6 +9,7 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 export class StudentOperationsCasesController {
   constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService) {}
   @Get('options') options(){return this.cases.options();}
+  @Get('edit-options') editOptions(@Req() r:Request){return this.cases.editOptions(r.studentOperationsPrincipal);}
   @Get() list(@Req() r:Request,@Query() query:unknown){return this.cases.list(r.studentOperationsPrincipal,query);}
   @Post() create(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.create(r.studentOperationsPrincipal,body,key);}
   @Get(':caseId') get(@Req() r:Request,@Param('caseId') id:string){return this.cases.get(r.studentOperationsPrincipal,id);}

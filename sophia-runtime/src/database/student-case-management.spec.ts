@@ -28,12 +28,12 @@ suite('Case management against disposable PostgreSQL',()=>{
       CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text,name text,email text,cel text,tel text,type text,status text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
       CREATE TABLE public.bm_colleges(college_id uuid PRIMARY KEY,company_id uuid,college_name text,status text);
       CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,pack_id text,status text,role_key text);
-      CREATE TABLE sophia_runtime.student_operations_students(student_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),customer_id uuid,student_reference text,legal_name text,email text,UNIQUE(student_id,customer_id),UNIQUE(customer_id,student_reference));
+      CREATE TABLE sophia_runtime.student_operations_students(student_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),customer_id uuid,student_reference text,legal_name text,email text,updated_at timestamptz DEFAULT now(),UNIQUE(student_id,customer_id),UNIQUE(customer_id,student_reference));
       CREATE TABLE sophia_runtime.xero_connections(xero_connection_id uuid PRIMARY KEY,customer_id uuid,UNIQUE(xero_connection_id,customer_id));
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       GRANT SELECT ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
     `);
-    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql']) {
+    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql','074_student_case_profile_edit.sql']) {
       await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     }
     await pool.query(`INSERT INTO sophia_runtime.customers VALUES($1,$2,'active')`,[tenant,company]);
@@ -58,7 +58,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(detail.status).toBe('in_progress');
     expect(detail.studentName).toBe('Example Student');
     expect(detail.studentEmail).toBe('student@example.test');
-    expect(detail.studentPhone).toBe('0412 345 678');
+    expect(detail.studentPhone).toBe('07 3333 4444');
+    expect(detail.studentMobile).toBe('0412 345 678');
     expect(detail.openedOn).toBeTruthy();
     expect(detail.currentStage).toBe('imported_pending_review');
     expect(detail.courseName).toBeNull();
@@ -101,5 +102,16 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect((await documents.content(p,id,files.documents[0].documentId)).buffer.toString()).toBe('test');
     await expect(documents.content({...p,role:'advisor',identityUserId:user},id,files.documents[0].documentId)).rejects.toThrow('Case not found');
     expect(files.documents[0]).not.toHaveProperty('xero_connection_id');
+  });
+  test('saves case and linked login identity atomically and rejects duplicate email',async()=>{
+    const id=(await service.list(p,{})).cases.find(c=>c.currentStage==='imported_pending_review')!.caseId;
+    const before=await service.get(p,id);
+    const saved=await service.update(p,id,{recordVersion:before.recordVersion,studentName:'Updated Student',studentEmail:'updated@example.test',mobile:'0400 111 222',phone:'07 1111 2222',collegeId:college,advisorUserId:advisor},'update-case-profile');
+    const detail=await service.get(p,id);
+    expect(detail).toMatchObject({studentName:'Updated Student',studentEmail:'updated@example.test',studentMobile:'0400 111 222',studentPhone:'07 1111 2222',recordVersion:saved.recordVersion});
+    const account=(await pool.query('SELECT name,email,cel,tel FROM public.users WHERE id=$1',[user])).rows[0];
+    expect(account).toMatchObject({name:'Updated Student',email:'updated@example.test',cel:'0400 111 222',tel:'07 1111 2222'});
+    await expect(service.update(p,id,{recordVersion:saved.recordVersion,title:'Must roll back',studentEmail:'advisor@example.test'},'duplicate-case-email')).rejects.toThrow('already in use');
+    expect((await service.get(p,id)).title).not.toBe('Must roll back');
   });
 });

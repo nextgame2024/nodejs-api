@@ -4,6 +4,27 @@ import { StudentOperationsCasesService } from './student-operations-cases.servic
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
 describe('Case view data', () => {
+  it('loads tenant-scoped advisor and college edit choices only for case managers', async () => {
+    const tenantId = '11111111-1111-4111-8111-111111111111';
+    const queries: string[] = [];
+    const db = { query: jest.fn(async (sql: string) => {
+      queries.push(sql);
+      return { rows: sql.includes('advisor_roster') ? [{ userId: 'advisor-1', name: 'Advisor One' }] : [{ collegeId: 'college-1', name: 'College One' }] };
+    }) };
+    const database = { tenantReadTransaction: async (_tenant: string, work: (client: typeof db) => Promise<unknown>) => work(db) } as unknown as DatabaseService;
+    const principal: StudentOperationsWorkspacePrincipal = {
+      tenantId, externalCompanyId: tenantId, identityUserId: tenantId,
+      entitlementId: tenantId, role: 'chief_executive', authorizationRevision: 1,
+    };
+    const service = new StudentOperationsCasesService(database);
+    expect(await service.editOptions(principal)).toEqual({
+      advisors: [{ userId: 'advisor-1', name: 'Advisor One' }],
+      colleges: [{ collegeId: 'college-1', name: 'College One' }],
+    });
+    expect(queries).toHaveLength(2);
+    expect(queries.every(sql => sql.includes('customer_id=$1'))).toBe(true);
+    await expect(service.editOptions({ ...principal, role: 'advisor' })).rejects.toThrow('Case management permission required');
+  });
   it('returns invoice reference and payment track only to roles with full payment access', async () => {
     const tenantId = '11111111-1111-4111-8111-111111111111';
     const caseId = '22222222-2222-4222-8222-222222222222';
