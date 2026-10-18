@@ -22,9 +22,9 @@ const QuerySchema = z.object({
   from: DateSchema.optional(),
   to: DateSchema.optional(),
   attentionThisWeek: z.enum(["true"]).optional(),
-  sortBy: z.enum(["name", "studentId", "advisor", "college", "stage", "nextPayment", "status"])
-    .default("name"),
-  sortDir: z.enum(["asc", "desc"]).default("asc"),
+  sortBy: z.enum(["name", "studentId", "advisor", "college", "date", "stage", "nextPayment", "status"])
+    .default("date"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
 }).strict().superRefine((value, context) => {
   if (Boolean(value.from) !== Boolean(value.to)) {
     context.addIssue({ code: "custom", message: "Select both dates.", path: ["from"] });
@@ -39,6 +39,7 @@ const SORT_COLUMNS: Record<RegisterQuery["sortBy"], string> = {
   studentId: "c.student_reference",
   advisor: "lower(c.advisor_name)",
   college: "lower(c.college_name)",
+  date: "c.record_date",
   stage: "c.current_stage",
   nextPayment: "c.next_due_on",
   status: "c.register_status",
@@ -55,6 +56,7 @@ type RegisterRow = {
   case_reference: string | null; current_stage: string | null;
   advisor_user_id: string | null; advisor_name: string | null;
   college_id: string | null; college_name: string | null;
+  record_date: string;
   register_status: string; attention_reason: string | null;
   next_due_on: string | null; next_amount: string | null;
   next_currency: string | null; next_case_id: string | null;
@@ -137,7 +139,8 @@ export class StudentOperationsRegisterService {
           email: row.email, caseId: row.case_id, caseReference: row.case_reference,
           currentStage: row.current_stage, advisorUserId: row.advisor_user_id,
           advisorName: row.advisor_name, collegeId: row.college_id,
-          collegeName: row.college_name, status: row.register_status,
+          collegeName: row.college_name, recordDate: row.record_date,
+          status: row.register_status,
           attentionReason: row.attention_reason, caseCount: Number(row.case_count),
           cases: (caseMap.get(row.user_id) ?? []).map((c) => ({
             caseId: c.case_id, caseReference: c.case_reference,
@@ -192,6 +195,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
     ), cohort AS MATERIALIZED (
       SELECT r.user_id, r.profile_id, r.student_reference, r.legal_name, r.email,
              r.account_created_at, greatest(r.account_updated_at, coalesce(cs.last_case_update, r.account_updated_at)) AS last_updated,
+             coalesce(d.opened_on, r.account_created_at::date)::text AS record_date,
              d.case_id, d.case_reference, d.current_stage, ad.advisor_user_id,
              coalesce(ar.display_name, nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name) AS advisor_name,
              cl.college_id,
