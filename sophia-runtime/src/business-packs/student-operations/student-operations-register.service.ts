@@ -22,7 +22,7 @@ const QuerySchema = z.object({
   from: DateSchema.optional(),
   to: DateSchema.optional(),
   attentionThisWeek: z.enum(["true"]).optional(),
-  sortBy: z.enum(["name", "studentId", "advisor", "college", "date", "stage", "nextPayment", "status"])
+  sortBy: z.enum(["name", "studentId", "advisor", "advisorXero", "college", "date", "stage", "nextPayment", "status"])
     .default("date"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
 }).strict().superRefine((value, context) => {
@@ -38,6 +38,7 @@ const SORT_COLUMNS: Record<RegisterQuery["sortBy"], string> = {
   name: "lower(c.legal_name)",
   studentId: "c.student_reference",
   advisor: "lower(c.advisor_name)",
+  advisorXero: "lower(c.advisor_xero_name)",
   college: "lower(c.college_name)",
   date: "c.record_date",
   stage: "c.current_stage",
@@ -54,7 +55,8 @@ type RegisterRow = {
   user_id: string; profile_id: string | null; student_reference: string;
   legal_name: string; email: string; case_id: string | null;
   case_reference: string | null; current_stage: string | null;
-  advisor_user_id: string | null; advisor_name: string | null;
+  advisor_user_id: string | null; advisor_id: string | null;
+  advisor_name: string | null; advisor_xero_name: string | null;
   college_id: string | null; college_name: string | null;
   record_date: string;
   register_status: string; attention_reason: string | null;
@@ -138,7 +140,8 @@ export class StudentOperationsRegisterService {
           studentReference: row.student_reference, legalName: row.legal_name,
           email: row.email, caseId: row.case_id, caseReference: row.case_reference,
           currentStage: row.current_stage, advisorUserId: row.advisor_user_id,
-          advisorName: row.advisor_name, collegeId: row.college_id,
+          advisorId: row.advisor_id, advisorName: row.advisor_name,
+          advisorXeroName: row.advisor_xero_name, collegeId: row.college_id,
           collegeName: row.college_name, recordDate: row.record_date,
           status: row.register_status,
           attentionReason: row.attention_reason, caseCount: Number(row.case_count),
@@ -188,16 +191,13 @@ export function buildStudentRegisterCohortSql(schema: string): string {
        WHERE r.customer_id = $1 AND r.account_status <> 'archived'
          AND ($2::text IS NULL OR EXISTS (
            SELECT 1 FROM visible_cases vc WHERE vc.student_id = r.profile_id))
-    ), advisor_roster AS MATERIALIZED (
-      SELECT ar.customer_id, ar.user_id, ar.display_name
-        FROM ${schema}.student_operations_advisor_roster ar
-       WHERE ar.customer_id = $1
     ), cohort AS MATERIALIZED (
       SELECT r.user_id, r.profile_id, r.student_reference, r.legal_name, r.email,
              r.account_created_at, greatest(r.account_updated_at, coalesce(cs.last_case_update, r.account_updated_at)) AS last_updated,
              coalesce(d.opened_on, r.account_created_at::date)::text AS record_date,
              d.case_id, d.case_reference, d.current_stage, ad.advisor_user_id,
-             coalesce(ar.display_name, nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name) AS advisor_name,
+             profile.advisor_id, directory.name AS advisor_name,
+             coalesce(nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name) AS advisor_xero_name,
              cl.college_id,
              coalesce(cl.college_name, ci.college_name, xi.college_name) AS college_name,
              coalesce(cs.case_count, 0)::int AS case_count,
@@ -218,6 +218,10 @@ export function buildStudentRegisterCohortSql(schema: string): string {
                   ELSE NULL END AS attention_reason,
              (coalesce(pay.due_on, invoice_pay.due_date) < CURRENT_DATE + 7 OR d.lifecycle_status IN ('on_hold', 'payment_overdue', 'collections')) AS attention_this_week
         FROM eligible r
+        LEFT JOIN ${schema}.student_operations_students profile
+          ON profile.customer_id = $1 AND profile.student_id = r.profile_id
+        LEFT JOIN ${schema}.student_operations_advisor_directory directory
+          ON directory.customer_id = profile.customer_id AND directory.advisor_id = profile.advisor_id
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS case_count,
                  bool_or(v.lifecycle_status NOT IN ('closed', 'completed', 'cancelled')) AS has_current_case,
@@ -236,8 +240,6 @@ export function buildStudentRegisterCohortSql(schema: string): string {
            WHERE ca.customer_id = $1 AND ca.case_id = d.case_id
            ORDER BY ca.is_primary DESC, ca.assigned_at ASC, ca.advisor_user_id ASC LIMIT 1
         ) ad ON true
-        LEFT JOIN advisor_roster ar
-          ON ar.customer_id = $1 AND ar.user_id = ad.advisor_user_id
         LEFT JOIN LATERAL (
           SELECT cc.college_id, col.college_name
             FROM ${schema}.student_operations_case_colleges cc
@@ -304,7 +306,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
             WHERE ca.customer_id = $1 AND ca.case_id = d.case_id AND ca.advisor_user_id = $4))
          AND ($5::uuid IS NULL OR cl.college_id = $5)
          AND ($6::date IS NULL OR cs.case_count = 0 OR d.opened_on BETWEEN $6::date AND $7::date)
-         AND ($8::text IS NULL OR lower(coalesce(ar.display_name, nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name)) = lower($8))
+         AND ($8::text IS NULL OR lower(coalesce(nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name)) = lower($8))
          AND ($9::text IS NULL OR lower(coalesce(cl.college_name, ci.college_name, xi.college_name)) = lower($9))
          AND ($3::text IS NULL OR r.legal_name ILIKE $3 ESCAPE '\\'
               OR r.student_reference ILIKE $3 ESCAPE '\\'

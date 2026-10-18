@@ -9,7 +9,7 @@ describe('Case view data', () => {
     const queries: string[] = [];
     const db = { query: jest.fn(async (sql: string) => {
       queries.push(sql);
-      return { rows: sql.includes('advisor_roster') ? [{ userId: 'advisor-1', name: 'Advisor One' }] : [{ collegeId: 'college-1', name: 'College One' }] };
+      return { rows: sql.includes('advisor_directory') ? [{ advisorId: 'advisor-1', code: 'S15', name: 'Advisor One', xeroLabel: 'S15 Advisor One' }] : [{ collegeId: 'college-1', name: 'College One' }] };
     }) };
     const database = { tenantReadTransaction: async (_tenant: string, work: (client: typeof db) => Promise<unknown>) => work(db) } as unknown as DatabaseService;
     const principal: StudentOperationsWorkspacePrincipal = {
@@ -18,7 +18,7 @@ describe('Case view data', () => {
     };
     const service = new StudentOperationsCasesService(database);
     expect(await service.editOptions(principal)).toEqual({
-      advisors: [{ userId: 'advisor-1', name: 'Advisor One' }],
+      advisors: [{ advisorId: 'advisor-1', code: 'S15', name: 'Advisor One', xeroLabel: 'S15 Advisor One' }],
       colleges: [{ collegeId: 'college-1', name: 'College One' }],
     });
     expect(queries).toHaveLength(2);

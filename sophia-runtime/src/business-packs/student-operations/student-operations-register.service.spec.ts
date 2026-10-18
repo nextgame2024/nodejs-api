@@ -4,12 +4,11 @@ import { buildStudentRegisterCohortSql, StudentOperationsRegisterService } from 
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
 
 describe("Student Operations register query", () => {
-  it("materializes the tenant advisor roster once before joining student rows", () => {
+  it("keeps the Xero advisor label separate from the tenant advisor directory", () => {
     const sql = buildStudentRegisterCohortSql("sophia_runtime");
-    expect(sql).toContain("advisor_roster AS MATERIALIZED");
-    expect(sql).toContain("FROM sophia_runtime.student_operations_advisor_roster ar");
-    expect(sql).toContain("WHERE ar.customer_id = $1");
-    expect(sql).toContain("LEFT JOIN advisor_roster ar");
+    expect(sql).toContain("profile.advisor_id, directory.name AS advisor_name");
+    expect(sql).toContain("AS advisor_xero_name");
+    expect(sql).toContain("LEFT JOIN sophia_runtime.student_operations_advisor_directory directory");
     expect(sql).not.toContain("LEFT JOIN sophia_runtime.student_operations_advisor_roster ar");
   });
 
