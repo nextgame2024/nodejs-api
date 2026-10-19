@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
+  "caseOpeningDateAndPaginationFollowUp": {
+    "updatedOn": "2026-10-19",
+    "behavior": "All six page-size menus share single-line option labels and sit inside the compact page-button group. Student Date label is now Case opened on desktop/mobile. One-time migration 079 uses the oldest non-void/non-deleted sales invoice date for existing_students_v1 cases only; native CURRENT_DATE default is preserved.",
+    "execution": "Applied only migration 079 to the configured Open for Australia tenant: 1068 imported cases updated, 1068 append-only case activity entries, migration ledger recorded. Transactional post-check found no remaining corrections. Preview and applied reports are in workspace exports/.",
+    "verification": [
+      "PASS: 51 affected ChromeHeadless UI tests, including shared menu light/dark geometry; frontend application TypeScript check and Runtime build.",
+      "PASS: 2 isolated PostgreSQL migration tests covering oldest dates, native cases, other tenants, absent invoices, wrong student identity, invalid/deleted transactions, audit entries and idempotence."
+    ]
+  },
   "xeroSynchronizationFollowUp": {
     "updatedOn": "2026-10-19",
     "behavior": "Latest dated sales invoice is authoritative for Advisor Xero and profile Advisor. Successful imports reconcile advisors; the API worker queues review scans after source refresh and apply runs at 02:00 Australia/Brisbane. Missing contacts and older imported invoices remain reviewable; existing identity links and explicit exclusions are preserved.",
