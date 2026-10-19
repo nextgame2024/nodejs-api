@@ -1,5 +1,10 @@
 {
   "schemaVersion": 1,
+  "paginationMenuAnchorFollowUp": {
+    "updatedOn": "2026-10-19",
+    "behavior": "Shared upward ManagerSelect menus correct rendered position against the trigger after opening, including offset/filtered/transformed/scaled containing layouts; the menu bottom stays 6px above the selector and aligns to its left edge.",
+    "verification": ["PASS: 19 focused ChromeHeadless shared-select and Students tests, including an offset filtered shell at narrow/wide widths in light/dark mode."]
+  },
   "caseOpeningDateAndPaginationFollowUp": {
     "updatedOn": "2026-10-19",
     "behavior": "All six page-size menus share single-line option labels and sit inside the compact page-button group. Student Date label is now Case opened on desktop/mobile. One-time migration 079 uses the oldest non-void/non-deleted sales invoice date for existing_students_v1 cases only; native CURRENT_DATE default is preserved.",
