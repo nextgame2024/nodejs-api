@@ -4,6 +4,17 @@
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C4-GENUINE-CUSTOMER-AUTH-SMOKE-PASSED-NO-EMAIL-NO-CHARGE",
   "updatedAt": "2026-10-04T15:01:59+10:00",
+  "paginationUxFollowUp": {
+    "updatedOn": "2026-10-19",
+    "scope": "Shared pagination controls across Business Manager registers, college detail tabs, case detail lists, Sync Users and the Admin module directory.",
+    "behavior": "Page-size menus open above their trigger; shared numeric page navigation supports Go and Enter; per-list navigation state restores page, page size and associated filters/sort within the application session. The state cache clears on login changes and stores no fetched records.",
+    "verification": [
+      "PASS: frontend ./node_modules/.bin/tsc -p tsconfig.spec.json --noEmit.",
+      "PASS: 87 focused ChromeHeadless tests covering PageJump, navigation-state isolation, upward select-menu geometry in light/dark modes, Students, case details, Users, Colleges, Payments and Control, Sync Users and Admin overview.",
+      "PASS: Students direct page-20 navigation and filter/page-size/sort restoration; Payments and Control and Colleges return-state regression checks.",
+      "No production deployment, live data mutation or migration was performed."
+    ]
+  },
   "studentsRegisterWorkstream": {
     "updatedOn": "2026-10-15",
     "plan": "students-module-delivery-plan.json",
