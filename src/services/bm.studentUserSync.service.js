@@ -13,14 +13,10 @@ const fail = (message, status = 409) =>
   Object.assign(new Error(message), { status });
 const clean = (value) => String(value ?? "").trim();
 const SOURCE = `FROM sophia_runtime.student_operations_xero_invoices i
- JOIN sophia_runtime.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
- JOIN sophia_runtime.student_operations_xero_sync_runs seen ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
+ LEFT JOIN sophia_runtime.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
  WHERE i.customer_id=$1 AND i.xero_connection_id=$2
  AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
- AND i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')
- AND seen.created_at>=COALESCE((SELECT max(f.created_at) FROM sophia_runtime.student_operations_xero_sync_runs f
- WHERE f.customer_id=i.customer_id AND f.xero_connection_id=i.xero_connection_id AND f.status='succeeded'
- AND f.mode IN ('initial','reconciliation')),seen.created_at)`;
+ AND i.invoice_status NOT IN ('DELETED','VOIDED')`;
 
 export async function authorizeSync(db, actorId) {
   const { rows } = await db.query(
@@ -134,8 +130,7 @@ export async function syncOverview(actorId, query = {}) {
       runs: runs.rows,
       page,
       total: total.rows[0].count,
-      // Retain the response field for older clients. User sync is manual-only.
-      automatic: false,
+      automatic: true,
     };
   });
 }
@@ -147,8 +142,8 @@ export async function enqueueSync(actorId, mode) {
     await installed(db);
     await db.query(
       `INSERT INTO bm_xero_student_sync_config(customer_id,company_id,actor_user_id,automatic)
-      VALUES($1,$2,$3,false) ON CONFLICT(customer_id) DO UPDATE SET actor_user_id=$3,
-      automatic=false`,
+      VALUES($1,$2,$3,true) ON CONFLICT(customer_id) DO UPDATE SET actor_user_id=$3,
+      automatic=true`,
       [scope.customer_id, scope.company_id, actorId],
     );
     const result = await db.query(
@@ -173,7 +168,7 @@ export async function resolveCandidate(actorId, id, input) {
     );
     if (!r.rowCount) throw fail("Record not found.", 404);
     const row = r.rows[0];
-    if (row.student_id && input.action !== "correct")
+    if (row.student_id && row.status === 'linked' && input.action !== "correct")
       throw fail(
         "This record is already linked. Existing student links cannot be replaced here.",
       );
@@ -189,7 +184,10 @@ export async function resolveCandidate(actorId, id, input) {
       );
       if (user.rowCount !== 1)
         throw fail("Enter an active Student ID from your company.", 400);
+      if (row.student_id && row.student_id !== user.rows[0].student_id)
+        throw fail('Existing linked invoices belong to another student. Review the contact grouping.');
       await linkStudent(db, scope, row, user.rows[0].student_id);
+      await db.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1::uuid)', [scope.customer_id]);
     } else if (input.action === "correct") {
       const name = normalizeStudentName(input.name).name;
       const email = clean(input.email).toLowerCase();
@@ -261,11 +259,15 @@ async function scan(db, run, scope) {
     throw fail("Refresh Xero successfully before syncing users.");
   const source = connection.rows[0];
   const contacts = await db.query(
-    `SELECT c.xero_contact_id,c.legal_name,c.email,count(*)::int records ${SOURCE}
-    GROUP BY c.xero_contact_id,c.legal_name,c.email`,
+    `SELECT i.xero_contact_id,c.legal_name,c.email,count(*)::int records ${SOURCE}
+    GROUP BY i.xero_contact_id,c.legal_name,c.email`,
     [scope.customer_id, source.xero_connection_id],
   );
   const groups = groupContacts(contacts.rows);
+  const exclusions = await db.query(`SELECT contact_ids FROM bm_xero_student_sync_candidates
+    WHERE customer_id=$1 AND connection_id=$2 AND status='excluded'`,
+    [scope.customer_id, source.xero_connection_id]);
+  const excludedContacts = new Set(exclusions.rows.flatMap(r => r.contact_ids));
   const owners = new Map();
   for (const g of groups)
     for (const email of g.emails) {
@@ -304,7 +306,7 @@ async function scan(db, run, scope) {
       emails: g.emails,
       contact_ids: g.contacts,
       record_count: g.records,
-      status: reason ? "pending" : "ready",
+      status: g.contacts.every(id => excludedContacts.has(id)) ? 'excluded' : reason ? "pending" : "ready",
       reason,
     };
   });
@@ -315,8 +317,8 @@ async function scan(db, run, scope) {
     ON CONFLICT(customer_id,name_key) DO UPDATE SET connection_id=EXCLUDED.connection_id,display_name=EXCLUDED.display_name,
     source_names=EXCLUDED.source_names,emails=EXCLUDED.emails,contact_ids=EXCLUDED.contact_ids,record_count=EXCLUDED.record_count,scan_run_id=$3,
     status=CASE WHEN bm_xero_student_sync_candidates.student_id IS NOT NULL THEN 'linked'
-      WHEN bm_xero_student_sync_candidates.status='excluded' THEN 'excluded'
-      WHEN bm_xero_student_sync_candidates.resolved_by IS NOT NULL THEN 'ready' ELSE EXCLUDED.status END,
+      WHEN bm_xero_student_sync_candidates.status='excluded' AND bm_xero_student_sync_candidates.contact_ids @> EXCLUDED.contact_ids THEN 'excluded'
+      WHEN bm_xero_student_sync_candidates.resolved_by IS NOT NULL AND bm_xero_student_sync_candidates.status<>'excluded' THEN 'ready' ELSE EXCLUDED.status END,
     reason=CASE WHEN bm_xero_student_sync_candidates.student_id IS NOT NULL OR bm_xero_student_sync_candidates.resolved_by IS NOT NULL THEN NULL ELSE EXCLUDED.reason END`,
     [
       scope.customer_id,
@@ -325,7 +327,46 @@ async function scan(db, run, scope) {
       JSON.stringify(payload),
     ],
   );
+  // A preview must also repair established mappings and expose *all* unlinked
+  // transactions, including newly added contacts in a previously linked group.
+  const reviewed = await db.query(
+    `SELECT c.* FROM bm_xero_student_sync_candidates c WHERE c.customer_id=$1 AND c.scan_run_id=$2 AND c.status<>'excluded'
+       AND EXISTS (SELECT 1 FROM sophia_runtime.student_operations_xero_invoices i
+         WHERE i.customer_id=c.customer_id AND i.xero_connection_id=c.connection_id
+           AND i.xero_contact_id=ANY(c.contact_ids) AND i.student_id IS NULL
+           AND i.invoice_status NOT IN ('DELETED','VOIDED'))`,
+    [scope.customer_id, run.id],
+  );
+  for (const row of reviewed.rows) {
+    await db.query('SAVEPOINT preview_link');
+    try {
+      // Pending candidates cannot create accounts, but existing stable mappings
+      // can safely populate new invoices during every post-Xero scan.
+      await applyCandidate(db, run, scope, { ...row, status: 'pending', reason: null });
+    } catch (error) {
+      await db.query('ROLLBACK TO SAVEPOINT preview_link');
+      if (!error.status && error.code !== '23505') throw error;
+      await db.query("UPDATE bm_xero_student_sync_candidates SET status='pending',reason=$3 WHERE customer_id=$1 AND id=$2",
+        [scope.customer_id,row.id,error.status ? error.message : 'Account details conflict; review the Student ID.']);
+    }
+    await db.query('RELEASE SAVEPOINT preview_link');
+  }
+  await db.query(
+    `UPDATE bm_xero_student_sync_candidates c SET status='pending',
+      reason=COALESCE(reason,'Invoice has no Student ID; review or sync ready users')
+     WHERE c.customer_id=$1 AND c.scan_run_id=$2 AND c.status<>'excluded'
+       AND EXISTS (SELECT 1 FROM sophia_runtime.student_operations_xero_invoices i
+         WHERE i.customer_id=c.customer_id AND i.xero_connection_id=c.connection_id
+           AND i.xero_contact_id=ANY(c.contact_ids) AND i.student_id IS NULL
+           AND i.invoice_status NOT IN ('DELETED','VOIDED'))`,
+    [scope.customer_id, run.id],
+  );
   // Keep PostgreSQL timestamp precision; round-tripping through JS Date can cause endless refresh jobs.
+  await db.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1::uuid)', [scope.customer_id]);
+  await db.query(`UPDATE bm_xero_student_sync_config SET last_source_sync=(
+    SELECT last_successful_sync_at FROM sophia_runtime.student_operations_xero_sync_configurations
+     WHERE customer_id=$1 AND xero_connection_id=$2) WHERE customer_id=$1`,
+    [scope.customer_id, source.xero_connection_id]);
   await db.query(
     `UPDATE bm_xero_student_sync_runs SET source_sync=(SELECT last_successful_sync_at
     FROM sophia_runtime.student_operations_xero_sync_configurations WHERE customer_id=$2 AND xero_connection_id=$3),
@@ -374,7 +415,7 @@ async function applyCandidate(db, run, scope, row) {
     await linkStudent(db, scope, row, [...ids][0]);
     return false;
   }
-  if (row.status !== "ready") return false;
+  if (row.status !== "ready" && row.reason !== 'Invoice has no Student ID; review or sync ready users') return false;
   const name = row.resolution_name || row.display_name;
   const key = normalizeStudentName(name).key;
   const email = row.resolution_email || row.emails[0];
@@ -473,15 +514,53 @@ async function applyCandidate(db, run, scope, row) {
   return true;
 }
 
+export async function scheduleStudentSync(db) {
+  // Bootstrap only eligible companies with an active Chief Executive. Each
+  // batch reauthorizes the actor; scheduling never grants staff permissions.
+  await db.query(`INSERT INTO bm_xero_student_sync_config(customer_id,company_id,actor_user_id,automatic)
+    SELECT DISTINCT ON (c.customer_id) c.customer_id,b.company_id,u.id,true
+    FROM sophia_runtime.customers c JOIN bm_company b ON b.company_id::text=c.external_company_id
+    JOIN users u ON u.company_id=b.company_id AND u.status='active'
+    JOIN sophia_runtime.business_pack_entitlements e ON e.customer_id=c.customer_id
+      AND e.identity_user_id=u.id::text AND e.pack_id='student-operations'
+      AND e.status='active' AND e.role_key='chief_executive'
+    WHERE c.status='active' AND b.status='active' AND b.workspace_profile='student_operations'
+    ORDER BY c.customer_id,u.id ON CONFLICT DO NOTHING`);
+  // Atomic enqueue/checkpoint, plus the existing unique active-run index,
+  // prevents duplicate jobs across API replicas. Nightly runs take priority.
+  await db.query(`WITH due AS (
+    SELECT c.customer_id,c.actor_user_id,c.next_nightly_at<=now() AS nightly
+    FROM bm_xero_student_sync_config c
+    JOIN sophia_runtime.student_operations_xero_sync_configurations x USING(customer_id)
+    WHERE c.automatic AND x.enabled AND x.organisation_role='trust'
+      AND x.last_successful_sync_at IS NOT NULL
+      AND (c.next_nightly_at<=now() OR c.last_source_sync IS DISTINCT FROM x.last_successful_sync_at)
+      AND NOT EXISTS (SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs r
+        WHERE r.customer_id=c.customer_id AND r.status IN ('queued','processing'))
+      AND NOT EXISTS (SELECT 1 FROM bm_xero_student_sync_runs r
+        WHERE r.customer_id=c.customer_id AND r.status IN ('queued','processing'))
+      AND NOT EXISTS (SELECT 1 FROM bm_xero_student_sync_runs r
+        WHERE r.customer_id=c.customer_id AND r.status='failed' AND r.updated_at>now()-interval '5 minutes')
+    FOR UPDATE OF c SKIP LOCKED
+  ), queued AS (
+    INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
+    SELECT customer_id,actor_user_id,CASE WHEN nightly THEN 'apply' ELSE 'preview' END FROM due
+    ON CONFLICT DO NOTHING RETURNING customer_id,mode
+  ) UPDATE bm_xero_student_sync_config c SET next_nightly_at=
+    (((now() AT TIME ZONE 'Australia/Brisbane')::date + 1 + time '02:00') AT TIME ZONE 'Australia/Brisbane')
+    FROM queued q WHERE c.customer_id=q.customer_id AND q.mode='apply'`);
+}
+
 // Transaction-scoped locks also work with transaction-pooling database URLs.
 // Each bounded batch commits accounts, mappings and checkpoints together.
-export async function processSyncBatch() {
+export async function processSyncBatch({ schedule = true } = {}) {
   const db = await pool.connect();
   try {
     const available = await db.query(
       "SELECT to_regclass('public.bm_xero_student_sync_runs') AS name",
     );
     if (!available.rows[0].name) return;
+    if (schedule) await scheduleStudentSync(db);
     const runs = await db.query(
       "SELECT * FROM bm_xero_student_sync_runs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 10",
     );
@@ -554,6 +633,7 @@ export async function processSyncBatch() {
           );
           await db.query("RELEASE SAVEPOINT candidate");
         }
+        await db.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1::uuid)', [scope.customer_id]);
         if (!candidates.rowCount) {
           await db.query(
             "UPDATE bm_xero_student_sync_runs SET status='succeeded',phase='done',updated_at=now() WHERE id=$1",
@@ -593,11 +673,14 @@ export async function processSyncBatch() {
 }
 export function startStudentUserSyncWorker() {
   let busy = false;
+  let lastScheduled = 0;
   const tick = async () => {
     if (busy) return;
     busy = true;
     try {
-      await processSyncBatch();
+      const schedule = Date.now() - lastScheduled >= 60_000;
+      await processSyncBatch({ schedule });
+      if (schedule) lastScheduled = Date.now();
     } catch (error) {
       console.error(
         "Student sync connection unavailable",

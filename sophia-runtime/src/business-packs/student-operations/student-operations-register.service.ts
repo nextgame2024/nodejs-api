@@ -197,7 +197,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
              coalesce(d.opened_on, r.account_created_at::date)::text AS record_date,
              d.case_id, d.case_reference, d.current_stage, ad.advisor_user_id,
              profile.advisor_id, directory.name AS advisor_name,
-             coalesce(nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name) AS advisor_xero_name,
+             latest_advisor.advisor_name AS advisor_xero_name,
              cl.college_id,
              coalesce(cl.college_name, ci.college_name, xi.college_name) AS college_name,
              coalesce(cs.case_count, 0)::int AS case_count,
@@ -222,6 +222,8 @@ export function buildStudentRegisterCohortSql(schema: string): string {
           ON profile.customer_id = $1 AND profile.student_id = r.profile_id
         LEFT JOIN ${schema}.student_operations_advisor_directory directory
           ON directory.customer_id = profile.customer_id AND directory.advisor_id = profile.advisor_id
+        LEFT JOIN ${schema}.student_operations_latest_invoice_advisors latest_advisor
+          ON latest_advisor.customer_id = profile.customer_id AND latest_advisor.profile_id = profile.student_id
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS case_count,
                  bool_or(v.lifecycle_status NOT IN ('closed', 'completed', 'cancelled')) AS has_current_case,

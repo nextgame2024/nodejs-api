@@ -38,6 +38,15 @@ suite("Student user sync — isolated PostgreSQL", () => {
       CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(sync_run_id uuid PRIMARY KEY,customer_id uuid,xero_connection_id uuid,status text,mode text,created_at timestamptz);
       CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,legal_name text,email text);
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid DEFAULT gen_random_uuid(),xero_contact_id uuid,invoice_type text,invoice_status text,last_seen_sync_run_id uuid);`);
+    await pool.query(`
+      DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sophia_runtime_app') THEN CREATE ROLE sophia_runtime_app; END IF; END $$;
+      ALTER TABLE sophia_runtime.student_operations_xero_invoices ADD COLUMN invoice_date date, ADD COLUMN advisor_name text;
+      CREATE TABLE sophia_runtime.student_operations_students(customer_id uuid,student_id uuid,advisor_id uuid,updated_at timestamptz,record_version int DEFAULT 1);
+      CREATE TABLE sophia_runtime.student_operations_student_audit_events(customer_id uuid,student_id uuid,actor_identity_user_id text,event_type text,record_version int,changed_fields text[],correlation_id text);
+      CREATE TABLE sophia_runtime.student_operations_student_user_links(customer_id uuid,student_id uuid,student_reference text);
+      CREATE TABLE sophia_runtime.student_operations_case_invoice_links(customer_id uuid,student_id uuid,xero_connection_id uuid,xero_invoice_id uuid);
+      CREATE TABLE sophia_runtime.student_operations_advisor_directory(customer_id uuid,advisor_id uuid,code text,name text,xero_label text,status text);
+    `);
     await pool.query(
       await readFile(
         new URL(
@@ -52,6 +61,8 @@ suite("Student user sync — isolated PostgreSQL", () => {
       "student_operations",
       "active",
     ]);
+    await pool.query(await readFile(new URL('../scripts/sql/bm_xero_student_sync_schedule.sql', import.meta.url), 'utf8'));
+    await pool.query((await readFile(new URL('../sophia-runtime/src/database/migrations/078_latest_invoice_advisors.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query("INSERT INTO sophia_runtime.customers VALUES($1,$2,$3)", [
       customer,
       company,
@@ -112,7 +123,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
     await enqueueSync(actor, "preview");
     await drain();
     const result = await syncOverview(actor);
-    expect(result.counts).toEqual({ ready: 2, pending: 4 });
+    expect(result.counts).toEqual({ pending: 6 });
     expect(result.total).toBe(6);
     expect(
       (
@@ -222,7 +233,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
       "pending",
     );
   });
-  test("Xero refresh does not sync users until a Chief Executive starts a run", async () => {
+  test("Xero refresh queues review without creating accounts; nightly apply links eligible invoices", async () => {
     const id = await addContact("C90 New Student", "new@example.test");
     const total = (
       await pool.query(
@@ -245,8 +256,8 @@ suite("Student user sync — isolated PostgreSQL", () => {
       (
         await pool.query("SELECT count(*)::int n FROM bm_xero_student_sync_runs")
       ).rows[0].n,
-    ).toBe(runsBefore);
-    expect((await syncOverview(actor)).automatic).toBe(false);
+    ).toBe(runsBefore + 1);
+    expect((await syncOverview(actor)).automatic).toBe(true);
     expect(
       (
         await pool.query(
@@ -255,7 +266,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
         )
       ).rows[0].student_id,
     ).toBeNull();
-    await enqueueSync(actor, "apply");
+    await pool.query("UPDATE bm_xero_student_sync_config SET next_nightly_at=now()-interval '1 minute'");
     await drain();
     expect(
       (
@@ -264,7 +275,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
           [customer],
         )
       ).rows[0].automatic,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       (
         await pool.query(
@@ -344,5 +355,38 @@ suite("Student user sync — isolated PostgreSQL", () => {
     await expect(enqueueSync(id, "apply")).rejects.toMatchObject({
       status: 403,
     });
+  });
+  test('missing contacts and old unseen invoices remain pending and can be explicitly linked', async () => {
+    const id = await addContact('Unknown Contact', null);
+    await pool.query('DELETE FROM sophia_runtime.student_operations_xero_contacts WHERE xero_contact_id=$1',[id]);
+    await enqueueSync(actor,'preview'); await drain();
+    const row = (await syncOverview(actor)).records.find(r => r.display_name==='');
+    expect(row.status).toBe('pending');
+    const student = (await pool.query("SELECT student_id FROM users WHERE type='student' LIMIT 1")).rows[0];
+    await resolveCandidate(actor,row.id,{action:'link',studentId:student.student_id});
+    expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1',[id])).rows[0].student_id).toBe(student.student_id);
+  });
+  test('latest dated draft wins; advisor changes and blanks reconcile idempotently and tenant-scoped', async () => {
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('sophia.tenant_id',$1,true)",[customer]);
+      const profile='66666666-6666-4666-8666-666666666666';
+      const advisor='77777777-7777-4777-8777-777777777777';
+      await client.query('INSERT INTO sophia_runtime.student_operations_students(customer_id,student_id) VALUES($1,$2)',[customer,profile]);
+      await client.query("INSERT INTO sophia_runtime.student_operations_advisor_directory VALUES($1,$2,'S69','Pedro Muñoz','S69 Pedro Muñoz','active')",[customer,advisor]);
+      const invoice=(await client.query('SELECT xero_invoice_id FROM sophia_runtime.student_operations_xero_invoices WHERE student_id IS NOT NULL LIMIT 1')).rows[0].xero_invoice_id;
+      await client.query('INSERT INTO sophia_runtime.student_operations_student_user_links SELECT $1,$2,student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_invoice_id=$3',[customer,profile,invoice]);
+      await client.query("UPDATE sophia_runtime.student_operations_xero_invoices SET invoice_date='2029-10-01',advisor_name='S69 Pedro Munoz' WHERE xero_invoice_id=$1",[invoice]);
+      await client.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1)',[customer]);
+      expect((await client.query('SELECT advisor_id,record_version FROM sophia_runtime.student_operations_students')).rows[0]).toEqual({advisor_id:advisor,record_version:2});
+      await client.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1)',[customer]);
+      expect((await client.query('SELECT record_version FROM sophia_runtime.student_operations_students')).rows[0].record_version).toBe(2);
+      await client.query("UPDATE sophia_runtime.student_operations_xero_invoices SET advisor_name=NULL WHERE xero_invoice_id=$1",[invoice]);
+      await client.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1)',[customer]);
+      expect((await client.query('SELECT advisor_id FROM sophia_runtime.student_operations_students')).rows[0].advisor_id).toBeNull();
+      await client.query("SELECT set_config('sophia.tenant_id',$1,true)",[actor]);
+      expect((await client.query('SELECT * FROM sophia_runtime.student_operations_latest_invoice_advisors')).rows).toHaveLength(0);
+    } finally { await client.query('ROLLBACK'); client.release(); }
   });
 });

@@ -1,5 +1,16 @@
 {
   "schemaVersion": 1,
+  "xeroSynchronizationFollowUp": {
+    "updatedOn": "2026-10-19",
+    "behavior": "Latest dated sales invoice is authoritative for Advisor Xero and profile Advisor. Successful imports reconcile advisors; the API worker queues review scans after source refresh and apply runs at 02:00 Australia/Brisbane. Missing contacts and older imported invoices remain reviewable; existing identity links and explicit exclusions are preserved.",
+    "verification": [
+      "PASS: 20 backend tests including 10 isolated PostgreSQL sync/advisor integration cases.",
+      "PASS: 14 Runtime register and Xero synchronization tests.",
+      "PASS: Runtime npm run build.",
+      "PASS: 8 Sync users ChromeHeadless tests, including desktop/mobile light/dark checks."
+    ],
+    "deployment": "Requires Runtime migration 078, owner SQL bm_xero_student_sync_schedule.sql, Runtime/API/frontend deployment and a running API worker. Not applied to production. Unknown directory advisors clear stale assignment and require directory maintenance."
+  },
   "targetSpecification": "../sophia-realtime-codex-implementation-plan.v2.1.json",
   "baselineStatus": "reported_not_verified",
   "checkpoint": "P6-A06C4-GENUINE-CUSTOMER-AUTH-SMOKE-PASSED-NO-EMAIL-NO-CHARGE",
@@ -13,6 +24,18 @@
       "PASS: 87 focused ChromeHeadless tests covering PageJump, navigation-state isolation, upward select-menu geometry in light/dark modes, Students, case details, Users, Colleges, Payments and Control, Sync Users and Admin overview.",
       "PASS: Students direct page-20 navigation and filter/page-size/sort restoration; Payments and Control and Colleges return-state regression checks.",
       "No production deployment, live data mutation or migration was performed."
+    ]
+  },
+  "advisorReconciliationFollowUp": {
+    "updatedOn": "2026-10-19",
+    "sourceOfTruth": "The Advisor Xero value projected by the Students register, with its stored-case-label priority over the latest invoice advisor.",
+    "audit": "Read-only comparison of all 1,068 visible students: 907 matching, 154 different assignments, 5 missing assignments, and 2 without an Advisor Xero value. Accent normalization resolves Xero Munoz to directory Muñoz without changing the source label.",
+    "migration": "077_reconcile_student_advisors_to_xero.sql contains the 159 audited corrections, guarded by tenant/company, student identity, previous assignment, current source label and active target advisor. It appends student audit events and leaves Xero fields and case login/access grants untouched.",
+    "verification": [
+      "PASS: scripts/verify-student-advisor-migration.mjs on isolated local PostgreSQL, seeded from the read-only audit snapshot: all 159 corrections, unchanged matching/missing-source rows, unchanged Xero fields and idempotent rerun.",
+      "PASS: local PostgreSQL checks for concurrent assignment/source changes, archived students, inactive targets, tenant scope, and both invoice source fallbacks.",
+      "PASS: Sophia Runtime npm run build.",
+      "No live migration, production data mutation or deployment performed."
     ]
   },
   "studentsRegisterWorkstream": {

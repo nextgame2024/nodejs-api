@@ -805,6 +805,7 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
+      await db.query(`SELECT ${schema}.reconcile_latest_invoice_advisors($1::uuid)`, [tenantId]);
       const count = await db.query<{ count: number }>(
         `SELECT count(DISTINCT i.xero_contact_id)::int AS count
            FROM ${schema}.student_operations_xero_invoices i

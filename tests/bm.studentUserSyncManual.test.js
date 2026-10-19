@@ -5,6 +5,7 @@ const query = jest.fn(async (sql) => {
     return { rows: [{ name: "bm_xero_student_sync_runs" }] };
   if (sql.includes("FROM bm_xero_student_sync_runs WHERE status IN"))
     return { rows: [] };
+  if (sql.includes('INSERT INTO bm_xero_student_sync_config') || sql.includes('WITH due AS')) return { rows: [] };
   throw new Error(`Unexpected database query: ${sql}`);
 });
 const release = jest.fn();
@@ -16,13 +17,11 @@ const { processSyncBatch } = await import(
   "../src/services/bm.studentUserSync.service.js"
 );
 
-describe("manual-only Student-user sync", () => {
-  test("an idle worker never scans configuration or queues a run", async () => {
+describe("scheduled Student-user sync", () => {
+  test("an idle worker checks durable schedules before processing runs", async () => {
     await processSyncBatch();
-    expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls.map(([sql]) => sql).join("\n")).not.toContain(
-      "bm_xero_student_sync_config",
-    );
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls.map(([sql]) => sql).join("\n")).toContain('FOR UPDATE OF c SKIP LOCKED');
     expect(release).toHaveBeenCalledTimes(1);
   });
 });

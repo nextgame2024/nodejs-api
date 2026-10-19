@@ -6,7 +6,8 @@ Business Manager → **Sync users** is a Chief Executive-only, company-scoped wo
 
 1. Apply `scripts/sql/bm_user_student_fields.sql` if it has not already been deployed.
 2. Using the database owner connection, apply `scripts/sql/bm_xero_student_user_sync.sql` to the database containing `public.users` and `sophia_runtime`.
-3. Deploy/restart the Business Manager API (`src/server.js`) and deploy the frontend. The API starts the resumable sync worker. No Runtime grants or RLS policies are widened.
+3. Apply Runtime migration `078_latest_invoice_advisors.sql`, then owner migration `scripts/sql/bm_xero_student_sync_schedule.sql`.
+4. Deploy/restart Runtime, the Business Manager API (`src/server.js`), and the frontend. Keep the API worker running overnight. Manual controls remain available.
 
 From the backend directory, with an owner URL supplied securely in the shell environment:
 
@@ -19,7 +20,9 @@ Do not substitute the normal restricted Runtime connection. The migration create
 ## Operation
 
 - **Check records** scans and groups current imported contacts without creating users.
-- **Sync ready users** applies eligible groups only when a Chief Executive starts a run. Xero refreshes do not start Student-user sync runs.
+- **Sync ready users** applies eligible groups manually or nightly at **02:00 Australia/Brisbane**. A missed nightly run executes when the worker resumes. Every batch revalidates Chief Executive authority.
+- Every successful Xero refresh queues **Check records** using the durable source timestamp. This repairs established contact mappings without creating accounts. Nightly/manual apply can create eligible accounts using existing matching rules.
+- All imported non-deleted/non-void TRUST sales transactions are scanned, including missing contacts and invoices not seen in the latest full refresh. Unlinked transactions appear as **Pending action**, grouped by normalized contact name (missing names by contact ID). Explicit exclusions survive rescans and contact renames. Eligible pending records can be processed by Sync ready users; identity conflicts require review.
 - **Review** supports correcting name/email, explicitly linking an existing active `STD-…` Student from the same company, excluding an organisation, and reopening excluded records through a correction.
 - Pending records show their original names, emails, transaction count, and reason. Search/status filters are paginated; recent runs show progress and failures.
 - Corrections are local import decisions, not edits to Xero. Existing accounts' passwords, names, email and status are never overwritten by sync.
@@ -39,6 +42,12 @@ Runs, per-group checkpoints, identity links, account creation, and audits persis
 The worker performs bounded batches of 20 groups. PostgreSQL timestamps stay in PostgreSQL when comparing synchronization checkpoints, avoiding sub-millisecond rounding that could cause repeated scheduling.
 
 ## Verification
+
+### Latest-invoice advisor reconciliation (2026-10-19)
+
+Migration 078 defines the shared latest-invoice advisor projection across student identity and case links. It orders by invoice date descending, including future drafts, with deterministic invoice/connection ID ties; deleted/voided invoices are excluded. Advisor Xero displays that raw value. Each successful import and identity-link batch updates the profile Advisor from the active directory using an unambiguous label/name or code match. Blank or unrecognized values clear stale assignments; unrecognized advisors require directory maintenance. Students with no source invoice retain local assignments. Changes increment versions and create audit events; access grants are unaffected. Migration 077's historical snapshot rule is superseded on the next sync.
+
+Deploy both migrations before the corresponding APIs. No production migration or live provider call was performed during implementation. Nightly account creation uses the existing provisioning policy; no welcome messages are sent.
 
 Focused unit tests: `tests/bm.studentUserSync.test.js`.
 Isolated PostgreSQL integration tests: `tests/bm.studentUserSyncSql.test.js`, enabled only through `LOCAL_STUDENT_SYNC_TEST_DATABASE_URL` pointing at a disposable local database. They create fixture tables; never use a shared/deployed database. Frontend tests cover loading, corrections and desktop/mobile light/dark geometry.
