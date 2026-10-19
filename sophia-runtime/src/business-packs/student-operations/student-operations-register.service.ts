@@ -297,16 +297,13 @@ export function buildStudentRegisterCohortSql(schema: string): string {
            ORDER BY i.due_date ASC, i.xero_invoice_id ASC LIMIT 1
         ) invoice_pay ON true
        WHERE (d.case_id IS NOT NULL
-          OR ($4::uuid IS NULL AND $5::uuid IS NULL AND cs.case_count = 0
+          OR ($5::uuid IS NULL AND cs.case_count = 0
               AND ($6::date IS NULL OR r.account_created_at::date BETWEEN $6::date AND $7::date)
-              AND ($8::text IS NULL OR lower(xi.advisor_name) = lower($8))
               AND ($9::text IS NULL OR lower(xi.college_name) = lower($9))))
-         AND ($4::uuid IS NULL OR EXISTS (
-           SELECT 1 FROM ${schema}.student_operations_case_advisors ca
-            WHERE ca.customer_id = $1 AND ca.case_id = d.case_id AND ca.advisor_user_id = $4))
+         AND ($4::uuid IS NULL OR profile.advisor_id = $4)
          AND ($5::uuid IS NULL OR cl.college_id = $5)
          AND ($6::date IS NULL OR cs.case_count = 0 OR d.opened_on BETWEEN $6::date AND $7::date)
-         AND ($8::text IS NULL OR lower(coalesce(nullif(btrim(d.advisor_name), ''), ci.advisor_name, xi.advisor_name)) = lower($8))
+         AND ($8::text IS NULL OR lower(directory.name) = lower($8))
          AND ($9::text IS NULL OR lower(coalesce(cl.college_name, ci.college_name, xi.college_name)) = lower($9))
          AND ($3::text IS NULL OR r.legal_name ILIKE $3 ESCAPE '\\'
               OR r.student_reference ILIKE $3 ESCAPE '\\'
@@ -344,37 +341,20 @@ async function loadOptions(client: PoolClient, schema: string,
   principal: StudentOperationsWorkspacePrincipal) {
   const advisorScope = principal.role === "advisor" ? principal.identityUserId : null;
   const [advisors, colleges] = await Promise.all([
-    client.query<{ user_id: string | null; display_name: string }>(
-      `SELECT min(source.user_id) AS user_id, source.display_name
-         FROM (
-        SELECT ar.user_id::text AS user_id, ar.display_name
-         FROM ${schema}.student_operations_advisor_roster ar
-         JOIN ${schema}.student_operations_case_advisors ca
-           ON ca.customer_id = ar.customer_id AND ca.advisor_user_id = ar.user_id
-         JOIN ${schema}.student_operations_cases c
-           ON c.customer_id = ca.customer_id AND c.case_id = ca.case_id
-         JOIN ${schema}.student_operations_student_user_links link
-           ON link.customer_id = c.customer_id AND link.student_id = c.student_id
-         JOIN ${schema}.student_operations_student_roster roster
-           ON roster.customer_id = link.customer_id AND roster.user_id = link.user_id
-        WHERE ar.customer_id = $1
-          AND roster.account_status <> 'archived'
+    client.query<{ advisor_id: string; code: string; name: string }>(
+      `SELECT directory.advisor_id, directory.code, directory.name
+         FROM ${schema}.student_operations_advisor_directory directory
+        WHERE directory.customer_id = $1 AND directory.status = 'active'
           AND ($2::text IS NULL OR EXISTS (
-            SELECT 1 FROM ${schema}.student_operations_case_advisors mine
-             WHERE mine.customer_id = c.customer_id AND mine.case_id = c.case_id
-               AND mine.advisor_user_id::text = $2))
-        UNION ALL
-        SELECT NULL::text AS user_id, btrim(i.advisor_name) AS display_name
-          FROM ${schema}.student_operations_xero_invoices i
-          JOIN ${schema}.student_operations_student_roster roster
-            ON roster.customer_id = i.customer_id AND roster.student_reference = i.student_id
-         WHERE i.customer_id = $1 AND $2::text IS NULL
-           AND roster.account_status <> 'archived'
-           AND i.invoice_status NOT IN ('DELETED', 'VOIDED')
-           AND nullif(btrim(i.advisor_name), '') IS NOT NULL
-         ) source
-        GROUP BY source.display_name
-        ORDER BY source.display_name`,
+            SELECT 1 FROM ${schema}.student_operations_students student
+            JOIN ${schema}.student_operations_cases c
+              ON c.customer_id = student.customer_id AND c.student_id = student.student_id
+            JOIN ${schema}.student_operations_case_advisors mine
+              ON mine.customer_id = c.customer_id AND mine.case_id = c.case_id
+             AND mine.is_primary AND mine.advisor_user_id::text = $2
+            WHERE student.customer_id = directory.customer_id
+              AND student.advisor_id = directory.advisor_id))
+        ORDER BY lower(directory.name), directory.advisor_id`,
       [principal.tenantId, advisorScope],
     ),
     client.query<{ college_id: string | null; college_name: string }>(
@@ -415,7 +395,7 @@ async function loadOptions(client: PoolClient, schema: string,
     ),
   ]);
   return {
-    advisors: advisors.rows.map((row) => ({ userId: row.user_id, name: row.display_name })),
+    advisors: advisors.rows.map((row) => ({ advisorId: row.advisor_id, code: row.code, name: row.name })),
     colleges: colleges.rows.map((row) => ({ collegeId: row.college_id, name: row.college_name })),
   };
 }

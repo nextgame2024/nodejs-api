@@ -10,6 +10,10 @@ describe("Student Operations register query", () => {
     expect(sql).toContain("AS advisor_xero_name");
     expect(sql).toContain("LEFT JOIN sophia_runtime.student_operations_advisor_directory directory");
     expect(sql).not.toContain("LEFT JOIN sophia_runtime.student_operations_advisor_roster ar");
+    expect(sql).toContain("($4::uuid IS NULL OR profile.advisor_id = $4)");
+    expect(sql).toContain("($8::text IS NULL OR lower(directory.name) = lower($8))");
+    expect(sql).not.toContain("lower(xi.advisor_name) = lower($8)");
+    expect(sql).not.toContain("ca.advisor_user_id = $4");
   });
 
   it("projects the latest case workflow status without treating active pre-sale and payment cases as closed", () => {
@@ -32,6 +36,9 @@ describe("Student Operations register query", () => {
             advisor_name: null, college_id: null, college_name: null, register_status: "not_started",
             attention_reason: null, case_count: 0, next_due_on: null, filtered_total: 1, total: 1 }] };
         }
+        if (sql.includes("SELECT directory.advisor_id, directory.code, directory.name")) {
+          return { rows: [{ advisor_id: "22222222-2222-4222-8222-222222222222", code: "S69", name: "Pedro Muñoz" }] };
+        }
         return { rows: [] };
       }),
     };
@@ -46,13 +53,17 @@ describe("Student Operations register query", () => {
     const service = new StudentOperationsRegisterService(database);
     const result = await service.list(principal, {});
     expect(result.students[0]).toMatchObject({ recordDate: "2026-10-16" });
+    expect(result.options.advisors).toEqual([{ advisorId: "22222222-2222-4222-8222-222222222222", code: "S69", name: "Pedro Muñoz" }]);
+    expect(queries.find(sql => sql.includes("SELECT directory.advisor_id"))).toContain("directory.customer_id = $1 AND directory.status = 'active'");
     expect(queries[0]).toContain("coalesce(d.opened_on, r.account_created_at::date)::text AS record_date");
     expect(queries[0]).toContain("ORDER BY c.record_date DESC NULLS LAST,\n                      lower(c.legal_name) ASC, c.user_id ASC");
 
     queries.length = 0;
-    await service.list(principal, { sortBy: "date", sortDir: "asc", page: 2, limit: 25 });
+    await service.list(principal, { sortBy: "date", sortDir: "asc", page: 2, limit: 25, advisorId: "22222222-2222-4222-8222-222222222222" });
     expect(queries[0]).toContain("ORDER BY c.record_date ASC NULLS LAST");
     expect(db.query).toHaveBeenCalledWith(expect.stringContaining("LIMIT $12 OFFSET $13"),
       expect.arrayContaining([25]));
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining("profile.advisor_id = $4"),
+      [principal.tenantId, null, null, "22222222-2222-4222-8222-222222222222", null, null, null, null, null, null, false, 25, 25]);
   });
 });
