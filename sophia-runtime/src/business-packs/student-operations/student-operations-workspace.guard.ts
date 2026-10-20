@@ -45,7 +45,8 @@ export class StudentOperationsWorkspaceGuard implements CanActivate {
       );
     }
 
-    const correlationId = validCorrelation(header(request, "x-correlation-id"))
+    const correlationId = validCorrelation(request.studentOperationsCorrelationId)
+      ?? validCorrelation(header(request, "x-correlation-id"))
       ?? randomUUID();
     if (studentOperationsTimingEnabled()) {
       context.switchToHttp().getResponse?.<{ setHeader?: (name: string, value: string) => void }>()

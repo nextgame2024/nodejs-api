@@ -1,7 +1,11 @@
 {
   "date": "2026-10-20",
   "timezone": "Australia/Brisbane",
-  "status": "First-stage code implemented locally; deployment and remaining orchestration work pending",
+  "status": "Phase 1 deployed per user confirmation. Phase 2 diagnostic tooling implemented locally; authenticated deployment samples pending. Overnight pipeline orchestration remains phase 3.",
+  "deploymentEvidence": {
+    "phase1": {"date": "2026-10-20", "source": "User confirmed phase 1 deployed", "hostingScheduleIndependentlyVerified": false},
+    "phase2": {"state": "not_deployed", "requires": "Deploy updated Runtime and enable SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily to expose the new request timing breakdown."}
+  },
   "findings": [
     "Normal list endpoints already use tenant-scoped local database records, not live Xero requests.",
     "Students latest-invoice advisor view was repeatedly evaluated for 1068 students. Read-only EXPLAIN ANALYZE: 8768 ms before, 476 ms with a tenant-scoped MATERIALIZED CTE. An earlier baseline was 9177 ms. These are query timings, not end-to-end page timings.",
@@ -27,11 +31,47 @@
     "freshnessTradeoff": "Nightly automatic imports mean Xero changes can remain invisible until the next successful night. Explicit manual refresh remains available. Do not call the local view live Xero data."
   },
   "rollout": [
-    {"phase": 1, "state": "implemented_not_deployed", "action": "Deploy query fixes, document worker and frontend. Apply Render Blueprint schedule to the existing cron and verify no duplicate hourly job remains. No database migration is required for this phase."},
-    {"phase": 2, "state": "planned", "action": "Collect authenticated request timings for Students and Payments: workspace/access calls, pool acquisition, database setup, query execution, total API time and browser waiting time. Compare warm/cold and sync-active/idle samples. Enable SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily. Check API/DB region alignment and hosting sleep behavior. Do not add caches or raise pool sizes without evidence."},
+    {"phase": 1, "state": "deployed_user_confirmed", "action": "User confirmed deployment on 2026-10-20. Query fixes, document worker, frontend and cron configuration were included in phase 1. Render schedule activation and duplicate-job checks are not independently verified."},
+    {"phase": 2, "state": "diagnostics_implemented_pending_authenticated_samples", "action": "Request-local timing traces now cover the complete Student Operations HTTP request and existing guard/workspace/query phases. Server-Timing and X-Correlation-ID headers plus CORS timing exposure allow browser and server measurements to join. Offline scripts/analyze-student-performance.mjs summarizes HAR and saved Runtime logs without exporting financial records or identity data. Collect authenticated samples after deploying this diagnostic change; compare sync-active/idle samples and independently verify hosting regions and plan/sleep behavior. Do not add caches or raise pool sizes without evidence."},
     {"phase": 3, "state": "planned", "action": "Implement and integration-test a dependency-aware nightly invoice -> student reconciliation -> document pipeline with dedicated workers. Gate automatic creation to the Brisbane window; allow manual jobs at any time. Test UTC boundaries, retries, duplicate schedulers, restart recovery, missing scopes and disabled tenants before changing production schedules."},
     {"phase": 4, "state": "planned", "action": "Confirm the Xero app tier and actual remaining daily allowance; add shared budget accounting, source deduplication, changed-source enqueueing and alerting before accelerating the historical document backlog."}
   ],
+  "phase2Diagnostics": {
+    "verification": [
+      "PASS: 37 Runtime tests across request timing, concurrent request isolation, identity bridge, guard, workspace resolution, register, invoice sync and CORS.",
+      "PASS: 3 offline analyzer tests covering HAR/log correlation, missing timing headers, error responses, malformed lines and sensitive-input omission.",
+      "PASS: Runtime TypeScript check and build.",
+      "PASS: Plan JSON parsing and git diff --check."
+    ],
+    "implementation": [
+      "SOPHIA_STUDENT_OPERATIONS_TIMING=1 enables middleware only for Student Operations routes. The default remains disabled.",
+      "AsyncLocalStorage isolates measurements across concurrent requests. Response content, authorization and tenant checks retain existing behavior.",
+      "Server-Timing includes app time, identity/access checks, workspace and list pool/setup/work/commit times and list query/options times when recorded. Nested phases overlap.",
+      "X-Correlation-ID joins the browser request, workspace guard, services and final HTTP log. Timing-Allow-Origin is restricted to configured CORS origins.",
+      "HTTP logs contain endpoint categories, status codes and durations, not raw URLs, student names, filters, credentials or response content.",
+      "The offline analyzer accepts HAR and/or saved Runtime logs, supports explicit sync-idle/sync-active labels, and reports p50/p95/max with sample counts. It performs no network requests or database access."
+    ],
+    "observedHealthChecks": {
+      "date": "2026-10-20",
+      "origin": "Local development machine, not the browser or Render internal network",
+      "runtime": {"statuses": [200,200], "firstObservedMs": 2240, "subsequentMs": 940},
+      "businessManager": {"statuses": [200,200], "firstObservedMs": 493, "subsequentMs": 810},
+      "interpretation": "Services responded successfully. These requests include database health checks, not authenticated page requests. First observed is not proof of a cold start; no p95 or hosting-region conclusion can be drawn from two samples."
+    },
+    "captureProcedure": [
+      "Deploy the updated Runtime; temporarily set SOPHIA_STUDENT_OPERATIONS_TIMING=1. No frontend deployment or database migration is required for phase 2 diagnostics.",
+      "In an authenticated browser session, preserve the Network log, load Students and Payments, and perform normal pagination/filter operations. Record at least 20 successful list requests per scenario. Keep page sizes consistent for comparisons.",
+      "Export the browser HAR locally and save Runtime logs covering that period. Record whether syncs were active or idle from actual job status. Do not deliberately start a production sync just to benchmark it.",
+      "From backend, run node scripts/analyze-student-performance.mjs --har /path/to/capture.har --logs /path/to/runtime.log --scenario sync-idle. Repeat with a separate observed sync-active sample. The command prints timing-only JSON.",
+      "Inspect browser waiting/transfer and server app/identity/workspace/pool/query metrics together. Do not add nested timings or equate browser outside-application time with pure network latency.",
+      "Check actual Render service region, database region, instance plan and restart/sleep logs in hosting configuration. Edge-network location does not prove the server region.",
+      "Disable the timing flag after collecting enough evidence. Use measured bottlenecks to choose the next optimization and worker deployment settings."
+    ],
+    "remainingEvidence": [
+      "No authenticated browser session or hosting log connection is available in this workspace; no application token was generated or authentication bypassed for this audit.",
+      "Authenticated full-page p95, slow identity requests, active-sync contention, cold starts and actual Render service region remain unverified."
+    ]
+  },
   "capacity": {
     "source": "https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits",
     "limits": "Xero documents 60 calls/minute and daily per-organisation limits of 1000 for Starter or 5000 for higher tiers. Tier was not verified for this deployment.",

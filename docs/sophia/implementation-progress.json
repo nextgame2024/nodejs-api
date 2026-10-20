@@ -1,5 +1,19 @@
 {
   "schemaVersion": 1,
+  "studentPerformanceDiagnosticsPhase2": {
+    "updatedOn": "2026-10-20",
+    "plan": "student-sync-performance-plan.json",
+    "phase1Deployment": "User confirmed phase 1 deployment. Actual Render schedule activation and absence of duplicate cron jobs have not been independently verified.",
+    "status": "Diagnostic code implemented and verified locally; authenticated production samples and phase 2 deployment pending.",
+    "behavior": "Opt-in request-local Server-Timing measurements and HTTP completion logs correlate existing identity, workspace and list timings. Approved CORS origins can inspect response timing headers. Offline analyzer summarizes browser HAR and Runtime logs without emitting URLs, query strings, credentials, response bodies or student data. No new authentication or data caches were introduced.",
+    "verification": [
+      "PASS: 37 focused Runtime tests, including concurrent request isolation, disabled diagnostics, error status, CORS, guard correlation and existing authorization/register/sync regressions.",
+      "PASS: 3 Node analyzer tests for HAR/log correlation, old logs, malformed entries, error responses and privacy projection.",
+      "PASS: Runtime npm run typecheck and npm run build.",
+      "OBSERVED: Two read-only deployed health probes per service returned HTTP 200. Runtime first observed/subsequent elapsed times 2240/940ms; Business Manager 493/810ms from the development machine. This does not establish authenticated latency, p95 or cold-start behavior."
+    ],
+    "remaining": "Deploy Runtime with SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily and collect authenticated HAR/log samples for sync-idle and sync-active periods. Hosting region, instance sleep behavior, authenticated p95 and active-sync contention remain unverified. No hosting-log connector or authenticated browser session is available in this workspace. Phase 3 dedicated overnight pipeline remains planned. No production writes, schedule changes or live Xero calls performed in this phase."
+  },
   "studentSyncPerformanceFollowUp": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",

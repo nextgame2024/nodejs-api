@@ -100,6 +100,13 @@ describe("StudentOperationsWorkspaceGuard", () => {
     expect(request.studentOperationsPrincipal).toEqual(principal);
   });
 
+  it('keeps the middleware correlation ID so guard and HTTP timings join', async () => {
+    const { guard, context, request } = harness({ headers: { authorization: 'Token business-manager-token' } });
+    Object.assign(request, { studentOperationsCorrelationId: 'request-trace-1' });
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request).toMatchObject({ studentOperationsCorrelationId: 'request-trace-1' });
+  });
+
   it("emits guarded phase timings and a response correlation ID only when enabled", async () => {
     const previous = process.env.SOPHIA_STUDENT_OPERATIONS_TIMING;
     process.env.SOPHIA_STUDENT_OPERATIONS_TIMING = "1";
