@@ -1,3 +1,6 @@
+# Legacy document cron. After the shared student worker is verified, suspend
+# this service in Render. Never run both document executors concurrently.
+# Retained for rollback; do not reapply it after that cutover.
 services:
   - type: cron
     name: sophia-case-document-discovery

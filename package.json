@@ -45,6 +45,7 @@
     "@google/genai": "^2.27.0"
   },
   "scripts": {
+    "student-sync:worker": "node scripts/process-student-sync.mjs",
     "test:p0:boundaries": "node scripts/check-sophia-boundaries.mjs",
     "test:p0:real-estate": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/sophia.realEstate.characterization.test.js tests/bm.realEstateConfirmation.test.js tests/bm.realEstateBookingQueue.test.js tests/bm.inspectionWorkflow.test.js tests/bm.propertyReportJobs.test.js tests/bm.propertyReportWorker.test.js tests/bm.inspectionEmailWorker.test.js tests/bm.workflowHardening.test.js",
     "test:p2:contracts": "npm --prefix sophia-runtime run contracts:check && npm --prefix sophia-runtime test -- --runTestsByPath src/platform/contracts/v2/sophia-runtime-v2.contracts.spec.ts",

@@ -66,7 +66,7 @@ organisations independently and allowing other agencies to connect their own org
 Normal Students page, search, and infinite-scroll requests read PostgreSQL only. A Chief Executive can enqueue a
 durable refresh with `POST .../student-sync`; the scheduler performs initial/incremental/reconciliation paging and
 the UI keeps the last successful projection when Xero is unavailable. The legacy inline scheduler uses
-`XERO_SYNC_SCHEDULER_ENABLED=true`. For the opt-in dedicated nightly workers and
+`XERO_SYNC_SCHEDULER_ENABLED=true`. For the opt-in shared nightly worker and
 API enqueue-only cutover, follow [the worker runbook](../docs/sophia/student-sync-worker-cutover.md);
 do not leave the legacy scheduler enabled after that cutover. Configure the Xero webhook endpoint as
 `/api/connectors/xero/v1/webhooks`; signed events coalesce into the same durable queue. Candidate acceptance links a

@@ -67,7 +67,7 @@ export class StudentOperationsCaseDocumentsService {
 
   // Called by the dedicated worker, never by a read endpoint. Tenant scope is
   // explicit and each network call runs outside the database transaction.
-  async processOne(tenantId:string):Promise<boolean> {
+  async processOne(tenantId:string,options:{dailyBudget?:boolean}={}):Promise<boolean> {
     caseId(tenantId);
     const token=randomUUID(),s=caseSchema();
     const job=await this.database.tenantTransaction(tenantId,async db=>{
@@ -75,7 +75,7 @@ export class StudentOperationsCaseDocumentsService {
       const result=await db.query(`WITH candidate AS (
         SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND attempts<5 AND next_attempt_at<=now()
           AND (status='queued' OR (status='processing' AND lease_expires_at<now()))
-          ${process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' ? `AND EXISTS (
+          ${process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' || options.dailyBudget ? `AND EXISTS (
             SELECT 1 FROM ${s}.student_operations_sync_checkpoints checkpoint
             JOIN ${s}.student_operations_xero_sync_configurations config USING(customer_id,xero_connection_id)
             JOIN ${s}.customers tenant USING(customer_id)
@@ -87,9 +87,22 @@ export class StudentOperationsCaseDocumentsService {
               AND NOT EXISTS (SELECT 1 FROM ${s}.student_operations_xero_sync_runs active
                 WHERE active.customer_id=checkpoint.customer_id AND active.xero_connection_id=checkpoint.xero_connection_id
                   AND active.status IN ('queued','processing')))` : ''}
+          ${options.dailyBudget ? `AND ${s}.student_operations_document_window()
+            AND NOT EXISTS (SELECT 1 FROM ${s}.student_operations_document_daily_budgets blocked
+              WHERE blocked.customer_id=$1 AND blocked.blocked_until>now())` : ''}
           ORDER BY next_attempt_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1)
+        ${options.dailyBudget ? `, budget AS (
+          INSERT INTO ${s}.student_operations_document_daily_budgets(customer_id,business_date,attempted_sources)
+          SELECT $1::uuid,(now() AT TIME ZONE 'Australia/Brisbane')::date,1 FROM candidate
+          ON CONFLICT(customer_id,business_date) DO UPDATE SET
+            attempted_sources=student_operations_document_daily_budgets.attempted_sources+1,updated_at=now()
+          WHERE student_operations_document_daily_budgets.attempted_sources<500
+            AND student_operations_document_daily_budgets.started_at>now()-interval '30 minutes'
+            AND (student_operations_document_daily_budgets.blocked_until IS NULL
+              OR student_operations_document_daily_budgets.blocked_until<=now())
+          RETURNING customer_id)` : ''}
         UPDATE ${s}.student_operations_document_jobs j SET status='processing',attempts=attempts+1,lease_token=$2,lease_expires_at=now()+interval '2 minutes',updated_at=now()
-        FROM candidate c WHERE j.job_id=c.job_id RETURNING j.*`,[tenantId,token]);
+        FROM candidate c${options.dailyBudget ? ',budget' : ''} WHERE j.job_id=c.job_id RETURNING j.*`,[tenantId,token]);
       return result.rows[0];
     });
     if(!job) return false;
@@ -107,7 +120,15 @@ export class StudentOperationsCaseDocumentsService {
       const code=response && typeof response==='object' && 'errorCode' in response ? String(response.errorCode) : 'document_discovery_failed';
       const permanent=code==='xero_attachment_scope_missing' || code==='xero_authorization_rejected';
       const retry=response && typeof response==='object' && 'retryAfterSeconds' in response ? Number(response.retryAfterSeconds) : 60;
-      await this.database.tenantTransaction(tenantId,db=>db.query(`UPDATE ${s}.student_operations_document_jobs SET status=$4,error_code=$5,next_attempt_at=now()+($6 * interval '1 second'),lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND job_id=$2 AND lease_token=$3`,[tenantId,job.job_id,token,permanent || job.attempts>=5 ? 'failed':'queued',code,Math.max(60,Math.min(Number.isFinite(retry)?retry:60,86400))]));
+      await this.database.tenantTransaction(tenantId,async db=>{
+        await db.query(`UPDATE ${s}.student_operations_document_jobs SET status=$4,error_code=$5,next_attempt_at=now()+($6 * interval '1 second'),lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND job_id=$2 AND lease_token=$3`,[tenantId,job.job_id,token,permanent || job.attempts>=5 ? 'failed':'queued',code,Math.max(60,Math.min(Number.isFinite(retry)?retry:60,86400))]);
+        if(options.dailyBudget) await db.query(`UPDATE ${s}.student_operations_document_daily_budgets
+          SET blocked_until=greatest(now()+($2 * interval '1 second'),
+            (((now() AT TIME ZONE 'Australia/Brisbane')::date+1+time '03:00') AT TIME ZONE 'Australia/Brisbane')),
+            updated_at=now()
+          WHERE customer_id=$1 AND business_date=(now() AT TIME ZONE 'Australia/Brisbane')::date`,
+          [tenantId,Math.max(60,Math.min(Number.isFinite(retry)?retry:60,86400))]);
+      });
       // Back off the whole worker on provider failures/rate limiting.
       return false;
     }

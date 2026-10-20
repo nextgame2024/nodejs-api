@@ -1,10 +1,29 @@
 {
   "schemaVersion": 1,
+  "studentSharedWorkerConsolidation": {
+    "updatedOn": "2026-10-20",
+    "plan": "student-sync-performance-plan.json",
+    "runbook": "student-sync-worker-cutover.md",
+    "status": "Implemented and locally verified; one shared worker replaces the earlier two-worker topology and document cron. Not provisioned or deployed by the agent.",
+    "operatorEvidence": "User confirmed Runtime migration 080, identity pipeline columns, no active invoice/user jobs at the time of the check, and both APIs deployed enqueue-only. Render screenshot shows only two APIs plus document and Toolkit email crons. Do not infer current queue emptiness or successful document runs from that screenshot.",
+    "behavior": "One pure sequential coordinator polls the existing invoice and identity queues, preserving their authorization, leases and overnight/manual rules. Documents run only 03:00-06:00 Brisbane for explicit configured tenant IDs after committed identity checkpoints. Two separate capped pools retain the Runtime app-role/identity boundary. No HTTP server or unrelated media/email worker starts.",
+    "documentBudget": "New additive Runtime migration 081: same-transaction budget reservation with each document lease, max 500 source attempts/customer/Brisbane date and 30 minutes from the first eligible claim. Cap/deadline survive restarts; dependency waits do not start the timer. Provider failure pauses discovery until the next document night and at least bounded Retry-After, including across date rollover. Not a global provider API quota.",
+    "artifacts": ["Dockerfile.student-sync", "Dockerfile.student-sync.dockerignore", "scripts/process-student-sync.mjs", "src/workers/student-sync-worker.js", "sophia-runtime/src/operators/shared-student-sync-runtime.ts", "render.student-sync-workers.yaml"],
+    "verification": [
+      "PASS: Runtime npm run build and 38 focused tests, including shared adapter preflight, durable queue delegation and missing attachment-scope holds.",
+      "PASS: 19 coordinator/identity unit tests: daytime queues, Brisbane document boundaries, sequential execution, overlap protection, pacing, scheduling retry, sanitized errors, shutdown and configuration validation.",
+      "PASS: 13 isolated local PostgreSQL pipeline tests with actual migrations 080/081: concurrent/restarted budget claims, cap/time/window enforcement, dependency gating, cross-date provider backoff, mutable-budget tenant RLS and denied deletion; prior lease/checkpoint protections remain.",
+      "PASS: 38 real-estate regression tests and boundary check (286 source files).",
+      "PASS: Compiled Runtime adapter import/close smoke test without provider or database connection; Node syntax checks, plan JSON validation and git diff --check."
+    ],
+    "deployment": "Deploy updated Runtime and apply 081 once; 080/identity migrations need not be repeated. Prepare ONE Background Worker using repository-root Docker context and Dockerfile.student-sync. Copy normal Runtime and identity connections into distinct variables, preserve encryption keys and set pipeline=true on this worker only. Suspend and drain the old document cron before starting shared execution. Keep the Toolkit email cron unchanged.",
+    "limitations": "Docker image build could not run because the local Docker daemon is stopped (confirmed after escalated socket check); Render build/startup remain unverified. No hosting resource or provider call was executed and no production data/migration changed. Phase 4 shared API quota/source deduplication and production overnight/p95 verification remain open."
+  },
   "studentNightlyWorkerPhase3": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",
     "runbook": "student-sync-worker-cutover.md",
-    "status": "Implemented and locally verified; opt-in production rollout pending. No infrastructure provisioned or production migrations applied.",
+    "status": "Historical separate-worker implementation; deployment topology superseded by studentSharedWorkerConsolidation. User subsequently confirmed 080/identity migrations and enqueue-only API deployments. Agent provisioned no infrastructure or production migration.",
     "behavior": "Dedicated invoice and identity process entrypoints; API enqueue-only flags preserve legacy behavior until cutover. Automatic invoice claims are gated to 01:00-06:00 Brisbane with next-night success scheduling. Manual jobs remain available any time. Post-import identity preview/apply publishes a same-transaction per-connection watermark checkpoint; document jobs wait for it and for active imports to finish. Runtime checkpoint access is tenant-RLS SELECT-only.",
     "deployment": "Requires Runtime migration 080, identity bm_xero_student_worker_pipeline.sql, both code deployments, two explicitly provisioned workers and all-replica execution-mode cutover. Optional worker blueprint is separate to avoid accidental cost or duplicate scheduling. Existing document cron budget remains unchanged.",
     "verification": [
