@@ -83,42 +83,52 @@ export class StudentOperationsWorkspaceService {
       const resolution = await this.database.transaction(async (client) => {
       let stageStartedAt = performance.now();
       const customer = await client.query<CustomerRow>(
-        `SELECT customer_id, external_company_id
+        `WITH matching_customers AS MATERIALIZED (
+         SELECT customer_id, external_company_id
            FROM ${schema}.customers
           WHERE external_company_id = $1 AND status = 'active'
-          LIMIT 2`,
+          LIMIT 2
+         )
+         SELECT customer_id, external_company_id,
+                set_config('sophia.tenant_id', customer_id::text, true) AS tenant_context
+           FROM matching_customers
+          WHERE (SELECT count(*) FROM matching_customers) = 1`,
         [identity.companyId],
       );
-      durations.customerLookupMs = elapsedMs(stageStartedAt);
+      durations.customerContextMs = elapsedMs(stageStartedAt);
       if (customer.rows.length !== 1) return { kind: "customer_invalid" as const };
 
       const tenant = customer.rows[0];
       stageStartedAt = performance.now();
-      await client.query("SELECT set_config('sophia.tenant_id', $1, true)", [tenant.customer_id]);
-      durations.tenantContextMs = elapsedMs(stageStartedAt);
-      stageStartedAt = performance.now();
+      // Tenant context was set by the completed preceding statement. Keep the
+      // entitlement read in a separate statement so RLS cannot run before it.
+      // The data-modifying CTE audits both allowed and denied access exactly once.
       const entitlement = await client.query<EntitlementRow>(
-        `SELECT entitlement_id, customer_id, identity_user_id, role_key, authorization_revision
+        `WITH entitlement AS MATERIALIZED (
+         SELECT entitlement_id, customer_id, identity_user_id, role_key, authorization_revision
            FROM ${schema}.business_pack_entitlements
           WHERE customer_id = $1 AND identity_user_id = $2
             AND pack_id = $3 AND status = 'active'
-          LIMIT 2`,
-        [tenant.customer_id, identity.userId, PACK_ID],
+          LIMIT 2
+         ), access_audit AS (
+           INSERT INTO ${schema}.business_pack_access_audit_events
+             (customer_id, identity_user_id, pack_id, event_type, outcome, correlation_id, metadata)
+           SELECT $1, $2, $3, 'business_pack.workspace.access',
+                  CASE WHEN (SELECT count(*) FROM entitlement) = 1 THEN 'allowed' ELSE 'denied' END,
+                  $4, CASE WHEN (SELECT count(*) FROM entitlement) = 1
+                    THEN '{}'::jsonb ELSE '{"reason":"entitlement_missing"}'::jsonb END
+           RETURNING 1
+         )
+         SELECT entitlement.* FROM entitlement CROSS JOIN access_audit
+          WHERE (SELECT count(*) FROM entitlement) = 1`,
+        [tenant.customer_id, identity.userId, PACK_ID, correlationId],
       );
-      durations.entitlementLookupMs = elapsedMs(stageStartedAt);
+      durations.entitlementAuditMs = elapsedMs(stageStartedAt);
       if (entitlement.rows.length !== 1) {
-        stageStartedAt = performance.now();
-        await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
-          "denied", correlationId, { reason: "entitlement_missing" });
-        durations.auditInsertMs = elapsedMs(stageStartedAt);
         return { kind: "entitlement_missing" as const };
       }
 
       const row = entitlement.rows[0];
-      stageStartedAt = performance.now();
-      await this.insertAudit(client, schema, tenant.customer_id, identity.userId,
-        "allowed", correlationId, {});
-      durations.auditInsertMs = elapsedMs(stageStartedAt);
       stageStartedAt = performance.now();
       const summary = includeDashboardSummary
         ? await this.loadStudentSummary(client, schema, tenant.customer_id,

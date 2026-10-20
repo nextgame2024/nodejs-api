@@ -13,7 +13,6 @@ function harness(entitled = true) {
       rows: [{ customer_id: tenantId, external_company_id: companyId }],
       rowCount: 1,
     })
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
     .mockResolvedValueOnce({
       rows: entitled ? [{
         entitlement_id: entitlementId,
@@ -73,10 +72,8 @@ describe("StudentOperationsWorkspaceService", () => {
         phase: "workspace-resolution",
         correlationId: "correlation-3",
         outcome: "ok",
-        customerLookupMs: expect.any(Number),
-        tenantContextMs: expect.any(Number),
-        entitlementLookupMs: expect.any(Number),
-        auditInsertMs: expect.any(Number),
+        customerContextMs: expect.any(Number),
+        entitlementAuditMs: expect.any(Number),
         dbPoolAcquireMs: 5,
         totalMs: expect.any(Number),
       }));
@@ -96,7 +93,7 @@ describe("StudentOperationsWorkspaceService", () => {
     }, "correlation-2")).rejects.toBeInstanceOf(ForbiddenException);
     expect(clientQuery).toHaveBeenCalledWith(
       expect.stringContaining("business_pack_access_audit_events"),
-      expect.arrayContaining([tenantId, "user-1", "student-operations", "denied"]),
+      [tenantId, "user-1", "student-operations", "correlation-2"],
     );
   });
 

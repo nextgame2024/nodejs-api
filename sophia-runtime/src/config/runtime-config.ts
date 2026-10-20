@@ -10,6 +10,7 @@ export type RuntimeConfig = {
   databaseUrl: string;
   databaseSsl: boolean;
   databasePoolSize: number;
+  databaseIdleTimeoutMs: number;
   databaseRole?: string;
   schema: string;
   defaultCustomerId?: string;
@@ -158,6 +159,7 @@ export function runtimeConfig(): RuntimeConfig {
     databaseUrl,
     databaseSsl: parseBoolean(process.env.SOPHIA_RUNTIME_DB_SSL, true),
     databasePoolSize: Number(process.env.SOPHIA_RUNTIME_DB_POOL_SIZE || 5),
+    databaseIdleTimeoutMs: clampNumber(Number(process.env.SOPHIA_RUNTIME_DB_IDLE_TIMEOUT_MS || 60000), 1000, 300000),
     databaseRole,
     schema,
     defaultCustomerId: emptyToUndefined(process.env.SOPHIA_DEFAULT_CUSTOMER_ID),

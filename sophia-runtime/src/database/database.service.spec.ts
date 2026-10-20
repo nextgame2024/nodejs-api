@@ -109,11 +109,37 @@ describe("DatabaseService tenant transactions", () => {
     };
     await expect(service.query("SELECT 1 AS value")).resolves.toEqual({ rows: [{ value: 1 }] });
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
-      "BEGIN",
-      'SET LOCAL ROLE "sophia_runtime_app"',
+      'BEGIN; SET LOCAL ROLE "sophia_runtime_app"',
       "SELECT 1 AS value",
       "COMMIT",
     ]);
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it('distinguishes new client acquisition from reuse and records pool queue state', async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
+    const service = new DatabaseService();
+    (service as unknown as { pool: unknown }).pool = {
+      connect: jest.fn().mockResolvedValue(client), totalCount: 1, idleCount: 1, waitingCount: 0,
+    };
+    const observations: unknown[] = [];
+    await service.transaction(async () => 'first', value => observations.push(value));
+    await service.transaction(async () => 'second', value => observations.push(value));
+    expect(observations[0]).toMatchObject({ poolNewConnection: 1, poolTotalBefore: 1, poolIdleBefore: 1, poolWaitingBefore: 0 });
+    expect(observations[1]).toMatchObject({ poolNewConnection: 0 });
+  });
+
+  it('keeps idle connections briefly without changing the configured maximum pool size', async () => {
+    const previous = process.env.SOPHIA_RUNTIME_DB_IDLE_TIMEOUT_MS;
+    delete process.env.SOPHIA_RUNTIME_DB_IDLE_TIMEOUT_MS;
+    const service = new DatabaseService();
+    try {
+      const pool = (service as unknown as { pool: { options: { idleTimeoutMillis: number; max: number } } }).pool;
+      expect(pool.options.idleTimeoutMillis).toBe(60000);
+      expect(pool.options.max).toBe(5);
+    } finally {
+      await service.onModuleDestroy();
+      if (previous !== undefined) process.env.SOPHIA_RUNTIME_DB_IDLE_TIMEOUT_MS = previous;
+    }
   });
 });

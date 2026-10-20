@@ -39,8 +39,8 @@ describe("Student Operations register query", () => {
             advisor_name: null, college_id: null, college_name: null, register_status: "not_started",
             attention_reason: null, case_count: 0, next_due_on: null, filtered_total: 1, total: 1 }] };
         }
-        if (sql.includes("SELECT directory.advisor_id, directory.code, directory.name")) {
-          return { rows: [{ advisor_id: "22222222-2222-4222-8222-222222222222", code: "S69", name: "Pedro Muñoz" }] };
+        if (sql.includes("AS cases,")) {
+          return { rows: [{ cases: [], advisors: [{ advisor_id: "22222222-2222-4222-8222-222222222222", code: "S69", name: "Pedro Muñoz" }], colleges: [] }] };
         }
         return { rows: [] };
       }),
@@ -57,7 +57,8 @@ describe("Student Operations register query", () => {
     const result = await service.list(principal, {});
     expect(result.students[0]).toMatchObject({ recordDate: "2026-10-16" });
     expect(result.options.advisors).toEqual([{ advisorId: "22222222-2222-4222-8222-222222222222", code: "S69", name: "Pedro Muñoz" }]);
-    expect(queries.find(sql => sql.includes("SELECT directory.advisor_id"))).toContain("directory.customer_id = $1 AND directory.status = 'active'");
+    expect(queries).toHaveLength(2);
+    expect(queries[1]).toContain("directory.customer_id = $1 AND directory.status = 'active'");
     expect(queries[0]).toContain("coalesce(d.opened_on, r.account_created_at::date)::text AS record_date");
     expect(queries[0]).toContain("ORDER BY c.record_date DESC NULLS LAST,\n                      lower(c.legal_name) ASC, c.user_id ASC");
 

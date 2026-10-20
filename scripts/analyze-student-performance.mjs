@@ -4,11 +4,11 @@ import { pathToFileURL } from 'node:url';
 const prefix = '/api/business-packs/student-operations/v1/';
 const operations = new Set(['students','payments','payments-initial','payment-tracks','sync-status','xero-status','workspace','case-documents','workspace-other']);
 const metricNames = ['totalMs','identityMs','entitlementMs','dbPoolAcquireMs','dbSetupMs','dbWorkMs',
-  'dbCommitMs','registerQueryMs','invoiceQueryMs','caseLinksMs','optionsMs'];
+  'dbCommitMs','registerQueryMs','invoiceQueryMs','caseLinksMs','optionsMs','metadataQueryMs','customerContextMs','entitlementAuditMs'];
 const validNumber = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const validCorrelation = value => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,160}$/.test(value);
 const serverMetrics = new Set(['app', ...['guard','workspace','register','xero_status','invoices','tracks']
-  .flatMap(phase => ['total','identity','access','pool','setup','db_work','commit','query','cases','options'].map(metric => `${phase}_${metric}`))]);
+  .flatMap(phase => ['total','identity','access','pool','setup','db_work','commit','query','cases','options','metadata','customer_context','entitlement_audit'].map(metric => `${phase}_${metric}`))]);
 
 function operationFor(pathname) {
   if (/\/student-register$/.test(pathname)) return 'students';

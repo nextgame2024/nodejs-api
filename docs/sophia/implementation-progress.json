@@ -1,17 +1,26 @@
 {
   "schemaVersion": 1,
+  "studentDatabaseRoundTripFollowUp": {
+    "updatedOn": "2026-10-20",
+    "plan": "student-sync-performance-plan.json",
+    "evidence": "Authenticated screenshots: Students app 2942ms, access resolution 1086ms, register 1583ms; Payments app 3995ms with 1094ms pool acquisition. Setup, commit and small queries commonly take about 180ms. Neon is in Sydney. User confirms both Render APIs are in Singapore, with Runtime settings screenshot corroboration. Cross-region database access is a likely latency contributor, not proof that all observed delay is network time.",
+    "behavior": "Workspace resolution and audit use two statements with RLS context established before entitlement reads; register cases/options use one combined metadata statement. Direct queries reuse batched role setup. Idle connection reuse defaults to 60 seconds with unchanged maximum pool size; timing describes new/reused connections and pool state. No auth/data cache or schema change.",
+    "verification": ["PASS: 42 focused Runtime tests and Runtime build.", "PASS: 8 isolated local PostgreSQL RLS/audit/rollback/metadata tests.", "PASS: 24 real-estate tests plus database regressions; 3 analyzer tests.", "PASS: Read-only production metadata comparison found identical chief and assigned-scope results; new SQL execution 31ms and 7ms, excluding network latency."],
+    "deployment": "New changes require Runtime deployment only. No production mutation, migration or live Xero call performed. New full-page latency and p95 are not yet measured.",
+    "infrastructureNextStep": "Evaluate API/database colocation after deploying batching. Render does not currently list Sydney; Neon supports Singapore but requires a new project and controlled data migration. Confirm residency and explicit migration approval first. The performance plan records backup, all-consumer cutover, RLS validation and rollback gates. No region change performed."
+  },
   "studentListInitialLoadFollowUp": {
     "updatedOn": "2026-10-20",
     "evidence": "User screenshots show Students register/workspace 4.23/4.34s and Payments workspace/connection/invoice requests 2.83/2.17/2.58s. Code confirms serial Payments dependencies. A read-only unauthenticated deployed request confirmed timing headers are enabled; no authenticated timing phase values were available.",
     "behavior": "Students receives workspace context with its list. Payments bootstraps workspace, server-selected Trust connection and invoices in one guarded request, then loads optional status/filter metadata. Existing pagination/filter endpoints and older-server fallback remain. No new auth/data caches; non-integration roles cannot use the bootstrap to read integration data.",
     "verification": ["PASS: 61 focused ChromeHeadless page/service tests, including new single-request loads, older-server fallback, access denial, restored pagination and changes to filters while loading.", "PASS: 27 Runtime tests for controllers, timing, Xero query contracts and guard behavior; Runtime build.", "PASS: 3 offline analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."],
-    "deployment": "New Runtime/frontend changes not deployed. No migrations or production data changes. Full Server-Timing values remain needed to locate remaining per-request delay. Phase 3 overnight orchestration remains planned."
+    "deployment": "Observed live in subsequent user screenshots, including payments-register and the consolidated Students response. Authenticated timing breakdowns received; see studentDatabaseRoundTripFollowUp. No migrations or production data changes. Phase 3 overnight orchestration remains planned."
   },
   "studentPerformanceDiagnosticsPhase2": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",
     "phase1Deployment": "User confirmed phase 1 deployment. Actual Render schedule activation and absence of duplicate cron jobs have not been independently verified.",
-    "status": "Diagnostic timing headers are observed live. Screenshot request times recorded; complete authenticated timing phase values still pending. Initial-request consolidation is implemented locally and awaiting deployment.",
+    "status": "Diagnostic timing headers and initial-request consolidation are observed live. Authenticated phase values identify repeated database round trips and slow connection acquisition. Batching and connection-reuse follow-up is implemented locally; see studentDatabaseRoundTripFollowUp.",
     "behavior": "Opt-in request-local Server-Timing measurements and HTTP completion logs correlate existing identity, workspace and list timings. Approved CORS origins can inspect response timing headers. Offline analyzer summarizes browser HAR and Runtime logs without emitting URLs, query strings, credentials, response bodies or student data. No new authentication or data caches were introduced.",
     "verification": [
       "PASS: 37 focused Runtime tests, including concurrent request isolation, disabled diagnostics, error status, CORS, guard correlation and existing authorization/register/sync regressions.",
@@ -19,7 +28,7 @@
       "PASS: Runtime npm run typecheck and npm run build.",
       "OBSERVED: Two read-only deployed health probes per service returned HTTP 200. Runtime first observed/subsequent elapsed times 2240/940ms; Business Manager 493/810ms from the development machine. This does not establish authenticated latency, p95 or cold-start behavior."
     ],
-    "remaining": "Deploy Runtime with SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily and collect authenticated HAR/log samples for sync-idle and sync-active periods. Hosting region, instance sleep behavior, authenticated p95 and active-sync contention remain unverified. No hosting-log connector or authenticated browser session is available in this workspace. Phase 3 dedicated overnight pipeline remains planned. No production writes, schedule changes or live Xero calls performed in this phase."
+    "remaining": "Deploy the Runtime round-trip follow-up with timing temporarily enabled and collect authenticated HAR/log samples for sync-idle and sync-active periods. Singapore APIs and Sydney Neon are confirmed. Instance sleep behavior, authenticated p95 and active-sync contention remain unverified. No hosting-log connector or authenticated browser session is available in this workspace. Phase 3 dedicated overnight pipeline remains planned. No production writes, schedule changes or live Xero calls performed in this phase."
   },
   "studentSyncPerformanceFollowUp": {
     "updatedOn": "2026-10-20",

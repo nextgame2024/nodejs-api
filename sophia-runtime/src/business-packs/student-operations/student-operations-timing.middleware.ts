@@ -58,18 +58,26 @@ export function classifyStudentOperationsRequest(pathname: string): string {
 
 function serverTiming(records: StudentOperationsTimingRecord[], totalMs: number): string {
   const metrics = new Map<string, number>([['app', totalMs]]);
+  const descriptions: string[] = [];
   const aliases: Record<string, string> = { 'workspace-guard': 'guard', 'workspace-resolution': 'workspace',
     'student-register': 'register', 'xero-status': 'xero_status', 'xero-invoices': 'invoices', 'xero-payment-tracks': 'tracks' };
   const fields: Record<string, string> = { totalMs: 'total', identityMs: 'identity', entitlementMs: 'access',
     dbPoolAcquireMs: 'pool', dbSetupMs: 'setup', dbWorkMs: 'db_work', dbCommitMs: 'commit',
-    registerQueryMs: 'query', invoiceQueryMs: 'query', caseLinksMs: 'cases', optionsMs: 'options' };
+    registerQueryMs: 'query', invoiceQueryMs: 'query', metadataQueryMs: 'metadata',
+    customerContextMs: 'customer_context', entitlementAuditMs: 'entitlement_audit',
+    caseLinksMs: 'cases', optionsMs: 'options' };
   for (const record of records) {
     const prefix = aliases[record.phase];
     if (!prefix) continue;
+    const counts = ['dbPoolNewConnection','dbPoolTotalBefore','dbPoolIdleBefore','dbPoolWaitingBefore']
+      .map(field => record.durations[field]);
+    if (counts.every(value => Number.isSafeInteger(value) && value >= 0)) {
+      descriptions.push(`${prefix}_pool_state;desc="new=${counts[0]} total=${counts[1]} idle=${counts[2]} waiting=${counts[3]}"`);
+    }
     for (const [field, alias] of Object.entries(fields)) {
       const value = record.durations[field];
       if (typeof value === 'number' && Number.isFinite(value) && value >= 0) metrics.set(`${prefix}_${alias}`, value);
     }
   }
-  return [...metrics].map(([name, value]) => `${name};dur=${value.toFixed(2)}`).join(', ');
+  return [...[...metrics].map(([name, value]) => `${name};dur=${value.toFixed(2)}`), ...descriptions].join(', ');
 }

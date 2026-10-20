@@ -1,6 +1,5 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { performance } from "node:perf_hooks";
-import type { PoolClient } from "pg";
 import { z } from "zod";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
@@ -120,18 +119,23 @@ export class StudentOperationsRegisterService {
         query.limit, (query.page - 1) * query.limit]);
       durations.registerQueryMs = elapsedMs(registerStartedAt);
       const pageRows = register.rows.filter((row) => Boolean(row.user_id));
-      const caseLinksStartedAt = performance.now();
-      const cases = await loadCaseLinks(client, schema, principal, pageRows);
-      durations.caseLinksMs = elapsedMs(caseLinksStartedAt);
+      const metadataStartedAt = performance.now();
+      const metadata = await client.query<RegisterMetadataRow>(buildStudentRegisterMetadataSql(schema), [
+        principal.tenantId, advisorScope,
+        pageRows.map(row => row.profile_id).filter((id): id is string => Boolean(id)),
+      ]);
+      durations.metadataQueryMs = elapsedMs(metadataStartedAt);
+      const { cases, advisors, colleges } = metadata.rows[0];
       const caseMap = new Map<string, CaseLinkRow[]>();
       for (const row of cases) {
         const list = caseMap.get(row.user_id) ?? [];
         list.push(row);
         caseMap.set(row.user_id, list);
       }
-      const optionsStartedAt = performance.now();
-      const options = await loadOptions(client, schema, principal);
-      durations.optionsMs = elapsedMs(optionsStartedAt);
+      const options = {
+        advisors: advisors.map(row => ({ advisorId: row.advisor_id, code: row.code, name: row.name })),
+        colleges: colleges.map(row => ({ collegeId: row.college_id, name: row.college_name })),
+      };
       const fullPayment = principal.role !== "advisor";
       const totals = register.rows[0];
       return {
@@ -319,36 +323,31 @@ export function buildStudentRegisterCohortSql(schema: string): string {
     )`;
 }
 
-async function loadCaseLinks(
-  client: PoolClient, schema: string, principal: StudentOperationsWorkspacePrincipal,
-  page: RegisterRow[],
-): Promise<CaseLinkRow[]> {
-  const profileIds = page.map((row) => row.profile_id).filter((id): id is string => Boolean(id));
-  if (!profileIds.length) return [];
-  const result = await client.query<CaseLinkRow>(
-    `SELECT l.user_id, c.case_id, c.case_reference, c.lifecycle_status,
-            c.opened_on::text AS opened_on
+type RegisterMetadataRow = {
+  cases: CaseLinkRow[];
+  advisors: Array<{ advisor_id: string; code: string; name: string }>;
+  colleges: Array<{ college_id: string | null; college_name: string }>;
+};
+
+// pg queues queries on a single client even inside Promise.all. Aggregate these
+// independent lookups in one statement to avoid three serial network round trips.
+export function buildStudentRegisterMetadataSql(schema: string): string {
+  return `SELECT
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'user_id', l.user_id, 'case_id', c.case_id, 'case_reference', c.case_reference,
+      'lifecycle_status', c.lifecycle_status, 'opened_on', c.opened_on::text)
+      ORDER BY c.created_at DESC, c.case_id DESC)
        FROM ${schema}.student_operations_cases c
        JOIN ${schema}.student_operations_student_user_links l
          ON l.customer_id = c.customer_id AND l.student_id = c.student_id
-      WHERE c.customer_id = $1 AND c.student_id = ANY($2::uuid[])
-        AND ($3::text IS NULL OR EXISTS (
+      WHERE c.customer_id = $1 AND c.student_id = ANY($3::uuid[])
+        AND ($2::text IS NULL OR EXISTS (
           SELECT 1 FROM ${schema}.student_operations_case_advisors ca
            WHERE ca.customer_id = c.customer_id AND ca.case_id = c.case_id
-             AND ca.advisor_user_id::text = $3 AND ca.is_primary))
-      ORDER BY c.created_at DESC, c.case_id DESC`,
-    [principal.tenantId, profileIds,
-      principal.role === "advisor" ? principal.identityUserId : null],
-  );
-  return result.rows;
-}
-
-async function loadOptions(client: PoolClient, schema: string,
-  principal: StudentOperationsWorkspacePrincipal) {
-  const advisorScope = principal.role === "advisor" ? principal.identityUserId : null;
-  const [advisors, colleges] = await Promise.all([
-    client.query<{ advisor_id: string; code: string; name: string }>(
-      `SELECT directory.advisor_id, directory.code, directory.name
+             AND ca.advisor_user_id::text = $2 AND ca.is_primary))), '[]'::jsonb) AS cases,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'advisor_id', directory.advisor_id, 'code', directory.code, 'name', directory.name)
+      ORDER BY lower(directory.name), directory.advisor_id)
          FROM ${schema}.student_operations_advisor_directory directory
         WHERE directory.customer_id = $1 AND directory.status = 'active'
           AND ($2::text IS NULL OR EXISTS (
@@ -359,12 +358,10 @@ async function loadOptions(client: PoolClient, schema: string,
               ON mine.customer_id = c.customer_id AND mine.case_id = c.case_id
              AND mine.is_primary AND mine.advisor_user_id::text = $2
             WHERE student.customer_id = directory.customer_id
-              AND student.advisor_id = directory.advisor_id))
-        ORDER BY lower(directory.name), directory.advisor_id`,
-      [principal.tenantId, advisorScope],
-    ),
-    client.query<{ college_id: string | null; college_name: string }>(
-      `SELECT min(source.college_id) AS college_id, source.college_name
+              AND student.advisor_id = directory.advisor_id))), '[]'::jsonb) AS advisors,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'college_id', grouped.college_id, 'college_name', grouped.college_name) ORDER BY grouped.college_name)
+      FROM (SELECT min(source.college_id) AS college_id, source.college_name
          FROM (
         SELECT col.college_id::text AS college_id, col.college_name
          FROM ${schema}.student_operations_colleges col
@@ -395,15 +392,7 @@ async function loadOptions(client: PoolClient, schema: string,
            AND coalesce(nullif(btrim(i.invoice_reference), ''),
                         nullif(btrim(i.college_name), '')) IS NOT NULL
          ) source
-        GROUP BY source.college_name
-        ORDER BY source.college_name`,
-      [principal.tenantId, advisorScope],
-    ),
-  ]);
-  return {
-    advisors: advisors.rows.map((row) => ({ advisorId: row.advisor_id, code: row.code, name: row.name })),
-    colleges: colleges.rows.map((row) => ({ collegeId: row.college_id, name: row.college_name })),
-  };
+        GROUP BY source.college_name) grouped), '[]'::jsonb) AS colleges`;
 }
 
 function escapeLike(value: string): string {

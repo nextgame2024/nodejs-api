@@ -42,7 +42,8 @@ describe('Student Operations request timings', () => {
       middleware(req as never, res as never, () => {
         setTimeout(() => {
           logStudentOperationsTiming('workspace-guard', `trace-${i}`, 'ok', { totalMs: duration, identityMs: duration - 1 });
-          logStudentOperationsTiming('student-register', `trace-${i}`, 'ok', { registerQueryMs: duration, dbPoolAcquireMs: 2 });
+          logStudentOperationsTiming('student-register', `trace-${i}`, 'ok', { registerQueryMs: duration, dbPoolAcquireMs: 2,
+            dbPoolNewConnection: i === 0 ? 1 : 0, dbPoolTotalBefore: 2, dbPoolIdleBefore: 0, dbPoolWaitingBefore: 0 });
           expect(res.end('response-body')).toBe('response-body'); resolve(res);
         }, i === 0 ? 5 : 0);
       });
@@ -50,6 +51,8 @@ describe('Student Operations request timings', () => {
     expect(results[0].headers.get('Server-Timing')).toContain('register_query;dur=17.00');
     expect(results[0].headers.get('Server-Timing')).not.toContain('93.00');
     expect(results[1].headers.get('Server-Timing')).toContain('register_query;dur=93.00');
+    expect(results[0].headers.get('Server-Timing')).toContain('register_pool_state;desc="new=1 total=2 idle=0 waiting=0"');
+    expect(results[1].headers.get('Server-Timing')).toContain('register_pool_state;desc="new=0 total=2 idle=0 waiting=0"');
     expect(results[0].headers.get('Timing-Allow-Origin')).toBe('https://sophiaai.com.au');
     const logs = log.mock.calls.map(call => JSON.parse(String(call[0])));
     expect(logs.filter(item => item.phase === 'http-request')).toEqual(expect.arrayContaining([

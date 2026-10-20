@@ -1,10 +1,10 @@
 {
   "date": "2026-10-20",
   "timezone": "Australia/Brisbane",
-  "status": "Phase 1 deployed. Phase 2 timing headers observed live; screenshot evidence identified repeated access checks and serial Payments loading. Initial-load request consolidation is implemented locally and awaiting Runtime/frontend deployment. Full authenticated timing breakdowns and phase 3 overnight orchestration remain pending.",
+  "status": "Phase 1 and initial-request consolidation are observed live in user screenshots. Authenticated Server-Timing samples identify database round-trip overhead and expensive connection acquisition. Runtime batching, bounded idle-connection reuse and pool-state diagnostics are implemented locally; deployment and regional-alignment verification pending. Phase 3 overnight orchestration remains planned.",
   "deploymentEvidence": {
     "phase1": {"date": "2026-10-20", "source": "User confirmed phase 1 deployed", "hostingScheduleIndependentlyVerified": false},
-    "phase2": {"state": "timing_headers_observed_live", "evidence": "Read-only unauthenticated workspace request returned 401 with Server-Timing app;dur=1.14, X-Correlation-ID and Timing-Allow-Origin http://localhost:4200. Confirms diagnostics are enabled; does not measure authenticated access or query time.", "requires": "Deploy the new request-consolidation changes to Runtime and frontend; no database migration required."}
+    "phase2": {"state": "authenticated_timings_and_consolidation_observed_live", "evidence": "User supplied payments-register, student-sync and student-register Server-Timing headers after deployment. Payments uses the new bootstrap endpoint, and Students no longer makes a separate workspace request.", "requires": "Deploy the new Runtime round-trip/connection-reuse changes; no frontend update or database migration required for this follow-up."}
   },
   "findings": [
     "Normal list endpoints already use tenant-scoped local database records, not live Xero requests.",
@@ -37,6 +37,41 @@
     {"phase": 4, "state": "planned", "action": "Confirm the Xero app tier and actual remaining daily allowance; add shared budget accounting, source deduplication, changed-source enqueueing and alerting before accelerating the historical document backlog."}
   ],
   "phase2Diagnostics": {
+    "roundTripFollowUp": {
+      "source": "Authenticated Server-Timing headers supplied by user on 2026-10-20",
+      "studentsMs": {"app": 2942.15, "workspace": 1086.10, "workspacePool": 0.28, "workspaceSetup": 179.85, "workspaceWork": 724.71, "workspaceCommit": 181.14, "identity": 267.44, "register": 1583.17, "registerQuery": 649.89, "caseLinks": 181.86, "filterOptions": 388.64},
+      "paymentsMs": {"app": 3995.32, "workspace": 2184.84, "workspacePool": 1093.69, "identity": 301.58, "connectionStatus": 559.56, "invoices": 927.93, "invoiceQuery": 383.78},
+      "syncStatusMs": {"app": 3536.54, "workspace": 2328.87, "workspacePool": 1164.02, "identity": 240.51},
+      "interpretation": "Many separate database operations cost 179-196ms. Workspace work has four sequential statements; case links plus two filter-option statements add three more round trips after the register query. Pool acquisition includes connection creation and possible queueing; screenshots alone do not distinguish them. No sync-contention or p95 conclusion is drawn from these samples.",
+      "changes": [
+        "Workspace resolution now uses two parameterized statements: resolve one active company/customer and set transaction-local tenant context, then read active entitlements and append exactly one allowed/denied audit event atomically. Tenant-scoped entitlement reads remain in a later statement so RLS cannot evaluate before context is set. Ambiguous/absent company bindings still fail closed.",
+        "Students keeps its main paginated query and combines case links, advisor choices and college choices into one aggregate metadata query. Four statements become two without changing role scope, sorting or filter contents.",
+        "Generic direct DatabaseService.query uses the existing batched BEGIN/SET LOCAL ROLE transaction helper. Effective runtime role and transaction cleanup are retained.",
+        "Idle client connections are retained for 60 seconds rather than the installed pg-pool default of 10 seconds. SOPHIA_RUNTIME_DB_IDLE_TIMEOUT_MS can override this within 1-300 seconds. Maximum pool size is unchanged.",
+        "Timing headers and logs distinguish new/reused client acquisition and record total/idle/waiting counts before acquisition. The metadata and combined access-query durations have their own metrics."
+      ],
+      "verification": [
+        "PASS: 42 focused Runtime tests and build.",
+        "PASS: 8 isolated PostgreSQL tests using the non-BYPASSRLS runtime role for allow/deny auditing, company ambiguity, role/tenant isolation, rollback and metadata scope.",
+        "PASS: 24 real-estate regression tests (31 tests including the then-current database suite).",
+        "PASS: 3 offline analyzer tests and git diff --check.",
+        "PASS: Read-only production comparison of all metadata fields for a 25-profile sample: chief 25 cases/18 advisors/730 colleges; assigned scope 2 cases/2 advisors/2 colleges. Old/new results identical in both scopes. New SQL execution 31ms/7ms, excluding network round trips."
+      ],
+      "infrastructure": {
+        "databaseRegion": "ap-southeast-2 (Sydney), confirmed from configured Neon connection hostname",
+        "renderRegions": "Singapore, confirmed by user for both APIs and by the Runtime Render settings screenshot on 2026-10-20.",
+        "interpretation": "Cross-region database access is confirmed and is a likely contributor to repeated 179-196ms operations. These samples do not isolate physical network latency from proxy, database or transaction overhead, or prove sync contention.",
+        "recommendation": "Deploy the verified Runtime batching first and measure warm/new connections. Then evaluate colocating APIs and database. If non-Australian database residency is acceptable, a new Neon Singapore project is the least application-hosting change; if Australian residency is required, retain Sydney data and evaluate Sydney API hosting instead. Render currently does not list Sydney. Do not migrate production as part of this code deployment.",
+        "cutoverGates": [
+          "Confirm data-residency requirements, all database consumers and explicit infrastructure migration approval before creating or copying production data.",
+          "Neon region is fixed per project: use a new project, not a branch. Rehearse a migration with the same PostgreSQL version; verify roles, grants, FORCE RLS, extensions, sequences and application behavior, not only row counts.",
+          "Plan backup, write quiescence or validated replication, pause all writers/schedulers during final cutover, update every consumer connection string, and validate invoice links, advisor reconciliation and document jobs before resuming. Retain the source without deleting it; rollback after target writes requires reconciliation, not a blind connection-string reversal.",
+          "Compare authenticated p50/p95 and pool-state metrics before and after. Same-region hosting reduces a source of latency but is not a guarantee of a particular page time."
+        ],
+        "references": ["https://render.com/docs/regions", "https://neon.com/docs/introduction/regions", "https://neon.com/docs/import/migrate-neon-to-another-region"]
+      },
+      "deployment": "Runtime deployment only; defaults activate batching and 60-second bounded idle reuse. Keep the timing flag enabled temporarily to compare warm/reused and new connections. No production writes or migration performed."
+    },
     "initialLoadFollowUp": {
       "source": "User screenshots on 2026-10-20 plus frontend request-flow inspection",
       "observedBrowserMs": {"studentRegister": 4230, "studentsWorkspace": 4340, "paymentsWorkspace": 2830, "paymentsConnectionStatus": 2170, "paymentsInvoices": 2580, "paymentsTracks": 3440, "paymentsSyncStatus": 3590},
@@ -49,9 +84,9 @@
         "Initial queries respect restored pagination and filters. Filter changes during loading trigger a fresh invoice query without showing stale bootstrap rows or abandoning the workspace request.",
         "Analyzer distinguishes payments-initial from later payments queries. No authorization or financial-record cache was added."
       ],
-      "deployment": "Runtime plus frontend deployment required. Existing routes are retained for rolling deployments. No migration or production data change.",
+      "deployment": "Observed live in the user's subsequent screenshots: payments-register endpoint and Students response context are active. No migration or production data change.",
       "verification": ["PASS: 61 focused ChromeHeadless page/service tests.", "PASS: 27 focused Runtime tests and build.", "PASS: 3 analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."],
-      "remaining": "Copy the complete Server-Timing value from authenticated student-register and payments-register responses to identify remaining identity, access, pool, setup and query delays. Request-count reduction is verified locally; production speed improvement is not yet measured."
+      "remaining": "Authenticated timing breakdowns received; see roundTripFollowUp. End-to-end p95 and active-sync comparison remain unmeasured."
     },
     "verification": [
       "PASS: 37 Runtime tests across request timing, concurrent request isolation, identity bridge, guard, workspace resolution, register, invoice sync and CORS.",
@@ -85,7 +120,7 @@
     ],
     "remainingEvidence": [
       "No authenticated browser session or hosting log connection is available in this workspace; no application token was generated or authentication bypassed for this audit.",
-      "Authenticated full-page p95, slow identity requests, active-sync contention, cold starts and actual Render service region remain unverified."
+      "Singapore APIs and Sydney Neon are confirmed. Authenticated full-page p95, slow identity requests, active-sync contention and cold starts remain unverified. Infrastructure relocation requires separate residency review and explicit approval."
     ]
   },
   "capacity": {

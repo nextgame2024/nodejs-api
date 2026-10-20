@@ -6,6 +6,9 @@ import { runtimeConfig } from "../config/runtime-config.js";
 export type DatabaseTransactionTimings = Partial<Record<
   "poolAcquireMs" | "setupMs" | "beginMs" | "isolationMs" | "roleMs" |
   "tenantContextMs" | "workMs" | "commitMs" | "rollbackMs" | "totalMs",
+  // Pool acquisition includes new-connection handshakes as well as queue waits.
+  number
+>> & Partial<Record<"poolNewConnection" | "poolTotalBefore" | "poolIdleBefore" | "poolWaitingBefore",
   number
 >>;
 
@@ -24,6 +27,7 @@ function emitTimings(observer: TimingObserver | undefined, timings: DatabaseTran
 export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool;
   private readonly databaseRole?: string;
+  private readonly seenClients = new WeakSet<PoolClient>();
 
   constructor() {
     const config = runtimeConfig();
@@ -31,6 +35,7 @@ export class DatabaseService implements OnModuleDestroy {
     this.pool = new Pool({
       connectionString: config.databaseUrl,
       max: config.databasePoolSize,
+      idleTimeoutMillis: config.databaseIdleTimeoutMs,
       ssl: config.databaseSsl ? { rejectUnauthorized: true } : undefined,
     });
   }
@@ -39,19 +44,7 @@ export class DatabaseService implements OnModuleDestroy {
     text: string,
     params: unknown[] = [],
   ): Promise<QueryResult<T>> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      await this.assumeRuntimeRole(client);
-      const result = await client.query<T>(text, params);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.transaction(client => client.query<T>(text, params));
   }
 
   async ping(): Promise<void> {
@@ -67,7 +60,7 @@ export class DatabaseService implements OnModuleDestroy {
     let stageStartedAt = performance.now();
     let client: PoolClient;
     try {
-      client = await this.pool.connect();
+      client = await this.acquireClient(timings);
       timings.poolAcquireMs = performance.now() - stageStartedAt;
     } catch (error) {
       timings.poolAcquireMs = performance.now() - stageStartedAt;
@@ -126,7 +119,7 @@ export class DatabaseService implements OnModuleDestroy {
     let stageStartedAt = performance.now();
     let client: PoolClient;
     try {
-      client = await this.pool.connect();
+      client = await this.acquireClient(timings);
       timings.poolAcquireMs = performance.now() - stageStartedAt;
     } catch (error) {
       timings.poolAcquireMs = performance.now() - stageStartedAt;
@@ -166,7 +159,13 @@ export class DatabaseService implements OnModuleDestroy {
     await this.pool.end();
   }
 
-  private async assumeRuntimeRole(client: PoolClient): Promise<void> {
-    if (this.databaseRole) await client.query(`SET LOCAL ROLE "${this.databaseRole}"`);
+  private async acquireClient(timings: DatabaseTransactionTimings): Promise<PoolClient> {
+    timings.poolTotalBefore = this.pool.totalCount;
+    timings.poolIdleBefore = this.pool.idleCount;
+    timings.poolWaitingBefore = this.pool.waitingCount;
+    const client = await this.pool.connect();
+    timings.poolNewConnection = this.seenClients.has(client) ? 0 : 1;
+    this.seenClients.add(client);
+    return client;
   }
 }
