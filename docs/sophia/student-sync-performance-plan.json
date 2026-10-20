@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-20",
+  "timezone": "Australia/Brisbane",
+  "status": "First-stage code implemented locally; deployment and remaining orchestration work pending",
+  "findings": [
+    "Normal list endpoints already use tenant-scoped local database records, not live Xero requests.",
+    "Students latest-invoice advisor view was repeatedly evaluated for 1068 students. Read-only EXPLAIN ANALYZE: 8768 ms before, 476 ms with a tenant-scoped MATERIALIZED CTE. An earlier baseline was 9177 ms. These are query timings, not end-to-end page timings.",
+    "Payments invoice query: 85 ms before, 28 ms after removing a correlated full-sync watermark lookup. Both returned identical first-page rows in the same read-only snapshot.",
+    "Invoice sync scheduler runs in the Runtime process when enabled, with a default hourly incremental interval. It can compete with HTTP requests for the same pool and compute.",
+    "Sync users currently applies at 02:00 Brisbane, and also queues review scans when invoice sync completes. It skips active invoice sync runs.",
+    "Document discovery already runs separately, with durable per-source jobs, leases and retries, but was capped at 25 sources per hour.",
+    "No active production contention, API cold-start duration or end-to-end browser latency was proven by this audit. Payments needs correlated timing logs before further changes."
+  ],
+  "implemented": [
+    "Compute latest invoice advisors once per student-register request, retaining RLS and existing assignment rules.",
+    "Compute the Payments full-sync watermark once using authenticated tenant/connection parameters.",
+    "Change document Render cron to 17:00 UTC / 03:00 Brisbane daily. Process at most 500 sources or 30 minutes per invocation, serially, paced 2 seconds apart, stopping on provider backoff. Existing per-source leases and retry state remain authoritative.",
+    "Log batch_finished plus remaining status counts; do not imply the entire backlog finished.",
+    "Separate queued, processing, failed and completed-empty document UI states. Poll stored metadata every 30 seconds while processing or 120 seconds while queued, for at most 30 visible-page refreshes. Stop on completion/error/navigation/destruction; skip hidden tabs. Keep manual status refresh."
+  ],
+  "targetArchitecture": {
+    "interactive": "Serve local read models only. Preserve current records while jobs run. Manual Refresh queues durable work; previews/downloads remain available during the day. Show last successful synchronization and degraded status.",
+    "automaticWindow": "01:00-06:00 Brisbane. Start invoice import at 01:00; perform student linkage and advisor reconciliation after successful import; discover document metadata after linkage. Dependency checkpoints, not just clock offsets, must enforce ordering.",
+    "workerIsolation": "Move invoice and user-sync processing out of HTTP API processes into dedicated workers. Use small separate pools, retain tenant RLS, atomic claims and leases. Disable old scheduler execution only after the replacement worker is proven, without disabling manual enqueue endpoints.",
+    "consistency": "Never mark a source sync successful before its data commits. Resume checkpoints after failures. Keep unmatched invoices Pending action, preserve explicit exclusions and reconcile advisors from the latest dated eligible invoice. Manual daytime imports still need downstream linkage/review reconciliation.",
+    "documents": "Use a shared per-Xero-connection rate budget across imports, discovery and downloads. Honor provider remaining-limit headers and Retry-After. Deduplicate attachment-source discovery across cases and fan out metadata only to authorized linked cases. Queue newly linked or changed sources after import/linking; periodically recheck completed sources for newly added attachments. These capabilities are follow-up work, not implemented by the bounded-batch change.",
+    "freshnessTradeoff": "Nightly automatic imports mean Xero changes can remain invisible until the next successful night. Explicit manual refresh remains available. Do not call the local view live Xero data."
+  },
+  "rollout": [
+    {"phase": 1, "state": "implemented_not_deployed", "action": "Deploy query fixes, document worker and frontend. Apply Render Blueprint schedule to the existing cron and verify no duplicate hourly job remains. No database migration is required for this phase."},
+    {"phase": 2, "state": "planned", "action": "Collect authenticated request timings for Students and Payments: workspace/access calls, pool acquisition, database setup, query execution, total API time and browser waiting time. Compare warm/cold and sync-active/idle samples. Enable SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily. Check API/DB region alignment and hosting sleep behavior. Do not add caches or raise pool sizes without evidence."},
+    {"phase": 3, "state": "planned", "action": "Implement and integration-test a dependency-aware nightly invoice -> student reconciliation -> document pipeline with dedicated workers. Gate automatic creation to the Brisbane window; allow manual jobs at any time. Test UTC boundaries, retries, duplicate schedulers, restart recovery, missing scopes and disabled tenants before changing production schedules."},
+    {"phase": 4, "state": "planned", "action": "Confirm the Xero app tier and actual remaining daily allowance; add shared budget accounting, source deduplication, changed-source enqueueing and alerting before accelerating the historical document backlog."}
+  ],
+  "capacity": {
+    "source": "https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits",
+    "limits": "Xero documents 60 calls/minute and daily per-organisation limits of 1000 for Starter or 5000 for higher tiers. Tier was not verified for this deployment.",
+    "warning": "500 is a source budget per invocation, not a global provider-call quota: retries and other sync/download activity also consume calls. Do not run duplicate cron jobs or repeated manual batches without checking allowance.",
+    "backlog": "The previously observed 6826 queued sources need at least 14 successful nights at 500/night, potentially longer with failures/time limits/new jobs. This change moves load overnight; it does not promise faster total backlog clearance than 25 hourly jobs. Increase throughput only after verifying tier/budget and adding source deduplication."
+  },
+  "acceptanceAndMonitoring": [
+    "Target warm authenticated list API p95 under 1 second and usable list within 2 seconds; these are proposed targets, not measured achievements.",
+    "Compare exact sorted rows, counts, filters and advisor role visibility before/after; verify no tenant leakage.",
+    "Record nightly job heartbeat, last success, queue age, processed/failed sources, retry-after and unresolved invoice count. Alert on a missed nightly run and growing backlog.",
+    "Run a controlled restart during a batch and confirm leases recover without duplicate case documents.",
+    "Rollback code/schedule independently if request latency or provider errors regress. Never reset queues, delete discovered documents or truncate local invoice data."
+  ],
+  "productionMutations": false,
+  "liveXeroCalls": false
+}

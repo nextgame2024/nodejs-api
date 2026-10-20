@@ -1,5 +1,18 @@
 {
   "schemaVersion": 1,
+  "studentSyncPerformanceFollowUp": {
+    "updatedOn": "2026-10-20",
+    "plan": "student-sync-performance-plan.json",
+    "behavior": "Materialize tenant latest-invoice advisors once per register request; parameter-scope Payments full-sync watermark. Document cron configuration is now 03:00 Brisbane with serial 500-source/30-minute batches and remaining-status logging. Documents UI separates queued/processing/failed states and uses bounded visibility-aware metadata polling.",
+    "verification": [
+      "PASS: Read-only tenant-scoped production EXPLAIN ANALYZE measured Students cohort 8768ms before / 476ms after; initial baseline 9177ms. Payments invoice query 85ms before / 28ms after with identical first-page rows.",
+      "PASS: 18 focused Runtime Jest tests and Runtime build.",
+      "PASS: 32 case-page ChromeHeadless tests including narrow/wide light/dark notices, and frontend application TypeScript check.",
+      "PASS: All 1068 student cohort rows identical before/after in one read-only repeatable-read production snapshot.",
+      "PASS: Both repository git diff --check checks."
+    ],
+    "limitations": "No deployment, production writes, migrations or live Xero calls. Measurements are database execution, not full-page latency. Invoice/user worker isolation and dependency-aware overnight orchestration remain planned; their existing schedules are unchanged. Document budget is per invocation, not a shared quota, and the 6826-source backlog needs at least 14 nights at this conservative limit."
+  },
   "paginationMenuAnchorFollowUp": {
     "updatedOn": "2026-10-19",
     "behavior": "Shared upward ManagerSelect menus correct rendered position against the trigger after opening, including offset/filtered/transformed/scaled containing layouts; the menu bottom stays 6px above the selector and aligns to its left edge.",

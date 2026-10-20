@@ -5,7 +5,9 @@ services:
     dockerfilePath: ./sophia-runtime/Dockerfile
     dockerContext: ./sophia-runtime
     dockerCommand: node dist/operators/process-case-documents.js --customer-id 33ed40a6-7f2b-407c-aab2-de76b1cb45a8
-    schedule: "0 * * * *"
+    # Render cron is UTC: 17:00 UTC = 03:00 Australia/Brisbane (no DST).
+    # One bounded batch, at most 500 sources / 30 minutes. Do not duplicate it.
+    schedule: "0 17 * * *"
     envVars:
       # Copy the same values used by sophia-runtime-api. Never use a database
       # owner URL here: the worker must assume sophia_runtime_app and tenant RLS.

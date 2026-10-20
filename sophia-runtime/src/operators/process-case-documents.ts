@@ -7,6 +7,7 @@ import { XeroConnectorService } from '../connectors/xero/xero-connector.service.
 import { StudentOperationsCasesService } from '../business-packs/student-operations/student-operations-cases.service.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { runtimeConfig } from '../config/runtime-config.js';
+import { runDocumentBatch } from './document-batch.js';
 
 const args = process.argv.slice(2);
 const customerIdIndex = args.indexOf('--customer-id');
@@ -40,16 +41,18 @@ try {
         connections: blocked.map(row => ({ connectionId: row.xero_connection_id, queuedJobs: row.jobs })) }));
       process.exitCode = 2;
     } else {
-      let processed = 0;
-      while (processed < 25 && await service.processOne(customerId)) {
-        processed++;
-        if (processed < 25) await new Promise(resolve => setTimeout(resolve, 1500));
-      }
+      const processed = await runDocumentBatch({
+        processOne: () => service.processOne(customerId),
+        maxSources: 500, maxDurationMs: 30 * 60 * 1000,
+      });
       const errors = await db.tenantReadTransaction(customerId, client => client.query<{ error_code: string; jobs: number }>(
         `SELECT error_code, count(*)::int AS jobs FROM ${schema}.student_operations_document_jobs
          WHERE customer_id=$1 AND error_code IS NOT NULL AND updated_at >= $2 GROUP BY error_code`,
         [customerId, startedAt]));
-      console.log(JSON.stringify({ outcome: errors.rows.length ? 'provider_error' : 'finished', processed, errors: errors.rows }));
+      const remaining = await db.tenantReadTransaction(customerId, client => client.query(
+        `SELECT status,count(*)::int AS sources FROM ${schema}.student_operations_document_jobs
+         WHERE customer_id=$1 GROUP BY status`, [customerId]));
+      console.log(JSON.stringify({ outcome: errors.rows.length ? 'provider_error' : 'batch_finished', processed, remaining: remaining.rows, errors: errors.rows }));
       if (errors.rows.length) process.exitCode = 1;
     }
   } else {

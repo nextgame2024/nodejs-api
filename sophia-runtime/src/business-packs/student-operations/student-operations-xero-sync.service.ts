@@ -439,8 +439,8 @@ export class StudentOperationsXeroSyncService {
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
                 FROM ${schema}.student_operations_xero_sync_runs full_run
-               WHERE full_run.customer_id=i.customer_id
-                 AND full_run.xero_connection_id=i.xero_connection_id
+               WHERE full_run.customer_id=$1
+                 AND full_run.xero_connection_id=$2
                  AND full_run.status='succeeded'
                  AND full_run.mode IN ('initial','reconciliation')
             ), seen.created_at)

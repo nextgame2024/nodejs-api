@@ -136,6 +136,8 @@ describe("StudentOperationsXeroSyncService", () => {
       "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
     );
     expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
+    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.customer_id=$1");
+    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.xero_connection_id=$2");
     expect(query.mock.calls.at(-1)?.[0]).toContain("count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()");
   });
 

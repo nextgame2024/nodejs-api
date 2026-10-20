@@ -6,6 +6,9 @@ import type { StudentOperationsWorkspacePrincipal } from "./student-operations-w
 describe("Student Operations register query", () => {
   it("keeps the Xero advisor label separate from the tenant advisor directory", () => {
     const sql = buildStudentRegisterCohortSql("sophia_runtime");
+    expect(sql).toContain('WITH latest_advisors AS MATERIALIZED');
+    expect(sql).toContain('student_operations_latest_invoice_advisors WHERE customer_id = $1');
+    expect(sql).toContain('LEFT JOIN latest_advisors latest_advisor');
     expect(sql).toContain("profile.advisor_id, directory.name AS advisor_name");
     expect(sql).toContain("AS advisor_xero_name");
     expect(sql).toContain("LEFT JOIN sophia_runtime.student_operations_advisor_directory directory");

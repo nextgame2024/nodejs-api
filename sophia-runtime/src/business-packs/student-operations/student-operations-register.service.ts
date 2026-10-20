@@ -179,7 +179,11 @@ export class StudentOperationsRegisterService {
 }
 
 export function buildStudentRegisterCohortSql(schema: string): string {
-  return `WITH visible_cases AS NOT MATERIALIZED (
+  // Evaluate the tenant's authoritative invoice-advisor projection once. Without
+  // this fence PostgreSQL can sort/deduplicate all invoices once per student.
+  return `WITH latest_advisors AS MATERIALIZED (
+      SELECT * FROM ${schema}.student_operations_latest_invoice_advisors WHERE customer_id = $1
+    ), visible_cases AS NOT MATERIALIZED (
       SELECT c.* FROM ${schema}.student_operations_cases c
        WHERE c.customer_id = $1
          AND ($2::text IS NULL OR EXISTS (
@@ -222,7 +226,7 @@ export function buildStudentRegisterCohortSql(schema: string): string {
           ON profile.customer_id = $1 AND profile.student_id = r.profile_id
         LEFT JOIN ${schema}.student_operations_advisor_directory directory
           ON directory.customer_id = profile.customer_id AND directory.advisor_id = profile.advisor_id
-        LEFT JOIN ${schema}.student_operations_latest_invoice_advisors latest_advisor
+        LEFT JOIN latest_advisors latest_advisor
           ON latest_advisor.customer_id = profile.customer_id AND latest_advisor.profile_id = profile.student_id
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS case_count,
