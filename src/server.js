@@ -19,6 +19,6 @@ const port = Number(process.env.PORT || 3300);
   app.listen(port, () => {
     console.log(`API listening on :${port}`);
     startInspectionWorkflow();
-    startStudentUserSyncWorker();
+    if (process.env.STUDENT_USER_SYNC_EXECUTION_MODE !== 'worker') startStudentUserSyncWorker();
   });
 })();

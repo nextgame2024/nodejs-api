@@ -1,0 +1,49 @@
+# OPTIONAL blueprint: creates paid workers only when explicitly applied.
+# Read docs/sophia/student-sync-worker-cutover.md first. Do not apply alongside
+# legacy API workers without completing the ownership-transfer checklist.
+services:
+  - type: worker
+    name: sophia-student-invoice-worker
+    region: singapore
+    runtime: docker
+    dockerfilePath: ./sophia-runtime/Dockerfile
+    dockerContext: ./sophia-runtime
+    dockerCommand: node dist/operators/process-student-invoices.js
+    envVars:
+      - key: XERO_SYNC_EXECUTION_MODE
+        value: worker
+      - key: XERO_SYNC_SCHEDULER_ENABLED
+        value: "false"
+      - key: SOPHIA_RUNTIME_DB_POOL_SIZE
+        value: "2"
+      - key: SOPHIA_RUNTIME_DATABASE_URL
+        sync: false
+      - key: XERO_CLIENT_ID
+        sync: false
+      - key: XERO_CLIENT_SECRET
+        sync: false
+      - key: XERO_REDIRECT_URI
+        sync: false
+      - key: XERO_RETURN_URL
+        sync: false
+      - key: XERO_OAUTH_STATE_SECRET
+        sync: false
+      - key: XERO_TOKEN_ENCRYPTION_KEY
+        sync: false
+  - type: worker
+    name: sophia-student-user-worker
+    region: singapore
+    runtime: node
+    buildCommand: npm ci --omit=dev
+    startCommand: node scripts/process-student-users.mjs
+    envVars:
+      - key: STUDENT_USER_SYNC_EXECUTION_MODE
+        value: worker
+      - key: STUDENT_SYNC_PIPELINE_ENABLED
+        value: "true"
+      - key: DB_POOL_SIZE
+        value: "2"
+      - key: DB_SSL
+        value: "true"
+      - key: DATABASE_URL
+        sync: false

@@ -15,6 +15,8 @@ export class StudentOperationsXeroSyncScheduler implements OnApplicationBootstra
   ) {}
 
   onApplicationBootstrap(): void {
+    // Dedicated-worker mode must never execute provider jobs inside the API.
+    if (process.env.XERO_SYNC_EXECUTION_MODE === "worker") return;
     if (process.env.XERO_SYNC_SCHEDULER_ENABLED?.trim().toLowerCase() !== "true") return;
     void this.tick();
     this.timer = setInterval(() => { void this.tick(); }, 60_000);
@@ -31,10 +33,11 @@ export class StudentOperationsXeroSyncScheduler implements OnApplicationBootstra
     this.running = true;
     try {
       const schema = runtimeConfig().schema;
+      const worker = process.env.XERO_SYNC_EXECUTION_MODE === "worker";
       const due = await this.database.query<{ customer_id: string; sync_run_id: string }>(
         `SELECT customer_id, sync_run_id
-           FROM ${schema}.claim_due_student_operations_xero_sync_runs($1)`,
-        [10],
+           FROM ${schema}.${worker ? 'claim_due_student_operations_xero_worker_runs' : 'claim_due_student_operations_xero_sync_runs'}($1)`,
+        [worker ? 1 : 10],
       );
       for (const run of due.rows) {
         await this.sync.process(run.customer_id, run.sync_run_id);

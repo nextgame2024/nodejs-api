@@ -13,6 +13,37 @@ const tenantId = "11111111-1111-4111-8111-111111111111";
 const connectionId = "44444444-4444-4444-8444-444444444444";
 
 describe("StudentOperationsXeroSyncService", () => {
+  it('promotes an existing automatic run for a manual request without executing it in the API',async()=>{
+    const previous=process.env.XERO_SYNC_EXECUTION_MODE;process.env.XERO_SYNC_EXECUTION_MODE='worker';
+    const now=new Date('2026-10-20T00:00Z');
+    const row={sync_run_id:'66666666-6666-4666-8666-666666666666',xero_connection_id:connectionId,
+      mode:'incremental',trigger_type:'webhook',status:'queued',created_at:now};
+    const query=jest.fn(async(sql:string)=>({rows:sql.includes('SELECT sync_run_id')?[row]:[],rowCount:1}));
+    const database={tenantTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
+    const service=new StudentOperationsXeroSyncService(database as never,{} as never);
+    const processRun=jest.spyOn(service,'process').mockResolvedValue(undefined);
+    try {
+      const result=await service.enqueueManual({tenantId,identityUserId:'chief'} as never,connectionId);
+      await new Promise(resolve=>setTimeout(resolve,5));
+      expect(result).toMatchObject({syncRunId:row.sync_run_id,triggerType:'manual'});
+      expect(query).toHaveBeenCalledWith(expect.stringContaining("SET trigger_type='manual'"),[tenantId,row.sync_run_id,'chief']);
+      expect(processRun).not.toHaveBeenCalled();
+    } finally {if(previous===undefined) delete process.env.XERO_SYNC_EXECUTION_MODE;else process.env.XERO_SYNC_EXECUTION_MODE=previous;}
+  });
+
+  it('acknowledges an eligible webhook by enqueueing, without starting API execution in worker mode',async()=>{
+    const previous=process.env.XERO_SYNC_EXECUTION_MODE;process.env.XERO_SYNC_EXECUTION_MODE='worker';
+    const query=jest.fn(async()=>({rows:[{sync_run_id:'run'}]}));
+    const database={query:async()=>({rows:[{customer_id:tenantId,xero_connection_id:connectionId}]}),
+      tenantTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
+    const service=new StudentOperationsXeroSyncService(database as never,{} as never);
+    const processRun=jest.spyOn(service,'process').mockResolvedValue(undefined);
+    try {
+      expect(await service.enqueueWebhook(connectionId)).toBe(true);
+      await new Promise(resolve=>setTimeout(resolve,5));expect(processRun).not.toHaveBeenCalled();
+      expect(query).toHaveBeenCalledWith(expect.stringContaining("'webhook'"),[tenantId,connectionId]);
+    } finally {if(previous===undefined) delete process.env.XERO_SYNC_EXECUTION_MODE;else process.env.XERO_SYNC_EXECUTION_MODE=previous;}
+  });
   it("keeps the full reconciliation timestamp distinct from a later incremental check", async () => {
     const query = jest.fn(async (sql: string) => ({ rows: sql.includes("sync_configurations") ? [{
       organisation_role: "trust",

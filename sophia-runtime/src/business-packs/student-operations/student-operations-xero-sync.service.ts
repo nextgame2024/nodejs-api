@@ -220,7 +220,15 @@ export class StudentOperationsXeroSyncService {
           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
         [principal.tenantId, connectionId],
       );
-      if (active.rows[0]) return active.rows[0];
+      if (active.rows[0]) {
+        // A manual click must release an automatic job held for tonight, not
+        // leave it silently queued until the next window. Preserve its run ID.
+        await db.query(`UPDATE ${schema}.student_operations_xero_sync_runs
+          SET trigger_type='manual',requested_by_identity=$3
+          WHERE customer_id=$1 AND sync_run_id=$2 AND status IN ('queued','processing')`,
+          [principal.tenantId,active.rows[0].sync_run_id,principal.identityUserId]);
+        return {...active.rows[0],trigger_type:'manual'};
+      }
       const configuration = existingConfiguration.rows[0];
       // An explicit refresh is authoritative: scan the complete provider register so
       // records removed from Xero can be retired from the local read model.
@@ -237,7 +245,9 @@ export class StudentOperationsXeroSyncService {
       );
       return inserted.rows[0]!;
     });
-    setTimeout(() => { void this.process(principal.tenantId, run.sync_run_id); }, 0);
+    if (process.env.XERO_SYNC_EXECUTION_MODE !== 'worker') {
+      setTimeout(() => { void this.process(principal.tenantId, run.sync_run_id); }, 0);
+    }
     return runProjection(run);
   }
 
@@ -288,7 +298,9 @@ export class StudentOperationsXeroSyncService {
       );
       return inserted.rows[0]?.sync_run_id ?? null;
     });
-    if (runId) setTimeout(() => { void this.process(row.customer_id, runId); }, 0);
+    if (runId && process.env.XERO_SYNC_EXECUTION_MODE !== 'worker') {
+      setTimeout(() => { void this.process(row.customer_id, runId); }, 0);
+    }
     return true;
   }
 
@@ -832,10 +844,12 @@ export class StudentOperationsXeroSyncService {
                 last_reconciliation_sync_at=CASE WHEN $3 IN ('initial','reconciliation') THEN now() ELSE last_reconciliation_sync_at END,
                 invoice_metadata_version=CASE WHEN $3 IN ('initial','reconciliation') THEN 1 ELSE invoice_metadata_version END,
                 invoice_detail_version=CASE WHEN $3 IN ('initial','reconciliation') THEN 1 ELSE invoice_detail_version END,
-                last_error_code=NULL, next_sync_at=now()+incremental_interval,
+                last_error_code=NULL, next_sync_at=CASE WHEN $4::boolean THEN
+                  (((now() AT TIME ZONE 'Australia/Brisbane')::date + 1 + time '01:00') AT TIME ZONE 'Australia/Brisbane')
+                  ELSE now()+incremental_interval END,
                 revision=revision+1, updated_at=now()
           WHERE customer_id=$1 AND xero_connection_id=$2`,
-        [tenantId, run.xero_connection_id, run.mode],
+        [tenantId, run.xero_connection_id, run.mode,process.env.XERO_SYNC_EXECUTION_MODE === 'worker'],
       );
     });
   }

@@ -74,7 +74,20 @@ export class StudentOperationsCaseDocumentsService {
       await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='failed',error_code='lease_attempts_exhausted',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND status='processing' AND lease_expires_at<now() AND attempts>=5`,[tenantId]);
       const result=await db.query(`WITH candidate AS (
         SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND attempts<5 AND next_attempt_at<=now()
-          AND (status='queued' OR (status='processing' AND lease_expires_at<now())) ORDER BY next_attempt_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1)
+          AND (status='queued' OR (status='processing' AND lease_expires_at<now()))
+          ${process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' ? `AND EXISTS (
+            SELECT 1 FROM ${s}.student_operations_sync_checkpoints checkpoint
+            JOIN ${s}.student_operations_xero_sync_configurations config USING(customer_id,xero_connection_id)
+            JOIN ${s}.customers tenant USING(customer_id)
+            JOIN ${s}.xero_connections connection USING(customer_id,xero_connection_id)
+            WHERE checkpoint.customer_id=student_operations_document_jobs.customer_id
+              AND checkpoint.xero_connection_id=student_operations_document_jobs.xero_connection_id
+              AND tenant.status='active' AND connection.status='active' AND config.enabled
+              AND checkpoint.source_sync_at>=config.last_successful_sync_at
+              AND NOT EXISTS (SELECT 1 FROM ${s}.student_operations_xero_sync_runs active
+                WHERE active.customer_id=checkpoint.customer_id AND active.xero_connection_id=checkpoint.xero_connection_id
+                  AND active.status IN ('queued','processing')))` : ''}
+          ORDER BY next_attempt_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1)
         UPDATE ${s}.student_operations_document_jobs j SET status='processing',attempts=attempts+1,lease_token=$2,lease_expires_at=now()+interval '2 minutes',updated_at=now()
         FROM candidate c WHERE j.job_id=c.job_id RETURNING j.*`,[tenantId,token]);
       return result.rows[0];

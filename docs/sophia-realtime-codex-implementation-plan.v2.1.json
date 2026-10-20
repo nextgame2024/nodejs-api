@@ -3606,9 +3606,16 @@
   },
   "infrastructure": {
     "initialDecision": "Do not combine the core refactor with an AWS database/hosting move. Keep Render/Neon initially for the controlled development/pilot environment only where the reviewed data policy allows it.",
+    "studentPerformanceHostingCheckpoint": {
+      "recordedOn": "2026-10-20",
+      "userDirection": "Complete the student sync/performance plan first. Any later relocation must be toward Australia; do not relocate the Sydney database to Singapore. Assess AWS Australia or another appropriate Australian host separately under P7-01/P7-02 before any decision or spend.",
+      "observedTopology": "User confirms Runtime and Business Manager Render services in Singapore; Runtime settings screenshot corroborates. Configured Neon connection hostname identifies Sydney (ap-southeast-2).",
+      "performanceEvidence": "Repeated small database operations take roughly 167-181ms in supplied headers even with reused connections and negligible pool waiting. Regional distance is a likely contributor, not a complete explanation of query/identity latency. See docs/sophia/student-sync-performance-plan.json for exact samples and remaining evidence.",
+      "migrationReview": "Evaluate Australian API and separate worker hosting close to the existing Sydney database before deciding to move PostgreSQL. Include identity service, storage, secrets, logs, backups, costs, provider processing paths, job ownership transfer, rollback and data residency. No cloud resources, database copies or production cutover authorized by this note."
+    },
     "currentUnknowns": [
-      "Actual Render service regions and plans",
-      "Actual Neon project region, ownership and pooling mode",
+      "Render plan/capacity and any additional worker regions (the two APIs are confirmed Singapore in the 2026-10-20 checkpoint)",
+      "Neon ownership and pooling mode (configured database region is confirmed Sydney in the 2026-10-20 checkpoint)",
       "Actual S3 bucket regions/policies and SES configuration",
       "Actual Amplify/CloudFront cache behavior",
       "Current backup/PITR and restore procedures",

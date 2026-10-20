@@ -363,6 +363,12 @@ async function scan(db, run, scope) {
   );
   // Keep PostgreSQL timestamp precision; round-tripping through JS Date can cause endless refresh jobs.
   await db.query('SELECT sophia_runtime.reconcile_latest_invoice_advisors($1::uuid)', [scope.customer_id]);
+  if (process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' && run.mode === 'apply') {
+    // A previous preview checkpoint is not completion of the apply stage.
+    // Hold further document claims until every apply batch has committed.
+    await db.query(`DELETE FROM sophia_runtime.student_operations_sync_checkpoints
+      WHERE customer_id=$1 AND xero_connection_id=$2`,[scope.customer_id,source.xero_connection_id]);
+  }
   await db.query(`UPDATE bm_xero_student_sync_config SET last_source_sync=(
     SELECT last_successful_sync_at FROM sophia_runtime.student_operations_xero_sync_configurations
      WHERE customer_id=$1 AND xero_connection_id=$2) WHERE customer_id=$1`,
@@ -370,6 +376,7 @@ async function scan(db, run, scope) {
   await db.query(
     `UPDATE bm_xero_student_sync_runs SET source_sync=(SELECT last_successful_sync_at
     FROM sophia_runtime.student_operations_xero_sync_configurations WHERE customer_id=$2 AND xero_connection_id=$3),
+    ${process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' ? 'source_connection_id=$3,' : ''}
     phase=$4,status=$5,processed_count=$6,updated_at=now() WHERE id=$1`,
     [
       run.id,
@@ -515,6 +522,8 @@ async function applyCandidate(db, run, scope, row) {
 }
 
 export async function scheduleStudentSync(db) {
+  const worker=process.env.STUDENT_USER_SYNC_EXECUTION_MODE === 'worker';
+  const automaticWindow=worker ? 'sophia_runtime.student_operations_automatic_window()' : 'true';
   // Bootstrap only eligible companies with an active Chief Executive. Each
   // batch reauthorizes the actor; scheduling never grants staff permissions.
   await db.query(`INSERT INTO bm_xero_student_sync_config(customer_id,company_id,actor_user_id,automatic)
@@ -529,12 +538,14 @@ export async function scheduleStudentSync(db) {
   // Atomic enqueue/checkpoint, plus the existing unique active-run index,
   // prevents duplicate jobs across API replicas. Nightly runs take priority.
   await db.query(`WITH due AS (
-    SELECT c.customer_id,c.actor_user_id,c.next_nightly_at<=now() AS nightly
+    SELECT c.customer_id,c.actor_user_id,
+      (c.next_nightly_at<=now() AND ${automaticWindow}) AS nightly
     FROM bm_xero_student_sync_config c
     JOIN sophia_runtime.student_operations_xero_sync_configurations x USING(customer_id)
     WHERE c.automatic AND x.enabled AND x.organisation_role='trust'
       AND x.last_successful_sync_at IS NOT NULL
-      AND (c.next_nightly_at<=now() OR c.last_source_sync IS DISTINCT FROM x.last_successful_sync_at)
+      AND ((c.next_nightly_at<=now() AND ${automaticWindow})
+        OR c.last_source_sync IS DISTINCT FROM x.last_successful_sync_at)
       AND NOT EXISTS (SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs r
         WHERE r.customer_id=c.customer_id AND r.status IN ('queued','processing'))
       AND NOT EXISTS (SELECT 1 FROM bm_xero_student_sync_runs r
@@ -543,8 +554,9 @@ export async function scheduleStudentSync(db) {
         WHERE r.customer_id=c.customer_id AND r.status='failed' AND r.updated_at>now()-interval '5 minutes')
     FOR UPDATE OF c SKIP LOCKED
   ), queued AS (
-    INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode)
-    SELECT customer_id,actor_user_id,CASE WHEN nightly THEN 'apply' ELSE 'preview' END FROM due
+    INSERT INTO bm_xero_student_sync_runs(customer_id,actor_user_id,mode${process.env.STUDENT_USER_SYNC_EXECUTION_MODE === 'worker' ? ',trigger_type' : ''})
+    SELECT customer_id,actor_user_id,CASE WHEN nightly THEN 'apply' ELSE 'preview' END
+      ${process.env.STUDENT_USER_SYNC_EXECUTION_MODE === 'worker' ? ",CASE WHEN nightly THEN 'nightly' ELSE 'source' END" : ''} FROM due
     ON CONFLICT DO NOTHING RETURNING customer_id,mode
   ) UPDATE bm_xero_student_sync_config c SET next_nightly_at=
     (((now() AT TIME ZONE 'Australia/Brisbane')::date + 1 + time '02:00') AT TIME ZONE 'Australia/Brisbane')
@@ -553,7 +565,7 @@ export async function scheduleStudentSync(db) {
 
 // Transaction-scoped locks also work with transaction-pooling database URLs.
 // Each bounded batch commits accounts, mappings and checkpoints together.
-export async function processSyncBatch({ schedule = true } = {}) {
+export async function processSyncBatch({ schedule = true, throwOnError = false } = {}) {
   const db = await pool.connect();
   try {
     const available = await db.query(
@@ -562,7 +574,10 @@ export async function processSyncBatch({ schedule = true } = {}) {
     if (!available.rows[0].name) return;
     if (schedule) await scheduleStudentSync(db);
     const runs = await db.query(
-      "SELECT * FROM bm_xero_student_sync_runs WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 10",
+      `SELECT * FROM bm_xero_student_sync_runs WHERE status IN ('queued','processing')
+       ${process.env.STUDENT_USER_SYNC_EXECUTION_MODE === 'worker' ? `AND (trigger_type<>'nightly' OR
+         sophia_runtime.student_operations_automatic_window())` : ''}
+       ORDER BY created_at LIMIT 10`,
     );
     for (const queuedRun of runs.rows) {
       try {
@@ -595,6 +610,7 @@ export async function processSyncBatch({ schedule = true } = {}) {
           );
         if (run.phase === "scan") {
           await scan(db, run, scope);
+          if (run.mode === 'preview') await checkpointStudentSync(db,run);
           await db.query("COMMIT");
           continue;
         }
@@ -643,6 +659,7 @@ export async function processSyncBatch({ schedule = true } = {}) {
             "UPDATE bm_xero_student_sync_config SET last_source_sync=(SELECT source_sync FROM bm_xero_student_sync_runs WHERE id=$2) WHERE customer_id=$1",
             [scope.customer_id, run.id],
           );
+          await checkpointStudentSync(db,run);
         }
         await db.query("COMMIT");
       } catch (error) {
@@ -667,9 +684,27 @@ export async function processSyncBatch({ schedule = true } = {}) {
   } catch (error) {
     await db.query("ROLLBACK");
     console.error("Student sync worker unavailable", error.code || "internal");
+    if (throwOnError) throw error;
   } finally {
     db.release();
   }
+}
+
+async function checkpointStudentSync(db,run) {
+  if (process.env.STUDENT_SYNC_PIPELINE_ENABLED !== 'true') return;
+  // Publish only after the scan/apply succeeded; use PostgreSQL timestamps
+  // directly to retain precision. This commits with the identity/link changes.
+  await db.query(`INSERT INTO sophia_runtime.student_operations_sync_checkpoints
+    (customer_id,xero_connection_id,source_sync_at,reconciled_at)
+    SELECT r.customer_id,x.xero_connection_id,r.source_sync,now()
+    FROM bm_xero_student_sync_runs r
+    JOIN sophia_runtime.student_operations_xero_sync_configurations x
+      ON x.customer_id=r.customer_id AND x.xero_connection_id=r.source_connection_id
+    WHERE r.id=$1 AND r.customer_id=$2 AND r.source_sync IS NOT NULL
+      AND x.enabled AND x.organisation_role='trust'
+    ON CONFLICT(customer_id,xero_connection_id) DO UPDATE SET
+      source_sync_at=greatest(student_operations_sync_checkpoints.source_sync_at,EXCLUDED.source_sync_at),
+      reconciled_at=now()`,[run.id,run.customer_id]);
 }
 export function startStudentUserSyncWorker() {
   let busy = false;

@@ -52,7 +52,11 @@ try {
       const remaining = await db.tenantReadTransaction(customerId, client => client.query(
         `SELECT status,count(*)::int AS sources FROM ${schema}.student_operations_document_jobs
          WHERE customer_id=$1 GROUP BY status`, [customerId]));
-      console.log(JSON.stringify({ outcome: errors.rows.length ? 'provider_error' : 'batch_finished', processed, remaining: remaining.rows, errors: errors.rows }));
+      // A dependency-gated worker can legitimately do zero work while imports
+      // or reconciliation are outstanding. Never label that backlog finished.
+      const waiting=process.env.STUDENT_SYNC_PIPELINE_ENABLED==='true' && processed===0
+        && remaining.rows.some(row=>row.status==='queued' || row.status==='processing');
+      console.log(JSON.stringify({ outcome: errors.rows.length ? 'provider_error' : waiting ? 'waiting_or_backoff' : 'batch_finished', processed, remaining: remaining.rows, errors: errors.rows }));
       if (errors.rows.length) process.exitCode = 1;
     }
   } else {

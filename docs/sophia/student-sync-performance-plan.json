@@ -1,10 +1,10 @@
 {
   "date": "2026-10-20",
   "timezone": "Australia/Brisbane",
-  "status": "Phase 1 and initial-request consolidation are observed live in user screenshots. Authenticated Server-Timing samples identify database round-trip overhead and expensive connection acquisition. Runtime batching, bounded idle-connection reuse and pool-state diagnostics are implemented locally; deployment and regional-alignment verification pending. Phase 3 overnight orchestration remains planned.",
+  "status": "Phases 1/2 and database batching are observed live in user screenshots. Phase 3 dedicated workers, automatic window and committed reconciliation checkpoints are implemented and locally verified, pending opt-in deployment and overnight observation. Phase 4 provider-budget/source-deduplication work remains open. Australian hosting assessment is deferred to Sophia Runtime P7; do not move the database to Singapore.",
   "deploymentEvidence": {
     "phase1": {"date": "2026-10-20", "source": "User confirmed phase 1 deployed", "hostingScheduleIndependentlyVerified": false},
-    "phase2": {"state": "authenticated_timings_and_consolidation_observed_live", "evidence": "User supplied payments-register, student-sync and student-register Server-Timing headers after deployment. Payments uses the new bootstrap endpoint, and Students no longer makes a separate workspace request.", "requires": "Deploy the new Runtime round-trip/connection-reuse changes; no frontend update or database migration required for this follow-up."}
+    "phase2": {"state": "batching_and_reused_connections_observed_live", "evidence": "Latest user screenshots include customer_context, entitlement_audit, register_metadata and new=0/waiting=0 pool descriptions. Batching is deployed. Payments app sample 2274ms versus earlier 3995ms is not a controlled benchmark or p95.", "requires": "Collect comparable authenticated samples; phase 3 deployment is separate and requires additive migrations and worker ownership transfer."}
   },
   "findings": [
     "Normal list endpoints already use tenant-scoped local database records, not live Xero requests.",
@@ -32,11 +32,18 @@
   },
   "rollout": [
     {"phase": 1, "state": "deployed_user_confirmed", "action": "User confirmed deployment on 2026-10-20. Query fixes, document worker, frontend and cron configuration were included in phase 1. Render schedule activation and duplicate-job checks are not independently verified."},
-    {"phase": 2, "state": "diagnostics_implemented_pending_authenticated_samples", "action": "Request-local timing traces now cover the complete Student Operations HTTP request and existing guard/workspace/query phases. Server-Timing and X-Correlation-ID headers plus CORS timing exposure allow browser and server measurements to join. Offline scripts/analyze-student-performance.mjs summarizes HAR and saved Runtime logs without exporting financial records or identity data. Collect authenticated samples after deploying this diagnostic change; compare sync-active/idle samples and independently verify hosting regions and plan/sleep behavior. Do not add caches or raise pool sizes without evidence."},
-    {"phase": 3, "state": "planned", "action": "Implement and integration-test a dependency-aware nightly invoice -> student reconciliation -> document pipeline with dedicated workers. Gate automatic creation to the Brisbane window; allow manual jobs at any time. Test UTC boundaries, retries, duplicate schedulers, restart recovery, missing scopes and disabled tenants before changing production schedules."},
+    {"phase": 2, "state": "deployed_observed_pending_p95", "action": "Consolidated requests, query batching, bounded idle reuse and pool diagnostics are observed live. Complete comparable authenticated idle/active-sync sampling; do not mistake a screenshot for p95. No auth cache or increased API pool size."},
+    {"phase": 3, "state": "locally_verified_pending_deployment", "action": "Dedicated invoice and identity entrypoints, 01:00-06:00 Brisbane automatic claims, manual daytime enqueue, next-night scheduling and per-connection committed reconciliation checkpoints implemented. See student-sync-worker-cutover.md. Additive migrations and explicit worker ownership transfer are required; no live jobs or hosting changes performed."},
     {"phase": 4, "state": "planned", "action": "Confirm the Xero app tier and actual remaining daily allowance; add shared budget accounting, source deduplication, changed-source enqueueing and alerting before accelerating the historical document backlog."}
   ],
   "phase2Diagnostics": {
+    "latestDeployedSamples": {
+      "source": "User screenshots on 2026-10-20 after batching deployment",
+      "studentsMs": {"app": 3534.56, "workspace": 726.63, "workspacePool": 0.78, "customerContext": 181.45, "entitlementAudit": 181.82, "identity": 1398.13, "register": 1391.77, "query": 636.68, "metadata": 392.30},
+      "paymentsMs": {"app": 2274.04, "workspace": 670.62, "workspacePool": 0.14, "identity": 236.07, "connectionStatus": 503.14, "invoices": 861.06, "invoiceQuery": 359.02},
+      "syncStatusMs": {"app": 1724.62, "workspace": 670.17, "identity": 214.93},
+      "interpretation": "All displayed pool states are reused (new=0) with waiting=0. Workspace cost is lower; no pool saturation is evident in these samples. Students identity time is variable and dominates this particular request. These are different requests, not a controlled before/after experiment or a latency target achievement."
+    },
     "roundTripFollowUp": {
       "source": "Authenticated Server-Timing headers supplied by user on 2026-10-20",
       "studentsMs": {"app": 2942.15, "workspace": 1086.10, "workspacePool": 0.28, "workspaceSetup": 179.85, "workspaceWork": 724.71, "workspaceCommit": 181.14, "identity": 267.44, "register": 1583.17, "registerQuery": 649.89, "caseLinks": 181.86, "filterOptions": 388.64},
@@ -61,7 +68,7 @@
         "databaseRegion": "ap-southeast-2 (Sydney), confirmed from configured Neon connection hostname",
         "renderRegions": "Singapore, confirmed by user for both APIs and by the Runtime Render settings screenshot on 2026-10-20.",
         "interpretation": "Cross-region database access is confirmed and is a likely contributor to repeated 179-196ms operations. These samples do not isolate physical network latency from proxy, database or transaction overhead, or prove sync contention.",
-        "recommendation": "Deploy the verified Runtime batching first and measure warm/new connections. Then evaluate colocating APIs and database. If non-Australian database residency is acceptable, a new Neon Singapore project is the least application-hosting change; if Australian residency is required, retain Sydney data and evaluate Sydney API hosting instead. Render currently does not list Sydney. Do not migrate production as part of this code deployment.",
+        "recommendation": "User direction on 2026-10-20: finish this performance plan first; any future relocation must be toward Australia. Retain the Sydney database. Evaluate Australian API/worker hosting (possibly AWS) later under Sophia Runtime P7-01/P7-02, including whether any database move is necessary. Do not move Neon to Singapore or provision infrastructure in this performance phase.",
         "cutoverGates": [
           "Confirm data-residency requirements, all database consumers and explicit infrastructure migration approval before creating or copying production data.",
           "Neon region is fixed per project: use a new project, not a branch. Rehearse a migration with the same PostgreSQL version; verify roles, grants, FORCE RLS, extensions, sequences and application behavior, not only row counts.",
@@ -70,7 +77,7 @@
         ],
         "references": ["https://render.com/docs/regions", "https://neon.com/docs/introduction/regions", "https://neon.com/docs/import/migrate-neon-to-another-region"]
       },
-      "deployment": "Runtime deployment only; defaults activate batching and 60-second bounded idle reuse. Keep the timing flag enabled temporarily to compare warm/reused and new connections. No production writes or migration performed."
+      "deployment": "Observed live in the latest user screenshots: combined access/metadata metrics and reused connections. Keep timing enabled temporarily for comparable samples. No production writes or migration performed by this work."
     },
     "initialLoadFollowUp": {
       "source": "User screenshots on 2026-10-20 plus frontend request-flow inspection",

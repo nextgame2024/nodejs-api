@@ -1,5 +1,21 @@
 {
   "schemaVersion": 1,
+  "studentNightlyWorkerPhase3": {
+    "updatedOn": "2026-10-20",
+    "plan": "student-sync-performance-plan.json",
+    "runbook": "student-sync-worker-cutover.md",
+    "status": "Implemented and locally verified; opt-in production rollout pending. No infrastructure provisioned or production migrations applied.",
+    "behavior": "Dedicated invoice and identity process entrypoints; API enqueue-only flags preserve legacy behavior until cutover. Automatic invoice claims are gated to 01:00-06:00 Brisbane with next-night success scheduling. Manual jobs remain available any time. Post-import identity preview/apply publishes a same-transaction per-connection watermark checkpoint; document jobs wait for it and for active imports to finish. Runtime checkpoint access is tenant-RLS SELECT-only.",
+    "deployment": "Requires Runtime migration 080, identity bm_xero_student_worker_pipeline.sql, both code deployments, two explicitly provisioned workers and all-replica execution-mode cutover. Optional worker blueprint is separate to avoid accidental cost or duplicate scheduling. Existing document cron budget remains unchanged.",
+    "verification": [
+      "PASS: Runtime npm run build and 34 focused tests (scheduler, queue-only manual/webhook paths, provider backoff, document batch, workspace/register/database regressions).",
+      "PASS: 8 isolated PostgreSQL pipeline tests: Brisbane boundaries, daytime manual/automatic distinction, duplicate schedule claims, disabled tenants/connections, overdue reconciliation, lease recovery, checkpoint RLS and document dependency gating.",
+      "PASS: 21 identity sync unit/integration tests, including local PostgreSQL scan/apply checkpoints, hold during apply, daytime preview versus nighttime apply, stable Student IDs, pending/excluded mappings and advisor reconciliation.",
+      "PASS: 38 real-estate regression tests and Sophia boundary check (286 source files).",
+      "PASS: Node syntax checks, plan JSON parsing and git diff --check."
+    ],
+    "remaining": "Production overnight/restart observation and p95 remain open. Phase 4 shared provider quota and source deduplication are not implemented. Optional worker blueprint was not applied or validated against a connected hosting account. No live Xero calls."
+  },
   "studentDatabaseRoundTripFollowUp": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",
@@ -7,7 +23,7 @@
     "behavior": "Workspace resolution and audit use two statements with RLS context established before entitlement reads; register cases/options use one combined metadata statement. Direct queries reuse batched role setup. Idle connection reuse defaults to 60 seconds with unchanged maximum pool size; timing describes new/reused connections and pool state. No auth/data cache or schema change.",
     "verification": ["PASS: 42 focused Runtime tests and Runtime build.", "PASS: 8 isolated local PostgreSQL RLS/audit/rollback/metadata tests.", "PASS: 24 real-estate tests plus database regressions; 3 analyzer tests.", "PASS: Read-only production metadata comparison found identical chief and assigned-scope results; new SQL execution 31ms and 7ms, excluding network latency."],
     "deployment": "New changes require Runtime deployment only. No production mutation, migration or live Xero call performed. New full-page latency and p95 are not yet measured.",
-    "infrastructureNextStep": "Evaluate API/database colocation after deploying batching. Render does not currently list Sydney; Neon supports Singapore but requires a new project and controlled data migration. Confirm residency and explicit migration approval first. The performance plan records backup, all-consumer cutover, RLS validation and rollback gates. No region change performed."
+    "infrastructureNextStep": "User clarified that any future relocation must be toward Australia. Finish performance work first; retain Sydney Neon and defer Australian API/worker hosting assessment (possibly AWS) to Runtime P7-01/P7-02. No Singapore database relocation, provisioning or cutover in this task. Latest screenshot confirms batching is deployed; exact newer samples are in the performance plan."
   },
   "studentListInitialLoadFollowUp": {
     "updatedOn": "2026-10-20",

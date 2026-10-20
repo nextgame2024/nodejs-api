@@ -24,6 +24,7 @@ const actor = "33333333-3333-4333-8333-333333333333",
   connection = "44444444-4444-4444-8444-444444444444";
 const source = "55555555-5555-4555-8555-555555555555";
 const suite = url ? describe : describe.skip;
+const oldPipeline=process.env.STUDENT_SYNC_PIPELINE_ENABLED;
 suite("Student user sync — isolated PostgreSQL", () => {
   beforeAll(async () => {
     await pool.query(`CREATE SCHEMA sophia_runtime;
@@ -62,6 +63,10 @@ suite("Student user sync — isolated PostgreSQL", () => {
       "active",
     ]);
     await pool.query(await readFile(new URL('../scripts/sql/bm_xero_student_sync_schedule.sql', import.meta.url), 'utf8'));
+    await pool.query(await readFile(new URL('../scripts/sql/bm_xero_student_worker_pipeline.sql', import.meta.url), 'utf8'));
+    await pool.query(`CREATE TABLE sophia_runtime.student_operations_sync_checkpoints(customer_id uuid,xero_connection_id uuid,
+      source_sync_at timestamptz,reconciled_at timestamptz,PRIMARY KEY(customer_id,xero_connection_id))`);
+    process.env.STUDENT_SYNC_PIPELINE_ENABLED='true';
     await pool.query((await readFile(new URL('../sophia-runtime/src/database/migrations/078_latest_invoice_advisors.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query("INSERT INTO sophia_runtime.customers VALUES($1,$2,$3)", [
       customer,
@@ -96,6 +101,8 @@ suite("Student user sync — isolated PostgreSQL", () => {
       await addContact(name, email);
   });
   afterAll(async () => {
+    if(oldPipeline===undefined) delete process.env.STUDENT_SYNC_PIPELINE_ENABLED;
+    else process.env.STUDENT_SYNC_PIPELINE_ENABLED=oldPipeline;
     await pool.end();
   });
   async function addContact(name, email) {
@@ -125,6 +132,10 @@ suite("Student user sync — isolated PostgreSQL", () => {
     const result = await syncOverview(actor);
     expect(result.counts).toEqual({ pending: 6 });
     expect(result.total).toBe(6);
+    expect((await pool.query(`SELECT p.source_sync_at=x.last_successful_sync_at AS current
+      FROM sophia_runtime.student_operations_sync_checkpoints p
+      JOIN sophia_runtime.student_operations_xero_sync_configurations x USING(customer_id,xero_connection_id)`)).rows)
+      .toEqual([{current:true}]);
     expect(
       (
         await pool.query(
@@ -135,9 +146,13 @@ suite("Student user sync — isolated PostgreSQL", () => {
   });
   test("apply deduplicates, handles username collisions, hashes passwords and links invoices", async () => {
     await enqueueSync(actor, "apply");
+    await processSyncBatch({schedule:false});
+    expect((await pool.query('SELECT * FROM sophia_runtime.student_operations_sync_checkpoints')).rows).toHaveLength(0);
     await drain();
     const result = await syncOverview(actor);
     expect(result.runs[0].status).toBe("succeeded");
+    expect((await pool.query('SELECT * FROM sophia_runtime.student_operations_sync_checkpoints')).rows).toHaveLength(1);
+    expect((await pool.query('SELECT source_connection_id FROM bm_xero_student_sync_runs WHERE id=$1',[result.runs[0].id])).rows[0].source_connection_id).toBe(connection);
     const users = (
       await pool.query(
         "SELECT * FROM users WHERE type='student' ORDER BY username",
@@ -234,6 +249,10 @@ suite("Student user sync — isolated PostgreSQL", () => {
     );
   });
   test("Xero refresh queues review without creating accounts; nightly apply links eligible invoices", async () => {
+    const oldMode=process.env.STUDENT_USER_SYNC_EXECUTION_MODE;
+    process.env.STUDENT_USER_SYNC_EXECUTION_MODE='worker';
+    await pool.query(`CREATE FUNCTION sophia_runtime.student_operations_automatic_window() RETURNS boolean LANGUAGE sql AS $$ SELECT false $$`);
+    try {
     const id = await addContact("C90 New Student", "new@example.test");
     const total = (
       await pool.query(
@@ -267,6 +286,9 @@ suite("Student user sync — isolated PostgreSQL", () => {
       ).rows[0].student_id,
     ).toBeNull();
     await pool.query("UPDATE bm_xero_student_sync_config SET next_nightly_at=now()-interval '1 minute'");
+    await processSyncBatch();
+    expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1',[id])).rows[0].student_id).toBeNull();
+    await pool.query(`CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_automatic_window() RETURNS boolean LANGUAGE sql AS $$ SELECT true $$`);
     await drain();
     expect(
       (
@@ -291,6 +313,9 @@ suite("Student user sync — isolated PostgreSQL", () => {
         )
       ).rows[0].n,
     ).toBe(total);
+    } finally {
+      if(oldMode===undefined) delete process.env.STUDENT_USER_SYNC_EXECUTION_MODE;else process.env.STUDENT_USER_SYNC_EXECUTION_MODE=oldMode;
+    }
   });
   test("new same-name contacts with conflicting emails remain pending", async () => {
     const id = await addContact(
