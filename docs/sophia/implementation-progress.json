@@ -1,10 +1,17 @@
 {
   "schemaVersion": 1,
+  "studentListInitialLoadFollowUp": {
+    "updatedOn": "2026-10-20",
+    "evidence": "User screenshots show Students register/workspace 4.23/4.34s and Payments workspace/connection/invoice requests 2.83/2.17/2.58s. Code confirms serial Payments dependencies. A read-only unauthenticated deployed request confirmed timing headers are enabled; no authenticated timing phase values were available.",
+    "behavior": "Students receives workspace context with its list. Payments bootstraps workspace, server-selected Trust connection and invoices in one guarded request, then loads optional status/filter metadata. Existing pagination/filter endpoints and older-server fallback remain. No new auth/data caches; non-integration roles cannot use the bootstrap to read integration data.",
+    "verification": ["PASS: 61 focused ChromeHeadless page/service tests, including new single-request loads, older-server fallback, access denial, restored pagination and changes to filters while loading.", "PASS: 27 Runtime tests for controllers, timing, Xero query contracts and guard behavior; Runtime build.", "PASS: 3 offline analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."],
+    "deployment": "New Runtime/frontend changes not deployed. No migrations or production data changes. Full Server-Timing values remain needed to locate remaining per-request delay. Phase 3 overnight orchestration remains planned."
+  },
   "studentPerformanceDiagnosticsPhase2": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",
     "phase1Deployment": "User confirmed phase 1 deployment. Actual Render schedule activation and absence of duplicate cron jobs have not been independently verified.",
-    "status": "Diagnostic code implemented and verified locally; authenticated production samples and phase 2 deployment pending.",
+    "status": "Diagnostic timing headers are observed live. Screenshot request times recorded; complete authenticated timing phase values still pending. Initial-request consolidation is implemented locally and awaiting deployment.",
     "behavior": "Opt-in request-local Server-Timing measurements and HTTP completion logs correlate existing identity, workspace and list timings. Approved CORS origins can inspect response timing headers. Offline analyzer summarizes browser HAR and Runtime logs without emitting URLs, query strings, credentials, response bodies or student data. No new authentication or data caches were introduced.",
     "verification": [
       "PASS: 37 focused Runtime tests, including concurrent request isolation, disabled diagnostics, error status, CORS, guard correlation and existing authorization/register/sync regressions.",

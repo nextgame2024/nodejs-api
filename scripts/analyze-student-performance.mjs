@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const prefix = '/api/business-packs/student-operations/v1/';
-const operations = new Set(['students','payments','payment-tracks','sync-status','xero-status','workspace','case-documents','workspace-other']);
+const operations = new Set(['students','payments','payments-initial','payment-tracks','sync-status','xero-status','workspace','case-documents','workspace-other']);
 const metricNames = ['totalMs','identityMs','entitlementMs','dbPoolAcquireMs','dbSetupMs','dbWorkMs',
   'dbCommitMs','registerQueryMs','invoiceQueryMs','caseLinksMs','optionsMs'];
 const validNumber = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -12,6 +12,7 @@ const serverMetrics = new Set(['app', ...['guard','workspace','register','xero_s
 
 function operationFor(pathname) {
   if (/\/student-register$/.test(pathname)) return 'students';
+  if (/\/payments-register$/.test(pathname)) return 'payments-initial';
   if (/\/student-invoices$/.test(pathname)) return 'payments';
   if (/\/payment-tracks$/.test(pathname)) return 'payment-tracks';
   if (/\/student-sync$/.test(pathname)) return 'sync-status';

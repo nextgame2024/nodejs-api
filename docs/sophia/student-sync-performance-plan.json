@@ -1,10 +1,10 @@
 {
   "date": "2026-10-20",
   "timezone": "Australia/Brisbane",
-  "status": "Phase 1 deployed per user confirmation. Phase 2 diagnostic tooling implemented locally; authenticated deployment samples pending. Overnight pipeline orchestration remains phase 3.",
+  "status": "Phase 1 deployed. Phase 2 timing headers observed live; screenshot evidence identified repeated access checks and serial Payments loading. Initial-load request consolidation is implemented locally and awaiting Runtime/frontend deployment. Full authenticated timing breakdowns and phase 3 overnight orchestration remain pending.",
   "deploymentEvidence": {
     "phase1": {"date": "2026-10-20", "source": "User confirmed phase 1 deployed", "hostingScheduleIndependentlyVerified": false},
-    "phase2": {"state": "not_deployed", "requires": "Deploy updated Runtime and enable SOPHIA_STUDENT_OPERATIONS_TIMING=1 temporarily to expose the new request timing breakdown."}
+    "phase2": {"state": "timing_headers_observed_live", "evidence": "Read-only unauthenticated workspace request returned 401 with Server-Timing app;dur=1.14, X-Correlation-ID and Timing-Allow-Origin http://localhost:4200. Confirms diagnostics are enabled; does not measure authenticated access or query time.", "requires": "Deploy the new request-consolidation changes to Runtime and frontend; no database migration required."}
   },
   "findings": [
     "Normal list endpoints already use tenant-scoped local database records, not live Xero requests.",
@@ -37,6 +37,22 @@
     {"phase": 4, "state": "planned", "action": "Confirm the Xero app tier and actual remaining daily allowance; add shared budget accounting, source deduplication, changed-source enqueueing and alerting before accelerating the historical document backlog."}
   ],
   "phase2Diagnostics": {
+    "initialLoadFollowUp": {
+      "source": "User screenshots on 2026-10-20 plus frontend request-flow inspection",
+      "observedBrowserMs": {"studentRegister": 4230, "studentsWorkspace": 4340, "paymentsWorkspace": 2830, "paymentsConnectionStatus": 2170, "paymentsInvoices": 2580, "paymentsTracks": 3440, "paymentsSyncStatus": 3590},
+      "interpretation": "These are individual screenshot samples, not p95. Students workspace and list requests overlap. Payments workspace -> connection status -> invoices are sequential in the inspected code; each repeats login/access verification. Screenshots do not expose complete Server-Timing values and cannot establish the underlying database/identity breakdown.",
+      "changes": [
+        "Students register response now includes the server-resolved workspace context; the page avoids its separate workspace request. Older responses fall back once to the legacy context endpoint.",
+        "New GET workspace/payments-register derives role, tenant and Trust connection server-side, returning initial invoice rows through one guard execution. It reuses existing local invoice query validation, sorting and pagination.",
+        "Payments displays initial rows before requesting optional sync freshness and payment-track choices. Later filters/pages use the existing fresh server-side invoice endpoint.",
+        "Operations/advisor roles keep their existing student view and cannot read integration data through the new endpoint. Missing or ambiguous connections retain existing behavior. Only a missing route (404), not an access failure, uses the legacy initial-load flow.",
+        "Initial queries respect restored pagination and filters. Filter changes during loading trigger a fresh invoice query without showing stale bootstrap rows or abandoning the workspace request.",
+        "Analyzer distinguishes payments-initial from later payments queries. No authorization or financial-record cache was added."
+      ],
+      "deployment": "Runtime plus frontend deployment required. Existing routes are retained for rolling deployments. No migration or production data change.",
+      "verification": ["PASS: 61 focused ChromeHeadless page/service tests.", "PASS: 27 focused Runtime tests and build.", "PASS: 3 analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."],
+      "remaining": "Copy the complete Server-Timing value from authenticated student-register and payments-register responses to identify remaining identity, access, pool, setup and query delays. Request-count reduction is verified locally; production speed improvement is not yet measured."
+    },
     "verification": [
       "PASS: 37 Runtime tests across request timing, concurrent request isolation, identity bridge, guard, workspace resolution, register, invoice sync and CORS.",
       "PASS: 3 offline analyzer tests covering HAR/log correlation, missing timing headers, error responses, malformed lines and sensitive-input omission.",

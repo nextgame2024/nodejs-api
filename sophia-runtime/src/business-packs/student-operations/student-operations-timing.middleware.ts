@@ -46,6 +46,7 @@ export function studentOperationsTimingMiddleware(allowedOrigins: readonly strin
 
 export function classifyStudentOperationsRequest(pathname: string): string {
   if (/\/student-register$/.test(pathname)) return 'students';
+  if (/\/payments-register$/.test(pathname)) return 'payments-initial';
   if (/\/student-invoices$/.test(pathname)) return 'payments';
   if (/\/payment-tracks$/.test(pathname)) return 'payment-tracks';
   if (/\/student-sync$/.test(pathname)) return 'sync-status';
