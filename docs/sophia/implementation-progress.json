@@ -1,5 +1,18 @@
 {
   "schemaVersion": 1,
+  "studentSharedXeroBackoffPhase4A": {
+    "updatedOn": "2026-10-21",
+    "status": "First bounded Phase 4 slice implemented and locally verified, NOT deployed or enabled. User's latest screenshot shows student processing (260 processed, zero created), not completion or document execution.",
+    "behavior": "Opt-in XERO_SHARED_BACKOFF_ENABLED uses additive migration 082 for durable tenant/connection cooldown and sanitized remaining-allowance observations. All Accounting GET attempts through the connector (including paginated imports, discovery, attachment metadata/content and connection tests) check before fetch and observe responses outside network transactions. A 429 publishes Retry-After then exits to the durable scheduler without inline retries. Successful zero-remaining headers pause subsequent calls conservatively. Document claims skip known cooldowns without consuming lease attempts/daily source budget. Shared-worker startup checks 082 when enabled; unavailable stores fail closed.",
+    "safety": "Normal non-BYPASSRLS Runtime role, FORCE tenant RLS, tenant/connection foreign key, SELECT/INSERT/UPDATE only and no deletion grant. Concurrent/later observations cannot shorten a persisted cooldown. Policy contexts are isolated across concurrent requests. No credentials, response bodies or arbitrary provider header values are stored. Feature remains disabled by default; existing nightly cap/time/pacing are unchanged.",
+    "verification": [
+      "PASS: Runtime build and 65 focused tests across Xero client, connector, rate policy, shared adapter, document batch and invoice scheduler/processor.",
+      "PASS: 6 tests against disposable local PostgreSQL with migration 082 and real non-BYPASSRLS role: cross-client persistence, safe numeric observations, concurrent cooldown preservation, expiry, tenant isolation/denied deletion, and no document attempts while blocked.",
+      "PASS: 10 identity/coordinator tests, 38 real-estate regressions and boundary check across 288 source files."
+    ],
+    "release": "Let the current student run finish before redeploying the worker. Deploy Runtime API and shared-worker code with flag absent/false; apply Runtime migration 082 with the existing owner migration runner; then enable XERO_SHARED_BACKOFF_ENABLED=true on BOTH Runtime API and shared worker. No Business Manager API or frontend change required. Keep the old document cron suspended. Activate step by step with user; agent made no production changes or provider calls.",
+    "limits": "This is shared per-connection cooldown, NOT pre-call quota reservation/accounting, global app-minute enforcement, or a guarantee against concurrent in-flight calls. Same Xero organisation represented by different connection identities is not merged. OAuth token/connections/bootstrap verification before a persisted connection exists remains outside this Accounting policy. Unknown 429 without Retry-After holds a day; known minute/app/concurrent holds 60 seconds; successful daily exhaustion holds a conservative 24 hours, not a claimed reset time. Provider retry values are bounded to 7 days; stored remaining values are observations, not authoritative spendable balances. App tier/real allowance, source deduplication/fan-out, changed-source rechecks, alerts, overnight observation and p95 remain open. Australian hosting remains deferred to P7."
+  },
   "studentSyncQueuedWebhookFollowUp": {
     "updatedOn": "2026-10-21",
     "status": "Implemented and locally verified; deployment pending. No production writes or provider calls made by the agent.",

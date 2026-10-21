@@ -150,3 +150,57 @@ reset it or automatically retry account creation. No provider refresh is needed
 for this check. Successful overnight processing, document backlog progress and
 the shared provider-rate-budget follow-up still require validation. Australian
 hosting migration remains deferred to the Runtime P7 assessment.
+
+## Phase 4A: shared Xero cooldown (local implementation, not activated)
+
+Keep the running student job uninterrupted. After its final successful status,
+release the following separately, one step at a time:
+
+1. Deploy Runtime API and shared-worker code with `XERO_SHARED_BACKOFF_ENABLED`
+   absent or `false`. Business Manager API and frontend do not change.
+2. Apply additive Runtime migration `082_xero_connection_rate_limits.sql` using
+   the existing owner migration runner (`npm run migrate` in the Runtime image).
+   Do not replace the normal application's database URL with owner credentials.
+3. Set `XERO_SHARED_BACKOFF_ENABLED=true` on **sophia-runtime-api** and
+   **sophia-student-sync-worker**, deploying each configuration. It is not needed
+   on **nodejs-api**. Do not activate just one consumer and call the rollout done.
+4. Confirm worker readiness and observe existing/normally scheduled operations;
+   do not force provider requests or deliberately exhaust quota as a test.
+   Check the cooldown/allowance metadata with the read-only query below.
+5. Keep the document cron suspended and the 500-source/30-minute cap unchanged.
+   Successful overnight observation is still required. Rollback this slice by
+   setting the flag `false` on both consumers, retaining the additive table and
+   queue/history. This restores previous backoff behavior, not a throughput gain.
+
+```sql
+SELECT xero_connection_id, day_remaining, minute_remaining,
+       app_minute_remaining, limit_problem, observed_at, blocked_until,
+       blocked_until > now() AS cooling_down
+FROM sophia_runtime.xero_connection_rate_limits
+WHERE customer_id = '33ed40a6-7f2b-407c-aab2-de76b1cb45a8';
+```
+
+Rows appear only after a provider response contains allowance headers or a 429;
+no row is not proof of available quota. Use the configured Runtime schema if
+different. The store shares cooldown across imports, document discovery/downloads,
+candidate discovery and connection tests for the same customer/connection. Known
+document cooldowns do not consume another source attempt. Network calls run
+outside database transactions, and tenant/role permission checks remain intact.
+
+This is **not** an API reservation ledger, cross-tenant app-minute limiter, or
+deduplicated source cache. Requests already in flight can overlap; another
+connection identity for the same provider organisation is not automatically
+merged. OAuth/token/bootstrap calls before a persisted connection exists are
+outside this Accounting policy. Header snapshots can change or arrive out of
+order and are not spendable balances; only the cooldown is monotonically extended.
+Valid numeric `Retry-After` values are honored up to a defensive seven-day bound.
+Missing/invalid 429 delay defaults to a day, or 60 seconds for a known minute/app/
+concurrent limit. Successful daily exhaustion uses a conservative 24-hour hold;
+it does not assume Xero resets at Brisbane midnight. Normal workers still obey
+their existing overnight windows.
+
+Remaining Phase 4 work: verify the app tier/allowance, shared reservation accounting
+and app-wide limits, source deduplication/fan-out, changed-source rechecks and
+operator alerts. See [Xero's rate-limit documentation](https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits/)
+for remaining headers, `X-Rate-Limit-Problem` and `Retry-After`. Do not infer the
+account's actual quota from an old fixed daily-limit assumption.

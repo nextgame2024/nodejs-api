@@ -75,6 +75,11 @@ export class StudentOperationsCaseDocumentsService {
       const result=await db.query(`WITH candidate AS (
         SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND attempts<5 AND next_attempt_at<=now()
           AND (status='queued' OR (status='processing' AND lease_expires_at<now()))
+          ${process.env.XERO_SHARED_BACKOFF_ENABLED === 'true' ? `AND NOT EXISTS (
+            SELECT 1 FROM ${s}.xero_connection_rate_limits rate
+            WHERE rate.customer_id=student_operations_document_jobs.customer_id
+              AND rate.xero_connection_id=student_operations_document_jobs.xero_connection_id
+              AND rate.blocked_until>now())` : ''}
           ${process.env.STUDENT_SYNC_PIPELINE_ENABLED === 'true' || options.dailyBudget ? `AND EXISTS (
             SELECT 1 FROM ${s}.student_operations_sync_checkpoints checkpoint
             JOIN ${s}.student_operations_xero_sync_configurations config USING(customer_id,xero_connection_id)

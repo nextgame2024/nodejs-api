@@ -19,6 +19,13 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('fails startup with shared backoff enabled but migration 082 missing',async()=>{
+    const previous=process.env.XERO_SHARED_BACKOFF_ENABLED;process.env.XERO_SHARED_BACKOFF_ENABLED='true';
+    try {
+      query.mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('082');
+    } finally {if(previous===undefined) delete process.env.XERO_SHARED_BACKOFF_ENABLED;else process.env.XERO_SHARED_BACKOFF_ENABLED=previous;}
+  });
   it('fails startup without migration 081',async()=>{
     query.mockResolvedValue({rows:[{ready:false}]});
     const worker=createSharedStudentSyncRuntime();await expect(worker.preflight()).rejects.toThrow('080 and 081');

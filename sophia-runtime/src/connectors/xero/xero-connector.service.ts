@@ -21,6 +21,7 @@ import {
   type XeroAttachmentSource,
 } from "./xero.client.js";
 import { XeroCryptoService } from "./xero-crypto.service.js";
+import { XeroSharedBackoff } from './xero-rate-limit.js';
 import {
   XERO_CONNECTOR_KEY,
   XERO_READ_ONLY_SCOPES,
@@ -178,10 +179,10 @@ export class XeroConnectorService {
     const connection = await this.loadConnection(tenantId, connectionId);
     try {
       const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
-      const [organisation, bankAccounts] = await Promise.all([
+      const [organisation, bankAccounts] = await this.providerRequest(tenantId, connectionId, () => Promise.all([
         this.client.organisation(accessToken, connection.xero_tenant_id),
         this.client.bankAccounts(accessToken, connection.xero_tenant_id),
-      ]);
+      ]));
       await this.recordTest(tenantId, identityUserId, connection, "healthy", null);
       return {
         connectionId,
@@ -207,7 +208,7 @@ export class XeroConnectorService {
       });
     }
     const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
-    const result = await this.client.studentCandidates(accessToken, connection.xero_tenant_id);
+    const result = await this.providerRequest(tenantId, connectionId, () => this.client.studentCandidates(accessToken, connection.xero_tenant_id));
     return {
       connection: {
         connectionId: connection.xero_connection_id,
@@ -225,7 +226,7 @@ export class XeroConnectorService {
     modifiedSince?: Date,
   ): Promise<XeroPage<XeroContactRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.contactPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+    return this.providerRequest(tenantId, connectionId, () => this.client.contactPage(accessToken, connection.xero_tenant_id, page, modifiedSince));
   }
 
   async syncInvoicePage(
@@ -236,13 +237,13 @@ export class XeroConnectorService {
     registerOnly = false,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.invoicePage(
+    return this.providerRequest(tenantId, connectionId, () => this.client.invoicePage(
       accessToken,
       connection.xero_tenant_id,
       page,
       modifiedSince,
       registerOnly,
-    );
+    ));
   }
 
   async syncCreditNotePage(
@@ -252,12 +253,12 @@ export class XeroConnectorService {
     modifiedSince?: Date,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.creditNotePage(
+    return this.providerRequest(tenantId, connectionId, () => this.client.creditNotePage(
       accessToken,
       connection.xero_tenant_id,
       page,
       modifiedSince,
-    );
+    ));
   }
 
   async syncPrepaymentPage(
@@ -267,7 +268,7 @@ export class XeroConnectorService {
     modifiedSince?: Date,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.prepaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+    return this.providerRequest(tenantId, connectionId, () => this.client.prepaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince));
   }
 
   async syncOverpaymentPage(
@@ -277,7 +278,7 @@ export class XeroConnectorService {
     modifiedSince?: Date,
   ): Promise<XeroPage<XeroInvoiceRecord>> {
     const { connection, accessToken } = await this.syncAccess(tenantId, connectionId);
-    return this.client.overpaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince);
+    return this.providerRequest(tenantId, connectionId, () => this.client.overpaymentPage(accessToken, connection.xero_tenant_id, page, modifiedSince));
   }
 
   private async syncAccess(tenantId: string, connectionId: string) {
@@ -307,12 +308,19 @@ export class XeroConnectorService {
 
   async attachments(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string) {
     const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
-    return this.client.attachments(accessToken,connection.xero_tenant_id,source,sourceId);
+    return this.providerRequest(tenantId, connectionId, () => this.client.attachments(accessToken,connection.xero_tenant_id,source,sourceId));
   }
 
   async attachmentContent(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string) {
     const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
-    return this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId);
+    return this.providerRequest(tenantId, connectionId, () => this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId));
+  }
+
+  private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>): Promise<T> {
+    // Additive rollout: apply 082 first, then enable on both Runtime API and
+    // shared worker. A missing/inaccessible store fails closed before fetch.
+    if (process.env.XERO_SHARED_BACKOFF_ENABLED !== 'true') return request();
+    return this.client.withRequestPolicy(new XeroSharedBackoff(this.database).policy(tenantId, connectionId), request);
   }
 
   private async consumeState(

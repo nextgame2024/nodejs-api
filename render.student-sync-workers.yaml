@@ -17,6 +17,9 @@ services:
         value: "true"
       - key: XERO_SYNC_SCHEDULER_ENABLED
         value: "false"
+      # Apply 082 and deploy Runtime API + shared worker before enabling both.
+      - key: XERO_SHARED_BACKOFF_ENABLED
+        value: "false"
       - key: SOPHIA_RUNTIME_DB_POOL_SIZE
         value: "2"
       - key: DB_POOL_SIZE

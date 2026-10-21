@@ -24,6 +24,11 @@ export function createSharedStudentSyncRuntime() {
         [`${schema}.claim_due_student_operations_xero_worker_runs(integer)`,`${schema}.student_operations_document_daily_budgets`,
           `${schema}.student_operations_document_window(timestamp with time zone)`]);
       if(!result.rows[0]?.ready) throw new Error('Shared sync worker requires Runtime migrations 080 and 081.');
+      if(process.env.XERO_SHARED_BACKOFF_ENABLED==='true') {
+        const rateStore=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',
+          [`${schema}.xero_connection_rate_limits`]);
+        if(!rateStore.rows[0]?.ready) throw new Error('Shared Xero backoff requires Runtime migration 082.');
+      }
     },
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

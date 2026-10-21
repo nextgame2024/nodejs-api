@@ -1,5 +1,7 @@
 import { BadGatewayException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { xeroRateObservation, type XeroRequestPolicy } from './xero-rate-limit.js';
 
 const XERO_CONTACT_PAGE_SIZE = 100;
 export type XeroAttachmentSource = 'Invoices' | 'CreditNotes' | 'Contacts';
@@ -127,6 +129,11 @@ const XERO_GET_MAX_ATTEMPTS = 3;
 
 @Injectable()
 export class XeroClient {
+  private readonly requestPolicy = new AsyncLocalStorage<XeroRequestPolicy>();
+
+  withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
+    return this.requestPolicy.run(policy, request);
+  }
   async attachments(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string): Promise<XeroAttachment[]> {
     const payload = record(await this.json(attachmentPath(source, sourceId), accessToken, tenantId));
     if (!Array.isArray(payload.Attachments)) throw new BadGatewayException('Xero returned an invalid attachment list.');
@@ -140,11 +147,19 @@ export class XeroClient {
   }
 
   async attachmentContent(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string): Promise<Buffer> {
-    const response = await fetch(attachmentPath(source,sourceId,attachmentId), {
+    const path = attachmentPath(source,sourceId,attachmentId);
+    const policy = this.requestPolicy.getStore();
+    await policy?.beforeRequest();
+    const response = await fetch(path, {
       headers: { Authorization: `Bearer ${accessToken}`, 'xero-tenant-id': tenantId, Accept: 'application/octet-stream' },
       redirect: 'error', signal: AbortSignal.timeout(30_000),
     });
-    if (!response.ok) throw providerError(response);
+    try { await policy?.observe(response); }
+    catch(error) { await response.body?.cancel(); throw error; }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw providerError(response);
+    }
     if (!response.body) throw new BadGatewayException('Xero returned no attachment content.');
     const reader=response.body.getReader();
     const chunks: Uint8Array[]=[];
@@ -635,6 +650,8 @@ export class XeroClient {
     if (tenantId) headers["xero-tenant-id"] = tenantId;
     if (modifiedSince) headers["If-Modified-Since"] = modifiedSince.toUTCString();
     for (let attempt = 0; attempt < XERO_GET_MAX_ATTEMPTS; attempt += 1) {
+      const policy = this.requestPolicy.getStore();
+      await policy?.beforeRequest();
       let response: Response;
       try {
         response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
@@ -645,12 +662,21 @@ export class XeroClient {
         }
         throw xeroUnavailableError();
       }
+      try { await policy?.observe(response); }
+      catch(error) { await response.body?.cancel(); throw error; }
       if (response.ok) return parseJson(response);
+      // A durable cooldown belongs to the queue, not an immediate HTTP retry.
+      if (policy && response.status === 429) {
+        await response.body?.cancel();
+        throw providerError(response);
+      }
       const retryDelay = retryableResponseDelayMs(response, attempt);
       if (attempt < XERO_GET_MAX_ATTEMPTS - 1 && retryDelay !== null) {
+        await response.body?.cancel();
         await wait(retryDelay);
         continue;
       }
+      await response.body?.cancel();
       throw providerError(response);
     }
     throw xeroUnavailableError();
@@ -664,7 +690,7 @@ async function parseJson(response: Response): Promise<unknown> {
 
 function providerError(response: Response): BadGatewayException {
   const correlationId = response.headers.get("xero-correlation-id");
-  const retryAfter = response.headers.get("retry-after");
+  const rate = xeroRateObservation(response);
   const code = response.status === 429
     ? "xero_rate_limited"
     : response.status === 401 || response.status === 403
@@ -681,17 +707,15 @@ function providerError(response: Response): BadGatewayException {
     errorCode: code,
     providerStatus: response.status,
     correlationId,
-    retryAfterSeconds: retryAfter && /^\d+$/.test(retryAfter)
-      ? Number(retryAfter)
-      : response.status >= 500 ? 300 : null,
+    retryAfterSeconds: rate.retryAfterSeconds ?? (response.status >= 500 ? 300 : null),
+    ...(response.status === 429 ? {rateLimitProblem:rate.problem} : {}),
   });
 }
 
 function retryableResponseDelayMs(response: Response, attempt: number): number | null {
   if (![408, 429, 500, 502, 503, 504].includes(response.status)) return null;
   if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    const retryAfterSeconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : 1;
+    const retryAfterSeconds = xeroRateObservation(response).retryAfterSeconds!;
     // Long provider limits belong to the durable scheduler, not an HTTP worker.
     if (retryAfterSeconds > 5) return null;
     return Math.max(250, retryAfterSeconds * 1000);
