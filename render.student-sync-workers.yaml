@@ -26,6 +26,9 @@ services:
       # Apply 084 first; requires shared backoff and source dedup on both services.
       - key: XERO_SHARED_QUOTA_ENABLED
         value: "false"
+      # Worker only: apply 085 and enable quota/backoff/source dedup first.
+      - key: STUDENT_DOCUMENT_RECHECKS_ENABLED
+        value: "false"
       - key: SOPHIA_RUNTIME_DB_POOL_SIZE
         value: "2"
       - key: DB_POOL_SIZE

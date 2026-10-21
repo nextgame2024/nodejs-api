@@ -40,6 +40,8 @@ function ready(s:string) { return `EXISTS (
       WHERE r.customer_id=p.customer_id AND r.xero_connection_id=p.xero_connection_id
         AND r.status IN ('queued','processing')))`; }
 
+export {linked as documentSourceLinked,ready as documentSourceReady};
+
 export class StudentDocumentSourceDiscovery {
   constructor(private readonly database:DatabaseService,private readonly xero:XeroConnectorService) {}
 

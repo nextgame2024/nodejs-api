@@ -7,6 +7,7 @@ import { XeroConnectorService } from '../connectors/xero/xero-connector.service.
 import { StudentOperationsXeroSyncService } from '../business-packs/student-operations/student-operations-xero-sync.service.js';
 import { StudentOperationsCasesService } from '../business-packs/student-operations/student-operations-cases.service.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
+import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
 
 // No Nest application, HTTP listener, API scheduler or unrelated worker starts.
 // The identity side keeps its own connection and authorization in the host.
@@ -17,6 +18,7 @@ export function createSharedStudentSyncRuntime() {
   const documents=new StudentOperationsCaseDocumentsService(database,new StudentOperationsCasesService(database),xero);
   const schema=runtimeConfig().schema;
   const scopeChecks=new Map<string,{checkedAt:number;ready:boolean}>();
+  const rechecks=new StudentDocumentRechecks(database),recheckSchedules=new Map<string,number>();
   return {
     async preflight() {
       const result=await database.query<{ready:boolean}>(`SELECT to_regprocedure($1) IS NOT NULL
@@ -44,6 +46,13 @@ export function createSharedStudentSyncRuntime() {
           [`${schema}.xero_quota_admission`]);
         if(!quota.rows[0]?.ready) throw new Error('Shared Xero quota requires Runtime migration 084.');
       }
+      if(process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED==='true') {
+        if(process.env.XERO_SHARED_QUOTA_ENABLED!=='true' || process.env.XERO_SHARED_BACKOFF_ENABLED!=='true'
+          || process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED!=='true') throw new Error('Document rechecks require quota, backoff and source deduplication.');
+        const rechecks=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',
+          [`${schema}.student_document_recheck_budgets`]);
+        if(!rechecks.rows[0]?.ready) throw new Error('Document rechecks require Runtime migration 085.');
+      }
     },
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(
@@ -51,6 +60,9 @@ export function createSharedStudentSyncRuntime() {
       for(const run of due.rows) await invoices.process(run.customer_id,run.sync_run_id);
     },
     async processDocument(customerId:string) {
+      if(process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED==='true' && Date.now()-(recheckSchedules.get(customerId)??0)>=60_000) {
+        await rechecks.schedule(customerId);recheckSchedules.set(customerId,Date.now());
+      }
       const previous=scopeChecks.get(customerId);
       if(!previous || Date.now()-previous.checkedAt>=60_000) {
         const pending=await database.tenantReadTransaction(customerId,db=>db.query<{xero_connection_id:string}>(

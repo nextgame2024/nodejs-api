@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
 import { DatabaseService } from './database.service.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
+import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
 
 const url=process.env.LOCAL_DOCUMENT_SOURCE_TEST_DATABASE_URL;
 if(url && (!['localhost','127.0.0.1'].includes(new URL(url).hostname)
@@ -28,7 +29,9 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       CREATE TABLE sophia_runtime.student_operations_sync_checkpoints(customer_id uuid,xero_connection_id uuid,source_sync_at timestamptz);
       CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,status text);
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,
-        xero_contact_id uuid,invoice_type text,invoice_status text);
+        xero_contact_id uuid,invoice_type text,invoice_status text,provider_updated_at timestamptz);
+      CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,
+        provider_updated_at timestamptz);
       CREATE TABLE sophia_runtime.student_operations_case_invoice_links(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,case_id uuid);
       CREATE TABLE sophia_runtime.student_operations_document_jobs(customer_id uuid,job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),case_id uuid,
         xero_connection_id uuid,source_kind text,source_id uuid,status text DEFAULT 'queued',attempts int DEFAULT 0,
@@ -37,10 +40,10 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       CREATE TABLE sophia_runtime.student_operations_case_documents(document_id uuid DEFAULT gen_random_uuid(),customer_id uuid,case_id uuid,
         xero_connection_id uuid,source_kind text,source_id uuid,attachment_id uuid,file_name text,mime_type text,size_bytes bigint,last_seen_at timestamptz DEFAULT now(),
         UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id));`);
-    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql'])
+    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql','085_student_document_rechecks.sql'])
       await pool.query((await readFile(new URL(`./migrations/${migration}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     for(const table of ['customers','xero_connections','student_operations_cases','student_operations_xero_sync_configurations',
-      'student_operations_sync_checkpoints','student_operations_xero_sync_runs','student_operations_xero_invoices',
+      'student_operations_sync_checkpoints','student_operations_xero_sync_runs','student_operations_xero_invoices','student_operations_xero_contacts',
       'student_operations_case_invoice_links','student_operations_document_jobs','student_operations_case_documents']) {
       await pool.query(`ALTER TABLE sophia_runtime.${table} ENABLE ROW LEVEL SECURITY;
         ALTER TABLE sophia_runtime.${table} FORCE ROW LEVEL SECURITY;
@@ -55,14 +58,16 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
   afterAll(async()=>{
     await runtime?.onModuleDestroy();await pool.end();
     for(const key of ['SOPHIA_RUNTIME_DATABASE_URL','SOPHIA_RUNTIME_DB_SSL','SOPHIA_RUNTIME_DATABASE_ROLE',
-      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED']) {
+      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED']) {
       if(env[key]===undefined) delete process.env[key];else process.env[key]=env[key];
     }
   });
   beforeEach(async()=>{
     delete process.env.XERO_SHARED_QUOTA_ENABLED;
+    delete process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED;
     attachments.mockReset();attachments.mockResolvedValue([file]);
-    await pool.query(`TRUNCATE sophia_runtime.xero_quota_admission,sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
+    await pool.query(`TRUNCATE sophia_runtime.student_document_recheck_budgets,sophia_runtime.student_operations_xero_contacts,
+      sophia_runtime.xero_quota_admission,sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
       sophia_runtime.xero_connection_rate_limits,sophia_runtime.student_operations_document_jobs,sophia_runtime.student_operations_case_documents,
       sophia_runtime.student_operations_case_invoice_links,sophia_runtime.student_operations_xero_invoices,sophia_runtime.student_operations_cases,
       sophia_runtime.student_operations_sync_checkpoints,sophia_runtime.student_operations_xero_sync_runs,
@@ -78,8 +83,8 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     const id=(await pool.query('SELECT gen_random_uuid() id')).rows[0].id;
     const invoice=kind==='Contacts'?(await pool.query('SELECT gen_random_uuid() id')).rows[0].id:sourceId;
     await pool.query('INSERT INTO sophia_runtime.student_operations_cases VALUES($1,$2)',[customer,id]);
-    await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices VALUES($1,$2,$3,$4,$5,'DRAFT')`,
-      [customer,conn,invoice,source,kind==='CreditNotes'?'ACCRECCREDIT':'ACCREC']);
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,invoice_type,invoice_status) VALUES($1,$2,$3,$4,$5,'DRAFT')`,
+      [customer,conn,invoice,kind==='Contacts'?sourceId:source,kind==='CreditNotes'?'ACCRECCREDIT':'ACCREC']);
     await pool.query('INSERT INTO sophia_runtime.student_operations_case_invoice_links VALUES($1,$2,$3,$4)',[customer,conn,invoice,id]);
     await pool.query(`INSERT INTO sophia_runtime.student_operations_document_jobs(customer_id,case_id,xero_connection_id,source_kind,source_id)
       VALUES($1,$2,$3,$4,$5)`,[customer,id,conn,kind,sourceId]);
@@ -203,6 +208,89 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     await pool.query(`INSERT INTO sophia_runtime.xero_quota_admission(customer_id,xero_connection_id,remaining,refresh_after)
       VALUES($1,$2,$3,now()+interval '1 hour')`,[tenant,connection,remaining]);
   }
+  const schedule=()=>new StudentDocumentRechecks(runtime).schedule(tenant);
+  async function enableRechecks(remaining=500) {
+    await quotaState(remaining);process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED='true';
+  }
+  async function oldCompleted(kind='Contacts') {
+    await addCase(tenant,kind);await processOne();
+    await pool.query("UPDATE sophia_runtime.student_operations_document_sources SET checked_at=now()-interval '8 days'");
+  }
+  it('does not schedule rechecks unless explicitly enabled with all protections',async()=>{
+    await oldCompleted();expect(await schedule()).toBe(0);
+    process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED='true';
+    await expect(schedule()).rejects.toThrow('require quota');
+    expect((await pool.query('SELECT * FROM sophia_runtime.student_document_recheck_budgets')).rows).toHaveLength(0);
+  });
+  it('queues one representative per expired source and fans out a genuinely fresh result',async()=>{
+    await addCase();await oldCompleted();await enableRechecks();
+    expect(await schedule()).toBe(1);expect(await schedule()).toBe(0);
+    expect(attachments).toHaveBeenCalledTimes(1);expect(await budget()).toEqual([{attempted_sources:1}]);
+    expect((await pool.query("SELECT count(*)::int n FROM sophia_runtime.student_operations_document_jobs WHERE status='queued'")).rows[0].n).toBe(1);
+    attachments.mockResolvedValue([{...file,fileName:'updated.pdf'}]);
+    await processOne();expect(attachments).toHaveBeenCalledTimes(2);
+    expect((await pool.query('SELECT file_name FROM sophia_runtime.student_operations_case_documents')).rows)
+      .toEqual([{file_name:'updated.pdf'},{file_name:'updated.pdf'}]);
+    expect(await schedule()).toBe(0);
+  });
+  it.each(['Contacts','Invoices','CreditNotes'])('queues imported changes for %s without relying on local upsert timestamps',async kind=>{
+    await addCase(tenant,kind);await processOne();await enableRechecks();
+    expect(await schedule()).toBe(0);
+    await pool.query("UPDATE sophia_runtime.student_operations_document_sources SET checked_at=now()-interval '2 hours'");
+    if(kind==='Contacts') await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,now()-interval '1 hour')`,[tenant,connection,source]);
+    else await pool.query("UPDATE sophia_runtime.student_operations_xero_invoices SET provider_updated_at=now()-interval '1 hour'");
+    expect(await schedule()).toBe(1);expect(await schedule()).toBe(0);
+    expect(attachments).toHaveBeenCalledTimes(1);
+    await processOne();expect(attachments).toHaveBeenCalledTimes(2);expect(await schedule()).toBe(0);
+  });
+  it('periodically rechecks successful empty results',async()=>{
+    attachments.mockResolvedValue([]);await oldCompleted();await enableRechecks();
+    expect(await schedule()).toBe(1);await processOne();
+    expect(attachments).toHaveBeenCalledTimes(2);
+    expect((await pool.query('SELECT attachments FROM sophia_runtime.student_operations_document_sources')).rows[0].attachments).toEqual([]);
+  });
+  it.each(['window','quota','unknown','cooldown','import','checkpoint','unlinked','inactive'])('does not queue rechecks while %s blocks eligibility',async gate=>{
+    await oldCompleted();await enableRechecks();
+    if(gate==='window') await pool.query("CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_document_window(at_time timestamptz DEFAULT now()) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT false $$");
+    if(gate==='quota') await pool.query('UPDATE sophia_runtime.xero_quota_admission SET remaining=200');
+    if(gate==='unknown') await pool.query('UPDATE sophia_runtime.xero_quota_admission SET remaining=NULL');
+    if(gate==='cooldown') await pool.query(`INSERT INTO sophia_runtime.xero_connection_rate_limits(customer_id,xero_connection_id,blocked_until) VALUES($1,$2,now()+interval '1 hour')`,[tenant,connection]);
+    if(gate==='import') await pool.query('INSERT INTO sophia_runtime.student_operations_xero_sync_runs VALUES($1,$2,\'processing\')',[tenant,connection]);
+    if(gate==='checkpoint') await pool.query("UPDATE sophia_runtime.student_operations_sync_checkpoints SET source_sync_at='2026-10-19Z'");
+    if(gate==='unlinked') await pool.query('DELETE FROM sophia_runtime.student_operations_case_invoice_links');
+    if(gate==='inactive') await pool.query("UPDATE sophia_runtime.xero_connections SET status='inactive'");
+    expect(await schedule()).toBe(0);expect(attachments).toHaveBeenCalledTimes(1);
+    expect((await pool.query("SELECT status FROM sophia_runtime.student_operations_document_jobs")).rows[0].status).toBe('succeeded');
+  });
+  it('serializes recheck scheduling across replicas and persists the 25-source daily cap after restart',async()=>{
+    for(let i=0;i<30;i++) await addCase(tenant,'Invoices',(await pool.query('SELECT gen_random_uuid() id')).rows[0].id);
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_document_sources(customer_id,xero_connection_id,source_kind,source_id,status,checked_at,attachments)
+      SELECT customer_id,xero_connection_id,source_kind,source_id,'succeeded',now()-interval '8 days','[]'::jsonb FROM sophia_runtime.student_operations_document_jobs;
+      UPDATE sophia_runtime.student_operations_document_jobs SET status='succeeded'`);
+    await enableRechecks();
+    const result=await Promise.all([schedule(),schedule()]);expect(result.reduce((a,b)=>a+b,0)).toBe(25);
+    expect(await schedule()).toBe(0);expect(attachments).not.toHaveBeenCalled();expect(await budget()).toHaveLength(0);
+    expect((await pool.query('SELECT scheduled_sources FROM sophia_runtime.student_document_recheck_budgets')).rows[0].scheduled_sources).toBe(25);
+    // A new Brisbane business day allows another bounded set, not duplicates.
+    await pool.query("UPDATE sophia_runtime.student_document_recheck_budgets SET business_date=business_date-1");
+    expect(await schedule()).toBe(5);
+  });
+  it('does not restart a spent fetch deadline or reset an active retry',async()=>{
+    await oldCompleted();await enableRechecks();
+    await pool.query("UPDATE sophia_runtime.student_operations_document_daily_budgets SET started_at=now()-interval '31 minutes'");
+    expect(await schedule()).toBe(1);expect(await processOne()).toBe(false);expect(attachments).toHaveBeenCalledTimes(1);
+    await pool.query('UPDATE sophia_runtime.student_operations_document_daily_budgets SET started_at=now()');
+    attachments.mockRejectedValue(new Error('temporary'));await processOne();
+    const before=(await pool.query('SELECT attempts,status FROM sophia_runtime.student_operations_document_sources')).rows[0];
+    expect(await schedule()).toBe(0);
+    expect((await pool.query('SELECT attempts,status FROM sophia_runtime.student_operations_document_sources')).rows[0]).toEqual(before);
+  });
+  it('isolates recheck budgets and denies cross-tenant writes and deletion',async()=>{
+    await oldCompleted();await enableRechecks();await schedule();
+    expect((await runtime.tenantReadTransaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_document_recheck_budgets'))).rows).toHaveLength(0);
+    await expect(runtime.tenantTransaction(other,db=>db.query('INSERT INTO sophia_runtime.student_document_recheck_budgets(customer_id,business_date) VALUES($1,current_date)',[tenant]))).rejects.toMatchObject({code:'42501'});
+    await expect(runtime.tenantTransaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_document_recheck_budgets'))).rejects.toMatchObject({code:'42501'});
+  });
   it('holds unknown or reserved quota before consuming a source attempt',async()=>{
     await addCase();process.env.XERO_SHARED_QUOTA_ENABLED='true';
     expect(await processOne()).toBe(false);expect(await budget()).toHaveLength(0);

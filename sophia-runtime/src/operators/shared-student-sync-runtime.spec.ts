@@ -6,6 +6,8 @@ const close=jest.fn(async()=>{});
 const processInvoices=jest.fn(async(..._args:unknown[])=>{});
 const processOne=jest.fn(async(..._args:unknown[])=>true);
 const status=jest.fn<(...args:unknown[])=>Promise<unknown>>();
+const scheduleRechecks=jest.fn(async(_customer:string)=>0);
+jest.unstable_mockModule('../business-packs/student-operations/student-document-rechecks.js',()=>({StudentDocumentRechecks:class {schedule=scheduleRechecks;}}));
 jest.unstable_mockModule('../database/database.service.js',()=>({DatabaseService:class {
   query=query;tenantReadTransaction=tenantRead;onModuleDestroy=close;
 }}));
@@ -19,6 +21,25 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('requires migration 085 before enabling document rechecks',async()=>{
+    const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'];
+    const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
+    try {
+      query.mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:true}]})
+        .mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:true}]})
+        .mockResolvedValueOnce({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('085');
+    } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
+  });
+  it('checks for rechecks even when the old queue is empty, at most once per minute',async()=>{
+    const previous=process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED;process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED='true';
+    try {
+      tenantRead.mockResolvedValue({rows:[]});const worker=createSharedStudentSyncRuntime();
+      await worker.processDocument('tenant');await worker.processDocument('tenant');
+      expect(scheduleRechecks).toHaveBeenCalledTimes(1);expect(scheduleRechecks).toHaveBeenCalledWith('tenant');
+      expect(processOne).not.toHaveBeenCalled();
+    } finally {if(previous===undefined) delete process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED;else process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED=previous;}
+  });
   it.each([false,true])('requires quota dependencies and migration 084 (dependencies ready: %s)',async(ready)=>{
     const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED'];
     const previous=keys.map(key=>process.env[key]);

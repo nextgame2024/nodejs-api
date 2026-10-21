@@ -303,10 +303,12 @@ until those leases have expired. Daily admission/headroom is the separate Phase
 4C release below. Automatic changed-source/rechecks, clear quota/reset UI,
 alerts and production validation remain separate tasks.
 
-## Phase 4C: shared daily admission and protected headroom (local, disabled)
+## Phase 4C: shared daily admission and protected headroom (activation user-confirmed)
 
 User reports migration 083 applied and shared worker Live at `8aedd7c`.
 That is deployment evidence, not proof of overnight document throughput.
+User subsequently confirmed migration 084 applied and quota enabled/redeployed
+on both services. Readiness/current balance/overnight throughput remain unverified.
 
 Migration 084 adds a connection-scoped daily admission ledger. Owner-configured
 defaults match the confirmed Starter allowance: **1000 calls, 200 protected from
@@ -374,3 +376,65 @@ Rollback: stop the worker, let leases drain, disable only
 Keep migrations, counters, source deduplication and shared backoff. Disabling
 quota admission removes headroom protection; it does not increase provider quota
 or authorize bypassing an existing cooldown. Never resume the old cron alongside it.
+
+## Phase 4D: changed-source and weekly rechecks (local, disabled by default)
+
+The 24-hour cache TTL is not a scheduler. This worker-only slice explicitly
+queues a fresh check for a successfully discovered invoice/credit-note/contact
+when its imported `provider_updated_at` is newer than the last discovery, or
+the discovery is at least seven days old. Imported timestamps are hints, not
+proof of attachment changes; the weekly fallback covers sources without a
+useful attachment-change signal. Seven days is an eligibility age, not a
+guarantee of completion while quota/backlog is constrained.
+
+At most 25 unique sources per customer/Brisbane day are scheduled, durably
+across replicas/restarts. One succeeded representative case job is queued per
+source, not every case link. Its refresh marker bypasses stale cached metadata;
+the existing source lease/fetch/fan-out path updates currently eligible linked
+cases. Already queued/processing sources are not duplicated; failed source
+recovery is not reset. Existing older backlog stays ahead by `next_attempt_at`.
+
+Scheduling uses only local records, takes no provider credit and does not
+start/reset the 30-minute fetch budget. It requires the document window,
+completed import/reconciliation, active TRUST customer/connection, current link,
+usable discovery credit and no shared cooldown. Actual fetches retain every
+normal quota/lease/window/source-cap/deadline/pacing gate. Twenty-five scheduled
+sources are not extra quota or a guarantee of only 25 HTTP calls including retries.
+
+Release (not performed by agent):
+
+1. Let active work finish, then deploy **sophia-student-sync-worker** with
+   `STUDENT_DOCUMENT_RECHECKS_ENABLED` absent/`false`. No Runtime API, Business
+   Manager API or frontend deployment is required for this slice.
+2. Apply `085_student_document_rechecks.sql` using the existing owner migration
+   runner (`node /app/sophia-runtime/dist/database/migrate.js` in shared-worker
+   shell). Use the owner URL for that command only, never the saved app connection.
+   Migration adds scheduling accounting/index only; no backfill or Xero calls.
+3. On **the shared worker only**, set `STUDENT_DOCUMENT_RECHECKS_ENABLED=true`
+   and redeploy. Keep quota, backoff and source-dedup flags true. Preflight
+   requires all three flags plus migration 085. Keep old document cron suspended.
+4. Observe readiness and normal overnight work, without a forced Xero request.
+   Existing windows, 500-source cap, 30-minute fetch budget, pacing and 200-call
+   protected reserve stay unchanged. Inspect local scheduling counters:
+
+```sql
+SELECT business_date, scheduled_sources, updated_at
+FROM sophia_runtime.student_document_recheck_budgets
+WHERE customer_id = '33ed40a6-7f2b-407c-aab2-de76b1cb45a8'
+ORDER BY business_date DESC LIMIT 7;
+```
+
+An empty/zero row before eligible work is expected. This counter measures
+scheduled sources, not completed checks or provider calls. Use existing source
+status/quota queries to inspect processing and allowance separately.
+
+Rollback: disable only `STUDENT_DOCUMENT_RECHECKS_ENABLED` on the shared worker
+and redeploy after active work finishes. Retain migration/counters and already
+queued refresh requests; existing discovery may still finish them within its
+normal limits. Do not erase requests, reset budgets or resume the old cron.
+
+This release does not backfill legacy completed jobs without canonical source
+records, delete disappeared-file metadata, cache file contents or add app-wide
+minute/concurrency admission. Alerts, quota-specific UI, controlled p95 samples
+and real overnight throughput/savings remain open. Australian hosting stays
+deferred to Runtime P7; no schedule expansion is included.
