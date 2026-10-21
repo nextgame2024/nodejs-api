@@ -126,3 +126,27 @@ increase or claim that a whole backlog is finished is made here. Container build
 production startup, hosting alert delivery, overnight recovery and p95 are
 deployment verification gates. No provisioning, production migration or provider
 call was executed during local implementation.
+
+## Queued webhook follow-up — 21 October 2026
+
+Operator evidence confirms the shared worker is Live/ready and the old document
+cron is suspended. Startup readiness alone does not prove successful syncs.
+The first manual identity apply failed in scan because an invoice webhook queued
+for tonight was incorrectly interpreted as an import in progress.
+
+The follow-up fix uses the same automatic-window policy as Runtime: processing
+imports always block (including expired leases awaiting recovery), queued manual
+imports block, and queued automatic imports block only in the automatic window.
+Both automatic identity scheduling and each processing batch use this policy.
+Blocking dependencies leave the same job queued/processing for a later poll;
+they do not mark it failed or publish a reconciliation checkpoint.
+
+Release this fix by deploying **nodejs-api** and **sophia-student-sync-worker**
+from the same revision. No additional SQL migration or environment variable is
+required. Keep the document cron suspended and both APIs enqueue-only.
+Click **Check records** once, then verify that the new run is `preview` and
+`succeeded`. Keep the historical failed `apply` row as audit history; do not
+reset it or automatically retry account creation. No provider refresh is needed
+for this check. Successful overnight processing, document backlog progress and
+the shared provider-rate-budget follow-up still require validation. Australian
+hosting migration remains deferred to the Runtime P7 assessment.

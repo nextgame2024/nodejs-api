@@ -12,6 +12,14 @@ import {
 const fail = (message, status = 409) =>
   Object.assign(new Error(message), { status });
 const clean = (value) => String(value ?? "").trim();
+// Match Runtime's claim policy: automatic jobs parked outside the overnight
+// window are not imports in progress. Processing jobs always block, including
+// expired leases awaiting recovery, because their local data may be partial.
+const blockingInvoiceRun = () =>
+  process.env.STUDENT_USER_SYNC_EXECUTION_MODE === "worker"
+    ? `(r.status='processing' OR (r.status='queued' AND
+        (r.trigger_type='manual' OR sophia_runtime.student_operations_automatic_window())))`
+    : `r.status IN ('queued','processing')`;
 const SOURCE = `FROM sophia_runtime.student_operations_xero_invoices i
  LEFT JOIN sophia_runtime.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
  WHERE i.customer_id=$1 AND i.xero_connection_id=$2
@@ -241,15 +249,6 @@ async function linkStudent(db, scope, row, studentId) {
 }
 
 async function scan(db, run, scope) {
-  const refreshing = await db.query(
-    `SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs
-    WHERE customer_id=$1 AND status IN ('queued','processing')`,
-    [scope.customer_id],
-  );
-  if (refreshing.rowCount)
-    throw fail(
-      "Xero is still refreshing. Retry Sync users when the refresh finishes.",
-    );
   const connection = await db.query(
     `SELECT xero_connection_id,last_successful_sync_at FROM sophia_runtime.student_operations_xero_sync_configurations
     WHERE customer_id=$1 AND enabled AND organisation_role='trust'`,
@@ -547,7 +546,7 @@ export async function scheduleStudentSync(db) {
       AND ((c.next_nightly_at<=now() AND ${automaticWindow})
         OR c.last_source_sync IS DISTINCT FROM x.last_successful_sync_at)
       AND NOT EXISTS (SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs r
-        WHERE r.customer_id=c.customer_id AND r.status IN ('queued','processing'))
+        WHERE r.customer_id=c.customer_id AND ${blockingInvoiceRun()})
       AND NOT EXISTS (SELECT 1 FROM bm_xero_student_sync_runs r
         WHERE r.customer_id=c.customer_id AND r.status IN ('queued','processing'))
       AND NOT EXISTS (SELECT 1 FROM bm_xero_student_sync_runs r
@@ -608,6 +607,17 @@ export async function processSyncBatch({ schedule = true, throwOnError = false }
             "The requesting user no longer belongs to this company.",
             403,
           );
+        const refreshing = await db.query(
+          `SELECT 1 FROM sophia_runtime.student_operations_xero_sync_runs r
+           WHERE r.customer_id=$1 AND ${blockingInvoiceRun()} LIMIT 1`,
+          [scope.customer_id],
+        );
+        if (refreshing.rowCount) {
+          // Dependency wait, not a failed identity operation. Keep the same job
+          // and checkpoint untouched; reauthorize and retry on the next poll.
+          await db.query("ROLLBACK");
+          continue;
+        }
         if (run.phase === "scan") {
           await scan(db, run, scope);
           if (run.mode === 'preview') await checkpointStudentSync(db,run);

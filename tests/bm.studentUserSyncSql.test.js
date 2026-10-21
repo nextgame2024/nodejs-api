@@ -36,7 +36,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
       CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
       CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,pack_id text,status text,role_key text);
       CREATE TABLE sophia_runtime.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text,last_successful_sync_at timestamptz);
-      CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(sync_run_id uuid PRIMARY KEY,customer_id uuid,xero_connection_id uuid,status text,mode text,created_at timestamptz);
+      CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(sync_run_id uuid PRIMARY KEY,customer_id uuid,xero_connection_id uuid,status text,mode text,created_at timestamptz,trigger_type text DEFAULT 'manual');
       CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,legal_name text,email text);
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid DEFAULT gen_random_uuid(),xero_contact_id uuid,invoice_type text,invoice_status text,last_seen_sync_run_id uuid);`);
     await pool.query(`
@@ -86,7 +86,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
       [customer, connection],
     );
     await pool.query(
-      "INSERT INTO sophia_runtime.student_operations_xero_sync_runs VALUES($1,$2,$3,'succeeded','initial',now())",
+      "INSERT INTO sophia_runtime.student_operations_xero_sync_runs(sync_run_id,customer_id,xero_connection_id,status,mode,created_at) VALUES($1,$2,$3,'succeeded','initial',now())",
       [source, customer, connection],
     );
     for (const [name, email] of [
@@ -390,6 +390,80 @@ suite("Student user sync — isolated PostgreSQL", () => {
     const student = (await pool.query("SELECT student_id FROM users WHERE type='student' LIMIT 1")).rows[0];
     await resolveCandidate(actor,row.id,{action:'link',studentId:student.student_id});
     expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1',[id])).rows[0].student_id).toBe(student.student_id);
+  });
+  test('automatic local review is scheduled despite a daytime parked webhook', async () => {
+    const oldMode = process.env.STUDENT_USER_SYNC_EXECUTION_MODE;
+    process.env.STUDENT_USER_SYNC_EXECUTION_MODE = 'worker';
+    const id = (await pool.query('SELECT gen_random_uuid() id')).rows[0].id;
+    try {
+      await pool.query(`CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_automatic_window() RETURNS boolean LANGUAGE sql AS $$ SELECT false $$`);
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_sync_runs
+        (sync_run_id,customer_id,xero_connection_id,status,trigger_type)
+        VALUES($1,$2,$3,'queued','webhook')`, [id,customer,connection]);
+      await pool.query("UPDATE bm_xero_student_sync_config SET last_source_sync=NULL,next_nightly_at=now()+interval '1 day' WHERE customer_id=$1", [customer]);
+      await processSyncBatch();
+      expect((await pool.query("SELECT status,mode,trigger_type FROM bm_xero_student_sync_runs ORDER BY created_at DESC LIMIT 1")).rows[0])
+        .toEqual({status:'succeeded',mode:'preview',trigger_type:'source'});
+    } finally {
+      await pool.query('DELETE FROM sophia_runtime.student_operations_xero_sync_runs WHERE sync_run_id=$1',[id]);
+      if (oldMode === undefined) delete process.env.STUDENT_USER_SYNC_EXECUTION_MODE;
+      else process.env.STUDENT_USER_SYNC_EXECUTION_MODE = oldMode;
+    }
+  });
+  test('an import starting between apply batches defers without publishing a checkpoint', async () => {
+    const id = (await pool.query('SELECT gen_random_uuid() id')).rows[0].id;
+    await enqueueSync(actor,'apply');
+    await processSyncBatch({schedule:false});
+    const run = (await pool.query("SELECT id FROM bm_xero_student_sync_runs WHERE status='processing' AND customer_id=$1",[customer])).rows[0];
+    try {
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_sync_runs
+        (sync_run_id,customer_id,xero_connection_id,status,trigger_type)
+        VALUES($1,$2,$3,'processing','manual')`, [id,customer,connection]);
+      const before = (await pool.query('SELECT processed_count,created_count FROM bm_xero_student_sync_runs WHERE id=$1',[run.id])).rows[0];
+      await processSyncBatch({schedule:false});
+      expect((await pool.query('SELECT processed_count,created_count FROM bm_xero_student_sync_runs WHERE id=$1',[run.id])).rows[0]).toEqual(before);
+      expect((await pool.query('SELECT * FROM sophia_runtime.student_operations_sync_checkpoints')).rows).toHaveLength(0);
+    } finally {
+      await pool.query('DELETE FROM sophia_runtime.student_operations_xero_sync_runs WHERE sync_run_id=$1',[id]);
+    }
+    await drain();
+    expect((await pool.query('SELECT status FROM bm_xero_student_sync_runs WHERE id=$1',[run.id])).rows[0].status).toBe('succeeded');
+  });
+  test.each([
+    ['worker', false, 'queued', 'webhook', false],
+    ['worker', false, 'queued', 'schedule', false],
+    ['worker', false, 'queued', 'manual', true],
+    ['worker', true, 'queued', 'webhook', true],
+    ['worker', false, 'processing', 'webhook', true],
+    ['legacy', false, 'queued', 'webhook', true],
+  ])('%s window=%s invoice=%s/%s defers=%s without failing or creating accounts', async (mode, window, status, trigger, blocked) => {
+    const oldMode = process.env.STUDENT_USER_SYNC_EXECUTION_MODE;
+    process.env.STUDENT_USER_SYNC_EXECUTION_MODE = mode;
+    const invoiceRun = (await pool.query('SELECT gen_random_uuid() id')).rows[0].id;
+    try {
+      await pool.query(`CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_automatic_window() RETURNS boolean LANGUAGE sql AS $$ SELECT ${window} $$`);
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_sync_runs
+        (sync_run_id,customer_id,xero_connection_id,status,mode,created_at,trigger_type)
+        VALUES($1,$2,$3,$4,'incremental',now()-interval '8 hours',$5)`, [invoiceRun, customer, connection, status, trigger]);
+      const before = (await pool.query("SELECT count(*)::int n FROM users WHERE type='student'")).rows[0].n;
+      const checkpoints = (await pool.query('SELECT * FROM sophia_runtime.student_operations_sync_checkpoints')).rows;
+      await enqueueSync(actor, 'preview');
+      const run = (await pool.query("SELECT id FROM bm_xero_student_sync_runs WHERE status='queued' AND customer_id=$1", [customer])).rows[0];
+      await processSyncBatch({schedule:false});
+      expect((await pool.query('SELECT status,error FROM bm_xero_student_sync_runs WHERE id=$1', [run.id])).rows[0])
+        .toEqual({status:blocked ? 'queued' : 'succeeded', error:null});
+      if (blocked) {
+        expect((await pool.query('SELECT * FROM sophia_runtime.student_operations_sync_checkpoints')).rows).toEqual(checkpoints);
+        await pool.query("UPDATE sophia_runtime.student_operations_xero_sync_runs SET status='succeeded' WHERE sync_run_id=$1", [invoiceRun]);
+        await processSyncBatch({schedule:false});
+        expect((await pool.query('SELECT status FROM bm_xero_student_sync_runs WHERE id=$1', [run.id])).rows[0].status).toBe('succeeded');
+      }
+      expect((await pool.query("SELECT count(*)::int n FROM users WHERE type='student'")).rows[0].n).toBe(before);
+    } finally {
+      await pool.query('DELETE FROM sophia_runtime.student_operations_xero_sync_runs WHERE sync_run_id=$1', [invoiceRun]);
+      if (oldMode === undefined) delete process.env.STUDENT_USER_SYNC_EXECUTION_MODE;
+      else process.env.STUDENT_USER_SYNC_EXECUTION_MODE = oldMode;
+    }
   });
   test('latest dated draft wins; advisor changes and blanks reconcile idempotently and tenant-scoped', async () => {
     const client=await pool.connect();

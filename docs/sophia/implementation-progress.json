@@ -1,5 +1,13 @@
 {
   "schemaVersion": 1,
+  "studentSyncQueuedWebhookFollowUp": {
+    "updatedOn": "2026-10-21",
+    "status": "Implemented and locally verified; deployment pending. No production writes or provider calls made by the agent.",
+    "operatorEvidence": "User screenshots show shared worker Live with student_sync_worker_ready and documentWindow=false heartbeat; old document cron is suspended. SQL shows one queued incremental webhook invoice run with no lease, and a failed apply/scan identity run reporting Xero is still refreshing. This does not establish successful overnight processing.",
+    "fix": "Use the Runtime claim-window policy for both identity scheduling and execution: processing imports always block; queued manual imports block; queued automatic imports block during the automatic window only. A blocking import defers the same identity job without failing it, changing counts or publishing a checkpoint. Recheck before every bounded apply batch. Authorization and legacy queued-run blocking remain intact.",
+    "verification": "18 isolated local PostgreSQL integration tests, 19 focused unit tests and 38 real-estate regression tests passed; boundary check passed across 286 source files. Fixtures include the daytime queued webhook, automatic review scheduling, queued manual/overnight/processing waits, same-run resume, between-apply-batch waits, preview account safety and checkpoint preservation.",
+    "release": "Deploy nodejs-api and sophia-student-sync-worker from this revision. No new migrations or variables. Keep Runtime enqueue-only and the old document cron suspended. Click Check records once and verify the new preview run succeeds. Do not reset or automatically retry the historical failed apply row; do not force a provider refresh to test this local fix. Overnight success and provider-rate-budget phase 4 remain open; Australian hosting assessment stays deferred to P7."
+  },
   "studentSharedWorkerConsolidation": {
     "updatedOn": "2026-10-20",
     "plan": "student-sync-performance-plan.json",
