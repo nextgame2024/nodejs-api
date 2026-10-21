@@ -14,11 +14,11 @@ for(const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>stop.abort());
 try {
   const coordinator=createStudentSyncCoordinator({runtime,processUsers:processSyncBatch,customerIds,
     log:entry=>console.log(JSON.stringify(entry))});
-  await runtime.preflight();
+  const features=await runtime.preflight();
   const ready=await pool.query(`SELECT (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='public'
     AND table_name='bm_xero_student_sync_runs' AND column_name IN ('trigger_type','source_connection_id')) AS ready`);
   if(!ready.rows[0]?.ready) throw new Error('Shared worker requires the identity pipeline migration.');
-  console.log(JSON.stringify({event:'student_sync_worker_ready'}));
+  console.log(JSON.stringify({event:'student_sync_worker_ready',features}));
   while(!stop.signal.aborted) {
     const delay=await coordinator.tick(stop.signal);
     await sleep(delay,undefined,{signal:stop.signal}).catch(error=>{if(error.name!=='AbortError') throw error;});

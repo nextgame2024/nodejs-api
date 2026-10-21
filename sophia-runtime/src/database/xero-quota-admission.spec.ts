@@ -18,10 +18,23 @@ suite('Atomic Xero quota admission under PostgreSQL RLS',()=>{
     await pool.query(`DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname='sophia_runtime_app') THEN
       CREATE ROLE sophia_runtime_app NOLOGIN NOBYPASSRLS; END IF; END $$;
       CREATE SCHEMA sophia_runtime;GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.xero_connections(customer_id uuid,xero_connection_id uuid,UNIQUE(customer_id,xero_connection_id));
       INSERT INTO sophia_runtime.xero_connections VALUES('${tenant}','${connection}'),('${other}','${connection}');`);
     for(const file of ['082_xero_connection_rate_limits.sql','084_xero_quota_admission.sql'])
       await pool.query((await readFile(new URL(`./migrations/${file}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    // The quota-only fixture needs just the names of the other three stores;
+    // the source integration fixture exercises their complete migrations.
+    await pool.query(`CREATE TABLE sophia_runtime.student_operations_document_daily_budgets(customer_id uuid);
+      CREATE TABLE sophia_runtime.student_operations_document_sources(customer_id uuid);
+      CREATE TABLE sophia_runtime.student_document_recheck_budgets(customer_id uuid);`);
+    expect((await pool.query("SELECT has_column_privilege('sophia_runtime_app','sophia_runtime.xero_quota_admission','daily_limit','UPDATE') AS unsafe")).rows[0].unsafe).toBe(true);
+    await pool.query(`INSERT INTO sophia_runtime.xero_quota_admission(customer_id,xero_connection_id,remaining,generation_admissions,operational_admissions)
+      VALUES($1,$2,321,9,9)`,[tenant,connection]);
+    const before=(await pool.query('SELECT * FROM sophia_runtime.xero_quota_admission')).rows;
+    const hardening=(await readFile(new URL('./migrations/086_student_sync_permission_hardening.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime');
+    await pool.query(hardening);await pool.query(hardening);
+    expect((await pool.query('SELECT * FROM sophia_runtime.xero_quota_admission')).rows).toEqual(before);
     process.env.SOPHIA_RUNTIME_DATABASE_URL=url;process.env.SOPHIA_RUNTIME_DB_SSL='false';process.env.SOPHIA_RUNTIME_DATABASE_ROLE='sophia_runtime_app';
     process.env.XERO_SHARED_QUOTA_ENABLED='true';process.env.XERO_SHARED_BACKOFF_ENABLED='true';
     runtime=new DatabaseService();quota=new XeroQuotaAdmission(runtime);
@@ -125,6 +138,8 @@ suite('Atomic Xero quota admission under PostgreSQL RLS',()=>{
     await ready();
     expect((await runtime.tenantReadTransaction(other,db=>db.query('SELECT * FROM sophia_runtime.xero_quota_admission'))).rows).toHaveLength(0);
     await expect(runtime.tenantTransaction(tenant,db=>db.query('UPDATE sophia_runtime.xero_quota_admission SET discovery_reserve=0'))).rejects.toMatchObject({code:'42501'});
+    await expect(runtime.tenantTransaction(tenant,db=>db.query('UPDATE sophia_runtime.xero_quota_admission SET daily_limit=5000'))).rejects.toMatchObject({code:'42501'});
+    await expect(runtime.tenantTransaction(other,db=>db.query('INSERT INTO sophia_runtime.xero_quota_admission(customer_id,xero_connection_id,daily_limit) VALUES($1,$2,5000)',[other,connection]))).rejects.toMatchObject({code:'42501'});
     await expect(runtime.tenantTransaction(other,db=>db.query('INSERT INTO sophia_runtime.xero_quota_admission(customer_id,xero_connection_id) VALUES($1,$2)',[tenant,connection]))).rejects.toMatchObject({code:'42501'});
     await expect(runtime.tenantTransaction(tenant,db=>db.query('DELETE FROM sophia_runtime.xero_quota_admission'))).rejects.toMatchObject({code:'42501'});
   });

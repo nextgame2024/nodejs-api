@@ -379,6 +379,11 @@ or authorize bypassing an existing cooldown. Never resume the old cron alongside
 
 ## Phase 4D: changed-source and weekly rechecks (local, disabled by default)
 
+Recovery evidence supersedes earlier activation reports: 085 is applied, but the
+actual worker shell shows quota `false`, source dedup unset, backoff `true` and
+rechecks `false`. The worker is ready with rechecks off, not fully protected.
+Use the recovery procedure at the end before activating rechecks.
+
 The 24-hour cache TTL is not a scheduler. This worker-only slice explicitly
 queues a fresh check for a successfully discovered invoice/credit-note/contact
 when its imported `provider_updated_at` is newer than the last discovery, or
@@ -438,3 +443,61 @@ records, delete disappeared-file metadata, cache file contents or add app-wide
 minute/concurrency admission. Alerts, quota-specific UI, controlled p95 samples
 and real overnight throughput/savings remain open. Australian hosting stays
 deferred to Runtime P7; no schedule expansion is included.
+
+## Startup recovery and inherited-grant repair (086)
+
+The previous restart was a correct fail-closed dependency check, not a migration
+failure. Rechecks were enabled without quota/source dedup enabled in the actual
+worker environment. Disabling rechecks restored readiness and shell access.
+The new startup diagnostic names exact missing/non-true flags before DB checks;
+it never silently enables them. Ready logs now include four allowlisted boolean
+feature states, never arbitrary environment values, credentials or database URLs.
+
+Read-only production checks also exposed an independent permission defect:
+migration 010 grants CRUD on new tables by default. Later narrower GRANTs add
+permissions, not remove them, so 084's intended owner-only configuration was not
+enforced. Earlier thin fixtures lacked those defaults. The updated fixtures
+reproduce them and verify real migration 086 restores the intended boundary.
+
+086 changes grants only on five student sync stores: daily source budgets,
+shared cooldown, canonical source cache, daily quota and recheck budgets.
+Operational SELECT/INSERT/UPDATE remain; DELETE is removed. Quota INSERT/UPDATE
+are restricted to the existing allowed columns, excluding cap/reserve changes.
+It changes no data, queues, counters, cooldowns, leases, RLS or global defaults.
+Do not remove the broad defaults globally; unrelated Runtime stores rely on them.
+New restricted-table migrations must explicitly revoke inherited table grants.
+
+Recovery/release steps (no production mutations performed by agent):
+
+1. Keep `STUDENT_DOCUMENT_RECHECKS_ENABLED=false` on the worker. Deploy the new
+   shared-worker diagnostics. No API code change is required.
+2. Apply `086_student_sync_permission_hardening.sql` with the owner migration
+   runner (`node /app/sophia-runtime/dist/database/migrate.js` in worker shell).
+   Use owner credentials for that command only, not the saved app connection.
+   083/084/085 are already applied; do not reset their migration history.
+3. On **both Runtime API and shared worker**, save/deploy exactly:
+   `XERO_SHARED_QUOTA_ENABLED=true`, `XERO_SHARED_BACKOFF_ENABLED=true`,
+   `STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=true`. Values are lowercase, unquoted,
+   with no whitespace. Verify new worker ready log reports those three true and
+   rechecks false. Service Live alone does not establish enabled protections.
+4. Then enable `STUDENT_DOCUMENT_RECHECKS_ENABLED=true` on **worker only** and
+   redeploy. Verify ready log reports all four features true. Keep old cron
+   suspended and normal schedules, caps, pacing, reserve and source leases intact.
+5. Verify effective permissions read-only. All results below must be false:
+
+```sql
+SELECT has_column_privilege('sophia_runtime_app',
+         'sophia_runtime.xero_quota_admission', 'daily_limit', 'UPDATE') AS can_change_limit,
+       has_column_privilege('sophia_runtime_app',
+         'sophia_runtime.xero_quota_admission', 'discovery_reserve', 'UPDATE') AS can_change_reserve,
+       has_column_privilege('sophia_runtime_app',
+         'sophia_runtime.xero_quota_admission', 'daily_limit', 'INSERT') AS can_insert_limit,
+       has_table_privilege('sophia_runtime_app',
+         'sophia_runtime.xero_quota_admission', 'DELETE') AS can_delete_quota;
+```
+
+Do not broaden grants if a request fails; inspect exact effective role/column
+permission first. No permission rollback to broad CRUD is needed to disable
+rechecks. Existing SSL-mode compatibility warning is separate from the startup
+failure; TLS verification was not relaxed. Overnight throughput still needs
+normal scheduled observation; no forced Xero request is required for recovery.

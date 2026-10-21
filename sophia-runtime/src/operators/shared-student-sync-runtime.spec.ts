@@ -21,6 +21,27 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it.each([
+    ['XERO_SHARED_QUOTA_ENABLED',undefined],['XERO_SHARED_BACKOFF_ENABLED','false'],
+    ['STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','false'],['XERO_SHARED_QUOTA_ENABLED',' true '],
+    ['XERO_SHARED_QUOTA_ENABLED','TRUE'],['XERO_SHARED_QUOTA_ENABLED','"true"'],
+  ])('names the invalid dependency %s without exposing environment values',async(key,value)=>{
+    const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'];
+    const previous=keys.map(name=>process.env[name]);keys.forEach(name=>process.env[name]='true');
+    if(value===undefined) delete process.env[key!];else process.env[key!]=value;
+    try {
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow(`Missing or not exactly true: ${key}.`);
+      expect(query).not.toHaveBeenCalled();
+    } finally {keys.forEach((name,index)=>{if(previous[index]===undefined) delete process.env[name];else process.env[name]=previous[index];});}
+  });
+  it('returns only allowlisted boolean feature states after readiness succeeds',async()=>{
+    const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'];
+    const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
+    query.mockResolvedValue({rows:[{ready:true}]});
+    try {
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual(Object.fromEntries(keys.map(key=>[key,true])));
+    } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
+  });
   it('requires migration 085 before enabling document rechecks',async()=>{
     const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'];
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');

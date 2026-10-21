@@ -9,6 +9,18 @@ import { StudentOperationsCasesService } from '../business-packs/student-operati
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
 
+const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
+  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'] as const;
+function featureFlags() {
+  // An explicit allowlist of booleans only: never log arbitrary environment
+  // values, credentials or connection strings during startup diagnosis.
+  return Object.fromEntries(featureFlagNames.map(name=>[name,process.env[name]==='true']));
+}
+function requireFlags(message:string,names:readonly string[]) {
+  const missing=names.filter(name=>process.env[name]!=='true');
+  if(missing.length) throw new Error(`${message} Missing or not exactly true: ${missing.join(', ')}. Update this worker's environment and redeploy.`);
+}
+
 // No Nest application, HTTP listener, API scheduler or unrelated worker starts.
 // The identity side keeps its own connection and authorization in the host.
 export function createSharedStudentSyncRuntime() {
@@ -21,6 +33,16 @@ export function createSharedStudentSyncRuntime() {
   const rechecks=new StudentDocumentRechecks(database),recheckSchedules=new Map<string,number>();
   return {
     async preflight() {
+      // Diagnose configuration before database readiness. Keep strict true
+      // semantics and fail closed; never auto-enable a dependent protection.
+      if(process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED==='true') requireFlags(
+        'Document rechecks require quota, backoff and source deduplication.',
+        ['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']);
+      if(process.env.XERO_SHARED_QUOTA_ENABLED==='true') requireFlags(
+        'Shared quota requires shared backoff and source deduplication.',
+        ['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']);
+      if(process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED==='true') requireFlags(
+        'Source discovery requires shared Xero backoff.',['XERO_SHARED_BACKOFF_ENABLED']);
       const result=await database.query<{ready:boolean}>(`SELECT to_regprocedure($1) IS NOT NULL
         AND to_regclass($2) IS NOT NULL AND to_regprocedure($3) IS NOT NULL AS ready`,
         [`${schema}.claim_due_student_operations_xero_worker_runs(integer)`,`${schema}.student_operations_document_daily_budgets`,
@@ -32,7 +54,6 @@ export function createSharedStudentSyncRuntime() {
         if(!rateStore.rows[0]?.ready) throw new Error('Shared Xero backoff requires Runtime migration 082.');
       }
       if(process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED==='true') {
-        if(process.env.XERO_SHARED_BACKOFF_ENABLED!=='true') throw new Error('Source discovery requires shared Xero backoff.');
         const sources=await database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND EXISTS(
           SELECT 1 FROM information_schema.columns WHERE table_schema=$2
             AND table_name='student_operations_document_jobs' AND column_name='refresh_requested_at') AS ready`,
@@ -40,19 +61,16 @@ export function createSharedStudentSyncRuntime() {
         if(!sources.rows[0]?.ready) throw new Error('Source discovery requires Runtime migration 083.');
       }
       if(process.env.XERO_SHARED_QUOTA_ENABLED==='true') {
-        if(process.env.XERO_SHARED_BACKOFF_ENABLED!=='true' || process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED!=='true')
-          throw new Error('Shared quota requires shared backoff and source deduplication.');
         const quota=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',
           [`${schema}.xero_quota_admission`]);
         if(!quota.rows[0]?.ready) throw new Error('Shared Xero quota requires Runtime migration 084.');
       }
       if(process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED==='true') {
-        if(process.env.XERO_SHARED_QUOTA_ENABLED!=='true' || process.env.XERO_SHARED_BACKOFF_ENABLED!=='true'
-          || process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED!=='true') throw new Error('Document rechecks require quota, backoff and source deduplication.');
         const rechecks=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',
           [`${schema}.student_document_recheck_budgets`]);
         if(!rechecks.rows[0]?.ready) throw new Error('Document rechecks require Runtime migration 085.');
       }
+      return featureFlags();
     },
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

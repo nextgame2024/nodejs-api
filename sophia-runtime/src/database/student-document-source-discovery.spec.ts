@@ -21,6 +21,7 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     await pool.query(`DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname='sophia_runtime_app') THEN
       CREATE ROLE sophia_runtime_app NOLOGIN NOBYPASSRLS; END IF; END $$;
       CREATE SCHEMA sophia_runtime; GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,status text);
       CREATE TABLE sophia_runtime.xero_connections(customer_id uuid,xero_connection_id uuid,status text,UNIQUE(xero_connection_id,customer_id));
       CREATE TABLE sophia_runtime.student_operations_cases(customer_id uuid,case_id uuid,PRIMARY KEY(customer_id,case_id));
@@ -40,7 +41,7 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       CREATE TABLE sophia_runtime.student_operations_case_documents(document_id uuid DEFAULT gen_random_uuid(),customer_id uuid,case_id uuid,
         xero_connection_id uuid,source_kind text,source_id uuid,attachment_id uuid,file_name text,mime_type text,size_bytes bigint,last_seen_at timestamptz DEFAULT now(),
         UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id));`);
-    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql','085_student_document_rechecks.sql'])
+    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql','085_student_document_rechecks.sql','086_student_sync_permission_hardening.sql'])
       await pool.query((await readFile(new URL(`./migrations/${migration}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     for(const table of ['customers','xero_connections','student_operations_cases','student_operations_xero_sync_configurations',
       'student_operations_sync_checkpoints','student_operations_xero_sync_runs','student_operations_xero_invoices','student_operations_xero_contacts',
@@ -91,6 +92,13 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     return id;
   }
   async function budget(){return (await pool.query('SELECT attempted_sources FROM sophia_runtime.student_operations_document_daily_budgets')).rows;}
+  it('removes inherited deletion grants from all five protected stores without changing unrelated defaults',async()=>{
+    for(const table of ['student_operations_document_daily_budgets','xero_connection_rate_limits',
+      'student_operations_document_sources','xero_quota_admission','student_document_recheck_budgets']) {
+      expect((await pool.query("SELECT has_table_privilege('sophia_runtime_app',$1,'DELETE') AS allowed",[`sophia_runtime.${table}`])).rows[0].allowed).toBe(false);
+    }
+    expect((await pool.query("SELECT has_table_privilege('sophia_runtime_app','sophia_runtime.customers','DELETE') AS allowed")).rows[0].allowed).toBe(true);
+  });
   it('fetches one shared contact once and fans out only to linked cases in the same tenant',async()=>{
     await addCase();await addCase();await addCase(other);
     // An orphaned case job with the same source identity must not receive files.
