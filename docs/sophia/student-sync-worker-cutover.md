@@ -556,3 +556,32 @@ historical-stall SLA, persistent monitoring history or dashboard is configured.
 External delivery needs an approved destination/channel and separate work.
 Quota-specific UI, comparable p95 and real overnight progress/savings remain
 open. Existing schedules/caps/pacing and Australian hosting deferral are unchanged.
+
+## Payments quota pause feedback (frontend only)
+
+Latest user evidence at worker revision `3f62823` shows all five feature flags
+true and normally emitted health/heartbeat. Empty `signals` with window closed,
+import pending and quota unknown is a normal paused snapshot, not a failed sync.
+The 5795 queued and 2881 succeeded counts are case jobs, not file counts or a
+guaranteed provider-call forecast. Successful overnight progress still needs observation.
+
+The frontend feedback slice uses only the existing authenticated sync-status
+response. Quota unknown/exhausted/reserved and provider rate limits on failed
+attempts render as polite amber status in the existing freshness panel, while
+unexpected failures remain actionable errors. Unknown allowance does not display
+an invented remaining balance. Future retry bounds explicitly use Brisbane time
+and eligible-no-earlier-than wording; they do not guarantee a start outside the
+automatic window or assume midnight reset. Invalid/past/absent bounds do not
+invent a new deadline. Current run error takes precedence over stale configuration
+error; active/succeeded runs clear old quota feedback.
+
+Deploy/reload **frontend only**. No SQL, new environment variables, API/worker
+deployment or provider probe is required. Keep all worker flags and schedules
+unchanged and old document cron suspended. Existing role-scoped controls, local
+records, filters, paging, enqueue-only Refresh, GET-only Check progress and bounded
+polling remain. Mobile/desktop and dark/light wrapping and status colors are tested.
+
+This is improved failed-run feedback, not a live quota dashboard for queued jobs.
+External alert delivery, missing-heartbeat monitoring, measured overnight savings
+and controlled p95 remain separate work. Do not click Refresh solely to validate
+the wording or to consume quota for a smoke test.
