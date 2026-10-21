@@ -7,6 +7,7 @@ export function createStudentSyncCoordinator({runtime,processUsers,customerIds,n
   const tenants=[...new Set(customerIds)];
   let invoiceAt=0,usersAt=0,scheduleAt=0,heartbeatAt=0,busy=false,tenantIndex=0;
   const documentAt=new Map();
+  const healthAt=new Map();let healthIndex=0;
   const hour=new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',hourCycle:'h23'});
   async function stage(name,work) {
     try {return {ok:true,value:await work()};}
@@ -38,6 +39,21 @@ export function createStudentSyncCoordinator({runtime,processUsers,customerIds,n
             const processed=result.ok && result.value===true;
             documentAt.set(tenant,now()+(processed?2_000:60_000));
             if(processed) delay=2_000;
+            break;
+          }
+        }
+        if(signal?.aborted) return delay;
+        if(typeof runtime.reportHealth==='function') {
+          // One local read-only report per tick; rotate tenants fairly. A
+          // failed report never prevents the next business-processing tick.
+          for(let n=0;n<tenants.length;n++) {
+            const tenant=tenants[healthIndex++%tenants.length];
+            if(now()<(healthAt.get(tenant)??0)) continue;
+            healthAt.set(tenant,now()+5*60_000);
+            await stage('health',async()=>{
+              const report=await runtime.reportHealth(tenant);
+              if(report) log({event:'student_sync_health',...report});
+            });
             break;
           }
         }

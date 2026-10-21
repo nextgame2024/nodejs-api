@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { DatabaseService } from './database.service.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
+import { StudentSyncHealth } from '../operators/student-sync-health.js';
 
 const url=process.env.LOCAL_DOCUMENT_SOURCE_TEST_DATABASE_URL;
 if(url && (!['localhost','127.0.0.1'].includes(new URL(url).hostname)
@@ -26,7 +27,7 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       CREATE TABLE sophia_runtime.xero_connections(customer_id uuid,xero_connection_id uuid,status text,UNIQUE(xero_connection_id,customer_id));
       CREATE TABLE sophia_runtime.student_operations_cases(customer_id uuid,case_id uuid,PRIMARY KEY(customer_id,case_id));
       CREATE TABLE sophia_runtime.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,
-        enabled boolean DEFAULT true,organisation_role text DEFAULT 'trust',last_successful_sync_at timestamptz);
+        enabled boolean DEFAULT true,organisation_role text DEFAULT 'trust',last_successful_sync_at timestamptz,last_error_code text);
       CREATE TABLE sophia_runtime.student_operations_sync_checkpoints(customer_id uuid,xero_connection_id uuid,source_sync_at timestamptz);
       CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,status text);
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,
@@ -59,13 +60,14 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
   afterAll(async()=>{
     await runtime?.onModuleDestroy();await pool.end();
     for(const key of ['SOPHIA_RUNTIME_DATABASE_URL','SOPHIA_RUNTIME_DB_SSL','SOPHIA_RUNTIME_DATABASE_ROLE',
-      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED']) {
+      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED']) {
       if(env[key]===undefined) delete process.env[key];else process.env[key]=env[key];
     }
   });
   beforeEach(async()=>{
     delete process.env.XERO_SHARED_QUOTA_ENABLED;
     delete process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED;
+    delete process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED;
     attachments.mockReset();attachments.mockResolvedValue([file]);
     await pool.query(`TRUNCATE sophia_runtime.student_document_recheck_budgets,sophia_runtime.student_operations_xero_contacts,
       sophia_runtime.xero_quota_admission,sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
@@ -75,7 +77,8 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       sophia_runtime.student_operations_xero_sync_configurations,sophia_runtime.xero_connections,sophia_runtime.customers;
       INSERT INTO sophia_runtime.customers VALUES('${tenant}','active'),('${other}','active');
       INSERT INTO sophia_runtime.xero_connections VALUES('${tenant}','${connection}','active'),('${other}','${connection}','active');
-      INSERT INTO sophia_runtime.student_operations_xero_sync_configurations VALUES('${tenant}','${connection}',true,'trust','2026-10-20Z');
+      INSERT INTO sophia_runtime.student_operations_xero_sync_configurations(customer_id,xero_connection_id,enabled,organisation_role,last_successful_sync_at)
+        VALUES('${tenant}','${connection}',true,'trust','2026-10-20Z');
       INSERT INTO sophia_runtime.student_operations_sync_checkpoints VALUES('${tenant}','${connection}','2026-10-20Z');
       CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_document_window(at_time timestamptz DEFAULT now())
         RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT true $$;`);
@@ -92,6 +95,21 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     return id;
   }
   async function budget(){return (await pool.query('SELECT attempted_sources FROM sophia_runtime.student_operations_document_daily_budgets')).rows;}
+  it('reports tenant-scoped health read-only without provider calls or budget/queue changes',async()=>{
+    await addCase();await addCase(other);await quotaState(500);process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED='true';
+    const report=await new StudentSyncHealth(runtime).report(tenant);
+    expect(report).toMatchObject({status:'observed',counts:{queued:1,failed:0},quota:{remaining:500,reserve:200}});
+    expect(await new StudentSyncHealth(runtime).report(other)).toMatchObject({status:'unknown',signals:['no_active_trust_connection']});
+    expect(attachments).not.toHaveBeenCalled();expect(await budget()).toHaveLength(0);
+    expect((await pool.query('SELECT status FROM sophia_runtime.student_operations_document_jobs')).rows).toEqual([{status:'queued'},{status:'queued'}]);
+  });
+  it('reports expected quota pauses separately from actionable failures and excludes orphan job failures',async()=>{
+    await addCase();await quotaState(200);process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED='true';
+    await pool.query("UPDATE sophia_runtime.student_operations_document_jobs SET status='failed',error_code='source_not_linked'");
+    expect(await new StudentSyncHealth(runtime).report(tenant)).toMatchObject({status:'paused',signals:[],pauses:['discovery_quota_reserved'],counts:{failed:0}});
+    await pool.query("UPDATE sophia_runtime.student_operations_document_jobs SET error_code='document_discovery_failed'");
+    expect(await new StudentSyncHealth(runtime).report(tenant)).toMatchObject({status:'attention',signals:['document_jobs_failed']});
+  });
   it('removes inherited deletion grants from all five protected stores without changing unrelated defaults',async()=>{
     for(const table of ['student_operations_document_daily_budgets','xero_connection_rate_limits',
       'student_operations_document_sources','xero_quota_admission','student_document_recheck_budgets']) {

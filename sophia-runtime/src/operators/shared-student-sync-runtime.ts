@@ -8,9 +8,10 @@ import { StudentOperationsXeroSyncService } from '../business-packs/student-oper
 import { StudentOperationsCasesService } from '../business-packs/student-operations/student-operations-cases.service.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
+import { StudentSyncHealth } from './student-sync-health.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
-  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED'] as const;
+  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED'] as const;
 function featureFlags() {
   // An explicit allowlist of booleans only: never log arbitrary environment
   // values, credentials or connection strings during startup diagnosis.
@@ -31,8 +32,12 @@ export function createSharedStudentSyncRuntime() {
   const schema=runtimeConfig().schema;
   const scopeChecks=new Map<string,{checkedAt:number;ready:boolean}>();
   const rechecks=new StudentDocumentRechecks(database),recheckSchedules=new Map<string,number>();
+  const health=new StudentSyncHealth(database);
   return {
     async preflight() {
+      if(process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED==='true') requireFlags(
+        'Sync health logs require quota, backoff and source deduplication.',
+        ['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']);
       // Diagnose configuration before database readiness. Keep strict true
       // semantics and fail closed; never auto-enable a dependent protection.
       if(process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED==='true') requireFlags(
@@ -72,6 +77,7 @@ export function createSharedStudentSyncRuntime() {
       }
       return featureFlags();
     },
+    reportHealth:(customerId:string)=>health.report(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(
         `SELECT customer_id,sync_run_id FROM ${schema}.claim_due_student_operations_xero_worker_runs(1)`);

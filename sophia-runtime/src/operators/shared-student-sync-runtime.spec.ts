@@ -21,6 +21,14 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('requires protected source processing before enabling health logs',async()=>{
+    const keys=['STUDENT_SYNC_HEALTH_LOGS_ENABLED','XERO_SHARED_QUOTA_ENABLED'];const previous=keys.map(key=>process.env[key]);
+    process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED='true';delete process.env.XERO_SHARED_QUOTA_ENABLED;
+    try {
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('XERO_SHARED_QUOTA_ENABLED');
+      expect(query).not.toHaveBeenCalled();
+    } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
+  });
   it.each([
     ['XERO_SHARED_QUOTA_ENABLED',undefined],['XERO_SHARED_BACKOFF_ENABLED','false'],
     ['STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','false'],['XERO_SHARED_QUOTA_ENABLED',' true '],
@@ -39,7 +47,7 @@ describe('Shared worker Runtime adapter',()=>{
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
     query.mockResolvedValue({rows:[{ready:true}]});
     try {
-      expect(await createSharedStudentSyncRuntime().preflight()).toEqual(Object.fromEntries(keys.map(key=>[key,true])));
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false});
     } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
   });
   it('requires migration 085 before enabling document rechecks',async()=>{

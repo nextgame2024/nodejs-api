@@ -501,3 +501,58 @@ permission first. No permission rollback to broad CRUD is needed to disable
 rechecks. Existing SSL-mode compatibility warning is separate from the startup
 failure; TLS verification was not relaxed. Overnight throughput still needs
 normal scheduled observation; no forced Xero request is required for recovery.
+
+## Worker health summaries (local, disabled by default; no new migration)
+
+Latest evidence: 086 is applied and its effective restricted permissions were
+verified read-only. User-supplied ready log reports backoff, source dedup and
+quota true; rechecks remain false. The protection configuration is now observed
+on the worker, not merely inferred from Live status. Rechecks can be enabled
+separately with the existing worker-only flag; do not rerun 085/086.
+
+The next bounded observability slice adds `STUDENT_SYNC_HEALTH_LOGS_ENABLED`.
+When enabled, `student_sync_health` is emitted at most once per configured
+customer per five minutes, rotating one customer per coordinator tick after
+normal awaited business stages. A report uses the normal role and a tenant-scoped
+read-only transaction, with a five-second statement timeout. No Xero request,
+queue mutation, quota reservation, budget reset or new scheduler is involved.
+
+Reports contain only identifiers, bounded counts, timestamps and conservative
+quota metadata. No names, emails, filenames, credentials, provider bodies or
+raw exception messages are logged. The snapshot covers the currently active,
+enabled TRUST connection. Report status meanings:
+
+- `observed`: snapshot obtained with no listed failure/pause; not a claim that
+  all documents are synchronized or that metadata is fresh.
+- `paused`: expected window, import, reconciliation, cooldown, unknown/reserved
+  quota or closed source-batch limit. Inspect `pauses`; do not bypass the gate.
+- `attention`: import errors or failed document jobs/sources. Orphan
+  `source_not_linked` jobs are excluded from actionable failure counts.
+- `unknown`: no active eligible TRUST connection; not a healthy/empty-backlog claim.
+
+`lastSourceCheckAt` is the latest observed source check, not the oldest unchecked
+source or an all-source watermark. `quota.remaining` is the ledger estimate,
+not a live provider guarantee; stale/expired estimates are returned as unknown.
+Failed reads produce sanitized `student_sync_stage_failed` with stage `health`,
+then normal business processing continues. The cadence limits retries; a
+database outage is not converted into a false healthy report.
+
+Release:
+
+1. Deploy updated **sophia-student-sync-worker**. No API/frontend deployment
+   or new SQL is needed. Keep the three protection flags true.
+2. Set `STUDENT_SYNC_HEALTH_LOGS_ENABLED=true` on **worker only** and redeploy.
+   Startup requires quota/backoff/source dedup enabled. It does not require
+   rechecks enabled; the two features are independent.
+3. Verify ready feature states, heartbeat and normally emitted health events.
+   Outside 03:00-06:00 Brisbane, `outside_document_window` is expected, not a
+   processing failure. Do not trigger provider work just for a smoke test.
+4. Roll back only this slice by setting the health flag false and redeploying;
+   existing worker processing, jobs, counters and protection flags stay intact.
+
+These are structured logs and failure signals, **not delivered external alerts**.
+No email/webhook destination, alert rule, recipient, missing-heartbeat detector,
+historical-stall SLA, persistent monitoring history or dashboard is configured.
+External delivery needs an approved destination/channel and separate work.
+Quota-specific UI, comparable p95 and real overnight progress/savings remain
+open. Existing schedules/caps/pacing and Australian hosting deferral are unchanged.

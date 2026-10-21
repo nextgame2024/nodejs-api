@@ -56,4 +56,29 @@ describe('Shared student sync coordinator',()=>{
   test('rejects missing or malformed tenant configuration before any jobs run',()=>{
     for(const ids of [[],['invalid']]) expect(()=>createStudentSyncCoordinator({runtime:{},processUsers:()=>{},customerIds:ids})).toThrow('customer IDs');
   });
+  test('emits at most one read-only health report per tenant per five minutes',async()=>{
+    const f=fixture('2026-10-20T12:00:00+10:00');
+    f.runtime.reportHealth=jest.fn(async()=>({customerId:tenant,status:'paused',pauses:['outside_document_window']}));
+    await f.coordinator.tick();expect(f.runtime.reportHealth).toHaveBeenCalledTimes(1);
+    expect(f.log).toHaveBeenCalledWith({event:'student_sync_health',customerId:tenant,status:'paused',pauses:['outside_document_window']});
+    f.advance(15000);await f.coordinator.tick();expect(f.runtime.reportHealth).toHaveBeenCalledTimes(1);
+    f.advance(285000);await f.coordinator.tick();expect(f.runtime.reportHealth).toHaveBeenCalledTimes(2);
+  });
+  test('does not emit disabled health reports or leak health-read errors and keeps processing',async()=>{
+    const f=fixture();f.runtime.reportHealth=jest.fn(async()=>null);await f.coordinator.tick();
+    expect(f.log.mock.calls.flat().some(event=>event.event==='student_sync_health')).toBe(false);
+    f.advance(300000);f.runtime.reportHealth.mockRejectedValueOnce(new Error('postgresql://private-secret'));
+    await f.coordinator.tick();expect(f.log).toHaveBeenCalledWith({event:'student_sync_stage_failed',stage:'health'});
+    expect(JSON.stringify(f.log.mock.calls)).not.toContain('private-secret');
+    f.advance(15000);await f.coordinator.tick();expect(f.runtime.processInvoices).toHaveBeenCalledTimes(3);
+  });
+  test('rotates health reports fairly with only one tenant query per tick',async()=>{
+    const other='22222222-2222-4222-8222-222222222222';let now=new Date('2026-10-20T12:00:00+10:00').getTime();
+    const runtime={processInvoices:async()=>{},processDocument:async()=>false,reportHealth:jest.fn(async customerId=>({customerId,status:'observed'}))};
+    const coordinator=createStudentSyncCoordinator({runtime,processUsers:async()=>{},customerIds:[tenant,other],now:()=>now});
+    await coordinator.tick();expect(runtime.reportHealth.mock.calls).toEqual([[tenant]]);
+    await coordinator.tick();expect(runtime.reportHealth.mock.calls).toEqual([[tenant],[other]]);
+    await coordinator.tick();expect(runtime.reportHealth).toHaveBeenCalledTimes(2);
+    now+=300000;await coordinator.tick();expect(runtime.reportHealth).toHaveBeenLastCalledWith(tenant);
+  });
 });
