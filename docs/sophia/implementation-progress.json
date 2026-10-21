@@ -1,5 +1,20 @@
 {
   "schemaVersion": 1,
+  "studentSharedQuotaPhase4C": {
+    "updatedOn": "2026-10-21",
+    "status": "Implemented and verified locally behind disabled XERO_SHARED_QUOTA_ENABLED. No production migration, quota probe, queue reset, schedule change or provider request by agent.",
+    "operatorEvidence": "User confirms migration 083 applied and screenshot shows shared worker Live at 8aedd7c. Source-cache activation was reported; successful overnight document throughput and current Xero allowance are not independently verified. Previous observed daily exhaustion remains historical, not a spendable balance.",
+    "behavior": "Migration 084 adds durable per-customer/connection daily HTTP admission with owner-configured defaults of 1000 calls and 200 protected from attachment discovery. Imports, connection tests and authorized downloads may use the reserve. Every actual Accounting HTTP attempt/retry takes an atomic row-locked credit before fetch. Ambiguous attempts stay charged across restarts. Response tickets fence generations and subtract concurrent later admissions; delayed high headers cannot replenish credits. Unknown allowance blocks discovery and permits one ordinary operational request per 60-second recovery lease to learn headers, never an artificial quota probe. Provider daily Retry-After anchors the next fixed 24-hour boundary; without a known boundary a conservative local 24-hour bound is used. Expiry returns to unknown, not blindly full.",
+    "safety": "FORCE tenant RLS and non-BYPASSRLS application role; owner-only allowance/reserve configuration, no delete grant. Network calls hold no DB transaction. Unknown/reserved discovery is skipped before source claim; a lost admission race refunds only a fenced source attempt that sent no HTTP request, retaining charges if an earlier retry was sent. Cached fan-out remains available without spending credits. Existing backoff, enqueue-only APIs, suspended old cron, windows, pacing, source cap and authorization remain unchanged.",
+    "verification": [
+      "PASS: Runtime build; 69 focused connector/client/backoff/adapter/document-batch/import tests.",
+      "PASS: 15 isolated PostgreSQL quota tests using migrations 082/084 and actual Runtime role: concurrent reserve/final-credit exclusion, delayed headers, fixed reset cadence, unknown recovery, restart persistence, tenant/config/deletion denial, download charging and actual retry admissions.",
+      "PASS: 26 isolated source discovery PostgreSQL tests using migrations 081/082/083/084, including unknown/reserve preclaim hold, cached replay and refund versus charged retry paths.",
+      "PASS: 38 real-estate regression tests, 10 identity/coordinator tests and boundary check across 290 source files. Root npm test is not defined; the identity/coordinator tests were run successfully with the existing Jest binary."
+    ],
+    "release": "Deploy Runtime API/shared worker with quota flag absent/false; apply 084 via owner migration runner; enable XERO_SHARED_QUOTA_ENABLED=true on both services with backoff/source-dedup true. Verify readiness and read-only budget state during ordinary scheduled work, not forced provider calls. No Business Manager/frontend deployment required. See student-sync-worker-cutover.md Phase 4C.",
+    "limits": "Daily admission is per persisted connection, not app-wide minute/concurrency reservation or same-organisation merging across separate connection identities. OAuth/bootstrap and unmanaged consumers are outside this ledger. Conservative accounting may underuse allowance; operations can consume all reserved credits. Existing published cooldowns are never shortened. Automatic changed-source/rechecks, alerts, quota-specific UI, production savings/throughput and p95 remain open. Windows remain unchanged; Australian hosting assessment remains deferred to Runtime P7."
+  },
   "studentDocumentSourceDedupPhase4B": {
     "updatedOn": "2026-10-21",
     "status": "Bounded next task implemented locally behind disabled STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED. No production migration, provider request, queue reset, schedule change or provisioning by the agent.",

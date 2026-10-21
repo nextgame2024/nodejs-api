@@ -100,6 +100,12 @@ export class StudentDocumentSourceDiscovery {
             WHERE customer_id=$1 AND xero_connection_id=$2 AND blocked_until>now()`,args.slice(0,2));
           if(rate.rowCount) continue;
         }
+        if(process.env.XERO_SHARED_QUOTA_ENABLED==='true') {
+          const quota=await db.query(`SELECT 1 FROM ${s}.xero_quota_admission
+            WHERE customer_id=$1 AND xero_connection_id=$2 AND refresh_after>now()
+              AND remaining>discovery_reserve AND generation_admissions<daily_limit`,args.slice(0,2));
+          if(!quota.rowCount) continue;
+        }
         const budget=await db.query(`INSERT INTO ${s}.student_operations_document_daily_budgets(customer_id,business_date,attempted_sources)
           SELECT $1::uuid,(now() AT TIME ZONE 'Australia/Brisbane')::date,1
           WHERE NOT EXISTS(SELECT 1 FROM ${s}.student_operations_document_daily_budgets
@@ -109,7 +115,7 @@ export class StudentDocumentSourceDiscovery {
           WHERE student_operations_document_daily_budgets.attempted_sources<500
             AND student_operations_document_daily_budgets.started_at>now()-interval '30 minutes'
             AND (student_operations_document_daily_budgets.blocked_until IS NULL OR student_operations_document_daily_budgets.blocked_until<=now())
-          RETURNING customer_id`,[tenantId]);
+          RETURNING customer_id,business_date::text`,[tenantId]);
         if(!budget.rowCount) return null;
         const leased=await db.query<{last_attempt_at:string}>(`UPDATE ${s}.student_operations_document_sources src
           SET status='processing',attempts=$5,lease_token=$6,lease_expires_at=now()+interval '2 minutes',
@@ -117,7 +123,7 @@ export class StudentDocumentSourceDiscovery {
         await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='processing',attempts=$3,
           lease_token=$4,lease_expires_at=now()+interval '2 minutes',updated_at=now()
           WHERE customer_id=$1 AND job_id=$2`,[tenantId,job.job_id,attempts+1,token]);
-        return {cached:false as const,args,job,attempts:attempts+1,started:leased.rows[0].last_attempt_at};
+        return {cached:false as const,args,job,attempts:attempts+1,started:leased.rows[0].last_attempt_at,businessDate:budget.rows[0].business_date};
       }
       return invalid.rowCount?{cached:true as const}:null;
     });
@@ -151,6 +157,23 @@ export class StudentDocumentSourceDiscovery {
       const code=typeof value.errorCode==='string' && /^[a-z0-9_]{1,80}$/.test(value.errorCode)
         ? value.errorCode:'document_discovery_failed';
       const retry=Math.max(60,Math.min(Number.isFinite(Number(value.retryAfterSeconds))?Number(value.retryAfterSeconds):60,86400));
+      if(value.localQuotaDenial===true && value.upstreamAttempted===false && code.startsWith('xero_quota_')) {
+        // Admission lost a race to another process. No HTTP request was sent:
+        // release only our fenced source/case attempt, not another worker's.
+        await this.database.tenantTransaction(tenantId,async db=>{
+          const owned=await db.query(`UPDATE ${s}.student_operations_document_sources src SET status='queued',
+            attempts=greatest(0,attempts-1),next_attempt_at=now()+($6 * interval '1 second'),error_code=$7,
+            lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE ${key('src')} AND lease_token=$5 AND lease_expires_at>now() RETURNING source_id`,[...args,token,retry,code]);
+          if(!owned.rowCount) return;
+          await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='queued',attempts=greatest(0,attempts-1),
+            next_attempt_at=now()+($4 * interval '1 second'),error_code=$5,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE customer_id=$1 AND job_id=$2 AND lease_token=$3`,[tenantId,job.job_id,token,retry,code]);
+          await db.query(`UPDATE ${s}.student_operations_document_daily_budgets SET attempted_sources=greatest(0,attempted_sources-1),updated_at=now()
+            WHERE customer_id=$1 AND business_date=$2::date`,[tenantId,claim.businessDate]);
+        });
+        return false;
+      }
       const failed=attempts>=5 || ['xero_attachment_scope_missing','xero_authorization_rejected'].includes(code);
       await this.database.tenantTransaction(tenantId,async db=>{
         const owned=await db.query(`UPDATE ${s}.student_operations_document_sources src SET status=$6,error_code=$7,

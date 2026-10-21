@@ -22,6 +22,7 @@ import {
 } from "./xero.client.js";
 import { XeroCryptoService } from "./xero-crypto.service.js";
 import { XeroSharedBackoff } from './xero-rate-limit.js';
+import type { XeroRequestKind } from './xero-quota-admission.js';
 import {
   XERO_CONNECTOR_KEY,
   XERO_READ_ONLY_SCOPES,
@@ -179,10 +180,18 @@ export class XeroConnectorService {
     const connection = await this.loadConnection(tenantId, connectionId);
     try {
       const accessToken = await this.accessToken(tenantId, connection.xero_authorization_id, config);
-      const [organisation, bankAccounts] = await this.providerRequest(tenantId, connectionId, () => Promise.all([
-        this.client.organisation(accessToken, connection.xero_tenant_id),
-        this.client.bankAccounts(accessToken, connection.xero_tenant_id),
-      ]));
+      const [organisation, bankAccounts] = await this.providerRequest(tenantId, connectionId, async () => {
+        // Establish an unknown allowance with the first real operation before
+        // admitting the second verification request. No synthetic quota probe.
+        if(process.env.XERO_SHARED_QUOTA_ENABLED==='true') {
+          const organisation=await this.client.organisation(accessToken,connection.xero_tenant_id);
+          return [organisation,await this.client.bankAccounts(accessToken,connection.xero_tenant_id)] as const;
+        }
+        return Promise.all([
+          this.client.organisation(accessToken, connection.xero_tenant_id),
+          this.client.bankAccounts(accessToken, connection.xero_tenant_id),
+        ]);
+      });
       await this.recordTest(tenantId, identityUserId, connection, "healthy", null);
       return {
         connectionId,
@@ -308,7 +317,7 @@ export class XeroConnectorService {
 
   async attachments(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string) {
     const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
-    return this.providerRequest(tenantId, connectionId, () => this.client.attachments(accessToken,connection.xero_tenant_id,source,sourceId));
+    return this.providerRequest(tenantId, connectionId, () => this.client.attachments(accessToken,connection.xero_tenant_id,source,sourceId),'discovery');
   }
 
   async attachmentContent(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string) {
@@ -316,11 +325,13 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId, connectionId, () => this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId));
   }
 
-  private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>): Promise<T> {
+  private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>,kind:XeroRequestKind='operational'): Promise<T> {
     // Additive rollout: apply 082 first, then enable on both Runtime API and
     // shared worker. A missing/inaccessible store fails closed before fetch.
+    if(process.env.XERO_SHARED_QUOTA_ENABLED==='true' && process.env.XERO_SHARED_BACKOFF_ENABLED!=='true')
+      throw new ServiceUnavailableException('Shared Xero quota requires shared backoff.');
     if (process.env.XERO_SHARED_BACKOFF_ENABLED !== 'true') return request();
-    return this.client.withRequestPolicy(new XeroSharedBackoff(this.database).policy(tenantId, connectionId), request);
+    return this.client.withRequestPolicy(new XeroSharedBackoff(this.database).policy(tenantId, connectionId,kind), request);
   }
 
   private async consumeState(

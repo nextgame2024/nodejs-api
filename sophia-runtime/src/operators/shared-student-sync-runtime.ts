@@ -37,6 +37,13 @@ export function createSharedStudentSyncRuntime() {
           [`${schema}.student_operations_document_sources`,schema]);
         if(!sources.rows[0]?.ready) throw new Error('Source discovery requires Runtime migration 083.');
       }
+      if(process.env.XERO_SHARED_QUOTA_ENABLED==='true') {
+        if(process.env.XERO_SHARED_BACKOFF_ENABLED!=='true' || process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED!=='true')
+          throw new Error('Shared quota requires shared backoff and source deduplication.');
+        const quota=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',
+          [`${schema}.xero_quota_admission`]);
+        if(!quota.rows[0]?.ready) throw new Error('Shared Xero quota requires Runtime migration 084.');
+      }
     },
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

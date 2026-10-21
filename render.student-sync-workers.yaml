@@ -23,6 +23,9 @@ services:
       # Apply 083 before enabling on Runtime API and this worker.
       - key: STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED
         value: "false"
+      # Apply 084 first; requires shared backoff and source dedup on both services.
+      - key: XERO_SHARED_QUOTA_ENABLED
+        value: "false"
       - key: SOPHIA_RUNTIME_DB_POOL_SIZE
         value: "2"
       - key: DB_POOL_SIZE

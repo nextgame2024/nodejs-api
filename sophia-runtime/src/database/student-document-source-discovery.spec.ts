@@ -37,7 +37,7 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       CREATE TABLE sophia_runtime.student_operations_case_documents(document_id uuid DEFAULT gen_random_uuid(),customer_id uuid,case_id uuid,
         xero_connection_id uuid,source_kind text,source_id uuid,attachment_id uuid,file_name text,mime_type text,size_bytes bigint,last_seen_at timestamptz DEFAULT now(),
         UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id));`);
-    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql'])
+    for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql'])
       await pool.query((await readFile(new URL(`./migrations/${migration}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     for(const table of ['customers','xero_connections','student_operations_cases','student_operations_xero_sync_configurations',
       'student_operations_sync_checkpoints','student_operations_xero_sync_runs','student_operations_xero_invoices',
@@ -55,13 +55,14 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
   afterAll(async()=>{
     await runtime?.onModuleDestroy();await pool.end();
     for(const key of ['SOPHIA_RUNTIME_DATABASE_URL','SOPHIA_RUNTIME_DB_SSL','SOPHIA_RUNTIME_DATABASE_ROLE',
-      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']) {
+      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED']) {
       if(env[key]===undefined) delete process.env[key];else process.env[key]=env[key];
     }
   });
   beforeEach(async()=>{
+    delete process.env.XERO_SHARED_QUOTA_ENABLED;
     attachments.mockReset();attachments.mockResolvedValue([file]);
-    await pool.query(`TRUNCATE sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
+    await pool.query(`TRUNCATE sophia_runtime.xero_quota_admission,sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
       sophia_runtime.xero_connection_rate_limits,sophia_runtime.student_operations_document_jobs,sophia_runtime.student_operations_case_documents,
       sophia_runtime.student_operations_case_invoice_links,sophia_runtime.student_operations_xero_invoices,sophia_runtime.student_operations_cases,
       sophia_runtime.student_operations_sync_checkpoints,sophia_runtime.student_operations_xero_sync_runs,
@@ -196,6 +197,31 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       VALUES('${tenant}','${connection}',now()+interval '1 hour')`);
     expect(await processOne()).toBe(true);expect(attachments).toHaveBeenCalledTimes(1);
     expect(await budget()).toEqual([{attempted_sources:500}]);
+  });
+  async function quotaState(remaining=200) {
+    process.env.XERO_SHARED_QUOTA_ENABLED='true';
+    await pool.query(`INSERT INTO sophia_runtime.xero_quota_admission(customer_id,xero_connection_id,remaining,refresh_after)
+      VALUES($1,$2,$3,now()+interval '1 hour')`,[tenant,connection,remaining]);
+  }
+  it('holds unknown or reserved quota before consuming a source attempt',async()=>{
+    await addCase();process.env.XERO_SHARED_QUOTA_ENABLED='true';
+    expect(await processOne()).toBe(false);expect(await budget()).toHaveLength(0);
+    await quotaState();expect(await processOne()).toBe(false);
+    expect(attachments).not.toHaveBeenCalled();expect(await budget()).toHaveLength(0);
+  });
+  it('keeps cache-only fan-out available when quota is reserved for operations',async()=>{
+    await addCase();await processOne();await addCase();await quotaState();
+    expect(await processOne()).toBe(true);expect(attachments).toHaveBeenCalledTimes(1);
+    expect(await budget()).toEqual([{attempted_sources:1}]);
+  });
+  it.each([false,true])('handles a local quota race with upstreamAttempted=%s',async sent=>{
+    await addCase();await quotaState(201);
+    attachments.mockRejectedValue({getResponse:()=>({errorCode:'xero_quota_reserved',localQuotaDenial:true,upstreamAttempted:sent,retryAfterSeconds:600})});
+    expect(await processOne()).toBe(false);
+    expect(await budget()).toEqual([{attempted_sources:sent?1:0}]);
+    expect((await pool.query('SELECT status,attempts FROM sophia_runtime.student_operations_document_jobs')).rows[0])
+      .toEqual({status:'queued',attempts:sent?1:0});
+    expect((await pool.query('SELECT attempts FROM sophia_runtime.student_operations_document_sources')).rows[0].attempts).toBe(sent?1:0);
   });
   it('clears orphaned queue work only after dependencies are ready, without a source attempt',async()=>{
     const id=await addCase();

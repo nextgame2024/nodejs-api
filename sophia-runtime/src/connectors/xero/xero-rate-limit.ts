@@ -1,10 +1,12 @@
 import { BadGatewayException } from '@nestjs/common';
 import { runtimeConfig } from '../../config/runtime-config.js';
 import type { DatabaseService } from '../../database/database.service.js';
+import { XeroQuotaAdmission, type XeroRequestKind } from './xero-quota-admission.js';
 
+export type XeroRequestTicket={generation:string;sequence:string};
 export type XeroRequestPolicy = {
-  beforeRequest(): Promise<void>;
-  observe(response: Response): Promise<void>;
+  beforeRequest(): Promise<XeroRequestTicket|void>;
+  observe(response: Response,ticket?:XeroRequestTicket|void): Promise<void>;
 };
 
 function remaining(headers: Headers, name: string): number | null {
@@ -36,8 +38,9 @@ export function xeroRateObservation(response: Response) {
 export class XeroSharedBackoff {
   constructor(private readonly database: DatabaseService) {}
 
-  policy(customerId: string, connectionId: string): XeroRequestPolicy {
+  policy(customerId: string, connectionId: string,kind:XeroRequestKind='operational'): XeroRequestPolicy {
     const table = `${runtimeConfig().schema}.xero_connection_rate_limits`;
+    const quota=process.env.XERO_SHARED_QUOTA_ENABLED==='true'?new XeroQuotaAdmission(this.database):null;
     return {
       beforeRequest: async () => {
         const result = await this.database.tenantReadTransaction(customerId, db => db.query<{seconds: number}>(
@@ -49,11 +52,17 @@ export class XeroSharedBackoff {
           errorCode: 'xero_rate_limited', providerStatus: 429,
           retryAfterSeconds: result.rows[0].seconds,
         });
+        if(quota) return quota.reserve(customerId,connectionId,kind);
       },
-      observe: async response => {
+      observe: async (response,ticket) => {
         const value = xeroRateObservation(response);
-        if (value.day === null && value.minute === null && value.appMinute === null && response.status !== 429) return;
-        await this.database.tenantTransaction(customerId, db => db.query(
+        if(quota && ticket) {
+          await quota.observe(customerId,connectionId,ticket,value,response.status);
+          if(response.ok && value.day===0)
+            value.blockSeconds=await quota.exhaustedDelay(customerId,connectionId,ticket,value.blockSeconds);
+        }
+        if (value.day !== null || value.minute !== null || value.appMinute !== null || response.status === 429)
+          await this.database.tenantTransaction(customerId, db => db.query(
           `INSERT INTO ${table}(customer_id,xero_connection_id,day_remaining,minute_remaining,app_minute_remaining,
              limit_problem,blocked_until,observed_at)
            VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $7::int>0 THEN now()+($7 * interval '1 second') END,now())

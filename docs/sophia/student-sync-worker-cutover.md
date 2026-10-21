@@ -120,8 +120,9 @@ setting, understanding that legacy automatic invoices are hourly. Resume the old
 document cron only after the shared worker has stopped; do not run both. Preserve
 additive schemas, daily budgets, queues, mappings and committed business data.
 
-Phase 4 still needs verified Xero app allowance, shared API quota accounting,
-document source deduplication/fan-out and changed-source rechecks. No throughput
+Phase 4 release status is recorded below: Starter allowance is confirmed, source
+deduplication deployment is user-confirmed, and daily admission is ready locally.
+Changed-source rechecks, alerts and measured throughput remain open. No throughput
 increase or claim that a whole backlog is finished is made here. Container build,
 production startup, hosting alert delivery, overnight recovery and p95 are
 deployment verification gates. No provisioning, production migration or provider
@@ -151,10 +152,10 @@ for this check. Successful overnight processing, document backlog progress and
 the shared provider-rate-budget follow-up still require validation. Australian
 hosting migration remains deferred to the Runtime P7 assessment.
 
-## Phase 4A: shared Xero cooldown (local implementation, not activated)
+## Phase 4A: shared Xero cooldown (user-confirmed deployed)
 
-Keep the running student job uninterrupted. After its final successful status,
-release the following separately, one step at a time:
+User subsequently confirmed migration 082 and both flags; daily exhaustion was
+observed in SQL. Historical release procedure, retained for recovery:
 
 1. Deploy Runtime API and shared-worker code with `XERO_SHARED_BACKOFF_ENABLED`
    absent or `false`. Business Manager API and frontend do not change.
@@ -199,9 +200,9 @@ concurrent limit. Successful daily exhaustion uses a conservative 24-hour hold;
 it does not assume Xero resets at Brisbane midnight. Normal workers still obey
 their existing overnight windows.
 
-Remaining Phase 4 work: verify the app tier/allowance, shared reservation accounting
-and app-wide limits, source deduplication/fan-out, changed-source rechecks and
-operator alerts. See [Xero's rate-limit documentation](https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits/)
+Subsequent releases below cover source deduplication and daily reservation
+accounting. App-wide limits, changed-source rechecks and operator alerts remain
+open. See [Xero's rate-limit documentation](https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits/)
 for remaining headers, `X-Rate-Limit-Problem` and `Retry-After`. Do not infer the
 account's actual quota from an old fixed daily-limit assumption.
 
@@ -227,7 +228,7 @@ enabled Refresh without clicking it solely to test quota. A deliberate Refresh
 does consume provider allowance once processed, so leave the job overnight unless
 there is a genuine business need for a daytime import.
 
-## Phase 4B: source discovery deduplication (local, disabled by default)
+## Phase 4B: source discovery deduplication (deployment user-confirmed)
 
 This release does not change the automatic windows, pacing, 500-source cap or
 30-minute provider-fetch budget. It preserves existing per-case jobs/documents.
@@ -298,6 +299,78 @@ consumers, then restart the same worker; do not resume the old cron alongside it
 Retain migration 083, source/case jobs, mappings, budgets and committed metadata.
 Disabling deduplication restores per-case provider calls and may consume more
 quota. If canonical sources remain processing after rollback, do not re-enable
-until those leases have expired. The shared provider-call reservation ledger,
-reserved headroom for updates/manual requests, automatic changed-source/rechecks,
-clear quota/reset UI, alerts and production validation remain separate tasks.
+until those leases have expired. Daily admission/headroom is the separate Phase
+4C release below. Automatic changed-source/rechecks, clear quota/reset UI,
+alerts and production validation remain separate tasks.
+
+## Phase 4C: shared daily admission and protected headroom (local, disabled)
+
+User reports migration 083 applied and shared worker Live at `8aedd7c`.
+That is deployment evidence, not proof of overnight document throughput.
+
+Migration 084 adds a connection-scoped daily admission ledger. Owner-configured
+defaults match the confirmed Starter allowance: **1000 calls, 200 protected from
+attachment discovery**. Imports, connection tests and authorized content downloads
+can use the reserve, and can still exhaust it. It is not an extra 200 calls.
+Every managed Accounting HTTP attempt, including retries, takes one atomic
+credit before fetch. Ambiguous/sent attempts are not refunded. Durable counters
+and response tickets prevent concurrent or delayed responses from restoring
+already-spent credit. Cached metadata fan-out needs no provider credit.
+
+Unknown balances pause discovery. At most one ordinary operational request per
+60 seconds may establish headers; no synthetic quota request is generated.
+Provider daily `Retry-After` anchors the next reset and its fixed 24-hour cadence.
+Without that hint, a conservative local 24-hour refresh bound is used; it is not
+a claimed provider reset time. Expiry returns the balance to unknown, not 1000.
+Never clear a cooldown or force a provider request to make this release look green.
+Existing published cooldowns are not shortened by this feature.
+
+Release one step at a time (not executed by agent):
+
+1. Deploy **sophia-runtime-api** and **sophia-student-sync-worker** with
+   `XERO_SHARED_QUOTA_ENABLED` absent/`false`. Let active work finish before
+   restarting the worker. No Business Manager API/frontend deployment is needed.
+2. Apply `084_xero_quota_admission.sql` using the existing owner migration runner.
+   Shared-worker compiled runner: `node /app/sophia-runtime/dist/database/migrate.js`.
+   Use the owner connection only for that command; keep saved application
+   connections on the non-BYPASSRLS Runtime role. Do not delete/rewrite queues.
+3. Confirm `XERO_SHARED_BACKOFF_ENABLED=true` and
+   `STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=true` on both services. Then set
+   `XERO_SHARED_QUOTA_ENABLED=true` on both and redeploy. All Runtime replicas
+   must agree. Startup fails closed if the worker prerequisites are missing.
+4. Check worker readiness and observe ordinary scheduled work. Keep the old
+   document cron suspended, enqueue-only APIs and existing windows/caps/pacing.
+   A missing/unknown ledger balance before ordinary work is expected, not proof
+   of remaining quota. Do not force a Refresh solely for validation.
+5. Inspect state read-only and compare normal discovery progress to its earlier
+   baseline before deciding whether to change hours, reserve or source cap.
+
+```sql
+SELECT xero_connection_id, daily_limit, discovery_reserve, remaining,
+       generation_admissions, operational_admissions, discovery_admissions,
+       refresh_after, provider_reset_at, observed_at,
+       CASE WHEN remaining IS NULL OR refresh_after <= now() THEN NULL
+            ELSE greatest(0, remaining-discovery_reserve) END AS discovery_credit
+FROM sophia_runtime.xero_quota_admission
+WHERE customer_id = '33ed40a6-7f2b-407c-aab2-de76b1cb45a8';
+```
+
+Admission counters are cumulative; `generation_admissions` is the current local
+epoch, not a provider billing report. `remaining` is a conservative managed credit
+estimate and can be stale. `refresh_after` is a local re-observation boundary;
+`provider_reset_at` is the last daily retry hint, not a guarantee of availability.
+Allowance/reserve configuration is owner-only; do not raise 1000 merely because
+a larger tier exists. A paid upgrade needs separate confirmed entitlement.
+
+Limits: this is per persisted connection, not an app-wide minute/concurrency
+reservation or organisation merge across different connection identities.
+OAuth/bootstrap before persisted connections and unmanaged consumers remain
+outside this ledger. Conservative accounting can leave some capacity unused.
+Automatic changed-source/rechecks, quota-specific UI, alerts, overnight success,
+measured savings and p95 are still open. Do not expand the schedule in this cutover.
+
+Rollback: stop the worker, let leases drain, disable only
+`XERO_SHARED_QUOTA_ENABLED` on both consumers, then restart the same worker.
+Keep migrations, counters, source deduplication and shared backoff. Disabling
+quota admission removes headroom protection; it does not increase provider quota
+or authorize bypassing an existing cooldown. Never resume the old cron alongside it.

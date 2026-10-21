@@ -149,12 +149,12 @@ export class XeroClient {
   async attachmentContent(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string): Promise<Buffer> {
     const path = attachmentPath(source,sourceId,attachmentId);
     const policy = this.requestPolicy.getStore();
-    await policy?.beforeRequest();
+    const ticket=await policy?.beforeRequest();
     const response = await fetch(path, {
       headers: { Authorization: `Bearer ${accessToken}`, 'xero-tenant-id': tenantId, Accept: 'application/octet-stream' },
       redirect: 'error', signal: AbortSignal.timeout(30_000),
     });
-    try { await policy?.observe(response); }
+    try { await policy?.observe(response,ticket); }
     catch(error) { await response.body?.cancel(); throw error; }
     if (!response.ok) {
       await response.body?.cancel();
@@ -651,7 +651,18 @@ export class XeroClient {
     if (modifiedSince) headers["If-Modified-Since"] = modifiedSince.toUTCString();
     for (let attempt = 0; attempt < XERO_GET_MAX_ATTEMPTS; attempt += 1) {
       const policy = this.requestPolicy.getStore();
-      await policy?.beforeRequest();
+      let ticket;
+      try {ticket=await policy?.beforeRequest();}
+      catch(error) {
+        // A retry denied locally may follow a request already sent. Do not let
+        // discovery refund its source attempt in that case.
+        if(attempt>0 && error instanceof BadGatewayException) {
+          const body=error.getResponse();
+          if(typeof body==='object' && 'localQuotaDenial' in body && body.localQuotaDenial===true)
+            throw new BadGatewayException({...body,upstreamAttempted:true});
+        }
+        throw error;
+      }
       let response: Response;
       try {
         response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
@@ -662,7 +673,7 @@ export class XeroClient {
         }
         throw xeroUnavailableError();
       }
-      try { await policy?.observe(response); }
+      try { await policy?.observe(response,ticket); }
       catch(error) { await response.body?.cancel(); throw error; }
       if (response.ok) return parseJson(response);
       // A durable cooldown belongs to the queue, not an immediate HTTP retry.

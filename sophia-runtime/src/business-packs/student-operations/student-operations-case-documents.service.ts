@@ -71,6 +71,8 @@ export class StudentOperationsCaseDocumentsService {
   // explicit and each network call runs outside the database transaction.
   async processOne(tenantId:string,options:{dailyBudget?:boolean}={}):Promise<boolean> {
     caseId(tenantId);
+    if(process.env.XERO_SHARED_QUOTA_ENABLED==='true' && process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED!=='true')
+      throw new Error('Shared quota requires source-level discovery.');
     if(process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED === 'true') {
       if(!options.dailyBudget) throw new Error('Source discovery requires the shared worker daily budget.');
       return new StudentDocumentSourceDiscovery(this.database,this.xero).processOne(tenantId);

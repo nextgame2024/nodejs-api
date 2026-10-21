@@ -19,6 +19,18 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it.each([false,true])('requires quota dependencies and migration 084 (dependencies ready: %s)',async(ready)=>{
+    const keys=['XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_BACKOFF_ENABLED'];
+    const previous=keys.map(key=>process.env[key]);
+    process.env.XERO_SHARED_QUOTA_ENABLED='true';process.env.XERO_SHARED_BACKOFF_ENABLED='true';
+    process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=String(ready);
+    try {
+      if(ready) query.mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:true}]})
+        .mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:false}]});
+      else query.mockResolvedValue({rows:[{ready:true}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow(ready?'084':'Shared quota requires');
+    } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
+  });
   it('fails startup with source deduplication enabled but migration 083 missing',async()=>{
     const oldSource=process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED,oldRate=process.env.XERO_SHARED_BACKOFF_ENABLED;
     process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED='true';process.env.XERO_SHARED_BACKOFF_ENABLED='true';
