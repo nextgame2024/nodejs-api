@@ -1,5 +1,13 @@
 {
   "schemaVersion": 1,
+  "paymentsQueuedSyncUiFollowUp": {
+    "updatedOn": "2026-10-21",
+    "status": "Frontend fix implemented locally; deployment pending. No queue mutation or provider request performed by the agent.",
+    "operatorEvidence": "User confirmed migration 082 applied and screenshots show XERO_SHARED_BACKOFF_ENABLED=true on Runtime API and shared worker. Student run succeeded: 1120 processed, zero accounts created (run mode not verified). Xero portal shows Starter plan, while response-observation query still returns no rows; remaining allowance is unknown. SQL shows the existing queued webhook/incremental job with no start/lease. Payments incorrectly displayed Refreshing and repeatedly polled that parked job.",
+    "behavior": "Automatic queued webhook/schedule/connection jobs show Queued for overnight sync (01:00-06:00 Brisbane), make no continuous status polls and leave explicit Refresh enabled. Only an explicit permitted click calls the existing enqueue/promote POST. Manual queued and processing jobs use bounded, backed-off, visibility-aware status polling; Check progress performs GET only, including after polling times out. Request-in-flight states are separate from job status; duplicate clicks, status failures and navigation are guarded. Existing records, filters, pagination, SVG button and light/dark styling remain; refresh action has a 44px minimum touch height.",
+    "verification": "PASS: 60 focused ChromeHeadless page/service tests and frontend application/spec TypeScript checks. Coverage includes automatic queue triggers, no repeated reads, explicit same-run promotion, GET-only progress, request failures, completion reload, authorization, hidden tabs, polling budget/navigation cleanup and real 390px/1280px light/dark layout. Initial browser-test attempt was blocked by shell Node 20.15; rerun passed with installed Node 20.19.1. JSON validation and both repository diff checks passed.",
+    "release": "Frontend deployment/reload only; no backend deployment, SQL, environment change or worker restart is needed for this UI fix. On Payments verify scheduled text plus enabled Refresh without pressing it just to test quota. Leave the webhook queued for normal overnight processing; keep the document cron suspended. Overnight document success, provider observations, deduplication/full quota accounting and alerts remain open. Australian hosting remains deferred."
+  },
   "studentSharedXeroBackoffPhase4A": {
     "updatedOn": "2026-10-21",
     "status": "First bounded Phase 4 slice implemented and locally verified, NOT deployed or enabled. User's latest screenshot shows student processing (260 processed, zero created), not completion or document execution.",

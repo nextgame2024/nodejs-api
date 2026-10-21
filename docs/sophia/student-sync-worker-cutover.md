@@ -204,3 +204,25 @@ and app-wide limits, source deduplication/fan-out, changed-source rechecks and
 operator alerts. See [Xero's rate-limit documentation](https://developer.xero.com/documentation/best-practices/api-call-efficiencies/rate-limits/)
 for remaining headers, `X-Rate-Limit-Problem` and `Retry-After`. Do not infer the
 account's actual quota from an old fixed daily-limit assumption.
+
+## Payments queued-state UI follow-up — 21 October 2026
+
+Operator evidence now shows student sync succeeded (1120 processed, zero users
+created), migration 082 applied, and shared backoff enabled on both consumers.
+The portal confirms Starter plan; the response-observation query still returns
+no rows, so the remaining allowance is unknown. Neither student success nor
+flags alone prove provider activity or successful overnight discovery.
+
+Payments treated a queued webhook as active, disabling Refresh and polling it
+until timeout. The frontend-only fix separates queued automatic jobs from manual
+or processing jobs: scheduled work shows the Brisbane overnight window without
+continuous polling, while Refresh remains available to explicitly promote it.
+Check progress on a manual/processing job performs only a status GET; it does not
+enqueue another provider import. Active progress polling remains bounded and
+skips hidden tabs. Existing records remain visible throughout.
+
+Deploy/reload the frontend only for this fix. No SQL, flag changes, worker restart
+or deletion/reset of the webhook row is required. Verify the scheduled text and
+enabled Refresh without clicking it solely to test quota. A deliberate Refresh
+does consume provider allowance once processed, so leave the job overnight unless
+there is a genuine business need for a daytime import.
