@@ -226,3 +226,78 @@ or deletion/reset of the webhook row is required. Verify the scheduled text and
 enabled Refresh without clicking it solely to test quota. A deliberate Refresh
 does consume provider allowance once processed, so leave the job overnight unless
 there is a genuine business need for a daytime import.
+
+## Phase 4B: source discovery deduplication (local, disabled by default)
+
+This release does not change the automatic windows, pacing, 500-source cap or
+30-minute provider-fetch budget. It preserves existing per-case jobs/documents.
+Migration 083 adds a source lease/cache keyed by customer, connection, source
+kind and source UUID, plus an explicit-refresh timestamp on case jobs. There is
+no migration backfill, queue reset, or provider call. In particular, old completed
+jobs are not assumed to be proof of a complete/current attachment list.
+
+One provider discovery can supply metadata to up to 25 currently invoice-linked
+case jobs per local transaction. Further cases reuse the committed result on
+subsequent passes for at most 24 hours. Empty results are cached too. Updated
+source metadata is replayed to already-completed linked jobs in bounded passes.
+Links, active connection/tenant, import state and reconciliation checkpoints are
+rechecked before publication. Case reads/downloads retain their existing role
+checks; downloads are not cached or made public.
+
+Only new provider fetch attempts reserve the existing source budget. Cached
+metadata can still be associated locally when cooldown/cap prevents more calls.
+The 24-hour TTL is a reuse limit, not an automatic recheck schedule or deletion
+policy. Normalized metadata is bounded to 1000 attachments per source; no file
+contents, credentials, provider URLs or response bodies are cached. Removed files
+are not automatically deleted from existing case metadata by this release.
+
+Step-by-step release (not executed by the agent):
+
+1. Deploy Runtime API and shared-worker code with
+   `STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED` absent/`false` on both.
+2. Apply Runtime migration `083_student_document_source_cache.sql` via the owner
+   migration runner. In the shared-worker shell, the compiled runner is
+   `node /app/sophia-runtime/dist/database/migrate.js`; use an owner connection
+   only for that command, not as the saved application connection.
+3. Enable `STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=true` on **sophia-runtime-api**
+   first, then **sophia-student-sync-worker**. The API marks explicit discovery
+   requests as requiring a fresh lookup; the worker owns processing. All API
+   replicas must agree. Keep `XERO_SHARED_BACKOFF_ENABLED=true` on both.
+4. Check shared-worker readiness; it requires migration 083 and shared backoff.
+   Keep the old document cron suspended. No Business Manager API/frontend change
+   is needed. Do not request discovery solely to consume quota for a smoke test.
+5. Observe normal overnight progress, source versus case-job counts, provider
+   errors, quota headers and document access controls. Do not claim a savings
+   percentage until measured. A source attempt can include multiple HTTP retries
+   and is not an API-call reservation.
+
+Read-only baseline for queued case sources (not a guaranteed call-count forecast):
+
+```sql
+SELECT count(*) AS queued_case_sources,
+       count(DISTINCT (xero_connection_id, source_kind, source_id)) AS unique_sources
+FROM sophia_runtime.student_operations_document_jobs
+WHERE customer_id = '33ed40a6-7f2b-407c-aab2-de76b1cb45a8'
+  AND status = 'queued';
+```
+
+After activation, inspect bounded source-state summaries without filenames:
+
+```sql
+SELECT status, count(*) AS sources,
+       count(*) FILTER (WHERE checked_at IS NOT NULL) AS previously_discovered,
+       count(*) FILTER (WHERE lease_expires_at > now()) AS live_leases
+FROM sophia_runtime.student_operations_document_sources
+WHERE customer_id = '33ed40a6-7f2b-407c-aab2-de76b1cb45a8'
+GROUP BY status;
+```
+
+Rollback: stop the shared worker and let its source/case leases drain or expire
+before restoring the legacy document path. Set the new flag false on both
+consumers, then restart the same worker; do not resume the old cron alongside it.
+Retain migration 083, source/case jobs, mappings, budgets and committed metadata.
+Disabling deduplication restores per-case provider calls and may consume more
+quota. If canonical sources remain processing after rollback, do not re-enable
+until those leases have expired. The shared provider-call reservation ledger,
+reserved headroom for updates/manual requests, automatic changed-source/rechecks,
+clear quota/reset UI, alerts and production validation remain separate tasks.

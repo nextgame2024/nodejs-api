@@ -20,6 +20,9 @@ services:
       # Apply 082 and deploy Runtime API + shared worker before enabling both.
       - key: XERO_SHARED_BACKOFF_ENABLED
         value: "false"
+      # Apply 083 before enabling on Runtime API and this worker.
+      - key: STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED
+        value: "false"
       - key: SOPHIA_RUNTIME_DB_POOL_SIZE
         value: "2"
       - key: DB_POOL_SIZE

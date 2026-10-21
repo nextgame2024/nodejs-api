@@ -29,6 +29,14 @@ export function createSharedStudentSyncRuntime() {
           [`${schema}.xero_connection_rate_limits`]);
         if(!rateStore.rows[0]?.ready) throw new Error('Shared Xero backoff requires Runtime migration 082.');
       }
+      if(process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED==='true') {
+        if(process.env.XERO_SHARED_BACKOFF_ENABLED!=='true') throw new Error('Source discovery requires shared Xero backoff.');
+        const sources=await database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND EXISTS(
+          SELECT 1 FROM information_schema.columns WHERE table_schema=$2
+            AND table_name='student_operations_document_jobs' AND column_name='refresh_requested_at') AS ready`,
+          [`${schema}.student_operations_document_sources`,schema]);
+        if(!sources.rows[0]?.ready) throw new Error('Source discovery requires Runtime migration 083.');
+      }
     },
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

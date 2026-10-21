@@ -19,6 +19,28 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('fails startup with source deduplication enabled but migration 083 missing',async()=>{
+    const oldSource=process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED,oldRate=process.env.XERO_SHARED_BACKOFF_ENABLED;
+    process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED='true';process.env.XERO_SHARED_BACKOFF_ENABLED='true';
+    try {
+      query.mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:true}]}).mockResolvedValueOnce({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('083');
+    } finally {
+      if(oldSource===undefined) delete process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED;else process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=oldSource;
+      if(oldRate===undefined) delete process.env.XERO_SHARED_BACKOFF_ENABLED;else process.env.XERO_SHARED_BACKOFF_ENABLED=oldRate;
+    }
+  });
+  it('requires shared provider backoff before enabling source deduplication',async()=>{
+    const oldSource=process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED,oldRate=process.env.XERO_SHARED_BACKOFF_ENABLED;
+    process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED='true';delete process.env.XERO_SHARED_BACKOFF_ENABLED;
+    try {
+      query.mockResolvedValue({rows:[{ready:true}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('requires shared Xero backoff');
+    } finally {
+      if(oldSource===undefined) delete process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED;else process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED=oldSource;
+      if(oldRate===undefined) delete process.env.XERO_SHARED_BACKOFF_ENABLED;else process.env.XERO_SHARED_BACKOFF_ENABLED=oldRate;
+    }
+  });
   it('fails startup with shared backoff enabled but migration 082 missing',async()=>{
     const previous=process.env.XERO_SHARED_BACKOFF_ENABLED;process.env.XERO_SHARED_BACKOFF_ENABLED='true';
     try {

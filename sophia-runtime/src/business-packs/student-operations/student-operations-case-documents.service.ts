@@ -7,6 +7,7 @@ import type { XeroAttachmentSource } from '../../connectors/xero/xero.client.js'
 import { StudentOperationsCasesService,caseSchema,caseId } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
+import { StudentDocumentSourceDiscovery } from './student-document-source-discovery.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -40,6 +41,7 @@ export class StudentOperationsCaseDocumentsService {
         WHERE l.customer_id=$1 AND l.case_id=$2 AND s.kind IS NOT NULL
         ON CONFLICT(customer_id,case_id,xero_connection_id,source_kind,source_id) DO UPDATE
           SET status='queued',attempts=0,next_attempt_at=now(),error_code=NULL,updated_at=now()
+          ${process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED === 'true' ? ',refresh_requested_at=now()' : ''}
           WHERE student_operations_document_jobs.status IN ('succeeded','failed') RETURNING job_id`,[p.tenantId,id]);
       await this.cases.activity(db,p,id,'case.documents_requested','Document discovery requested');
       return {queued:result.rowCount};
@@ -69,6 +71,10 @@ export class StudentOperationsCaseDocumentsService {
   // explicit and each network call runs outside the database transaction.
   async processOne(tenantId:string,options:{dailyBudget?:boolean}={}):Promise<boolean> {
     caseId(tenantId);
+    if(process.env.STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED === 'true') {
+      if(!options.dailyBudget) throw new Error('Source discovery requires the shared worker daily budget.');
+      return new StudentDocumentSourceDiscovery(this.database,this.xero).processOne(tenantId);
+    }
     const token=randomUUID(),s=caseSchema();
     const job=await this.database.tenantTransaction(tenantId,async db=>{
       await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='failed',error_code='lease_attempts_exhausted',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND status='processing' AND lease_expires_at<now() AND attempts>=5`,[tenantId]);

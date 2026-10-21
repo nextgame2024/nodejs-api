@@ -24,7 +24,7 @@ export function xeroRateObservation(response: Response) {
   const problem = ['day', 'minute', 'app', 'concurrent'].includes(rawProblem ?? '') ? rawProblem! : null;
   const retry = remaining(response.headers, 'retry-after');
   // Unknown 429s fail conservatively for a day, not a tight retry loop. The
-  // actual app tier/rolling allowance is not inferred from a Brisbane date.
+  // actual provider allowance/reset window is not inferred from a Brisbane date.
   const fallback = problem === 'minute' || problem === 'app' || problem === 'concurrent' ? 60 : 86400;
   const retryAfterSeconds = response.status === 429
     ? Math.max(1, Math.min(retry ?? fallback, 604800)) : null;
