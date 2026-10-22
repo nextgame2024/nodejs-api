@@ -21,6 +21,20 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('validates the opt-in budget before database access and exposes only the numeric policy',async()=>{
+    const keys=['STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES','XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED'];
+    const previous=keys.map(key=>process.env[key]);
+    try {
+      process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='121';
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('30 to 120');
+      process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='120';delete process.env.XERO_SHARED_QUOTA_ENABLED;
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('XERO_SHARED_QUOTA_ENABLED');
+      expect(query).not.toHaveBeenCalled();
+      keys.slice(1).forEach(key=>process.env[key]='true');query.mockResolvedValue({rows:[{ready:true}]});
+      const worker=createSharedStudentSyncRuntime();await worker.preflight();
+      expect(worker.documentPolicy()).toEqual({fetchBudgetMinutes:120});
+    } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
+  });
   it('requires protected source processing before enabling health logs',async()=>{
     const keys=['STUDENT_SYNC_HEALTH_LOGS_ENABLED','XERO_SHARED_QUOTA_ENABLED'];const previous=keys.map(key=>process.env[key]);
     process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED='true';delete process.env.XERO_SHARED_QUOTA_ENABLED;

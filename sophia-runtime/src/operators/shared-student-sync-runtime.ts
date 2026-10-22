@@ -9,6 +9,7 @@ import { StudentOperationsCasesService } from '../business-packs/student-operati
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
 import { StudentSyncHealth } from './student-sync-health.js';
+import { studentDocumentFetchBudgetMinutes } from '../business-packs/student-operations/student-document-fetch-budget.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
   'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED'] as const;
@@ -35,6 +36,7 @@ export function createSharedStudentSyncRuntime() {
   const health=new StudentSyncHealth(database);
   return {
     async preflight() {
+      studentDocumentFetchBudgetMinutes();
       if(process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED==='true') requireFlags(
         'Sync health logs require quota, backoff and source deduplication.',
         ['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']);
@@ -77,6 +79,7 @@ export function createSharedStudentSyncRuntime() {
       }
       return featureFlags();
     },
+    documentPolicy:()=>({fetchBudgetMinutes:studentDocumentFetchBudgetMinutes()}),
     reportHealth:(customerId:string)=>health.report(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

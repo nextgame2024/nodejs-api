@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service.js';
 import type { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroAttachmentSource } from '../../connectors/xero/xero.client.js';
 import { caseId, caseSchema } from './student-operations-cases.service.js';
+import { studentDocumentFetchBudgetMinutes } from './student-document-fetch-budget.js';
 
 const metadata = z.array(z.object({attachmentId:z.uuid(),fileName:z.string().min(1).max(255),
   mimeType:z.string().min(1).max(200),sizeBytes:z.number().int().min(0).max(26214400)}).strict()).max(1000)
@@ -47,7 +48,7 @@ export class StudentDocumentSourceDiscovery {
 
   async processOne(tenantId:string):Promise<boolean> {
     caseId(tenantId);
-    const s=caseSchema(),token=randomUUID();
+    const s=caseSchema(),token=randomUUID(),fetchBudgetMinutes=studentDocumentFetchBudgetMinutes();
     const claim=await this.database.tenantTransaction(tenantId,async db=>{
       const invalid=await db.query(`WITH stale AS (
         SELECT j.job_id FROM ${s}.student_operations_document_jobs j WHERE j.customer_id=$1
@@ -115,9 +116,9 @@ export class StudentDocumentSourceDiscovery {
           ON CONFLICT(customer_id,business_date) DO UPDATE SET
             attempted_sources=student_operations_document_daily_budgets.attempted_sources+1,updated_at=now()
           WHERE student_operations_document_daily_budgets.attempted_sources<500
-            AND student_operations_document_daily_budgets.started_at>now()-interval '30 minutes'
+            AND student_operations_document_daily_budgets.started_at>now()-($2::integer * interval '1 minute')
             AND (student_operations_document_daily_budgets.blocked_until IS NULL OR student_operations_document_daily_budgets.blocked_until<=now())
-          RETURNING customer_id,business_date::text`,[tenantId]);
+          RETURNING customer_id,business_date::text`,[tenantId,fetchBudgetMinutes]);
         if(!budget.rowCount) return null;
         const leased=await db.query<{last_attempt_at:string}>(`UPDATE ${s}.student_operations_document_sources src
           SET status='processing',attempts=$5,lease_token=$6,lease_expires_at=now()+interval '2 minutes',

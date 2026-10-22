@@ -25,7 +25,7 @@ it('reports bounded allowlisted observations, not a completed-backlog guarantee'
   expect(result).toMatchObject({status:'observed',signals:[],pauses:[],counts:{queued:3,succeeded:10},quota:{remaining:500,reserve:200}});
   expect(read).toHaveBeenCalledWith(customer,expect.any(Function));
   expect(query.mock.calls[0]).toEqual(["SET LOCAL statement_timeout='5s'"]);
-  expect(query.mock.calls[1][1]).toEqual([customer]);
+  expect(query.mock.calls[1][1]).toEqual([customer,30]);
 });
 it.each([
   [{document_window:false},'outside_document_window'],[{import_pending:true},'import_pending'],

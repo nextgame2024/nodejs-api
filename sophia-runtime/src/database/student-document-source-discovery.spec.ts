@@ -60,11 +60,12 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
   afterAll(async()=>{
     await runtime?.onModuleDestroy();await pool.end();
     for(const key of ['SOPHIA_RUNTIME_DATABASE_URL','SOPHIA_RUNTIME_DB_SSL','SOPHIA_RUNTIME_DATABASE_ROLE',
-      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED']) {
+      'STUDENT_SYNC_PIPELINE_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED','XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES']) {
       if(env[key]===undefined) delete process.env[key];else process.env[key]=env[key];
     }
   });
   beforeEach(async()=>{
+    delete process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES;
     delete process.env.XERO_SHARED_QUOTA_ENABLED;
     delete process.env.STUDENT_DOCUMENT_RECHECKS_ENABLED;
     delete process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED;
@@ -214,12 +215,53 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
       RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT false $$`);
     expect(await processOne()).toBe(false);expect(attachments).not.toHaveBeenCalled();
   });
-  it('does not exceed the shared source cap when different sources are claimed concurrently',async()=>{
+  it.each(['30','120'])('does not exceed the shared source cap with concurrent claims and a %s-minute budget',async(minutes)=>{
+    await quotaState(700);process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES=minutes;
     await addCase();await addCase(tenant,'Invoices');
     await pool.query(`INSERT INTO sophia_runtime.student_operations_document_daily_budgets(customer_id,business_date,attempted_sources)
       VALUES('${tenant}',(now() AT TIME ZONE 'Australia/Brisbane')::date,499)`);
     await Promise.all([processOne(),processOne()]);
     expect(attachments).toHaveBeenCalledTimes(1);expect(await budget()).toEqual([{attempted_sources:500}]);
+  });
+  it('opts into 120 minutes without restarting the durable clock, then stops and rolls back safely',async()=>{
+    await addCase();await quotaState(700);
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_document_daily_budgets(customer_id,business_date,attempted_sources,started_at)
+      VALUES($1,(now() AT TIME ZONE 'Australia/Brisbane')::date,145,now()-interval '31 minutes')`,[tenant]);
+    const original=(await pool.query('SELECT started_at FROM sophia_runtime.student_operations_document_daily_budgets')).rows[0].started_at;
+    expect(await processOne()).toBe(false);expect(attachments).not.toHaveBeenCalled();
+    process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='120';
+    process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED='true';
+    expect(await new StudentSyncHealth(runtime).report(tenant)).toMatchObject({status:'observed',pauses:[]});
+    expect(await processOne()).toBe(true);expect(await budget()).toEqual([{attempted_sources:146}]);
+    expect((await pool.query('SELECT started_at FROM sophia_runtime.student_operations_document_daily_budgets')).rows[0].started_at).toEqual(original);
+    await addCase(tenant,'Invoices');
+    process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='30';
+    expect(await processOne()).toBe(false);
+    expect(await new StudentSyncHealth(runtime).report(tenant)).toMatchObject({pauses:['document_batch_closed']});
+    process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='120';
+    await pool.query("UPDATE sophia_runtime.student_operations_document_daily_budgets SET started_at=now()-interval '121 minutes'");
+    expect(await processOne()).toBe(false);expect(attachments).toHaveBeenCalledTimes(1);
+    expect(await new StudentSyncHealth(runtime).report(tenant)).toMatchObject({pauses:['document_batch_closed']});
+  });
+  it('retains source cap, reserve, cooldown, dependency and window gates with the extended budget',async()=>{
+    await addCase();await quotaState(200);process.env.STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES='120';
+    expect(await processOne()).toBe(false);expect(await budget()).toHaveLength(0);
+    await pool.query('UPDATE sophia_runtime.xero_quota_admission SET remaining=700');
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_document_daily_budgets(customer_id,business_date,attempted_sources)
+      VALUES($1,(now() AT TIME ZONE 'Australia/Brisbane')::date,500)`,[tenant]);
+    expect(await processOne()).toBe(false);
+    await pool.query('UPDATE sophia_runtime.student_operations_document_daily_budgets SET attempted_sources=145');
+    await pool.query(`INSERT INTO sophia_runtime.xero_connection_rate_limits(customer_id,xero_connection_id,blocked_until)
+      VALUES($1,$2,now()+interval '1 hour')`,[tenant,connection]);
+    expect(await processOne()).toBe(false);
+    await pool.query('TRUNCATE sophia_runtime.xero_connection_rate_limits');
+    await pool.query("UPDATE sophia_runtime.student_operations_sync_checkpoints SET source_sync_at='2026-10-19Z'");
+    expect(await processOne()).toBe(false);
+    await pool.query(`UPDATE sophia_runtime.student_operations_sync_checkpoints SET source_sync_at='2026-10-20Z';
+      CREATE OR REPLACE FUNCTION sophia_runtime.student_operations_document_window(at_time timestamptz DEFAULT now())
+      RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT false $$`);
+    expect(await processOne()).toBe(false);expect(attachments).not.toHaveBeenCalled();
+    expect(await budget()).toEqual([{attempted_sources:145}]);
   });
   it('reuses local metadata even when the provider budget is exhausted',async()=>{
     await addCase();await processOne();await addCase();

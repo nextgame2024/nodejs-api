@@ -18,7 +18,7 @@ try {
   const ready=await pool.query(`SELECT (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='public'
     AND table_name='bm_xero_student_sync_runs' AND column_name IN ('trigger_type','source_connection_id')) AS ready`);
   if(!ready.rows[0]?.ready) throw new Error('Shared worker requires the identity pipeline migration.');
-  console.log(JSON.stringify({event:'student_sync_worker_ready',features}));
+  console.log(JSON.stringify({event:'student_sync_worker_ready',features,documentPolicy:runtime.documentPolicy()}));
   while(!stop.signal.aborted) {
     const delay=await coordinator.tick(stop.signal);
     await sleep(delay,undefined,{signal:stop.signal}).catch(error=>{if(error.name!=='AbortError') throw error;});

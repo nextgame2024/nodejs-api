@@ -31,6 +31,10 @@ services:
         value: "false"
       - key: STUDENT_SYNC_HEALTH_LOGS_ENABLED
         value: "false"
+      # Worker only: retain 30 until rollout approval. 30-120; above 30 requires
+      # quota/backoff/source dedup true. The 500-source cap and window stay fixed.
+      - key: STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES
+        value: "30"
       - key: SOPHIA_RUNTIME_DB_POOL_SIZE
         value: "2"
       - key: DB_POOL_SIZE

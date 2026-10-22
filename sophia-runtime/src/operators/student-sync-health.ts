@@ -1,5 +1,6 @@
 import type { DatabaseService } from '../database/database.service.js';
 import { runtimeConfig } from '../config/runtime-config.js';
+import { studentDocumentFetchBudgetMinutes } from '../business-packs/student-operations/student-document-fetch-budget.js';
 
 type HealthRow={connection_id:string;document_window:boolean;dependency_ready:boolean;import_pending:boolean;
   import_error:boolean;queued:string;processing:string;succeeded:string;failed:string;cached_sources:string;failed_sources:string;
@@ -14,7 +15,7 @@ export class StudentSyncHealth {
 
   async report(customer:string) {
     if(process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED!=='true') return null;
-    const s=runtimeConfig().schema;
+    const s=runtimeConfig().schema,fetchBudgetMinutes=studentDocumentFetchBudgetMinutes();
     const row=await this.database.tenantReadTransaction(customer,async db=>{
       await db.query("SET LOCAL statement_timeout='5s'");
       return (await db.query<HealthRow>(`SELECT c.xero_connection_id AS connection_id,
@@ -25,7 +26,7 @@ export class StudentSyncHealth {
         (c.last_error_code IS NOT NULL AND c.last_error_code NOT IN
           ('xero_rate_limited','xero_quota_unknown','xero_quota_reserved','xero_quota_exhausted')) AS import_error,
         jobs.*,sources.*,b.attempted_sources,
-        coalesce(b.attempted_sources>=500 OR b.started_at<=now()-interval '30 minutes' OR b.blocked_until>now(),false) AS batch_closed,
+        coalesce(b.attempted_sources>=500 OR b.started_at<=now()-($2::integer * interval '1 minute') OR b.blocked_until>now(),false) AS batch_closed,
         (q.remaining IS NOT NULL AND q.refresh_after>now()) AS quota_known,q.remaining,q.discovery_reserve,
         coalesce(rate.blocked_until>now(),false) AS cooling_down,
         c.last_successful_sync_at,q.observed_at,q.refresh_after,rate.blocked_until
@@ -46,7 +47,7 @@ export class StudentSyncHealth {
           max(checked_at) AS last_source_check_at FROM ${s}.student_operations_document_sources src
           WHERE src.customer_id=c.customer_id AND src.xero_connection_id=c.xero_connection_id) sources
         WHERE c.customer_id=$1 AND c.enabled AND c.organisation_role='trust'
-        LIMIT 1`,[customer])).rows[0];
+        LIMIT 1`,[customer,fetchBudgetMinutes])).rows[0];
     });
     if(!row) return {customerId:customer,status:'unknown',signals:['no_active_trust_connection']};
     const signals:string[]=[],pauses:string[]=[];

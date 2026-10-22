@@ -585,3 +585,137 @@ This is improved failed-run feedback, not a live quota dashboard for queued jobs
 External alert delivery, missing-heartbeat monitoring, measured overnight savings
 and controlled p95 remain separate work. Do not click Refresh solely to validate
 the wording or to consume quota for a smoke test.
+
+## Overnight audit — 22 October 2026 (Brisbane)
+
+This dated audit supersedes earlier pending-overnight statements above. The user
+also subsequently confirmed frontend deployment; no authenticated browser check
+was available for this audit.
+
+Read-only tenant-filtered production queries at 22:16 Brisbane checked the latest
+completed night, **21→22 October**, without provider calls or production changes:
+
+| Stage | Observed result, 22 October Brisbane |
+| --- | --- |
+| Invoice import | 01:00:07–01:14:27, succeeded; 2,076 contacts and 11,381 invoices processed. |
+| Student reconciliation | Nightly apply 01:14:30–02:05:55, succeeded; 1,120 processed, zero created. |
+| Document discovery | Claims 03:00:07–03:30:04; 145 successful unique sources, zero failed. Last case completion 03:30:11. |
+| Later source checkpoint | Incremental import succeeded 05:24:14; source preview succeeded 05:24:34 and checkpoint matches that import. This preview was not another apply. |
+
+Queued case jobs fell from the supplied pre-night snapshot's 5,795 to 5,650;
+succeeded jobs rose from 2,881 to 3,026. Current queued jobs contain 5,650 distinct
+connection/kind/source keys. No case jobs are failed or actively leased. Seventeen
+queued jobs retain historical rate-limit codes; that is not an active cooldown.
+The canonical cache has 145 succeeded sources and one queued zero-attempt row.
+Twenty-three sources have 88 attachment metadata entries: these are not proof of
+88 file-content downloads. No production cache-hit counter proves call savings.
+Zero rechecks were scheduled, so recheck behavior still needs normal-run evidence.
+
+The source budget recorded 145 attempts, below its 500 cap. Stored quota at
+05:24:12 was 712, above the 200 reserve; the ledger records generation-1 admissions
+288 and cumulative operations/discovery admissions 143/145. This is stored
+evidence, not a live Xero balance or a per-day HTTP history. The old cooldown
+timestamp is past. Next queued import is eligible 23 October at 01:00 Brisbane.
+
+**Observed bottleneck: the durable 30-minute first-claim deadline**, not daily
+quota. Its three-hour document window does not imply three hours of fetching;
+extending the clock window alone would not extend this budget. An in-flight
+completion just after the deadline does not imply a new out-of-budget claim.
+At an unchanged 145 successful sources/night, the current backlog is a roughly
+39-further-night scenario, not an SLA. New work, retries, rechecks and changing
+latency/allowance affect it. Do not reset budgets or enlarge the schedule now.
+
+Next: collect another normal-night delta and per-source timing evidence before
+tuning; obtain comparable authenticated idle/active Students/Payments captures
+for p50/p95 and usable-page time. Rehearse interrupted-batch resumption and
+rollback in staging with separate approval. Automated tests and this successful
+night do not replace that rehearsal or prove the proposed page latency targets.
+
+## Deferred dashboard alerts — user decision, 22 October 2026
+
+Document the design now and return to implementation during dashboard work.
+Dashboard alerts should prevent silent failures/stale information, distinguish
+normal automatic waits from failures, and route the authorized role to an
+appropriate existing workflow. They are not simply a Run again button.
+
+The later design needs tenant-scoped persistence, deduplication, auto-resolution,
+and role-authorized deep links: integration owners to connection/configuration,
+student reviewers to Sync users, document operators to the affected case, and
+platform operators to infrastructure incidents. Destination access must still be
+checked server-side. Quota/window/Retry-After pauses should explain automatic
+waiting without bypassing existing limits or prompting repeated refreshes.
+Missed-night, stalled-processing and growing-backlog alerts require durable
+heartbeat/progress history and agreed thresholds, not one health snapshot.
+Email/webhook escalation is optional later and needs an approved destination;
+it is not mandatory or configured. No dashboard/alert implementation is included
+in this measurement pass. Australian hosting remains separately deferred to P7.
+
+## Document throughput — 23 October audit and opt-in budget
+
+The second completed night, **22→23 October**, was healthy, verified at 07:02
+Brisbane by tenant-filtered production SELECTs in a read-only transaction:
+
+| Stage | 23 October, Brisbane |
+| --- | --- |
+| Import | 01:00:16–01:13:28, succeeded; 2,076 contacts/11,382 invoices processed. |
+| Student apply | 02:00:41–02:51:48, succeeded; 1,120 processed/zero created; checkpoint matches import. |
+| Documents | 03:00:08–03:30:08 claims; 145 successful unique sources, zero failures; final case completion 03:30:15. |
+| Backlog | 5,650→5,505 queued case jobs/unique source keys; 3,171 succeeded jobs; no failed jobs/sources or active leases. |
+
+Thirty checked sources contain 79 attachment metadata entries, not proof of file
+downloads. Canonical successes total 290; one zero-attempt row remains queued.
+Recheck scheduling remains zero, and cache savings are not measured. Quota last
+observed at 03:30:14 was 717 remaining with reserve 200; generation-2 admissions
+283, cumulative operational/discovery deltas +138/+145 since the previous audit.
+These are stored observations, not a fresh Xero balance or per-day HTTP history.
+No active cooldown; next import 24 October 01:00 Brisbane.
+
+Both nights hit the **30-minute deadline**, not the 500-source cap or quota. The
+new worker-only rollout control allows more processing time without increasing
+source concurrency, pacing, source cap, provider quota or the document window:
+
+1. Deploy the updated **sophia-student-sync-worker** image outside active work.
+   No SQL migration, API/frontend release or provider smoke test is needed.
+2. Set **only on this worker**:
+
+   ```text
+   STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES=120
+   ```
+
+   Redeploy and retain all five currently enabled feature flags, including quota,
+   shared backoff and source dedup. The new value is a strict integer 30–120;
+   omitted means 30. Above 30 requires all three protections exactly true.
+   Invalid/missing protection configuration fails before startup DB readiness.
+3. Verify `student_sync_worker_ready.documentPolicy.fetchBudgetMinutes=120` and
+   all existing boolean feature flags. Health and source claim use this same
+   deadline; health must not incorrectly report batch closed after 30 minutes.
+4. Leave APIs enqueue-only and old cron suspended. Do not run the legacy operator
+   alongside the worker. Its non-dedup budget remains 30 minutes; this opt-in is
+   for the protected shared source-discovery path, not a global policy change.
+5. Observe the next **normal** night (24 October if deployed beforehand). Check
+   import/apply success, matching checkpoint, successes/attempts, queue delta,
+   reserve, errors and stop reason. Expect at most 500 attempts/customer/date and
+   two hours from the first provider claim, always within 03:00–06:00 Brisbane.
+   An earlier quota/cooldown/dependency stop remains valid. No counter resets.
+
+The durable `started_at` and `attempted_sources` are never reset by this change.
+Changing the value during a business date uses the original start, not the time
+of deployment. Roll back to `30` or unset and redeploy; keep protection flags,
+queues, sources, leases and budgets intact. No SQL rollback. Prefer changes
+outside active work. Keep the suspended cron until this rollout is validated.
+
+This increases allowed work time, not per-source execution speed. At the measured
+aggregate cadence (~12.5 seconds/source), 500 successes could fit in ~104 minutes,
+reducing a constant-backlog scenario from ~38 to ~12 further nights. This is not
+an SLA: quota, retries, new work, eligible rechecks, dependency timing and provider
+latency change results. Keep follow-up timing analysis and authenticated page
+performance separate from this deployment. Cache/recheck production evidence and
+the staging recovery/rollback rehearsal remain open; dashboard alerts stay deferred.
+
+Local verification: Runtime build, 55 policy/startup/health unit tests, 38 existing
+connector/import/case/batch tests, 49 disposable PostgreSQL source/recheck/health
+tests with the non-BYPASSRLS role and actual 081–086 migrations, 38 real-estate
+regressions and 11 coordinator tests passed. Extended budget tests cover durable
+clock/counter preservation, rollback and protection gates, including competing
+claims at the 500 cap. Separate identity SQL tests were not configured (18 skipped).
+No production write, deployment, provider request or cron deletion was performed.
