@@ -134,6 +134,28 @@ export class XeroClient {
   withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
     return this.requestPolicy.run(policy, request);
   }
+  async uploadAttachment(accessToken:string,tenantId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroAttachment> {
+    const path=attachmentPath(source,sourceId);
+    if(source!=='Contacts' || !fileName || fileName.length>255 || /[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)
+      || !/^[a-f0-9]{64}$/.test(key) || !['application/pdf','image/png','image/jpeg'].includes(mimeType)
+      || !buffer.length || buffer.length>10*1024*1024) throw new BadGatewayException('Invalid Xero Contact upload.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();
+    // A write is attempted once. Durable caller state controls recovery; never
+    // retry a provider mutation blindly or follow redirects with credentials.
+    let response:Response;
+    try { response=await fetch(`${path}/${encodeURIComponent(fileName)}`,{
+      method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,'Content-Type':mimeType,'Content-Length':String(buffer.length),Accept:'application/json','Idempotency-Key':key},
+      body:new Uint8Array(buffer),redirect:'error',signal:AbortSignal.timeout(30_000),
+    }); } catch { throw xeroUnavailableError(); }
+    try { await policy?.observe(response,ticket); } catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Attachments) || payload.Attachments.length!==1) throw new BadGatewayException('Xero upload confirmation is invalid. Retry the same file.');
+    const item=record(payload.Attachments[0]);
+    const attachmentId=requiredString(item.AttachmentID,'attachment id');attachmentPath(source,sourceId,attachmentId);
+    if(item.HasValidationErrors===true || item.FileName!==fileName || Number(item.ContentLength)!==buffer.length) throw new BadGatewayException('Xero upload confirmation does not match the file. Retry the same file.');
+    return {attachmentId,fileName,mimeType,sizeBytes:buffer.length};
+  }
   async attachments(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string): Promise<XeroAttachment[]> {
     const payload = record(await this.json(attachmentPath(source, sourceId), accessToken, tenantId));
     if (!Array.isArray(payload.Attachments)) throw new BadGatewayException('Xero returned an invalid attachment list.');

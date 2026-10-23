@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from "@jest/globals";
 import { XeroConnectorService } from "./xero-connector.service.js";
-import { XERO_READ_ONLY_SCOPES } from "./xero.config.js";
+import { XERO_READ_ONLY_SCOPES,xeroRequestedScopes } from "./xero.config.js";
 
 const originalDatabaseUrl = process.env.SOPHIA_RUNTIME_DATABASE_URL;
 beforeAll(() => { process.env.SOPHIA_RUNTIME_DATABASE_URL = "postgresql://example.invalid/runtime"; });
@@ -10,6 +10,18 @@ afterAll(() => {
 });
 
 describe("XeroConnectorService", () => {
+  it('requests attachment write permission only when uploads are explicitly enabled',()=>{
+    const old=process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;
+    try {
+      delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;expect(xeroRequestedScopes()).toEqual(XERO_READ_ONLY_SCOPES);
+      process.env.XERO_ATTACHMENT_UPLOAD_ENABLED='true';expect(xeroRequestedScopes()).toContain('accounting.attachments');
+      expect(xeroRequestedScopes()).not.toContain('accounting.invoices');expect(xeroRequestedScopes()).not.toContain('accounting.contacts');
+    } finally {if(old===undefined)delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;else process.env.XERO_ATTACHMENT_UPLOAD_ENABLED=old;}
+  });
+  it('does not allow full attachment permission to break existing read-scope reporting',async()=>{
+    const service=new XeroConnectorService({tenantReadTransaction:async(_id:string,work:(db:unknown)=>Promise<unknown>)=>work({query:async()=>({rows:[{granted_scopes:['accounting.attachments']}]})})} as never,{} as never,{} as never);
+    expect((await service.status('tenant')).connections[0].missingAttachmentScopes).toEqual([]);
+  });
   it("requests read-only payments permission for prepayments and overpayments", () => {
     expect(XERO_READ_ONLY_SCOPES).toContain("accounting.payments.read");
     expect(XERO_READ_ONLY_SCOPES).not.toContain("accounting.payments");

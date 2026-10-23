@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { jest } from '@jest/globals';
+import { StudentDocumentTypesService } from '../business-packs/student-operations/student-document-types.service.js';
 import { Pool } from 'pg';
 import { DatabaseService } from './database.service.js';
 import { StudentOperationsCasesService } from '../business-packs/student-operations/student-operations-cases.service.js';
@@ -49,6 +51,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,advisor_name,invoice_reference) VALUES($1,$2,$3,$3,'STD-1','INV-1','ACCREC','PAID','2025-01-01','Advisor One','YORK BUSINESS')`,[tenant,connection,invoice]);
     await pool.query(`UPDATE public.users SET password='unchanged-legacy-hash' WHERE id=$1`,[user]);
     await pool.query(await readFile(new URL('./migrations/088_user_password_setup_state.sql',import.meta.url),'utf8'));
+    await pool.query((await readFile(new URL('./migrations/089_student_document_types_uploads.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   test('password setup migration preserves legacy access and marks all future account inserts',async()=>{
@@ -172,5 +175,97 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(service.createStudent({...p,tenantId:'88888888-8888-4888-8888-888888888888'},value,'foreign-student')).rejects.toThrow();
     await expect(transaction(tenant,db=>db.query("INSERT INTO public.users(id) VALUES(gen_random_uuid())"))).rejects.toThrow('permission denied');
     await expect(transaction(tenant,db=>db.query('UPDATE public.bm_student_id_counter SET last_value=0'))).rejects.toThrow('permission denied');
+  });
+  const types=new StudentDocumentTypesService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service);
+  test('document types are company-scoped, active-unique, editable and archived without deletion',async()=>{
+    const first=await types.create(p,{name:'  Passport   copy ',required:true},'type-passport');
+    expect(first).toMatchObject({name:'Passport copy',required:true,status:'active',recordVersion:1});
+    expect(await types.create(p,{name:'Passport copy',required:true},'type-passport')).toEqual(first);
+    await expect(types.create(p,{name:'passport copy',required:false},'type-duplicate')).rejects.toThrow('already exists');
+    await expect(types.create(p,{name:'Injected',required:false,companyId:company},'type-injected')).rejects.toThrow('Enter a document');
+    await expect(types.create({...p,role:'advisor'},{name:'Denied',required:false},'type-forbidden')).rejects.toThrow();
+    expect((await types.list({...p,tenantId:'88888888-8888-4888-8888-888888888888'})).types).toHaveLength(0);
+    const changed=await types.update(p,String(first.documentTypeId),{name:'Passport',required:false,recordVersion:1},'type-edit');
+    expect(changed).toMatchObject({name:'Passport',required:false,recordVersion:2});
+    await expect(types.update(p,String(first.documentTypeId),{required:true,recordVersion:1},'type-stale')).rejects.toThrow('changed');
+    await types.update(p,String(first.documentTypeId),{status:'archived',recordVersion:2},'type-archive');
+    expect((await types.list(p)).types).toHaveLength(0);
+    await types.create(p,{name:'PASSPORT',required:true},'type-new-after-archive');
+    expect((await pool.query('SELECT status FROM sophia_runtime.student_operations_document_types WHERE document_type_id=$1',[first.documentTypeId])).rows[0].status).toBe('archived');
+    expect((await pool.query('SELECT count(*)::int n FROM sophia_runtime.student_operations_document_type_events WHERE document_type_id=$1',[first.documentTypeId])).rows[0].n).toBe(3);
+    await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_types'))).rejects.toThrow('permission denied');
+  });
+  test('Contact-only Xero upload is idempotent, typed and auditable; archived labels and content remain readable',async()=>{
+    const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'passport.pdf',mimetype:'application/pdf'};
+    const xero={uploadAttachment:jest.fn(async()=>({attachmentId:college})),attachmentContent:jest.fn(async()=>file.buffer)};
+    const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+    const created=await service.create(p,{userId:user},'uploaded-document-case');
+    const id=String(created.caseId),type=(await types.list(p)).types[0];
+    const input={documentTypeId:type.documentTypeId,connectionId:connection,contactId:invoice};
+    expect((await docs.uploadOptions(p,id)).contacts).toHaveLength(1);
+    const result=await docs.upload(p,id,input,file,'upload-example');
+    expect(await docs.upload(p,id,input,file,'upload-example')).toEqual(result);
+    expect(xero.uploadAttachment).toHaveBeenCalledTimes(1);
+    expect(xero.uploadAttachment.mock.calls[0]).toEqual([tenant,connection,'Contacts',invoice,expect.stringMatching(/^[a-f0-9-]+-passport\.pdf$/),'application/pdf',file.buffer,expect.stringMatching(/^[a-f0-9]{64}$/)]);
+    const listed=await docs.list(p,id,{});
+    expect(listed.documents).toHaveLength(1);
+    expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'PASSPORT',documentTypeRequired:true,sourceKind:'Contacts'});
+    expect(listed.documents[0]).not.toHaveProperty('private_object_key');
+    await types.update(p,type.documentTypeId,{status:'archived',recordVersion:type.recordVersion},'archive-upload-type');
+    expect((await docs.list(p,id,{})).documents[0].documentTypeName).toBe('PASSPORT');
+    expect((await docs.content(p,id,String(result.documentId))).buffer.equals(file.buffer)).toBe(true);
+    expect(xero.attachmentContent).toHaveBeenCalledWith(tenant,connection,'Contacts',invoice,college);
+    await expect(docs.upload(p,id,input,file,'upload-archived')).rejects.toThrow('active');
+    const activities=await service.activities(p,id,{});
+    expect(activities.activity.filter(a=>a.eventType==='case.document_uploaded')).toHaveLength(1);
+  });
+  test('upload validates permissions, tenant, file bytes, type and Contact identity before any provider request',async()=>{
+    const xero={uploadAttachment:jest.fn()};
+    const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+    const id=String((await service.create(p,{userId:user},'invalid-upload-case')).caseId);
+    const type=await types.create(p,{name:'Offer',required:false},'offer-upload-type');
+    const input={documentTypeId:type.documentTypeId,connectionId:connection,contactId:invoice};
+    const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'offer.pdf',mimetype:'application/pdf'};
+    await expect(docs.upload({...p,role:'advisor'},id,input,file,'upload-denied')).rejects.toThrow();
+    await expect(docs.upload({...p,tenantId:'88888888-8888-4888-8888-888888888888'},id,input,file,'upload-other-tenant')).rejects.toThrow('Case not found');
+    await expect(docs.upload(p,id,input,{...file,buffer:Buffer.from('<html>unsafe</html>')},'upload-fake')).rejects.toThrow('content');
+    await expect(docs.upload(p,id,input,{...file,originalname:'offer.svg'},'upload-extension')).rejects.toThrow('format');
+    await expect(docs.upload(p,id,input,{...file,buffer:Buffer.alloc(10*1024*1024+1)},'upload-size')).rejects.toThrow('10 MB');
+    await expect(docs.upload(p,id,{...input,documentTypeId:user},file,'upload-missing-type')).rejects.toThrow();
+    await expect(docs.upload(p,id,{...input,contactId:user},file,'upload-foreign-contact')).rejects.toThrow('Contact linked');
+    await expect(docs.upload(p,id,{...input,sourceKind:'Invoices'},file,'upload-wrong-source')).rejects.toThrow('Choose a document');
+    expect(xero.uploadAttachment).not.toHaveBeenCalled();
+  });
+  test('ambiguous provider failures retain a stable upload identity and lease instead of duplicating files',async()=>{
+    const xero={uploadAttachment:jest.fn(async()=>{throw new Error('Provider timeout');})};
+    const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+    const id=String((await service.create(p,{userId:user},'timeout-upload-case')).caseId);
+    const type=(await types.list(p)).types[0];
+    const input={documentTypeId:type.documentTypeId,connectionId:connection,contactId:invoice};
+    const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'offer.pdf',mimetype:'application/pdf'};
+    await expect(docs.upload(p,id,input,file,'timeout-upload')).rejects.toThrow('timeout');
+    await expect(docs.upload(p,id,input,file,'timeout-upload')).rejects.toThrow('still processing');
+    expect(xero.uploadAttachment).toHaveBeenCalledTimes(1);
+    const firstCall=xero.uploadAttachment.mock.calls[0];
+    await pool.query(`UPDATE sophia_runtime.student_operations_document_uploads SET lease_expires_at=now()-interval '1 second' WHERE idempotency_key='timeout-upload'`);
+    await expect(docs.upload(p,id,input,file,'timeout-upload')).rejects.toThrow('timeout');
+    expect(xero.uploadAttachment.mock.calls[1]).toEqual(firstCall);
+    expect((await docs.list(p,id,{})).documents).toHaveLength(0);
+  });
+  test('a persisted provider receipt recovers local finalization without sending the file twice',async()=>{
+    const xero={uploadAttachment:jest.fn(async()=>({attachmentId:user}))};
+    const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+    const id=String((await service.create(p,{userId:user},'receipt-recovery-case')).caseId);
+    const type=(await types.list(p)).types[0];
+    const input={documentTypeId:type.documentTypeId,connectionId:connection,contactId:invoice};
+    const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'receipt.pdf',mimetype:'application/pdf'};
+    const audit=jest.spyOn(service,'activity').mockRejectedValueOnce(new Error('Local audit interruption'));
+    try {await expect(docs.upload(p,id,input,file,'receipt-recovery')).rejects.toThrow('Local audit');}
+    finally {audit.mockRestore();}
+    expect((await docs.list(p,id,{})).documents).toHaveLength(0);
+    expect((await pool.query("SELECT status FROM sophia_runtime.student_operations_document_uploads WHERE idempotency_key='receipt-recovery'")).rows[0].status).toBe('uploaded');
+    const result=await docs.upload(p,id,input,file,'receipt-recovery');
+    expect(xero.uploadAttachment).toHaveBeenCalledTimes(1);
+    expect((await docs.list(p,id,{})).documents[0].documentId).toBe(result.documentId);
   });
 });

@@ -17,6 +17,26 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('uploads raw bytes only to Contacts with a stable idempotency key and observes quota headers',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',bytes=Buffer.from('%PDF-1.7\n%%EOF'),key='a'.repeat(64);
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Attachments:[{AttachmentID:id,FileName:'unique-passport.pdf',ContentLength:bytes.length}]}),{headers:{'x-daylimit-remaining':'20'}}));
+    const observe=jest.fn(async()=>{}),beforeRequest=jest.fn(async()=>{});
+    const client=new XeroClient();
+    await expect(client.withRequestPolicy({beforeRequest,observe},()=>client.uploadAttachment('secret','tenant','Contacts',id,'unique-passport.pdf','application/pdf',bytes,key))).resolves.toEqual({attachmentId:id,fileName:'unique-passport.pdf',mimeType:'application/pdf',sizeBytes:bytes.length});
+    const [url,options]=fetchMock.mock.calls[0];
+    expect(url).toBe(`https://api.xero.com/api.xro/2.0/Contacts/${id}/Attachments/unique-passport.pdf`);
+    expect(options).toMatchObject({method:'PUT',redirect:'error',headers:{'Content-Type':'application/pdf','Idempotency-Key':key}});
+    expect(Buffer.from(options?.body as Uint8Array).equals(bytes)).toBe(true);
+    expect(beforeRequest).toHaveBeenCalledTimes(1);expect(observe).toHaveBeenCalledTimes(1);
+    await expect(client.uploadAttachment('secret','tenant','Invoices',id,'passport.pdf','application/pdf',bytes,key)).rejects.toThrow('Contact');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('never retries a failed upstream mutation and does not expose raw provider errors',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private provider body',{status:429,headers:{'retry-after':'60'}}));
+    await expect(new XeroClient().uploadAttachment('secret','tenant','Contacts',id,'passport.pdf','application/pdf',Buffer.from('bytes'),'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_rate_limited',retryAfterSeconds:60})});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('lists attachment metadata by source identity without exposing provider URLs', async () => {
     const id='11111111-1111-4111-8111-111111111111';
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Attachments:[{AttachmentID:id,FileName:'passport.pdf',MimeType:'application/pdf',ContentLength:42,Url:'https://untrusted.example/file'}]}),{status:200}));

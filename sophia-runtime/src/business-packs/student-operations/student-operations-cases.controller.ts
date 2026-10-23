@@ -1,4 +1,6 @@
-import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards } from '@nestjs/common';
+import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { StudentDocumentTypesService } from './student-document-types.service.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
 import { StudentOperationsCasesService } from './student-operations-cases.service.js';
 import { StudentOperationsCaseDocumentsService } from './student-operations-case-documents.service.js';
@@ -7,7 +9,14 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @Controller('business-packs/student-operations/v1/workspace/cases')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
-  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService) {}
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService) {}
+  @Get('document-types') documentTypes(@Req() r:Request){return this.types.list(r.studentOperationsPrincipal);}
+  @Post('document-types') createType(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.create(r.studentOperationsPrincipal,body,key);}
+  @Patch('document-types/:typeId') updateType(@Req() r:Request,@Param('typeId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.update(r.studentOperationsPrincipal,id,body,key);}
+  @Post(':caseId/documents/upload')
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:10*1024*1024,files:1,fields:3,fieldSize:100,parts:4}}))
+  upload(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@UploadedFile() file:{buffer:Buffer;originalname:string;mimetype:string}|undefined,@Headers('idempotency-key') key?:string){return this.documents.upload(r.studentOperationsPrincipal,id,body,file,key);}
+  @Get(':caseId/documents/upload-options') uploadOptions(@Req() r:Request,@Param('caseId') id:string){return this.documents.uploadOptions(r.studentOperationsPrincipal,id);}
   @Get('options') options(){return this.cases.options();}
   @Get('edit-options') editOptions(@Req() r:Request){return this.cases.editOptions(r.studentOperationsPrincipal);}
   @Get() list(@Req() r:Request,@Query() query:unknown){return this.cases.list(r.studentOperationsPrincipal,query);}

@@ -25,7 +25,7 @@ import { XeroSharedBackoff } from './xero-rate-limit.js';
 import type { XeroRequestKind } from './xero-quota-admission.js';
 import {
   XERO_CONNECTOR_KEY,
-  XERO_READ_ONLY_SCOPES,
+  xeroRequestedScopes,
   XERO_STUDENT_DISCOVERY_SCOPES,
   xeroConfiguration,
   type XeroConfig,
@@ -95,7 +95,7 @@ export class XeroConnectorService {
       provider: "xero",
       configured,
       mode: "read_only",
-      requestedScopes: [...XERO_READ_ONLY_SCOPES],
+      requestedScopes: [...xeroRequestedScopes()],
       connections: result.rows.map((row) => ({
         connectionId: row.xero_connection_id,
         tenantId: row.xero_tenant_id,
@@ -108,7 +108,7 @@ export class XeroConnectorService {
         lastErrorCode: row.last_error_code,
         organisationRole: row.organisation_role,
         missingStudentDiscoveryScopes: missingScopes(row.granted_scopes, XERO_STUDENT_DISCOVERY_SCOPES),
-        missingAttachmentScopes: missingScopes(row.granted_scopes, ['accounting.attachments.read']),
+        missingAttachmentScopes: missingScopes(row.granted_scopes, ['accounting.attachments']).length ? missingScopes(row.granted_scopes, ['accounting.attachments.read']) : [],
       })),
     };
   }
@@ -135,7 +135,7 @@ export class XeroConnectorService {
       response_type: "code",
       client_id: config.clientId,
       redirect_uri: config.redirectUri,
-      scope: XERO_READ_ONLY_SCOPES.join(" "),
+      scope: xeroRequestedScopes().join(" "),
       state,
       code_challenge: challenge,
       code_challenge_method: "S256",
@@ -308,7 +308,7 @@ export class XeroConnectorService {
   private async attachmentAccess(tenantId: string, connectionId: string) {
     const config = requiredConfig();
     const connection = await this.loadConnection(tenantId, connectionId);
-    if (missingScopes(connection.granted_scopes, ['accounting.attachments.read']).length) {
+    if (missingScopes(connection.granted_scopes, ['accounting.attachments.read']).length && missingScopes(connection.granted_scopes, ['accounting.attachments']).length) {
       throw new ConflictException({ errorCode: 'xero_attachment_scope_missing', message: 'An integration administrator must reconnect Xero with read-only attachment access.' });
     }
     const accessToken = await this.accessToken(tenantId,connection.xero_authorization_id,config);
@@ -323,6 +323,16 @@ export class XeroConnectorService {
   async attachmentContent(tenantId: string, connectionId: string, source: XeroAttachmentSource, sourceId: string, attachmentId: string) {
     const {connection,accessToken}=await this.attachmentAccess(tenantId,connectionId);
     return this.providerRequest(tenantId, connectionId, () => this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId));
+  }
+
+  async uploadAttachment(tenantId:string,connectionId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string) {
+    if(source!=='Contacts') throw new BadRequestException('Documents must be uploaded to the student Contact.');
+    if(process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true') throw new ConflictException({errorCode:'xero_attachment_upload_disabled',message:'An integration administrator must enable Xero Contact uploads.'});
+    const config=requiredConfig();
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.attachments']).length) throw new ConflictException({errorCode:'xero_attachment_write_scope_missing',message:'An integration administrator must authorize Xero attachment uploads from company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,config);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.uploadAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key));
   }
 
   private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>,kind:XeroRequestKind='operational'): Promise<T> {

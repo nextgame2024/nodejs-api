@@ -251,7 +251,7 @@ export class StudentOperationsCasesService {
     await db.query(`INSERT INTO ${caseSchema()}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary) VALUES($1,$2,$3,$4,$5)`,[p.tenantId,id,p.identityUserId,event,summary]);
   }
 
-  private async write(p:Principal,operation:string,value:unknown,key:string|undefined,work:(db:PoolClient)=>Promise<Record<string,unknown>>) {
+  async write(p:Principal,operation:string,value:unknown,key:string|undefined,work:(db:PoolClient)=>Promise<Record<string,unknown>>) {
     const token=parse(z.string().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/),key);
     const fingerprint=createHash('sha256').update(JSON.stringify(value)).digest('hex');
     return this.database.tenantTransaction(p.tenantId,async db=>{

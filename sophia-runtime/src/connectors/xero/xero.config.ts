@@ -12,6 +12,12 @@ export const XERO_READ_ONLY_SCOPES = [
   "accounting.attachments.read",
 ] as const;
 
+export function xeroRequestedScopes(): readonly string[] {
+  return process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true'
+    ? XERO_READ_ONLY_SCOPES.map(scope=>scope==='accounting.attachments.read'?'accounting.attachments':scope)
+    : XERO_READ_ONLY_SCOPES;
+}
+
 export const XERO_STUDENT_DISCOVERY_SCOPES = [
   "accounting.invoices.read",
   "accounting.payments.read",
