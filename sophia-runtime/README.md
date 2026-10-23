@@ -95,8 +95,9 @@ blindly retry writes. A timeout retains the intent; retry the same file after tw
 or primary-binding writes occur on ordinary page viewing or upload-options GETs. File metadata remains
 associated with the explicitly selected Sophia case. Invoice attachment linking and S3 remain deferred.
 
-Release order: deploy updated Runtime API and shared worker connector code, apply owner migration 090,
-deploy the frontend, then explicitly enable **on Runtime API only**:
+Release order: keep uploads disabled during rollout; deploy updated Runtime API, shared worker and
+Business Manager (`nodejs-api`) code, apply owner migrations 090 and 091 in order (skip already applied
+migrations through the existing ledger), deploy the frontend, then explicitly enable **on Runtime API only**:
 
 ```text
 XERO_ATTACHMENT_UPLOAD_ENABLED=true
@@ -111,12 +112,39 @@ attachment uploads stops file writes. Roll back feature flags/UI without deletin
 Older frontend requests may only resume their already-persisted upload; new uploads require the refreshed UI.
 
 Xero [limits each Contact to ten attachments](https://developer.xero.com/documentation/api/accounting/contacts).
-This is shared across cases, not ten per case. The API checks capacity before sending bytes using operational
-quota, allows recovery using the upload's own durable UUID-prefixed filename, and never creates extra
-Contacts/overwrites unrelated files to bypass capacity. Users see an actionable storage-full message. Unlimited
-document storage is not provided by this release; S3 remains the planned solution. App uploads retain the
-existing PDF/JPEG/PNG, 10 MB limit. No live Contact creation/file upload or production migration is part of
-local verification; use an explicitly approved real student/file for release smoke testing.
+Migration 091 adds automatic **document-only overflow**, approved while S3/AWS migration is deferred:
+
+- Preserve the primary billing Contact. Prefer it for uploads, then reuse other active explicitly linked
+  Contacts, then create `Student (STD-n) — Documents 2`, `Documents 3`, etc. only as capacity is needed.
+- Document destinations are student/organisation scoped and shared across cases. Each file remains linked
+  to its originating case in Sophia. Discovery excludes Sophia-uploaded files belonging to another case;
+  historical imported files retain their existing discovery behaviour. No historical files are moved/deleted.
+- RLS-protected destination records store stable `sophia:<student UUID>:docs:<ordinal>` references, Contact
+  creation snapshots and fenced leases. Provider creation is outside transactions and reconciles by exact
+  external reference before retrying. No extra Sophia student, case or invoice is created for an overflow.
+- Allocation locks the destination row and counts live provider files plus outstanding local reservations
+  whose filenames are not yet visible upstream. This prevents concurrent cases/actors/replicas from taking
+  the same last slot. Reservations are conservative: timeouts and completed-but-not-visible files are not
+  blindly refunded. Full observations persist; deleted remote files do not automatically reclaim capacity.
+- A provider capacity check rejects before byte PUT when necessary; only such an unattempted reservation
+  may safely reroute. Once PUT might have happened, the upload stays pinned to its destination. Recovery
+  finds its durable filename and verifies remote content size/SHA-256 before accepting the receipt, rather
+  than overwriting/relying on Xero's six-minute key cache. Byte PUT is fenced after operational admission.
+- Contact allocation bounds provider work to twelve destinations per request and three pre-PUT reroutes.
+  Very large historical collections, concurrent provisioning, Xero outages/quota or stale leases can require
+  retrying the same file after two minutes. Progress/intent persists; files themselves remain in the browser
+  until confirmed and are never staged in PostgreSQL. This is not an outage-proof/offline upload queue.
+- Sync users recognises explicit managed storage mappings, rejects conflicting identities, repairs Contact/
+  invoice links to the existing student and excludes managed Contacts from fuzzy new-user grouping. The
+  mapping lookup is additive when 091 is absent; deploy worker and nodejs-api together before enabling.
+
+No additional OAuth scopes or environment flags beyond 090 are needed. Existing `accounting.contacts` and
+`accounting.attachments` consent must already be granted; an administrator reauthorizes only if missing.
+New stores deny direct deletion, including inherited default grants. Old in-flight uploads are marked as
+already attempted by 091 and cannot be silently retargeted. Roll back upload enablement/code without
+deleting overflow Contacts, reservations or provider receipts. S3 and invoice-document linking remain deferred.
+App uploads retain PDF/JPEG/PNG and the 10 MB limit. No live Contact creation/file upload or production migration
+is part of local verification; use an explicitly approved real student/file for release smoke testing.
 
 ## Sophia subscription billing
 

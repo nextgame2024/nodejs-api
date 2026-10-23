@@ -211,6 +211,9 @@ export class StudentDocumentSourceDiscovery {
       SELECT $1::uuid,c.case_id,$2::uuid,$3::text,$4::uuid,f."attachmentId",f."fileName",f."mimeType",f."sizeBytes"
       FROM unnest($5::uuid[]) c(case_id) CROSS JOIN jsonb_to_recordset($6::jsonb)
         f("attachmentId" uuid,"fileName" text,"mimeType" text,"sizeBytes" bigint)
+      WHERE NOT EXISTS(SELECT 1 FROM ${s}.student_operations_document_uploads u
+        WHERE u.customer_id=$1 AND u.xero_connection_id=$2 AND u.source_id=$4
+          AND u.file_name=f."fileName" AND u.case_id<>c.case_id)
       ON CONFLICT(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id)
       DO UPDATE SET file_name=excluded.file_name,mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,last_seen_at=now()`,
       [...args,targets.rows.map(row=>row.case_id),JSON.stringify(files)]);

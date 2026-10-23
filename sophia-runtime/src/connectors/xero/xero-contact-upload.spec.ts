@@ -47,11 +47,34 @@ describe('Xero Contact attachment write boundary',()=>{
   });
   it('reports a full Contact without overwriting another file, but permits an exact durable filename retry',async()=>{
     const {service}=setup(['accounting.attachments']);process.env.XERO_SHARED_BACKOFF_ENABLED='false';
-    const client={attachments:jest.fn(async()=>Array.from({length:10},(_,i)=>({fileName:`${i}.pdf`}))),uploadAttachment:jest.fn(async()=>({attachmentId:id}))};
+    const client={attachments:jest.fn(async()=>Array.from({length:10},(_,i)=>({fileName:`${i}.pdf`,attachmentId:id,sizeBytes:3}))),attachmentContent:jest.fn(async()=>Buffer.from('pdf')),uploadAttachment:jest.fn(async()=>({attachmentId:id}))};
     Object.assign(service,{client});
     await expect(service.uploadAttachment('tenant',id,'Contacts',id,'new.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'student_document_storage_full'})});
     expect(client.uploadAttachment).not.toHaveBeenCalled();
-    expect(await service.uploadAttachment('tenant',id,'Contacts',id,'0.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).toEqual({attachmentId:id});
-    expect(client.uploadAttachment).toHaveBeenCalledTimes(1);
+    expect(await service.uploadAttachment('tenant',id,'Contacts',id,'0.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).toMatchObject({attachmentId:id});
+    expect(client.uploadAttachment).not.toHaveBeenCalled();
+  });
+  it('uses operational admission for capacity reads and fences the upload before byte PUT',async()=>{
+    const {service}=setup(['accounting.attachments']),fetchMock=jest.spyOn(globalThis,'fetch');
+    await expect(service.documentContactAttachments('tenant',id,id)).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_rate_limited'})});
+    expect(fetchMock).not.toHaveBeenCalled();
+    process.env.XERO_SHARED_BACKOFF_ENABLED='false';
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({Attachments:[]}),{status:200,headers:{'Content-Type':'application/json'}}));
+    const fence=jest.fn(async()=>{throw new Error('Lease expired');});
+    await expect(service.uploadAttachment('tenant',id,'Contacts',id,'new.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64),fence)).rejects.toThrow('Lease expired');
+    expect(fence).toHaveBeenCalledTimes(1);expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('never overwrites or reroutes a stored filename with different bytes during recovery',async()=>{
+    const {service}=setup(['accounting.attachments']);process.env.XERO_SHARED_BACKOFF_ENABLED='false';
+    const client={attachments:jest.fn(async()=>[{attachmentId:id,fileName:'durable.pdf',sizeBytes:3}]),attachmentContent:jest.fn(async()=>Buffer.from('bad')),uploadAttachment:jest.fn()};
+    Object.assign(service,{client});
+    await expect(service.uploadAttachment('tenant',id,'Contacts',id,'durable.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'student_document_storage_review_required'})});
+    expect(client.uploadAttachment).not.toHaveBeenCalled();
+  });
+  it('does not mark a write attempted when operational admission denies before HTTP',async()=>{
+    const client=new XeroClient(),fence=jest.fn(async()=>{}),fetchMock=jest.spyOn(globalThis,'fetch');
+    await expect(client.withRequestPolicy({beforeRequest:async()=>{throw new Error('Quota reserved');},observe:async()=>{}},
+      ()=>client.uploadAttachment('fake','organisation','Contacts',id,'new.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64),fence))).rejects.toThrow('Quota reserved');
+    expect(fence).not.toHaveBeenCalled();expect(fetchMock).not.toHaveBeenCalled();
   });
 });

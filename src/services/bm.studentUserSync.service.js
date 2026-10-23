@@ -27,6 +27,37 @@ const SOURCE = `FROM sophia_runtime.student_operations_xero_invoices i
  AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
  AND i.invoice_status NOT IN ('DELETED','VOIDED')`;
 
+// Storage Contacts are explicit links to an existing Sophia identity, not new
+// student candidates. In particular, "Documents 2" must never become a user.
+async function documentContactMappings(db, scope, connectionId) {
+  const installed=await db.query("SELECT to_regclass('sophia_runtime.student_operations_document_contacts') AS name");
+  if(!installed.rows[0]?.name) return new Set(); // additive rollout before 091
+  const result=await db.query(`SELECT d.xero_contact_id AS contact_id,l.student_reference AS student_id
+    FROM sophia_runtime.student_operations_document_contacts d
+    JOIN sophia_runtime.student_operations_student_user_links l ON l.customer_id=d.customer_id AND l.student_id=d.student_id
+    JOIN public.users u ON u.company_id=$3 AND u.student_id=l.student_reference AND u.type='student' AND u.status='active'
+    WHERE d.customer_id=$1 AND d.xero_connection_id=$2 AND d.xero_contact_id IS NOT NULL`,[scope.customer_id,connectionId,scope.company_id]);
+  if(!result.rowCount) return new Set();
+  const mappings=JSON.stringify(result.rows),params=[scope.customer_id,connectionId,mappings];
+  const conflict=await db.query(`SELECT 1 FROM jsonb_to_recordset($3::jsonb) m(contact_id uuid,student_id text)
+    JOIN public.bm_xero_student_contact_links l ON l.customer_id=$1 AND l.connection_id=$2 AND l.contact_id=m.contact_id
+    WHERE l.student_id<>m.student_id UNION ALL
+    SELECT 1 FROM jsonb_to_recordset($3::jsonb) m(contact_id uuid,student_id text)
+    JOIN sophia_runtime.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_contact_id=m.contact_id
+    WHERE i.student_id IS NOT NULL AND i.student_id<>m.student_id LIMIT 1`,params);
+  if(conflict.rowCount) throw fail('Document storage identity conflict; administrator review is required.');
+  await db.query(`INSERT INTO public.bm_xero_student_identities(customer_id,company_id,student_id)
+    SELECT DISTINCT $1::uuid,$2::uuid,m.student_id FROM jsonb_to_recordset($3::jsonb) m(contact_id uuid,student_id text)
+    ON CONFLICT DO NOTHING`,[scope.customer_id,scope.company_id,mappings]);
+  await db.query(`INSERT INTO public.bm_xero_student_contact_links(customer_id,connection_id,contact_id,student_id)
+    SELECT $1::uuid,$2::uuid,m.contact_id,m.student_id FROM jsonb_to_recordset($3::jsonb) m(contact_id uuid,student_id text)
+    ON CONFLICT DO NOTHING`,params);
+  await db.query(`UPDATE sophia_runtime.student_operations_xero_invoices i SET student_id=m.student_id
+    FROM jsonb_to_recordset($3::jsonb) m(contact_id uuid,student_id text)
+    WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_contact_id=m.contact_id AND i.student_id IS NULL`,params);
+  return new Set(result.rows.map(row=>row.contact_id));
+}
+
 export async function authorizeSync(db, actorId) {
   const { rows } = await db.query(
     `SELECT c.company_id,rc.customer_id FROM users u
@@ -258,12 +289,13 @@ async function scan(db, run, scope) {
   if (connection.rowCount !== 1 || !connection.rows[0].last_successful_sync_at)
     throw fail("Refresh Xero successfully before syncing users.");
   const source = connection.rows[0];
+  const managedContacts=await documentContactMappings(db,scope,source.xero_connection_id);
   const contacts = await db.query(
     `SELECT i.xero_contact_id,c.legal_name,c.email,count(*)::int records ${SOURCE}
     GROUP BY i.xero_contact_id,c.legal_name,c.email`,
     [scope.customer_id, source.xero_connection_id],
   );
-  const groups = groupContacts(contacts.rows);
+  const groups = groupContacts(contacts.rows.filter(contact=>!managedContacts.has(contact.xero_contact_id)));
   const exclusions = await db.query(`SELECT contact_ids FROM bm_xero_student_sync_candidates
     WHERE customer_id=$1 AND connection_id=$2 AND status='excluded'`,
     [scope.customer_id, source.xero_connection_id]);

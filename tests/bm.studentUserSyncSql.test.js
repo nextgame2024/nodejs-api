@@ -492,4 +492,18 @@ suite("Student user sync — isolated PostgreSQL", () => {
       expect((await client.query('SELECT * FROM sophia_runtime.student_operations_latest_invoice_advisors')).rows).toHaveLength(0);
     } finally { await client.query('ROLLBACK'); client.release(); }
   });
+  test('document storage Contacts reconcile to the existing student without becoming new user candidates',async()=>{
+    const existing=(await pool.query("SELECT student_id FROM users WHERE company_id=$1 AND type='student' AND status='active' LIMIT 1",[company])).rows[0];
+    const before=(await pool.query("SELECT count(*)::int n FROM users WHERE type='student'")).rows[0].n;
+    const profile='a7777777-7777-4777-8777-777777777777';
+    await pool.query(`CREATE TABLE sophia_runtime.student_operations_document_contacts(customer_id uuid,student_id uuid,xero_connection_id uuid,xero_contact_id uuid)`);
+    await pool.query('INSERT INTO sophia_runtime.student_operations_student_user_links VALUES($1,$2,$3)',[customer,profile,existing.student_id]);
+    const contact=await addContact('Student — Documents 2',null);
+    await pool.query('INSERT INTO sophia_runtime.student_operations_document_contacts VALUES($1,$2,$3,$4)',[customer,profile,connection,contact]);
+    await enqueueSync(actor,'preview');await drain();
+    expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1',[contact])).rows[0].student_id).toBe(existing.student_id);
+    expect((await pool.query('SELECT student_id FROM public.bm_xero_student_contact_links WHERE contact_id=$1',[contact])).rows[0].student_id).toBe(existing.student_id);
+    expect((await pool.query('SELECT 1 FROM bm_xero_student_sync_candidates WHERE $1::uuid=ANY(contact_ids)',[contact])).rowCount).toBe(0);
+    expect((await pool.query("SELECT count(*)::int n FROM users WHERE type='student'")).rows[0].n).toBe(before);
+  });
 });

@@ -9,6 +9,7 @@ import type { StudentOperationsWorkspacePrincipal as Principal } from './student
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { StudentDocumentSourceDiscovery } from './student-document-source-discovery.js';
 import { StudentPrimaryXeroContact } from './student-primary-xero-contact.js';
+import { StudentDocumentContactStorage } from './student-document-contact-storage.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -81,7 +82,22 @@ export class StudentOperationsCaseDocumentsService {
       // Stable filename + provider idempotency key survive timeouts/restarts;
       // never blindly retry a write with a new identity or overwrite user files.
       const providerKey=createHash('sha256').update(`${p.tenantId}:${p.identityUserId}:${job.upload_id}`).digest('hex');
-      const attachment=await this.xero.uploadAttachment(p.tenantId,job.xero_connection_id,job.source_kind,job.source_id,job.file_name,mime,bytes,providerKey);
+      const storage=new StudentDocumentContactStorage(this.database,this.cases,this.xero);
+      let destination=await storage.reserve(p,job,lease);
+      let attachment:import('../../connectors/xero/xero.client.js').XeroAttachment|undefined;
+      for(let routing=0;routing<3;routing++) {
+        try {
+          attachment=await this.xero.uploadAttachment(p.tenantId,destination.xero_connection_id,'Contacts',destination.source_id,job.file_name,mime,bytes,providerKey,
+            ()=>storage.attempted(p,destination,lease));
+          break;
+        } catch(error) {
+          const response=error instanceof ConflictException?error.getResponse():null;
+          if(!response || typeof response!=='object' || !('errorCode' in response) || response.errorCode!=='student_document_storage_full'
+            || !await storage.releaseFull(p,destination,lease)) throw error;
+          destination=await storage.reserve(p,destination,lease);
+        }
+      }
+      if(!attachment) throw new ConflictException({errorCode:'student_document_storage_pending',message:'Document storage is being prepared. Retry the same file shortly.'});
       await this.database.tenantTransaction(p.tenantId,async db=>{
         const receipt=await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='uploaded',provider_attachment_id=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND upload_id=$2 AND lease_token=$4 RETURNING upload_id`,[p.tenantId,job.upload_id,attachment.attachmentId,lease]);
         if(!receipt.rowCount) throw new ConflictException('Upload confirmation is pending. Retry the same file.');
@@ -215,7 +231,9 @@ export class StudentOperationsCaseDocumentsService {
       await this.database.tenantTransaction(tenantId,async db=>{
         const lease=await db.query(`SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND job_id=$2 AND lease_token=$3 AND lease_expires_at>now() FOR UPDATE`,[tenantId,job.job_id,token]);
         if(!lease.rows.length) return;
-        for(const file of attachments) await db.query(`INSERT INTO ${s}.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        for(const file of attachments) await db.query(`INSERT INTO ${s}.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes)
+          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 WHERE NOT EXISTS(SELECT 1 FROM ${s}.student_operations_document_uploads u
+            WHERE u.customer_id=$1 AND u.xero_connection_id=$3 AND u.source_id=$5 AND u.file_name=$7 AND u.case_id<>$2)
           ON CONFLICT(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id) DO UPDATE SET file_name=excluded.file_name,mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,last_seen_at=now()`,[tenantId,job.case_id,job.xero_connection_id,job.source_kind,job.source_id,file.attachmentId,file.fileName,file.mimeType,file.sizeBytes]);
         await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='succeeded',error_code=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND job_id=$2 AND lease_token=$3`,[tenantId,job.job_id,token]);
       });

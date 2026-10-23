@@ -136,7 +136,7 @@ export class XeroClient {
   }
 
   async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<{contactId:string}> {
-    if(!/^sophia:[0-9a-f-]{36}$/i.test(value.contactNumber) || !value.name.trim() || value.name.length>255
+    if(!/^sophia:[0-9a-f-]{36}(?::docs:[2-9]|:docs:[1-9][0-9]{1,5})?$/i.test(value.contactNumber) || !value.name.trim() || value.name.length>255
       || (value.email!==null && value.email.length>320) || !/^[a-f0-9]{64}$/.test(key))
       throw new BadGatewayException('Invalid student document storage request.');
     const url=new URL('https://api.xero.com/api.xro/2.0/Contacts');
@@ -166,12 +166,15 @@ export class XeroClient {
     if(!Array.isArray(payload.Contacts) || payload.Contacts.length!==1) throw new BadGatewayException('Student document storage confirmation is pending. Retry this file.');
     return verified(payload.Contacts[0]);
   }
-  async uploadAttachment(accessToken:string,tenantId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroAttachment> {
+  async uploadAttachment(accessToken:string,tenantId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string,beforeWrite?:()=>Promise<void>):Promise<XeroAttachment> {
     const path=attachmentPath(source,sourceId);
     if(source!=='Contacts' || !fileName || fileName.length>255 || /[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)
       || !/^[a-f0-9]{64}$/.test(key) || !['application/pdf','image/png','image/jpeg'].includes(mimeType)
       || !buffer.length || buffer.length>10*1024*1024) throw new BadGatewayException('Invalid Xero Contact upload.');
     const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();
+    // Admission may deny without HTTP; do not mark the durable upload attempted
+    // until admission succeeds. Fence immediately before sending byte content.
+    await beforeWrite?.();
     // A write is attempted once. Durable caller state controls recovery; never
     // retry a provider mutation blindly or follow redirects with credentials.
     let response:Response;

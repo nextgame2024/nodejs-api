@@ -325,7 +325,15 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId, connectionId, () => this.client.attachmentContent(accessToken,connection.xero_tenant_id,source,sourceId,attachmentId));
   }
 
-  async uploadAttachment(tenantId:string,connectionId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string) {
+  async documentContactAttachments(tenantId:string,connectionId:string,contactId:string) {
+    if(process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true') throw new ConflictException({errorCode:'xero_attachment_upload_disabled',message:'An administrator must enable document storage.'});
+    const config=requiredConfig(),connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.attachments']).length) throw new ConflictException({errorCode:'xero_attachment_write_scope_missing',message:'An administrator must authorize document storage.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,config);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.attachments(accessToken,connection.xero_tenant_id,'Contacts',contactId));
+  }
+
+  async uploadAttachment(tenantId:string,connectionId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string,beforeWrite?:()=>Promise<void>) {
     if(source!=='Contacts') throw new BadRequestException('Documents must be uploaded to the student Contact.');
     if(process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true') throw new ConflictException({errorCode:'xero_attachment_upload_disabled',message:'An integration administrator must enable Xero Contact uploads.'});
     const config=requiredConfig();
@@ -336,9 +344,18 @@ export class XeroConnectorService {
       // Xero's ten-file limit is per Contact, not per Sophia case. This read is
       // part of an explicit mutation and uses operational quota, not discovery.
       const files=await this.client.attachments(accessToken,connection.xero_tenant_id,'Contacts',sourceId);
-      if(files.length>=10 && !files.some(file=>file.fileName===fileName))
+      const existing=files.find(file=>file.fileName===fileName);
+      if(existing) {
+        // Recover an uncertain write by its durable filename AND byte hash,
+        // rather than relying on Xero's expiring idempotency cache or overwriting.
+        const content=await this.client.attachmentContent(accessToken,connection.xero_tenant_id,'Contacts',sourceId,existing.attachmentId);
+        if(existing.sizeBytes!==buffer.length || !createHash('sha256').update(content).digest().equals(createHash('sha256').update(buffer).digest()))
+          throw new ConflictException({errorCode:'student_document_storage_review_required',message:'The stored document changed. Contact your administrator.'});
+        return existing;
+      }
+      if(files.length>=10)
         throw new ConflictException({errorCode:'student_document_storage_full',message:'Document storage is full. Contact your administrator.'});
-      return this.client.uploadAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key);
+      return this.client.uploadAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key,beforeWrite);
     });
   }
 

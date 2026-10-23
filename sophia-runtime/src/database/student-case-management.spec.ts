@@ -9,6 +9,9 @@ import { runCaseMigration } from '../../scripts/migrate-student-cases.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { XeroConnectorService } from '../connectors/xero/xero-connector.service.js';
 import { StudentPrimaryXeroContact } from '../business-packs/student-operations/student-primary-xero-contact.js';
+import { ConflictException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import type { XeroAttachment } from '../connectors/xero/xero.client.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -60,6 +63,10 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query(await readFile(new URL('./migrations/088_user_password_setup_state.sql',import.meta.url),'utf8'));
     await pool.query((await readFile(new URL('./migrations/089_student_document_types_uploads.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/090_student_primary_xero_contacts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    // New durable stores must deny deletion even under inherited owner defaults.
+    await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT DELETE ON TABLES TO sophia_runtime_app');
+    await pool.query((await readFile(new URL('./migrations/091_student_document_contact_overflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE ON TABLES FROM sophia_runtime_app');
   });
   afterAll(async()=>{await pool.end();});
   test('password setup migration preserves legacy access and marks all future account inserts',async()=>{
@@ -205,7 +212,7 @@ suite('Case management against disposable PostgreSQL',()=>{
   });
   test('Contact-only Xero upload is idempotent, typed and auditable; archived labels and content remain readable',async()=>{
     const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'passport.pdf',mimetype:'application/pdf'};
-    const xero={uploadAttachment:jest.fn(async()=>({attachmentId:college})),attachmentContent:jest.fn(async()=>file.buffer)};
+    const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>({attachmentId:college})),attachmentContent:jest.fn(async()=>file.buffer)};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
     const created=await service.create(p,{userId:user},'uploaded-document-case');
     const id=String(created.caseId),type=(await types.list(p)).types[0];
@@ -214,7 +221,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     const result=await docs.upload(p,id,input,file,'upload-example');
     expect(await docs.upload(p,id,input,file,'upload-example')).toEqual(result);
     expect(xero.uploadAttachment).toHaveBeenCalledTimes(1);
-    expect(xero.uploadAttachment.mock.calls[0]).toEqual([tenant,connection,'Contacts',invoice,expect.stringMatching(/^[a-f0-9-]+-passport\.pdf$/),'application/pdf',file.buffer,expect.stringMatching(/^[a-f0-9]{64}$/)]);
+    expect(xero.uploadAttachment.mock.calls[0]).toEqual([tenant,connection,'Contacts',invoice,expect.stringMatching(/^[a-f0-9-]+-passport\.pdf$/),'application/pdf',file.buffer,expect.stringMatching(/^[a-f0-9]{64}$/),expect.any(Function)]);
     const listed=await docs.list(p,id,{});
     expect(listed.documents).toHaveLength(1);
     expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'PASSPORT',documentTypeRequired:true,sourceKind:'Contacts'});
@@ -245,7 +252,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(xero.uploadAttachment).not.toHaveBeenCalled();
   });
   test('ambiguous provider failures retain a stable upload identity and lease instead of duplicating files',async()=>{
-    const xero={uploadAttachment:jest.fn(async()=>{throw new Error('Provider timeout');})};
+    const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>{throw new Error('Provider timeout');})};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
     const id=String((await service.create(p,{userId:user},'timeout-upload-case')).caseId);
     const type=(await types.list(p)).types[0];
@@ -257,11 +264,11 @@ suite('Case management against disposable PostgreSQL',()=>{
     const firstCall=xero.uploadAttachment.mock.calls[0];
     await pool.query(`UPDATE sophia_runtime.student_operations_document_uploads SET lease_expires_at=now()-interval '1 second' WHERE idempotency_key='timeout-upload'`);
     await expect(docs.upload(p,id,input,file,'timeout-upload')).rejects.toThrow('timeout');
-    expect(xero.uploadAttachment.mock.calls[1]).toEqual(firstCall);
+    expect(xero.uploadAttachment.mock.calls[1].slice(0,8)).toEqual(firstCall.slice(0,8));
     expect((await docs.list(p,id,{})).documents).toHaveLength(0);
   });
   test('a persisted provider receipt recovers local finalization without sending the file twice',async()=>{
-    const xero={uploadAttachment:jest.fn(async()=>({attachmentId:user}))};
+    const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>({attachmentId:user}))};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
     const id=String((await service.create(p,{userId:user},'receipt-recovery-case')).caseId);
     const type=(await types.list(p)).types[0];
@@ -301,7 +308,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       const created=await service.createStudent(p,{studentName:'No Invoices',studentEmail:'no-invoices@example.test'},'primary-no-invoices');
       const id=String(created.caseId),detail=await service.get(p,id);
       const contact='a3333333-3333-4333-8333-333333333333';
-      const xero={ensureStudentContact:jest.fn(async()=>({contactId:contact})),uploadAttachment:jest.fn(async()=>({attachmentId:college}))};
+      const xero={documentContactAttachments:jest.fn(async()=>[]),ensureStudentContact:jest.fn(async()=>({contactId:contact})),uploadAttachment:jest.fn(async()=>({attachmentId:college}))};
       const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
       const type=(await types.list(p)).types[0],file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'new-student.pdf',mimetype:'application/pdf'};
       // Options are read-only and do not create provider Contacts.
@@ -364,5 +371,103 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_sync_configurations VALUES($1,$2,'trust')`,[tenant,another]);
     try {await expect(resolver.ensure(p,id)).rejects.toThrow('administrator attention');}
     finally {await pool.query(`UPDATE sophia_runtime.xero_connections SET status='revoked' WHERE xero_connection_id=$1`,[another]);}
+  });
+  function provider() {
+    const references=new Map<string,string>(),files=new Map<string,XeroAttachment[]>();
+    const ensureStudentContact=jest.fn(async(_t:string,_c:string,v:{contactNumber:string;name:string;email:string|null},_key:string)=>{
+      if(!references.has(v.contactNumber)){const contact=randomUUID();references.set(v.contactNumber,contact);files.set(contact,[]);}
+      return {contactId:references.get(v.contactNumber)!};
+    });
+    const documentContactAttachments=jest.fn(async(_t:string,_c:string,id:string)=>[...(files.get(id)??[])]);
+    const uploadAttachment=jest.fn(async(...args:unknown[])=>{
+      const contact=String(args[3]),name=String(args[4]),list=files.get(contact)??[];
+      const existing=list.find(f=>f.fileName===name);if(existing)return existing;
+      if(list.length>=10)throw new ConflictException({errorCode:'student_document_storage_full'});
+      await (args[8] as ()=>Promise<void>)();
+      const result={attachmentId:randomUUID(),fileName:name,mimeType:String(args[5]),sizeBytes:(args[6] as Buffer).length};
+      files.set(contact,[...list,result]);return result;
+    });
+    const xero={ensureStudentContact,documentContactAttachments,uploadAttachment};
+    const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+    return {xero,files,references,docs};
+  }
+  const pdf={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'case.pdf',mimetype:'application/pdf'};
+  async function overflowStudent(name:string) {
+    const value=await service.createStudent(p,{studentName:name,studentEmail:`${name.toLowerCase().replaceAll(' ','-')}@example.test`},`overflow-${name.replaceAll(' ','-')}`);
+    return service.get(p,String(value.caseId));
+  }
+  const enableCreation=()=>{const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';return ()=>{if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;};};
+  test('25 files across three cases automatically use three Contacts without changing billing identity',async()=>{
+    const restore=enableCreation();try {
+      const student=await overflowStudent('Many Documents'),mock=provider(),type=(await types.list(p)).types[0];
+      const two=await service.create(p,{userId:student.userId},'overflow-many-case2'),three=await service.create(p,{userId:student.userId},'overflow-many-case3');
+      const cases=[student.caseId,String(two.caseId),String(three.caseId)];
+      for(let n=0;n<25;n++)await mock.docs.upload(p,cases[n%3],{documentTypeId:type.documentTypeId},pdf,`overflow-many-file-${n}`);
+      expect([...mock.files.values()].map(f=>f.length).sort((a,b)=>b-a)).toEqual([10,10,5]);
+      expect(mock.references.size).toBe(3);
+      const primary=(await pool.query('SELECT xero_contact_id FROM sophia_runtime.student_operations_primary_xero_contacts WHERE student_id=$1',[student.studentId])).rows[0].xero_contact_id;
+      expect(primary).toBe(mock.references.get(`sophia:${student.studentId}`));
+      expect((await mock.docs.list(p,cases[0],{})).total).toBe(9);expect((await mock.docs.list(p,cases[1],{})).total).toBe(8);expect((await mock.docs.list(p,cases[2],{})).total).toBe(8);
+      expect((await service.invoices(p,student.caseId,{})).total).toBe(0);
+      const foreign=await transaction('88888888-8888-4888-8888-888888888888',db=>db.query('SELECT * FROM sophia_runtime.student_operations_document_contacts'));
+      expect(foreign.rowCount).toBe(0);
+      await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_contacts'))).rejects.toThrow('permission denied');
+    } finally {restore();}
+  });
+  test('reuses free space on historical linked Contacts before creating overflow',async()=>{
+    const student=await overflowStudent('Legacy Capacity'),mock=provider(),type=(await types.list(p)).types[0],primary=randomUUID(),legacy=randomUUID();
+    for(const [id,date]of [[primary,'2026-10-24'],[legacy,'2020-01-01']]) {
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Legacy Capacity',NULL,now())`,[tenant,connection,id]);
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status,invoice_date) VALUES($1,$2,$3,$3,$4,'ACCREC','PAID',$5)`,[tenant,connection,id,student.studentReference,date]);
+    }
+    mock.files.set(primary,Array.from({length:10},(_,n)=>({attachmentId:randomUUID(),fileName:`old-${n}.pdf`,mimeType:'application/pdf',sizeBytes:1})));
+    await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-legacy-upload');
+    expect(mock.xero.uploadAttachment.mock.calls[0][3]).toBe(legacy);expect(mock.xero.ensureStudentContact).not.toHaveBeenCalled();
+    expect((await pool.query('SELECT xero_contact_id FROM sophia_runtime.student_operations_primary_xero_contacts WHERE student_id=$1',[student.studentId])).rows[0].xero_contact_id).toBe(primary);
+  });
+  test('concurrent cases reserve the last slot once and route the other upload to one overflow Contact',async()=>{
+    const restore=enableCreation();try {
+      const student=await overflowStudent('Concurrent Capacity'),mock=provider(),type=(await types.list(p)).types[0];
+      await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-concurrent-initial');
+      const primary=mock.references.get(`sophia:${student.studentId}`)!;
+      mock.files.set(primary,[...mock.files.get(primary)!,...Array.from({length:8},(_,n)=>({attachmentId:randomUUID(),fileName:`old-${n}.pdf`,mimeType:'application/pdf',sizeBytes:1}))]);
+      const second=String((await service.create(p,{userId:student.userId},'overflow-concurrent-case2')).caseId);
+      await Promise.all([mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-concurrent-a'),mock.docs.upload(p,second,{documentTypeId:type.documentTypeId},pdf,'overflow-concurrent-b')]);
+      expect([...mock.files.values()].map(f=>f.length).sort((a,b)=>b-a)).toEqual([10,1]);expect(mock.references.size).toBe(2);
+    } finally {restore();}
+  });
+  test('a capacity race before PUT reroutes safely; a timeout after PUT stays pinned and recovers',async()=>{
+    const restore=enableCreation();try {
+      const student=await overflowStudent('Capacity Recovery'),mock=provider(),type=(await types.list(p)).types[0];
+      const normal=mock.xero.uploadAttachment.getMockImplementation()!;
+      mock.xero.uploadAttachment.mockImplementationOnce(async()=>{throw new ConflictException({errorCode:'student_document_storage_full'});});
+      await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-race-file');
+      expect(mock.references.size).toBe(2);expect([...mock.files.values()].flat()).toHaveLength(1);
+      mock.xero.uploadAttachment.mockImplementationOnce(async(...args:unknown[])=>{await normal(...args);throw new Error('Unknown provider result');});
+      await expect(mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-unknown-file')).rejects.toThrow('Unknown provider');
+      const before=(await pool.query("SELECT source_id,destination_state FROM sophia_runtime.student_operations_document_uploads WHERE idempotency_key='overflow-unknown-file'")).rows[0];
+      expect(before.destination_state).toBe('attempted');
+      await pool.query("UPDATE sophia_runtime.student_operations_document_uploads SET lease_expires_at=now()-interval '1 second' WHERE idempotency_key='overflow-unknown-file'");
+      await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-unknown-file');
+      expect((await pool.query("SELECT source_id FROM sophia_runtime.student_operations_document_uploads WHERE idempotency_key='overflow-unknown-file'")).rows[0].source_id).toBe(before.source_id);
+      expect([...mock.files.values()].flat()).toHaveLength(2);expect(mock.references.size).toBe(2);
+    } finally {restore();}
+  });
+  test('an uncertain overflow creation reuses the same durable intent and external reference',async()=>{
+    const restore=enableCreation();try {
+      const student=await overflowStudent('Overflow Provision Recovery'),mock=provider(),type=(await types.list(p)).types[0];
+      const resolver=new StudentPrimaryXeroContact({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,mock.xero as unknown as XeroConnectorService);
+      const primary=await resolver.ensure(p,student.caseId);
+      mock.files.set(primary.source_id,Array.from({length:10},(_,n)=>({attachmentId:randomUUID(),fileName:`existing-${n}.pdf`,mimeType:'application/pdf',sizeBytes:1})));
+      const create=mock.xero.ensureStudentContact.getMockImplementation()!;
+      mock.xero.ensureStudentContact.mockImplementationOnce(async(...args)=>{await create(...args);throw new Error('Contact creation timeout');});
+      await expect(mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-create-timeout')).rejects.toThrow('Contact creation timeout');
+      const first=mock.xero.ensureStudentContact.mock.calls.at(-1)!;
+      await pool.query(`UPDATE sophia_runtime.student_operations_document_contacts SET lease_expires_at=now()-interval '1 second' WHERE student_id=$1 AND kind='overflow'`,[student.studentId]);
+      await pool.query("UPDATE sophia_runtime.student_operations_document_uploads SET lease_expires_at=now()-interval '1 second' WHERE idempotency_key='overflow-create-timeout'");
+      await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'overflow-create-timeout');
+      expect(mock.xero.ensureStudentContact.mock.calls.at(-1)).toEqual(first);expect(mock.references.size).toBe(2);
+      expect((await pool.query("SELECT sequence_number FROM sophia_runtime.student_operations_document_contacts WHERE student_id=$1 AND kind='overflow'",[student.studentId])).rows).toEqual([{sequence_number:2}]);
+    } finally {restore();}
   });
 });

@@ -41,12 +41,13 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
         UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id));
       CREATE TABLE sophia_runtime.student_operations_case_documents(document_id uuid DEFAULT gen_random_uuid(),customer_id uuid,case_id uuid,
         xero_connection_id uuid,source_kind text,source_id uuid,attachment_id uuid,file_name text,mime_type text,size_bytes bigint,last_seen_at timestamptz DEFAULT now(),
-        UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id));`);
+        UNIQUE(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id));
+      CREATE TABLE sophia_runtime.student_operations_document_uploads(customer_id uuid,case_id uuid,xero_connection_id uuid,source_id uuid,file_name text);`);
     for(const migration of ['081_shared_student_worker_document_budget.sql','082_xero_connection_rate_limits.sql','083_student_document_source_cache.sql','084_xero_quota_admission.sql','085_student_document_rechecks.sql','086_student_sync_permission_hardening.sql'])
       await pool.query((await readFile(new URL(`./migrations/${migration}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     for(const table of ['customers','xero_connections','student_operations_cases','student_operations_xero_sync_configurations',
       'student_operations_sync_checkpoints','student_operations_xero_sync_runs','student_operations_xero_invoices','student_operations_xero_contacts',
-      'student_operations_case_invoice_links','student_operations_document_jobs','student_operations_case_documents']) {
+      'student_operations_case_invoice_links','student_operations_document_jobs','student_operations_case_documents','student_operations_document_uploads']) {
       await pool.query(`ALTER TABLE sophia_runtime.${table} ENABLE ROW LEVEL SECURITY;
         ALTER TABLE sophia_runtime.${table} FORCE ROW LEVEL SECURITY;
         CREATE POLICY tenant_scope ON sophia_runtime.${table} USING(customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid);
@@ -72,7 +73,7 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     attachments.mockReset();attachments.mockResolvedValue([file]);
     await pool.query(`TRUNCATE sophia_runtime.student_document_recheck_budgets,sophia_runtime.student_operations_xero_contacts,
       sophia_runtime.xero_quota_admission,sophia_runtime.student_operations_document_sources,sophia_runtime.student_operations_document_daily_budgets,
-      sophia_runtime.xero_connection_rate_limits,sophia_runtime.student_operations_document_jobs,sophia_runtime.student_operations_case_documents,
+      sophia_runtime.xero_connection_rate_limits,sophia_runtime.student_operations_document_jobs,sophia_runtime.student_operations_case_documents,sophia_runtime.student_operations_document_uploads,
       sophia_runtime.student_operations_case_invoice_links,sophia_runtime.student_operations_xero_invoices,sophia_runtime.student_operations_cases,
       sophia_runtime.student_operations_sync_checkpoints,sophia_runtime.student_operations_xero_sync_runs,
       sophia_runtime.student_operations_xero_sync_configurations,sophia_runtime.xero_connections,sophia_runtime.customers;
@@ -133,6 +134,14 @@ suite('Deduplicated document discovery under PostgreSQL RLS',()=>{
     expect(await docs().processOne(tenant,{dailyBudget:true})).toBe(true);
     expect(attachments).toHaveBeenCalledTimes(1);expect(await budget()).toEqual([{attempted_sources:1}]);
     expect((await pool.query('SELECT * FROM sophia_runtime.student_operations_case_documents WHERE case_id=$1',[added])).rows).toHaveLength(1);
+  });
+  it('keeps Sophia-uploaded files in their originating case when Contacts are shared',async()=>{
+    const origin=await addCase(),another=await addCase();
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_document_uploads VALUES($1,$2,$3,$4,$5)`,[tenant,origin,connection,source,file.fileName]);
+    await processOne();
+    expect((await pool.query('SELECT case_id FROM sophia_runtime.student_operations_case_documents')).rows).toEqual([{case_id:origin}]);
+    expect((await pool.query("SELECT count(*)::int n FROM sophia_runtime.student_operations_document_jobs WHERE status='succeeded'")).rows[0].n).toBe(2);
+    expect(another).not.toBe(origin);
   });
   it('persists empty discovery and reuses it without treating it as unprocessed',async()=>{
     attachments.mockResolvedValue([]);await addCase();await processOne();await addCase();await processOne();
