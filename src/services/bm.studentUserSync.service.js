@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import { allocateStudentId } from "../models/user.model.js";
 import {
   groupContacts,
@@ -497,7 +498,9 @@ async function applyCandidate(db, run, scope, row) {
   )
     username = `${base}${suffix++}`;
   const studentId = await allocateStudentId(db);
-  const hash = await bcrypt.hash("openAustralia*", 10);
+  // No shared credential. Password setup requires a verified single-use link;
+  // do not log, return or send this unknown secret. Migration 088 marks the row.
+  const hash = await bcrypt.hash(randomBytes(32).toString('base64url'), 10);
   await db.query(
     `INSERT INTO users(id,company_id,name,email,username,password,type,status,student_id,student_name_in_xero,image,bio)
     VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,'student','active',$6,$7,'','')`,

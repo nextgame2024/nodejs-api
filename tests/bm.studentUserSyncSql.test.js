@@ -99,6 +99,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
       ["Greenwich College", "college@example.test"],
     ])
       await addContact(name, email);
+    await pool.query(await readFile(new URL('../sophia-runtime/src/database/migrations/088_user_password_setup_state.sql', import.meta.url), 'utf8'));
   });
   afterAll(async () => {
     if(oldPipeline===undefined) delete process.env.STUDENT_SYNC_PIPELINE_ENABLED;
@@ -164,8 +165,11 @@ suite("Student user sync — isolated PostgreSQL", () => {
       "fabian.andres2",
     ]);
     expect(await bcrypt.compare("openAustralia*", users[0].password)).toBe(
-      true,
+      false,
     );
+    expect(users.every(u => u.must_change_password === true)).toBe(true);
+    expect(users.every(u => /^\$2[aby]\$10\$/.test(u.password))).toBe(true);
+    expect((await pool.query('SELECT must_change_password FROM users WHERE id=$1', [actor])).rows[0].must_change_password).toBe(false);
     expect(users[0].password).not.toBe(users[1].password);
     expect(users.every((u) => /^STD-\d+$/.test(u.student_id))).toBe(true);
     expect(

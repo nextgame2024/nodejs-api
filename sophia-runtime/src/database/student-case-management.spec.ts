@@ -25,25 +25,44 @@ suite('Case management against disposable PostgreSQL',()=>{
       DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sophia_runtime_app') THEN CREATE ROLE sophia_runtime_app NOLOGIN; END IF; END $$;
       CREATE SCHEMA sophia_runtime; GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
-      CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text,name text,email text,cel text,tel text,type text,status text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
+      CREATE TABLE public.bm_company(company_id uuid PRIMARY KEY,workspace_profile text);
+      CREATE TABLE public.bm_student_id_counter(id boolean PRIMARY KEY,last_value bigint NOT NULL);
+      INSERT INTO public.bm_student_id_counter VALUES(true,1);
+      CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text UNIQUE,name text,email text,cel text,tel text,type text,status text,username text UNIQUE,password text,image text,bio text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
       CREATE TABLE public.bm_colleges(college_id uuid PRIMARY KEY,company_id uuid,college_name text,status text);
       CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,pack_id text,status text,role_key text);
       CREATE TABLE sophia_runtime.student_operations_students(student_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),customer_id uuid,student_reference text,legal_name text,email text,updated_at timestamptz DEFAULT now(),UNIQUE(student_id,customer_id),UNIQUE(customer_id,student_reference));
       CREATE TABLE sophia_runtime.xero_connections(xero_connection_id uuid PRIMARY KEY,customer_id uuid,UNIQUE(xero_connection_id,customer_id));
-      CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
+      CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,payment_track text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       GRANT SELECT ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
     `);
-    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql','074_student_case_profile_edit.sql']) {
+    for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql','074_student_case_profile_edit.sql','075_student_advisor_directory.sql','087_student_account_case_creation.sql']) {
       await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     }
     await pool.query(`INSERT INTO sophia_runtime.customers VALUES($1,$2,'active')`,[tenant,company]);
+    await pool.query(`INSERT INTO public.bm_company VALUES($1,'student_operations')`,[company]);
     await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,cel,tel,type,status) VALUES($1,$2,'STD-1','Example Student','student@example.test','0412 345 678','07 3333 4444','student','active'),($3,$2,NULL,'Advisor One','advisor@example.test',NULL,NULL,'advisor','active')`,[user,company,advisor]);
     await pool.query(`INSERT INTO sophia_runtime.business_pack_entitlements VALUES($1,$2,'student-operations','active','advisor')`,[tenant,advisor]);
     await pool.query(`INSERT INTO public.bm_colleges VALUES($1,$2,'York Business','active')`,[college,company]);
     await pool.query(`INSERT INTO sophia_runtime.xero_connections VALUES($1,$2)`,[connection,tenant]);
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,advisor_name,invoice_reference) VALUES($1,$2,$3,$3,'STD-1','INV-1','ACCREC','PAID','2025-01-01','Advisor One','YORK BUSINESS')`,[tenant,connection,invoice]);
+    await pool.query(`UPDATE public.users SET password='unchanged-legacy-hash' WHERE id=$1`,[user]);
+    await pool.query(await readFile(new URL('./migrations/088_user_password_setup_state.sql',import.meta.url),'utf8'));
   });
   afterAll(async()=>{await pool.end();});
+  test('password setup migration preserves legacy access and marks all future account inserts',async()=>{
+    expect((await pool.query('SELECT must_change_password,password FROM public.users WHERE id=$1',[user])).rows[0])
+      .toEqual({must_change_password:false,password:'unchanged-legacy-hash'});
+    expect((await pool.query('SELECT must_change_password FROM public.users WHERE id=$1',[advisor])).rows[0].must_change_password).toBe(false);
+    const result=await pool.query(`INSERT INTO public.users(id,company_id,name,email,type,must_change_password)
+      VALUES(gen_random_uuid(),$1,'New employee','new-employee@example.test','employee',false)
+      RETURNING must_change_password`,[company]);
+    expect(result.rows[0].must_change_password).toBe(true);
+    const column=await pool.query(`SELECT is_nullable,column_default FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='users' AND column_name='must_change_password'`);
+    expect(column.rows[0]).toEqual({is_nullable:'NO',column_default:'false'});
+  });
   test('preview is read-only; migration creates one case and reruns without duplication',async()=>{
     const preview=await runCaseMigration(pool,tenant,false);
     expect(preview.counts.planned).toBe(1);
@@ -113,5 +132,45 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(account).toMatchObject({name:'Updated Student',email:'updated@example.test',cel:'0400 111 222',tel:'07 1111 2222'});
     await expect(service.update(p,id,{recordVersion:saved.recordVersion,title:'Must roll back',studentEmail:'advisor@example.test'},'duplicate-case-email')).rejects.toThrow('already in use');
     expect((await service.get(p,id)).title).not.toBe('Must roll back');
+  });
+  test('creates a student account, profile, link and numbered first case only on one idempotent save',async()=>{
+    const value={studentName:'New Student',studentEmail:'NEW@example.test',mobile:'0400 222 333',courseName:'English'};
+    const before=(await pool.query('SELECT count(*)::int n FROM public.users')).rows[0].n;
+    await service.editOptions(p);service.options();
+    expect((await pool.query('SELECT count(*)::int n FROM public.users')).rows[0].n).toBe(before);
+    const [created,replayed]=await Promise.all([service.createStudent(p,value,'new-student-save'),service.createStudent(p,value,'new-student-save')]);
+    expect(replayed).toEqual(created);
+    const detail=await service.get(p,String(created.caseId));
+    expect(detail).toMatchObject({studentName:'New Student',studentEmail:'new@example.test',studentMobile:'0400 222 333',courseName:'English',currentStage:'documents_requested',status:'pre_sale'});
+    expect(detail.caseNumber).toMatch(/^CASE-\d+$/);expect(detail.studentReference).toBe('STD-2');
+    expect((await pool.query('SELECT count(*)::int n FROM public.users')).rows[0].n).toBe(before+1);
+    const account=(await pool.query('SELECT type,status,password,must_change_password FROM public.users WHERE id=$1',[detail.userId])).rows[0];
+    expect(account.must_change_password).toBe(true);
+    expect(account).toMatchObject({type:'student',status:'active'});
+    expect(account.password).toMatch(/^\$2[aby]\$10\$/);
+    expect(created).not.toHaveProperty('password');expect(detail).not.toHaveProperty('password');
+    expect((await service.activities(p,detail.caseId,{})).activity).toHaveLength(1);
+    expect((await pool.query("SELECT event_type,actor_identity_user_id FROM sophia_runtime.student_operations_student_audit_events WHERE student_id=$1",[detail.studentId])).rows).toEqual([{event_type:'student.created',actor_identity_user_id:advisor}]);
+    await expect(service.createStudent(p,{...value,courseName:'Changed'},'new-student-save')).rejects.toThrow('Idempotency');
+  });
+  test('rejects duplicates/foreign choices and rolls back account, profile and number counter on failure',async()=>{
+    const before=(await pool.query('SELECT last_value FROM public.bm_student_id_counter')).rows[0].last_value;
+    const accounts=(await pool.query('SELECT count(*)::int n FROM public.users')).rows[0].n;
+    await expect(service.createStudent(p,{studentName:'Other',studentEmail:'NEW@example.test'},'duplicate-new-student')).rejects.toThrow('already in use');
+    await expect(service.createStudent(p,{studentName:'Wrong Choice',studentEmail:'rollback@example.test',collegeId:user},'rollback-new-student')).rejects.toThrow('College');
+    expect((await pool.query('SELECT last_value FROM public.bm_student_id_counter')).rows[0].last_value).toBe(before);
+    expect((await pool.query('SELECT count(*)::int n FROM public.users')).rows[0].n).toBe(accounts);
+    expect((await pool.query("SELECT count(*)::int n FROM sophia_runtime.student_operations_students WHERE email='rollback@example.test'")).rows[0].n).toBe(0);
+    await expect(service.createStudent(p,{studentName:'Staff',studentEmail:'advisor@example.test'},'staff-email-student')).rejects.toThrow('already in use');
+  });
+  test('enforces manager scope, strict inputs, migration-only stage rejection and narrow identity privileges',async()=>{
+    const value={studentName:'Not Created',studentEmail:'not-created@example.test'};
+    await expect(service.createStudent({...p,role:'advisor'},value,'forbidden-student')).rejects.toThrow('permission');
+    await expect(service.createStudent(p,{...value,userId:user},'injected-user-student')).rejects.toThrow('Invalid case');
+    await expect(service.createStudent(p,{...value,customerId:tenant},'injected-tenant-student')).rejects.toThrow('Invalid case');
+    await expect(service.createStudent(p,{...value,currentStage:'imported_pending_review'},'import-stage-student')).rejects.toThrow('only for migrated');
+    await expect(service.createStudent({...p,tenantId:'88888888-8888-4888-8888-888888888888'},value,'foreign-student')).rejects.toThrow();
+    await expect(transaction(tenant,db=>db.query("INSERT INTO public.users(id) VALUES(gen_random_uuid())"))).rejects.toThrow('permission denied');
+    await expect(transaction(tenant,db=>db.query('UPDATE public.bm_student_id_counter SET last_value=0'))).rejects.toThrow('permission denied');
   });
 });

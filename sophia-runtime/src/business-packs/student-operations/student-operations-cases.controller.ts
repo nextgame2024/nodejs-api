@@ -12,6 +12,7 @@ export class StudentOperationsCasesController {
   @Get('edit-options') editOptions(@Req() r:Request){return this.cases.editOptions(r.studentOperationsPrincipal);}
   @Get() list(@Req() r:Request,@Query() query:unknown){return this.cases.list(r.studentOperationsPrincipal,query);}
   @Post() create(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.create(r.studentOperationsPrincipal,body,key);}
+  @Post('student') createStudent(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.createStudent(r.studentOperationsPrincipal,body,key);}
   @Get(':caseId') get(@Req() r:Request,@Param('caseId') id:string){return this.cases.get(r.studentOperationsPrincipal,id);}
   @Patch(':caseId') update(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.update(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/invoices') invoices(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.invoices(r.studentOperationsPrincipal,id,query);}

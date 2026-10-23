@@ -32,9 +32,14 @@ function timingHeaders(headers) {
   const values = new Map((Array.isArray(headers) ? headers : []).filter(h => typeof h.name === 'string')
     .map(h => [h.name.toLowerCase(), h.value]));
   const timings = {};
-  for (const part of String(values.get('server-timing') ?? '').split(',')) {
-    const match = /^\s*([a-z_]+);dur=(\d+(?:\.\d+)?)/.exec(part);
-    if (match && serverMetrics.has(match[1]) && validNumber(Number(match[2]))) timings[match[1]] = Number(match[2]);
+  // Proxies can append separate Server-Timing fields. Do not let the last
+  // proxy-only field hide the application's timing metrics.
+  const timingValues=(Array.isArray(headers)?headers:[])
+    .filter(h=>typeof h.name==='string' && h.name.toLowerCase()==='server-timing').map(h=>String(h.value??''));
+  for (const part of timingValues.join(',').split(',')) {
+    const match = /^\s*([a-z_]+)\s*;\s*dur\s*=\s*(?:"(\d+(?:\.\d+)?)"|(\d+(?:\.\d+)?)(?=\s*(?:;|$)))/i.exec(part);
+    const name=match?.[1].toLowerCase(),value=Number(match?.[2]??match?.[3]);
+    if (name && serverMetrics.has(name) && validNumber(value)) timings[name] = value;
   }
   const correlation = values.get('x-correlation-id');
   return { timings, correlationId: validCorrelation(correlation) ? correlation : null };

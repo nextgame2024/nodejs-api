@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
@@ -21,6 +21,10 @@ const fields = z.object({
   phone: z.string().trim().max(80).nullable().optional(),
 }).strict();
 const createSchema = fields.omit({ studentName: true, studentEmail: true, mobile: true, phone: true }).extend({ userId: z.string().uuid() });
+const createStudentSchema = fields.omit({ advisorUserId: true }).extend({
+  studentName: z.string().trim().min(1).max(200),
+  studentEmail: z.string().trim().email().max(320).transform(value=>value.toLowerCase()),
+});
 const updateSchema = fields.extend({ recordVersion: z.number().int().positive() });
 const querySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25), userId: z.string().uuid().optional() }).strict();
 export function caseSchema(): string {
@@ -106,7 +110,32 @@ export class StudentOperationsCasesService {
     assertManage(p);
     const value = parse(createSchema, input);
     const workflow = resolveCaseWorkflow(null, null, value.currentStage, value.status);
-    return this.write(p, 'case.create', value, key, async db => {
+    return this.write(p, 'case.create', value, key, db=>this.insertCase(db,p,value,workflow));
+  }
+
+  async createStudent(p: Principal, input: unknown, key?: string) {
+    assertManage(p);
+    const value=parse(createStudentSchema,input);
+    const workflow=resolveCaseWorkflow(null,null,value.currentStage,value.status);
+    try {
+      return await this.write(p,'case.create_student',value,key,async db=>{
+        const account=await db.query(`SELECT ${caseSchema()}.create_student_case_account($1,$2,$3,$4) AS user_id`,
+          [value.studentName,value.studentEmail,value.mobile??null,value.phone??null]);
+        const created=await this.insertCase(db,p,{...value,userId:account.rows[0].user_id},workflow);
+        await db.query(`INSERT INTO ${caseSchema()}.student_operations_student_audit_events
+          (customer_id,student_id,actor_identity_user_id,event_type,record_version,changed_fields,correlation_id)
+          SELECT customer_id,student_id,$3,'student.created',1,$4::text[],$5
+          FROM ${caseSchema()}.student_operations_student_user_links WHERE customer_id=$1 AND user_id=$2`,
+          [p.tenantId,account.rows[0].user_id,p.identityUserId,['studentReference','legalName','email'],randomUUID()]);
+        return created;
+      });
+    } catch(error) {
+      if((error as {code?:string}).code==='23505') throw new ConflictException('Student email or identifier is already in use.');
+      throw error;
+    }
+  }
+
+  private async insertCase(db:PoolClient,p:Principal,value:z.infer<typeof fields>&{userId:string},workflow:{stage:string;status:string}) {
       const s = caseSchema();
       const profile = await db.query(`SELECT ${s}.ensure_student_operations_profile($1) AS id`, [value.userId]);
       const row = await db.query(`INSERT INTO ${s}.student_operations_cases(customer_id,student_id,case_reference,case_kind,title,course_name,current_stage,lifecycle_status,closed_on)
@@ -117,7 +146,6 @@ export class StudentOperationsCasesService {
       await this.assignBusinessAdvisor(db,p,profile.rows[0].id,value.advisorId);
       await this.activity(db,p,id,'case.created','Case created');
       return { caseId: id, recordVersion: 1 };
-    });
   }
 
   async update(p: Principal, id: string, input: unknown, key?: string) {

@@ -25,6 +25,21 @@ test('supports old saved logs without HAR and does not double count correlated t
   assert.equal(report.operations.students.browserRequests,0);
 });
 
+test('accepts spaced/quoted Server-Timing durations without admitting private or malformed metrics',()=>{
+  const report=buildPerformanceReport({har:{log:{entries:[{
+    request:{method:'GET',url:'https://example.com/api/business-packs/student-operations/v1/workspace/student-register'},
+    time:1000,response:{status:200,headers:[{name:'Server-Timing',value:'app; dur=800.5, register_query ; dur = "400.25", PRIVATE_NAME; dur=20, invoices_total;dur=12oops, guard_total;dur=-1'}, {name:'server-timing',value:'proxy_only;desc="private-secret"'}]},
+  }]}}});
+  const students=report.operations.students;
+  assert.equal(students.requestsWithServerTimings,1);
+  assert.equal(students.metrics['server.appMs'].p50Ms,800.5);
+  assert.equal(students.metrics['server.register_queryMs'].p50Ms,400.25);
+  assert.equal(students.metrics['browser.outsideApplicationMs'].p50Ms,199.5);
+  assert.equal(students.metrics['server.invoices_totalMs'],undefined);
+  assert.equal(students.metrics['server.guard_totalMs'],undefined);
+  assert.doesNotMatch(JSON.stringify(report),/PRIVATE_NAME|example.com|proxy_only|private-secret/);
+});
+
 test('ignores malformed logs and unrelated traffic and keeps error samples visible', () => {
   const report=buildPerformanceReport({har:{log:{entries:[
     {request:{method:'GET',url:'https://example.com/elsewhere'},time:10},
