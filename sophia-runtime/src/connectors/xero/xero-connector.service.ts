@@ -332,7 +332,24 @@ export class XeroConnectorService {
     const connection=await this.loadConnection(tenantId,connectionId);
     if(missingScopes(connection.granted_scopes,['accounting.attachments']).length) throw new ConflictException({errorCode:'xero_attachment_write_scope_missing',message:'An integration administrator must authorize Xero attachment uploads from company integrations.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,config);
-    return this.providerRequest(tenantId,connectionId,()=>this.client.uploadAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key));
+    return this.providerRequest(tenantId,connectionId,async()=>{
+      // Xero's ten-file limit is per Contact, not per Sophia case. This read is
+      // part of an explicit mutation and uses operational quota, not discovery.
+      const files=await this.client.attachments(accessToken,connection.xero_tenant_id,'Contacts',sourceId);
+      if(files.length>=10 && !files.some(file=>file.fileName===fileName))
+        throw new ConflictException({errorCode:'student_document_storage_full',message:'Document storage is full. Contact your administrator.'});
+      return this.client.uploadAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key);
+    });
+  }
+
+  async ensureStudentContact(tenantId:string,connectionId:string,value:{contactNumber:string;name:string;email:string|null},key:string) {
+    if(process.env.XERO_CONTACT_CREATION_ENABLED!=='true' || process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true')
+      throw new ConflictException({errorCode:'student_document_setup_required',message:'An administrator must enable student document storage in company integrations.'});
+    const config=requiredConfig(),connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.contacts','accounting.attachments']).length)
+      throw new ConflictException({errorCode:'xero_contact_write_scope_missing',message:'An administrator must authorize document storage in company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,config);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.ensureStudentContact(accessToken,connection.xero_tenant_id,value,key));
   }
 
   private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>,kind:XeroRequestKind='operational'): Promise<T> {
@@ -577,5 +594,6 @@ function missingScopes(granted: unknown, required: readonly string[]): string[] 
     ? granted.filter((value): value is string => typeof value === "string")
     : [];
   const present = new Set(values);
-  return required.filter((scope) => !present.has(scope));
+  return required.filter((scope) => !present.has(scope)
+    && !(scope==='accounting.contacts.read' && present.has('accounting.contacts')));
 }

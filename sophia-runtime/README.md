@@ -58,7 +58,7 @@ Configure `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_RET
 `XERO_OAUTH_STATE_SECRET`, `XERO_TOKEN_ENCRYPTION_KEY`, and `XERO_WEBHOOK_KEY` only in the runtime environment.
 The connector requests identity, offline access, `accounting.settings.read`, `accounting.invoices.read`, and
 `accounting.contacts.read`. It can verify the selected organisation, list bank-account metadata, and produce a
-tenant-scoped read models from paged sales invoices and contacts. It cannot write accounting data.
+tenant-scoped read models from paged sales invoices and contacts. By default it cannot write accounting data.
 Existing connections must be re-authorized when the invoice/contact scopes are introduced. Each Xero
 organisation is persisted as a tenant-scoped connector binding, allowing one agency to connect TRUST and operating
 organisations independently and allowing other agencies to connect their own organisations later.
@@ -71,6 +71,52 @@ API enqueue-only cutover, follow [the worker runbook](../docs/sophia/student-syn
 do not leave the legacy scheduler enabled after that cutover. Configure the Xero webhook endpoint as
 `/api/connectors/xero/v1/webhooks`; signed events coalesce into the same durable queue. Candidate acceptance links a
 Xero contact to a reviewed operational student without writing to Xero.
+
+### Student document storage: primary Contact and first upload
+
+Apply owner migration `090_student_primary_xero_contacts.sql` after 089. It adds an RLS-protected,
+student/organisation primary destination and a narrow tenant-filtered projection of existing reviewed Contact
+links. It does not change users, passwords, historical Contacts, invoices or documents, or call Xero.
+
+Chief Executive/Operations document-management permissions are unchanged. On the first explicit upload for
+a saved student, the API selects the active Contact used by the most recent non-void/deleted invoice in the
+active TRUST organisation and persists it across all the student's cases. An exact Sophia external reference
+takes precedence; an explicitly reviewed Contact link without invoices can also be reused. Ties/no invoice
+dates use provider last-updated time, then Contact ID. Xero does not expose a dependable creation date.
+The persisted primary is not repicked when invoice activity changes. Archived primaries or ambiguous TRUST
+organisation configuration fail closed for administrator review; no historical Contacts are merged or deleted.
+
+If no Contact is linked, both new and existing students can provision storage on their first upload, without
+an invoice. The durable intent snapshots the name/email and uses `sophia:<runtime student UUID>` as its unique
+ContactNumber. A two-minute student/organisation lease serializes concurrent cases. Every attempt looks up
+that exact reference before creating, including after Xero's six-minute idempotency cache expires. The
+provider call happens outside database transactions, uses shared operational quota/backoff and does not
+blindly retry writes. A timeout retains the intent; retry the same file after two minutes. No provider calls
+or primary-binding writes occur on ordinary page viewing or upload-options GETs. File metadata remains
+associated with the explicitly selected Sophia case. Invoice attachment linking and S3 remain deferred.
+
+Release order: deploy updated Runtime API and shared worker connector code, apply owner migration 090,
+deploy the frontend, then explicitly enable **on Runtime API only**:
+
+```text
+XERO_ATTACHMENT_UPLOAD_ENABLED=true
+XERO_CONTACT_CREATION_ENABLED=true
+```
+
+An integration administrator must reauthorize Xero from company integrations to grant `accounting.attachments`
+and `accounting.contacts`. Deploy the updated worker before reauthorization: its read checks accept full
+Contacts permission in place of Contacts read-only permission. Invoice/payment write permissions remain
+unrequested. Disabling Contact creation does not prevent uploads to an already linked Contact; disabling
+attachment uploads stops file writes. Roll back feature flags/UI without deleting bindings or provider files.
+Older frontend requests may only resume their already-persisted upload; new uploads require the refreshed UI.
+
+Xero [limits each Contact to ten attachments](https://developer.xero.com/documentation/api/accounting/contacts).
+This is shared across cases, not ten per case. The API checks capacity before sending bytes using operational
+quota, allows recovery using the upload's own durable UUID-prefixed filename, and never creates extra
+Contacts/overwrites unrelated files to bypass capacity. Users see an actionable storage-full message. Unlimited
+document storage is not provided by this release; S3 remains the planned solution. App uploads retain the
+existing PDF/JPEG/PNG, 10 MB limit. No live Contact creation/file upload or production migration is part of
+local verification; use an explicitly approved real student/file for release smoke testing.
 
 ## Sophia subscription billing
 

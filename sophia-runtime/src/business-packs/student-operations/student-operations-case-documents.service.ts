@@ -8,6 +8,7 @@ import { StudentOperationsCasesService,caseSchema,caseId } from './student-opera
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { StudentDocumentSourceDiscovery } from './student-document-source-discovery.js';
+import { StudentPrimaryXeroContact } from './student-primary-xero-contact.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -17,25 +18,19 @@ export class StudentOperationsCaseDocumentsService {
   async uploadOptions(p:Principal,id:string) {
     if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException();
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
-      const current=await this.cases.authorizedCase(db,p,id);
-      const rows=await db.query(`SELECT DISTINCT xero_connection_id AS "connectionId",xero_contact_id AS "contactId"
-        FROM ${caseSchema()}.student_operations_xero_invoices WHERE customer_id=$1 AND student_id=$2 AND xero_contact_id IS NOT NULL
-        AND invoice_status NOT IN ('DELETED','VOIDED') ORDER BY xero_connection_id,xero_contact_id`,[p.tenantId,current.student_reference]);
-      return {enabled:process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true',contacts:rows.rows.map((row,index)=>({...row,label:`Student Xero contact ${index+1}`}))};
+      await this.cases.authorizedCase(db,p,id);
+      const connection=await new StudentPrimaryXeroContact(this.database,this.cases,this.xero).connection(db,p.tenantId);
+      return {enabled:process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true',available:connection!==null};
     });
-  }
-
-  private async uploadTarget(db:import('pg').PoolClient,p:Principal,studentReference:string,connectionId:string,contactId:string) {
-    const result=await db.query(`SELECT xero_connection_id,xero_contact_id AS source_id FROM ${caseSchema()}.student_operations_xero_invoices
-      WHERE customer_id=$1 AND student_id=$2 AND xero_connection_id=$3 AND xero_contact_id=$4 AND invoice_status NOT IN ('DELETED','VOIDED') LIMIT 1`,[p.tenantId,studentReference,connectionId,contactId]);
-    if(!result.rows[0]?.source_id) throw new BadRequestException('Choose a Xero Contact linked to this student.');
-    return result.rows[0];
   }
 
   async upload(p:Principal,id:string,input:unknown,file:{buffer:Buffer;originalname:string;mimetype:string}|undefined,key?:string) {
     if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException();
     caseId(id);
-    const parsed=z.object({documentTypeId:z.string().uuid(),connectionId:z.string().uuid(),contactId:z.string().uuid()}).strict().safeParse(input);
+    // Legacy target fields are accepted ONLY to resume already persisted uploads
+    // during rollout; new writes always resolve the primary destination server-side.
+    const parsed=z.object({documentTypeId:z.string().uuid(),connectionId:z.string().uuid().optional(),contactId:z.string().uuid().optional()})
+      .strict().refine(v=>Boolean(v.connectionId)===Boolean(v.contactId)).safeParse(input);
     if(!parsed.success || !file || !Buffer.isBuffer(file.buffer) || !file.buffer.length || file.buffer.length>10*1024*1024
       || !key || !/^[A-Za-z0-9._:-]{8,160}$/.test(key)) throw new BadRequestException('Choose a document type and a PDF, JPEG or PNG file up to 10 MB.');
     const name=file.originalname.replace(/[\x00-\x1f\x7f<>:"\\/|?*+]/g,'_').trim();
@@ -48,9 +43,24 @@ export class StudentOperationsCaseDocumentsService {
     const hash=createHash('sha256').update(bytes).digest('hex');
     const fingerprint=createHash('sha256').update(JSON.stringify({caseId:id,name,mime,hash,...parsed.data})).digest('hex');
     const lease=randomUUID(),s=caseSchema();
+    // Validate case/type/idempotency BEFORE provisioning external storage. A
+    // persisted upload keeps its original target even if integration setup changes.
+    const prior=await this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id);
+      const saved=await db.query(`SELECT * FROM ${s}.student_operations_document_uploads
+        WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3`,[p.tenantId,p.identityUserId,key]);
+      if(saved.rows[0] && saved.rows[0].request_fingerprint!==fingerprint) throw new ConflictException('The upload request changed. Select the file again.');
+      if(!saved.rows[0] && parsed.data.contactId) throw new BadRequestException('Reload the page before uploading a document.');
+      if(!saved.rows[0] || !['completed','uploaded'].includes(saved.rows[0].status)) {
+        const type=await db.query(`SELECT 1 FROM ${s}.student_operations_document_types WHERE customer_id=$1 AND document_type_id=$2 AND status='active'`,[p.tenantId,parsed.data.documentTypeId]);
+        if(!type.rowCount) throw new BadRequestException('Choose an active document type.');
+      }
+      return saved.rows[0];
+    });
+    const target=prior?{xero_connection_id:prior.xero_connection_id,source_id:prior.source_id}
+      :await new StudentPrimaryXeroContact(this.database,this.cases,this.xero).ensure(p,id);
     const job=await this.database.tenantTransaction(p.tenantId,async db=>{
-      const current=await this.cases.authorizedCase(db,p,id);
-      const target=await this.uploadTarget(db,p,current.student_reference,parsed.data.connectionId,parsed.data.contactId);
+      await this.cases.authorizedCase(db,p,id);
       const uploadId=randomUUID();
       const extension=name.slice(name.lastIndexOf('.'));
       const remoteName=`${uploadId}-${name.slice(0,-extension.length).slice(0,180)}${extension}`;

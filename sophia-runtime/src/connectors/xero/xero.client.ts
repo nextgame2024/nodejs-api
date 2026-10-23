@@ -134,6 +134,38 @@ export class XeroClient {
   withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
     return this.requestPolicy.run(policy, request);
   }
+
+  async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<{contactId:string}> {
+    if(!/^sophia:[0-9a-f-]{36}$/i.test(value.contactNumber) || !value.name.trim() || value.name.length>255
+      || (value.email!==null && value.email.length>320) || !/^[a-f0-9]{64}$/.test(key))
+      throw new BadGatewayException('Invalid student document storage request.');
+    const url=new URL('https://api.xero.com/api.xro/2.0/Contacts');
+    url.search=new URLSearchParams({where:`ContactNumber=="${value.contactNumber}"`,includeArchived:'true'}).toString();
+    const existing=record(await this.json(url.toString(),accessToken,tenantId));
+    if(!Array.isArray(existing.Contacts) || existing.Contacts.length>1) throw new BadGatewayException('Student document storage requires administrator attention.');
+    const verified=(raw:unknown)=>{
+      const item=record(raw);
+      if(item.ContactNumber!==value.contactNumber || item.ContactStatus!=='ACTIVE' || item.HasValidationErrors===true
+        || (Array.isArray(item.ValidationErrors) && item.ValidationErrors.length))
+        throw new BadGatewayException('Student document storage requires administrator attention.');
+      const contactId=requiredString(item.ContactID,'contact id');attachmentPath('Contacts',contactId);
+      return {contactId};
+    };
+    if(existing.Contacts.length) return verified(existing.Contacts[0]);
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();
+    let response:Response;
+    try { response=await fetch('https://api.xero.com/api.xro/2.0/Contacts',{
+      method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,
+        'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},
+      body:JSON.stringify({Contacts:[{Name:value.name,ContactNumber:value.contactNumber,...(value.email?{EmailAddress:value.email}:{})}]}),
+      redirect:'error',signal:AbortSignal.timeout(30_000),
+    }); } catch {throw xeroUnavailableError();}
+    try {await policy?.observe(response,ticket);} catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Contacts) || payload.Contacts.length!==1) throw new BadGatewayException('Student document storage confirmation is pending. Retry this file.');
+    return verified(payload.Contacts[0]);
+  }
   async uploadAttachment(accessToken:string,tenantId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroAttachment> {
     const path=attachmentPath(source,sourceId);
     if(source!=='Contacts' || !fileName || fileName.length>255 || /[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)

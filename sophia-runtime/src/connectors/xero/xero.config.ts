@@ -13,9 +13,9 @@ export const XERO_READ_ONLY_SCOPES = [
 ] as const;
 
 export function xeroRequestedScopes(): readonly string[] {
-  return process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true'
-    ? XERO_READ_ONLY_SCOPES.map(scope=>scope==='accounting.attachments.read'?'accounting.attachments':scope)
-    : XERO_READ_ONLY_SCOPES;
+  return XERO_READ_ONLY_SCOPES.map(scope=>
+    scope==='accounting.attachments.read' && process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true'?'accounting.attachments':
+    scope==='accounting.contacts.read' && process.env.XERO_CONTACT_CREATION_ENABLED==='true'?'accounting.contacts':scope);
 }
 
 export const XERO_STUDENT_DISCOVERY_SCOPES = [

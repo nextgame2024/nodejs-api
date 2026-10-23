@@ -10,6 +10,15 @@ afterAll(() => {
 });
 
 describe("XeroConnectorService", () => {
+  it('opts into Contact write scope separately and accepts it for existing read/import paths',async()=>{
+    const old=process.env.XERO_CONTACT_CREATION_ENABLED;
+    try {
+      process.env.XERO_CONTACT_CREATION_ENABLED='true';
+      expect(xeroRequestedScopes()).toContain('accounting.contacts');expect(xeroRequestedScopes()).not.toContain('accounting.invoices');
+      const service=new XeroConnectorService({tenantReadTransaction:async(_id:string,work:(db:unknown)=>Promise<unknown>)=>work({query:async()=>({rows:[{granted_scopes:['accounting.contacts','accounting.invoices.read','accounting.payments.read']}]})})} as never,{} as never,{} as never);
+      expect((await service.status('tenant')).connections[0].missingStudentDiscoveryScopes).toEqual([]);
+    } finally {if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;}
+  });
   it('requests attachment write permission only when uploads are explicitly enabled',()=>{
     const old=process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;
     try {

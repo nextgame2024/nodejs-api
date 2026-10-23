@@ -2,7 +2,7 @@ import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { XeroConnectorService } from './xero-connector.service.js';
 import { XeroClient } from './xero.client.js';
 
-const names=['XERO_CLIENT_ID','XERO_CLIENT_SECRET','XERO_REDIRECT_URI','XERO_RETURN_URL','XERO_OAUTH_STATE_SECRET','XERO_TOKEN_ENCRYPTION_KEY','XERO_ATTACHMENT_UPLOAD_ENABLED','XERO_SHARED_BACKOFF_ENABLED','SOPHIA_RUNTIME_DATABASE_URL'] as const;
+const names=['XERO_CLIENT_ID','XERO_CLIENT_SECRET','XERO_REDIRECT_URI','XERO_RETURN_URL','XERO_OAUTH_STATE_SECRET','XERO_TOKEN_ENCRYPTION_KEY','XERO_ATTACHMENT_UPLOAD_ENABLED','XERO_CONTACT_CREATION_ENABLED','XERO_SHARED_BACKOFF_ENABLED','SOPHIA_RUNTIME_DATABASE_URL'] as const;
 const original=Object.fromEntries(names.map(name=>[name,process.env[name]]));
 afterEach(()=>{jest.restoreAllMocks();for(const name of names){if(original[name]===undefined)delete process.env[name];else process.env[name]=original[name];}});
 function setup(scopes:string[]) {
@@ -29,5 +29,29 @@ describe('Xero Contact attachment write boundary',()=>{
     await expect(service.uploadAttachment('tenant',id,'Contacts',id,'file.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_rate_limited'})});
     await expect(service.uploadAttachment('tenant',id,'Invoices',id,'file.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).rejects.toThrow('Contact');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('requires explicit Contact creation and both write scopes before obtaining a token',async()=>{
+    const {service,accessToken}=setup(['accounting.contacts.read','accounting.attachments']);
+    const value={contactNumber:`sophia:${id}`,name:'Student',email:null};
+    delete process.env.XERO_CONTACT_CREATION_ENABLED;
+    await expect(service.ensureStudentContact('tenant',id,value,'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'student_document_setup_required'})});
+    process.env.XERO_CONTACT_CREATION_ENABLED='true';
+    await expect(service.ensureStudentContact('tenant',id,value,'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_contact_write_scope_missing'})});
+    expect(accessToken).not.toHaveBeenCalled();
+  });
+  it('applies shared cooldown before Contact lookup or creation',async()=>{
+    const {service}=setup(['accounting.contacts','accounting.attachments']);process.env.XERO_CONTACT_CREATION_ENABLED='true';
+    const fetchMock=jest.spyOn(globalThis,'fetch');
+    await expect(service.ensureStudentContact('tenant',id,{contactNumber:`sophia:${id}`,name:'Student',email:null},'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_rate_limited'})});
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('reports a full Contact without overwriting another file, but permits an exact durable filename retry',async()=>{
+    const {service}=setup(['accounting.attachments']);process.env.XERO_SHARED_BACKOFF_ENABLED='false';
+    const client={attachments:jest.fn(async()=>Array.from({length:10},(_,i)=>({fileName:`${i}.pdf`}))),uploadAttachment:jest.fn(async()=>({attachmentId:id}))};
+    Object.assign(service,{client});
+    await expect(service.uploadAttachment('tenant',id,'Contacts',id,'new.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'student_document_storage_full'})});
+    expect(client.uploadAttachment).not.toHaveBeenCalled();
+    expect(await service.uploadAttachment('tenant',id,'Contacts',id,'0.pdf','application/pdf',Buffer.from('pdf'),'a'.repeat(64))).toEqual({attachmentId:id});
+    expect(client.uploadAttachment).toHaveBeenCalledTimes(1);
   });
 });
