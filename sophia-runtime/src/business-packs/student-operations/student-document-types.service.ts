@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
 import { StudentOperationsCasesService,caseSchema,caseId } from './student-operations-cases.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
+import { CASE_STATUSES } from './student-operations-case-workflow.js';
+import { documentRequirements } from './student-document-requirements.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 
 const fields=z.object({name:z.string().trim().min(1).max(120).transform(v=>v.replace(/\s+/g,' ')),required:z.boolean()}).strict();
@@ -10,6 +12,12 @@ const fields=z.object({name:z.string().trim().min(1).max(120).transform(v=>v.rep
 export class StudentDocumentTypesService {
   constructor(@Inject(DatabaseService) private readonly database:DatabaseService,private readonly cases:StudentOperationsCasesService) {}
   private manage(p:Principal) { if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException(); }
+  async requirements(p:Principal,input:unknown) {
+    if(!hasStudentOperationsPermission(p.role,'documents.metadata.read_all') && !hasStudentOperationsPermission(p.role,'documents.metadata.read_assigned'))throw new ForbiddenException();
+    const parsed=z.object({status:z.enum(CASE_STATUSES)}).strict().safeParse(input);
+    if(!parsed.success)throw new BadRequestException('Choose a valid case status.');
+    return this.database.tenantReadTransaction(p.tenantId,async db=>({requirements:await documentRequirements(db,p.tenantId,parsed.data.status)}));
+  }
   async list(p:Principal) {
     if(!hasStudentOperationsPermission(p.role,'documents.metadata.read_all') && !hasStudentOperationsPermission(p.role,'documents.metadata.read_assigned')) throw new ForbiddenException();
     return this.database.tenantReadTransaction(p.tenantId,async db=>{

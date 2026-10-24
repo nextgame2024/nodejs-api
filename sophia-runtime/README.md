@@ -146,6 +146,44 @@ deleting overflow Contacts, reservations or provider receipts. S3 and invoice-do
 App uploads retain PDF/JPEG/PNG and the 10 MB limit. No live Contact creation/file upload or production migration
 is part of local verification; use an explicitly approved real student/file for release smoke testing.
 
+### Status-based document requirements
+
+Apply owner migration `093_student_status_document_requirements.sql` after 092,
+then deploy Runtime API and frontend together. It creates tenant-scoped
+`student_operations_status_document_requirements` bindings between a case status
+and document type, plus global default templates. Pre-sale starts with Engagement
+letter, Letter of Offer and Passport, in that order. Migration seeding reuses
+case/whitespace-insensitive active type names instead of duplicating them; it
+does not change existing type names or their general `required` flag.
+
+Draft creation reads `GET workspace/cases/document-requirements?status=pre_sale`
+and displays missing rows without writing a student, case or file. Upload is
+disabled until the case is saved. The invoker-rights initializer runs on case
+creation/update to provision defaults for newly onboarded companies; it uses
+the authenticated tenant/company binding, tenant RLS and existing type grants,
+not general customer-table access or `SECURITY DEFINER`. Archived bindings and
+archived bound types are not silently recreated/reactivated.
+
+Saved case document responses include workflow requirements and whole-case typed
+file coverage. Missing rows appear on page one with Upload, while actual file
+rows retain View/Download. A requirement upload opens the existing modal with
+its type selected and disabled; general Upload still permits choosing any active
+company type. Fulfilment uses the case/type UUID, never filenames, another case
+or only the current pagination page. A coverage index supports this lookup.
+The document count continues to count actual files, not missing placeholders.
+
+Workflow bindings carry `customer_id`, `case_status`, stable `requirement_key`,
+`document_type_id`, `required`, `sort_order` and active/archived status. Future
+owner migrations can add bindings for more types/statuses without changing the
+UI. Configuration authoring UI is not introduced here. The general Manage types
+Required flag remains independent of status-specific requirements. Renaming a
+type preserves bindings; archiving a still-required type leaves a visible
+unavailable requirement for administrator resolution, without losing files.
+
+No automatic checklist confirmation, signature validation, workflow transition,
+student-save gate, provider write or historical document classification is
+performed by this feature. Existing Contact storage/overflow uploads are reused.
+
 ### Case Next Actions and Pre-sale checklist
 
 Apply owner migration `092_student_case_checklists.sql` after existing migrations,

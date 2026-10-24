@@ -10,6 +10,8 @@ import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { StudentDocumentSourceDiscovery } from './student-document-source-discovery.js';
 import { StudentPrimaryXeroContact } from './student-primary-xero-contact.js';
 import { StudentDocumentContactStorage } from './student-document-contact-storage.js';
+import { documentRequirements } from './student-document-requirements.js';
+import { publicCaseStatus } from './student-operations-case-workflow.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -124,14 +126,15 @@ export class StudentOperationsCaseDocumentsService {
     if(!parsed.success) throw new BadRequestException('Invalid document pagination.');
     const {page,limit}=parsed.data;
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
-      await this.cases.authorizedCase(db,p,id);
+      const row=await this.cases.authorizedCase(db,p,id);
       if(!hasStudentOperationsPermission(p.role,'documents.metadata.read_all') && !hasStudentOperationsPermission(p.role,'documents.metadata.read_assigned')) throw new ForbiddenException();
       const count=await db.query(`SELECT count(*)::int total FROM ${caseSchema()}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
       const documents=await db.query(`SELECT d.document_id AS "documentId",d.file_name AS "fileName",d.mime_type AS "mimeType",d.size_bytes::float8 AS "sizeBytes",d.source_kind AS "sourceKind",d.last_seen_at AS "lastSeenAt",t.document_type_id AS "documentTypeId",t.name AS "documentTypeName",t.required AS "documentTypeRequired"
         FROM ${caseSchema()}.student_operations_case_documents d LEFT JOIN ${caseSchema()}.student_operations_document_types t ON t.customer_id=d.customer_id AND t.document_type_id=d.document_type_id
         WHERE d.customer_id=$1 AND d.case_id=$2 ORDER BY d.file_name,d.document_id LIMIT $3 OFFSET $4`,[p.tenantId,id,limit,(page-1)*limit]);
       const jobs=await db.query(`SELECT status,error_code AS "errorCode",count(*)::int count FROM ${caseSchema()}.student_operations_document_jobs WHERE customer_id=$1 AND case_id=$2 GROUP BY status,error_code`,[p.tenantId,id]);
-      return {documents:documents.rows,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
+      const requirements=await documentRequirements(db,p.tenantId,publicCaseStatus(row.lifecycle_status),id);
+      return {documents:documents.rows,requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
     });
   }
 

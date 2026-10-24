@@ -11,6 +11,7 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 export class StudentOperationsCasesController {
   constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService) {}
   @Get('document-types') documentTypes(@Req() r:Request){return this.types.list(r.studentOperationsPrincipal);}
+  @Get('document-requirements') documentRequirements(@Req() r:Request,@Query() query:unknown){return this.types.requirements(r.studentOperationsPrincipal,query);}
   @Post('document-types') createType(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.create(r.studentOperationsPrincipal,body,key);}
   @Patch('document-types/:typeId') updateType(@Req() r:Request,@Param('typeId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.update(r.studentOperationsPrincipal,id,body,key);}
   @Post(':caseId/documents/upload')

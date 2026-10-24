@@ -148,6 +148,7 @@ export class StudentOperationsCasesService {
 
   private async insertCase(db:PoolClient,p:Principal,value:z.infer<typeof fields>&{userId:string},workflow:{stage:string;status:string}) {
       const s = caseSchema();
+      await db.query(`SELECT ${s}.initialize_student_document_requirements($1)`,[p.externalCompanyId]);
       const profile = await db.query(`SELECT ${s}.ensure_student_operations_profile($1) AS id`, [value.userId]);
       const row = await db.query(`INSERT INTO ${s}.student_operations_cases(customer_id,student_id,case_reference,case_kind,title,course_name,current_stage,lifecycle_status,closed_on)
         VALUES($1,$2,'CASE-' || nextval('${s}.student_operations_case_number_seq')::text,'student_operations',$3,$4,$5,$6,CASE WHEN $6 IN ('closed','completed','cancelled') THEN CURRENT_DATE END) RETURNING case_id`,
@@ -163,6 +164,7 @@ export class StudentOperationsCasesService {
     assertManage(p); caseId(id);
     const value = parse(updateSchema,input);
     return this.write(p,'case.update',{caseId:id,...value},key,async db => {
+      await db.query(`SELECT ${caseSchema()}.initialize_student_document_requirements($1)`,[p.externalCompanyId]);
       const row = await this.authorizedCase(db,p,id,true);
       if (row.record_version !== value.recordVersion) throw new ConflictException('Case changed. Reload before saving.');
       const workflow = resolveCaseWorkflow(row.current_stage,row.lifecycle_status,value.currentStage,value.status);

@@ -68,6 +68,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/091_student_document_contact_overflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE ON TABLES FROM sophia_runtime_app');
     await pool.query((await readFile(new URL('./migrations/092_student_case_checklists.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_document_types(customer_id,company_id,name,required) VALUES($1,$2,'letter of offer',false)`,[tenant,company]);
+    await pool.query((await readFile(new URL('./migrations/093_student_status_document_requirements.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const checklists=async()=>{
@@ -231,12 +233,12 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(types.create(p,{name:'Injected',required:false,companyId:company},'type-injected')).rejects.toThrow('Enter a document');
     await expect(types.create({...p,role:'advisor'},{name:'Denied',required:false},'type-forbidden')).rejects.toThrow();
     expect((await types.list({...p,tenantId:'88888888-8888-4888-8888-888888888888'})).types).toHaveLength(0);
-    const changed=await types.update(p,String(first.documentTypeId),{name:'Passport',required:false,recordVersion:1},'type-edit');
-    expect(changed).toMatchObject({name:'Passport',required:false,recordVersion:2});
+    const changed=await types.update(p,String(first.documentTypeId),{name:'Travel document',required:false,recordVersion:1},'type-edit');
+    expect(changed).toMatchObject({name:'Travel document',required:false,recordVersion:2});
     await expect(types.update(p,String(first.documentTypeId),{required:true,recordVersion:1},'type-stale')).rejects.toThrow('changed');
     await types.update(p,String(first.documentTypeId),{status:'archived',recordVersion:2},'type-archive');
-    expect((await types.list(p)).types).toHaveLength(0);
-    await types.create(p,{name:'PASSPORT',required:true},'type-new-after-archive');
+    expect((await types.list(p)).types).toHaveLength(3);
+    await types.create(p,{name:'TRAVEL DOCUMENT',required:true},'type-new-after-archive');
     expect((await pool.query('SELECT status FROM sophia_runtime.student_operations_document_types WHERE document_type_id=$1',[first.documentTypeId])).rows[0].status).toBe('archived');
     expect((await pool.query('SELECT count(*)::int n FROM sophia_runtime.student_operations_document_type_events WHERE document_type_id=$1',[first.documentTypeId])).rows[0].n).toBe(3);
     await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_types'))).rejects.toThrow('permission denied');
@@ -246,7 +248,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>({attachmentId:college})),attachmentContent:jest.fn(async()=>file.buffer)};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
     const created=await service.create(p,{userId:user},'uploaded-document-case');
-    const id=String(created.caseId),type=(await types.list(p)).types[0];
+    const id=String(created.caseId),type=(await types.list(p)).types.find(t=>t.name==='TRAVEL DOCUMENT')!;
     const input={documentTypeId:type.documentTypeId};
     expect(await docs.uploadOptions(p,id)).toMatchObject({available:true});
     const result=await docs.upload(p,id,input,file,'upload-example');
@@ -255,10 +257,10 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(xero.uploadAttachment.mock.calls[0]).toEqual([tenant,connection,'Contacts',invoice,expect.stringMatching(/^[a-f0-9-]+-passport\.pdf$/),'application/pdf',file.buffer,expect.stringMatching(/^[a-f0-9]{64}$/),expect.any(Function)]);
     const listed=await docs.list(p,id,{});
     expect(listed.documents).toHaveLength(1);
-    expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'PASSPORT',documentTypeRequired:true,sourceKind:'Contacts'});
+    expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'TRAVEL DOCUMENT',documentTypeRequired:true,sourceKind:'Contacts'});
     expect(listed.documents[0]).not.toHaveProperty('private_object_key');
     await types.update(p,type.documentTypeId,{status:'archived',recordVersion:type.recordVersion},'archive-upload-type');
-    expect((await docs.list(p,id,{})).documents[0].documentTypeName).toBe('PASSPORT');
+    expect((await docs.list(p,id,{})).documents[0].documentTypeName).toBe('TRAVEL DOCUMENT');
     expect((await docs.content(p,id,String(result.documentId))).buffer.equals(file.buffer)).toBe(true);
     expect(xero.attachmentContent).toHaveBeenCalledWith(tenant,connection,'Contacts',invoice,college);
     await expect(docs.upload(p,id,input,file,'upload-archived')).rejects.toThrow('active');
@@ -502,4 +504,52 @@ suite('Case management against disposable PostgreSQL',()=>{
     } finally {restore();}
   });
   test('checklist is case-scoped, versioned, idempotent and logs completion once with the actor',checklists);
+  test('status document requirements reuse existing types, are extensible and track whole-case typed uploads',async()=>{
+    const restore=enableCreation();try {
+    const requirements=(await types.requirements(p,{status:'pre_sale'})).requirements;
+    expect(requirements.map(r=>r.name)).toEqual(['Engagement letter','letter of offer','Passport']);
+    expect(requirements.every(r=>r.required&&r.available&&!r.uploaded)).toBe(true);
+    expect((await types.list(p)).types.filter(t=>t.name.toLowerCase()==='letter of offer')).toHaveLength(1);
+    expect((await types.list(p)).types.find(t=>t.name==='letter of offer')!.required).toBe(false);
+    const created=await service.createStudent(p,{studentName:'Requirements Student',studentEmail:'requirements@example.test'},'requirements-student');
+    const id=String(created.caseId),mock=provider(),passport=requirements.find(r=>r.requirementKey==='passport')!;
+    let state=await mock.docs.list(p,id,{});expect(state.documents).toHaveLength(0);expect(state.requirements).toHaveLength(3);
+    await mock.docs.upload(p,id,{documentTypeId:passport.documentTypeId},pdf,'requirements-passport');
+    state=await mock.docs.list(p,id,{page:2,limit:1});
+    expect(state.documents).toHaveLength(0);expect(state.requirements.find(r=>r.requirementKey==='passport')!.uploaded).toBe(true);
+    const other=String((await service.create(p,{userId:(await service.get(p,id)).userId},'requirements-other-case')).caseId);
+    expect((await mock.docs.list(p,other,{})).requirements.every(r=>!r.uploaded)).toBe(true);
+    const extra=await types.create(p,{name:'Bank statement',required:false},'requirements-extra-type');
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_status_document_requirements(customer_id,case_status,requirement_key,document_type_id,sort_order) VALUES($1,'on_hold','bank_statement',$2,1)`,[tenant,extra.documentTypeId]));
+    expect((await types.requirements(p,{status:'on_hold'})).requirements.map(r=>r.name)).toEqual(['Bank statement']);
+    expect((await types.requirements({...p,tenantId:'88888888-8888-4888-8888-888888888888'},{status:'on_hold'})).requirements).toHaveLength(0);
+    expect((await types.requirements({...p,tenantId:'88888888-8888-4888-8888-888888888888'},{status:'pre_sale'})).requirements.every(r=>r.documentTypeId===null)).toBe(true);
+    await expect(types.requirements(p,{status:'pre_sale',companyId:company})).rejects.toThrow('valid case status');
+    await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_status_document_requirements'))).rejects.toThrow('permission denied');
+    const passportType=(await types.list(p)).types.find(t=>t.documentTypeId===passport.documentTypeId)!;
+    await types.update(p,passport.documentTypeId,{status:'archived',recordVersion:passportType.recordVersion},'requirements-archive-type');
+    expect((await types.requirements(p,{status:'pre_sale'})).requirements.find(r=>r.requirementKey==='passport')!.available).toBe(false);
+    await transaction(tenant,db=>db.query('SELECT sophia_runtime.initialize_student_document_requirements($1)',[company]));
+    expect((await types.list(p)).types.some(t=>t.name==='Passport')).toBe(false);
+    expect((await mock.docs.list(p,id,{})).requirements.find(r=>r.requirementKey==='passport')!.uploaded).toBe(true);
+    }finally{restore();}
+  });
+  test('new companies preview read-only defaults and initialize their own types without elevated grants',async()=>{
+    const otherTenant=randomUUID(),otherCompany=randomUUID(),principal={...p,tenantId:otherTenant,externalCompanyId:otherCompany};
+    await pool.query(`INSERT INTO sophia_runtime.customers VALUES($1,$2,'active')`,[otherTenant,otherCompany]);
+    await pool.query(`INSERT INTO public.bm_company VALUES($1,'student_operations')`,[otherCompany]);
+    const preview=(await types.requirements(principal,{status:'pre_sale'})).requirements;
+    expect(preview).toHaveLength(3);expect(preview.every(r=>r.documentTypeId===null&&!r.available)).toBe(true);
+    expect((await types.list(principal)).types).toHaveLength(0);
+    await expect(transaction(otherTenant,db=>db.query('SELECT sophia_runtime.initialize_student_document_requirements($1)',[company]))).rejects.toThrow(/scope mismatch|foreign key/);
+    await transaction(otherTenant,db=>db.query('SELECT sophia_runtime.initialize_student_document_requirements($1)',[otherCompany]));
+    await transaction(otherTenant,db=>db.query('SELECT sophia_runtime.initialize_student_document_requirements($1)',[otherCompany]));
+    expect((await types.list(principal)).types).toHaveLength(3);
+    expect((await types.requirements(principal,{status:'pre_sale'})).requirements.every(r=>r.available&&r.documentTypeId)).toBe(true);
+    await transaction(otherTenant,db=>db.query(`UPDATE sophia_runtime.student_operations_status_document_requirements SET status='archived' WHERE requirement_key='passport'`));
+    await transaction(otherTenant,db=>db.query('SELECT sophia_runtime.initialize_student_document_requirements($1)',[otherCompany]));
+    expect((await types.requirements(principal,{status:'pre_sale'})).requirements).toHaveLength(2);
+    await expect(transaction(otherTenant,db=>db.query('SELECT * FROM sophia_runtime.customers'))).rejects.toThrow('permission denied');
+    await expect(transaction(otherTenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_requirement_defaults'))).rejects.toThrow('permission denied');
+  });
 });
