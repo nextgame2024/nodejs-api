@@ -67,8 +67,39 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT DELETE ON TABLES TO sophia_runtime_app');
     await pool.query((await readFile(new URL('./migrations/091_student_document_contact_overflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE ON TABLES FROM sophia_runtime_app');
+    await pool.query((await readFile(new URL('./migrations/092_student_case_checklists.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
+  const checklists=async()=>{
+    const created=await service.createStudent(p,{studentName:'Checklist Student',studentEmail:'checklist@example.test'},'checklist-create-student');
+    const id=String(created.caseId),initial=await service.checklist(p,id);
+    expect(initial.items).toHaveLength(4);expect(initial.items.every(i=>!i.completed&&i.recordVersion===0)).toBe(true);
+    for(const item of initial.items){
+      const payload={itemKey:item.key,completed:true,recordVersion:0},key=`checklist-${item.key}`;
+      const saved=await service.updateChecklist(p,id,payload,key);
+      expect(await service.updateChecklist(p,id,payload,key)).toEqual(JSON.parse(JSON.stringify(saved)));
+    }
+    const activity=await service.activities(p,id,{});
+    expect(activity.activity.filter(i=>i.eventType==='case.checklist_completed')).toHaveLength(1);
+    expect(activity.activity.find(i=>i.eventType==='student.created')).toMatchObject({summary:'User created',actorName:'Advisor One'});
+    expect(activity.activity.find(i=>i.eventType==='case.checklist_completed')).toMatchObject({summary:'Checklist complete',actorName:'Advisor One'});
+    await expect(service.updateChecklist(p,id,{itemKey:initial.items[0].key,completed:false,recordVersion:0},'checklist-stale')).rejects.toThrow('Checklist changed');
+    await service.updateChecklist(p,id,{itemKey:initial.items[0].key,completed:false,recordVersion:1},'checklist-reopen');
+    expect((await service.activities(p,id,{})).activity.filter(i=>i.eventType==='case.checklist_reopened')).toHaveLength(1);
+    const other=String((await service.create(p,{userId:(await service.get(p,id)).userId},'checklist-other-case')).caseId);
+    expect((await service.checklist(p,other)).items.every(i=>!i.completed)).toBe(true);
+    await Promise.all(initial.items.map(item=>service.updateChecklist(p,other,{itemKey:item.key,completed:true,recordVersion:0},`concurrent-checklist-${item.key}`)));
+    expect((await service.activities(p,other,{})).activity.filter(i=>i.eventType==='case.checklist_completed')).toHaveLength(1);
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary) VALUES($1,$2,'system:test','case.checklist_verified','Automatic verification')`,[tenant,id]));
+    expect((await service.activities(p,id,{})).activity.find(i=>i.summary==='Automatic verification')?.actorName).toBe('SophiaAi');
+    await expect(service.updateChecklist(p,id,{itemKey:initial.items[0].key,completed:true,recordVersion:2,actorName:'SophiaAi'},'checklist-spoof-actor')).rejects.toThrow('Invalid case request');
+    await expect(service.updateChecklist({...p,role:'advisor'},id,{itemKey:initial.items[0].key,completed:true,recordVersion:2},'checklist-advisor')).rejects.toThrow('permission');
+    await expect(service.checklist({...p,tenantId:'88888888-8888-4888-8888-888888888888'},id)).rejects.toThrow('not found');
+    expect((await transaction('88888888-8888-4888-8888-888888888888',db=>db.query('SELECT * FROM sophia_runtime.student_operations_case_checklist'))).rowCount).toBe(0);
+    await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_case_checklist'))).rejects.toThrow('permission denied');
+    await service.update(p,id,{recordVersion:1,status:'in_progress',currentStage:'payment_received'},'checklist-leave-presale');
+    await expect(service.updateChecklist(p,id,{itemKey:initial.items[0].key,completed:true,recordVersion:2},'checklist-wrong-status')).rejects.toThrow('Pre-sale');
+  };
   test('password setup migration preserves legacy access and marks all future account inserts',async()=>{
     expect((await pool.query('SELECT must_change_password,password FROM public.users WHERE id=$1',[user])).rows[0])
       .toEqual({must_change_password:false,password:'unchanged-legacy-hash'});
@@ -167,7 +198,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(account).toMatchObject({type:'student',status:'active'});
     expect(account.password).toMatch(/^\$2[aby]\$10\$/);
     expect(created).not.toHaveProperty('password');expect(detail).not.toHaveProperty('password');
-    expect((await service.activities(p,detail.caseId,{})).activity).toHaveLength(1);
+    expect((await service.activities(p,detail.caseId,{})).activity).toHaveLength(2);
     expect((await pool.query("SELECT event_type,actor_identity_user_id FROM sophia_runtime.student_operations_student_audit_events WHERE student_id=$1",[detail.studentId])).rows).toEqual([{event_type:'student.created',actor_identity_user_id:advisor}]);
     await expect(service.createStudent(p,{...value,courseName:'Changed'},'new-student-save')).rejects.toThrow('Idempotency');
   });
@@ -470,4 +501,5 @@ suite('Case management against disposable PostgreSQL',()=>{
       expect((await pool.query("SELECT sequence_number FROM sophia_runtime.student_operations_document_contacts WHERE student_id=$1 AND kind='overflow'",[student.studentId])).rows).toEqual([{sequence_number:2}]);
     } finally {restore();}
   });
+  test('checklist is case-scoped, versioned, idempotent and logs completion once with the actor',checklists);
 });

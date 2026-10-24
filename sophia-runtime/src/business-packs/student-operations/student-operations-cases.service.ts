@@ -27,6 +27,16 @@ const createStudentSchema = fields.omit({ advisorUserId: true }).extend({
 });
 const updateSchema = fields.extend({ recordVersion: z.number().int().positive() });
 const querySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25), userId: z.string().uuid().optional() }).strict();
+export const PRE_SALE_CHECKLIST = [
+  {key:'signed_engagement_letter',label:'Signed engagement letter'},
+  {key:'invoice_loo_consistency',label:'Invoice/LoO consistency'},
+  {key:'document_completeness',label:'Document completeness'},
+  {key:'pending_track_status',label:'Pending Track status'},
+] as const;
+const checklistUpdateSchema=z.object({
+  itemKey:z.enum(['signed_engagement_letter','invoice_loo_consistency','document_completeness','pending_track_status']),
+  completed:z.boolean(),recordVersion:z.number().int().min(0),
+}).strict();
 export function caseSchema(): string {
   const schema = process.env.SOPHIA_RUNTIME_SCHEMA?.trim() || 'sophia_runtime';
   if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) throw new Error('Invalid runtime schema');
@@ -122,6 +132,7 @@ export class StudentOperationsCasesService {
         const account=await db.query(`SELECT ${caseSchema()}.create_student_case_account($1,$2,$3,$4) AS user_id`,
           [value.studentName,value.studentEmail,value.mobile??null,value.phone??null]);
         const created=await this.insertCase(db,p,{...value,userId:account.rows[0].user_id},workflow);
+        await this.activity(db,p,String(created.caseId),'student.created','User created');
         await db.query(`INSERT INTO ${caseSchema()}.student_operations_student_audit_events
           (customer_id,student_id,actor_identity_user_id,event_type,record_version,changed_fields,correlation_id)
           SELECT customer_id,student_id,$3,'student.created',1,$4::text[],$5
@@ -242,13 +253,55 @@ export class StudentOperationsCasesService {
     const q=parse(querySchema.omit({userId:true}),input);
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       await this.authorizedCase(db,p,id);
-      const result=await db.query(`SELECT activity_id AS "activityId",event_type AS "eventType",summary,created_at AS "createdAt" FROM ${caseSchema()}.student_operations_case_activity WHERE customer_id=$1 AND case_id=$2 ORDER BY created_at DESC,activity_id DESC LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
+      const result=await db.query(`SELECT a.activity_id AS "activityId",a.event_type AS "eventType",a.summary,a.created_at AS "createdAt",
+        coalesce(a.detail->>'actorName',r.display_name,CASE WHEN a.actor_identity_user_id ~ '^(migration:|system:|worker:|sophia:)' THEN 'SophiaAi' ELSE 'User unavailable' END) AS "actorName"
+        FROM ${caseSchema()}.student_operations_case_activity a
+        LEFT JOIN ${caseSchema()}.student_operations_advisor_roster r ON r.customer_id=a.customer_id AND r.user_id::text=a.actor_identity_user_id
+        WHERE a.customer_id=$1 AND a.case_id=$2 ORDER BY a.created_at DESC,a.activity_id DESC LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       return {activity:result.rows,page:q.page,limit:q.limit};
     });
   }
 
   async activity(db:PoolClient,p:Principal,id:string,event:string,summary:string) {
-    await db.query(`INSERT INTO ${caseSchema()}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary) VALUES($1,$2,$3,$4,$5)`,[p.tenantId,id,p.identityUserId,event,summary]);
+    await db.query(`INSERT INTO ${caseSchema()}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary,detail)
+      VALUES($1,$2,$3,$4,$5,jsonb_build_object('actorKind','user','actorName',coalesce((SELECT display_name FROM ${caseSchema()}.student_operations_advisor_roster WHERE customer_id=$1 AND user_id::text=$3),'User unavailable')))`,[p.tenantId,id,p.identityUserId,event,summary]);
+  }
+
+  private async checklistRows(db:PoolClient,p:Principal,id:string) {
+    const result=await db.query(`SELECT item_key,completed,record_version,actor_name,updated_at FROM ${caseSchema()}.student_operations_case_checklist WHERE customer_id=$1 AND case_id=$2 AND checklist_status='pre_sale'`,[p.tenantId,id]);
+    return PRE_SALE_CHECKLIST.map(item=>{
+      const row=result.rows.find(r=>r.item_key===item.key);
+      return {...item,completed:row?.completed??false,recordVersion:row?.record_version??0,updatedBy:row?.actor_name??null,updatedAt:row?.updated_at??null};
+    });
+  }
+
+  async checklist(p:Principal,id:string) {
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      const row=await this.authorizedCase(db,p,id);
+      return {status:publicCaseStatus(row.lifecycle_status),items:await this.checklistRows(db,p,id)};
+    });
+  }
+
+  async updateChecklist(p:Principal,id:string,input:unknown,key?:string) {
+    assertManage(p);caseId(id);
+    const value=parse(checklistUpdateSchema,input);
+    return this.write(p,'case.checklist.update',{caseId:id,...value},key,async db=>{
+      // Serialize all four items and case status changes, including first completion.
+      const row=await this.authorizedCase(db,p,id,true);
+      if(publicCaseStatus(row.lifecycle_status)!=='pre_sale')throw new ConflictException('This checklist is only editable for Pre-sale cases.');
+      const before=await this.checklistRows(db,p,id),item=before.find(i=>i.key===value.itemKey)!;
+      if(item.recordVersion!==value.recordVersion)throw new ConflictException('Checklist changed. Reload before saving.');
+      if(item.completed!==value.completed){
+        await db.query(`INSERT INTO ${caseSchema()}.student_operations_case_checklist(customer_id,case_id,item_key,completed,actor_identity_user_id,actor_kind,actor_name)
+          VALUES($1,$2,$3,$4,$5,'user',coalesce((SELECT display_name FROM ${caseSchema()}.student_operations_advisor_roster WHERE customer_id=$1 AND user_id::text=$5),'User unavailable'))
+          ON CONFLICT(customer_id,case_id,checklist_status,item_key) DO UPDATE SET completed=excluded.completed,record_version=student_operations_case_checklist.record_version+1,actor_identity_user_id=excluded.actor_identity_user_id,actor_kind=excluded.actor_kind,actor_name=excluded.actor_name,updated_at=now()`,[p.tenantId,id,value.itemKey,value.completed,p.identityUserId]);
+        await this.activity(db,p,id,'case.checklist_item_updated',`${item.label} ${value.completed?'completed':'reopened'}`);
+      }
+      const items=await this.checklistRows(db,p,id);
+      if(!before.every(i=>i.completed)&&items.every(i=>i.completed))await this.activity(db,p,id,'case.checklist_completed','Checklist complete');
+      if(before.every(i=>i.completed)&&!items.every(i=>i.completed))await this.activity(db,p,id,'case.checklist_reopened','Checklist reopened');
+      return {status:'pre_sale',items};
+    });
   }
 
   async write(p:Principal,operation:string,value:unknown,key:string|undefined,work:(db:PoolClient)=>Promise<Record<string,unknown>>) {

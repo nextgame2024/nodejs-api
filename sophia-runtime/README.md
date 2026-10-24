@@ -146,6 +146,37 @@ deleting overflow Contacts, reservations or provider receipts. S3 and invoice-do
 App uploads retain PDF/JPEG/PNG and the 10 MB limit. No live Contact creation/file upload or production migration
 is part of local verification; use an explicitly approved real student/file for release smoke testing.
 
+### Case Next Actions and Pre-sale checklist
+
+Apply owner migration `092_student_case_checklists.sql` after existing migrations,
+then deploy Runtime API and frontend. No Xero scope or worker changes are needed
+for manual checklist updates. New cases must be saved before checklist edits.
+
+`GET /business-packs/student-operations/v1/workspace/cases/:caseId/checklist`
+returns the four Pre-sale items. Missing rows are unchecked, version zero, and
+reads never create records. `PATCH` on the same route accepts only `itemKey`,
+`completed` and `recordVersion`, with the existing `Idempotency-Key` contract.
+It requires `cases.manage` and an authorized, saved Pre-sale case. Existing advisor
+read-only access is unchanged. Updates commit immediately, independently of case
+editing; they do not change workflow stage or case status.
+
+Tenant RLS, a case-scoped foreign key, a case-row lock and per-item versions
+isolate checklists and prevent concurrent lost updates. Item changes and the
+transition to/from all four complete append activity in the same transaction.
+Retrying a successful request does not duplicate activity. The activity feed
+shows the server-resolved actor name and timestamp; Add student also records
+`User created`. New human events snapshot the display name. Historical automated
+events with migration/system/worker/Sophia identities display `SophiaAi`; unknown
+human identities are not mislabelled as automation. The browser cannot choose an
+actor or mark its change as automatic.
+
+Next Actions sits beside Documents/Linked invoices; Meet Sophia moves beside
+Recent activity/Case at a glance. Only Pre-sale has defined checklist content;
+other statuses show an explicit unconfigured state. Future automatic verification
+must use trusted server-side actor attribution and the same transactional audit
+and concurrency rules. Automatic document/invoice/track validation, workflow
+gating and assistant execution are not enabled by this release.
+
 ## Sophia subscription billing
 
 Sophia subscriptions use an independently configured Stripe adapter. It never
