@@ -42,11 +42,15 @@ export async function documentChecklistEvidence(db:PoolClient,tenant:string,id:s
       verdict.parsed.success&&verdict.parsed.data.kind===row.requirement_key&&verdict.status==='passed'&&
       (row.requirement_key!=='letter_of_offer'||(row.offer_current===true&&verdict.reviewed==='confirmed'));
     return {key:String(row.requirement_key),required:Boolean(row.required),documentId:row.document_id??null,
-      resultId:row.result_id??null,reviewVersion:row.review_version??0,accepted};
+      resultId:row.result_id??null,reviewVersion:row.review_version??0,accepted,
+      validationState:accepted?'passed':!row.document_id?'missing':row.status==='queued'||row.status==='processing'?'checking':'needs_review'};
   });
   const engagement=evidence.find(e=>e.key==='engagement_letter');
   const required=evidence.filter(e=>e.required);
-  return {evidence,completed:{signed_engagement_letter:Boolean(engagement?.accepted),
+  const completeness=required.length>0&&required.every(e=>e.accepted);
+  return {evidence,validation:{signed_engagement_letter:engagement?.validationState??'missing',
+    document_completeness:completeness?'passed':required.some(e=>e.validationState==='needs_review')?'needs_review':required.some(e=>e.validationState==='checking')?'checking':'missing'},
+    completed:{signed_engagement_letter:Boolean(engagement?.accepted),
     document_completeness:required.length>0&&required.every(e=>e.accepted)}};
 }
 

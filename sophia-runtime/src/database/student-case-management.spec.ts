@@ -657,14 +657,14 @@ suite('Case management against disposable PostgreSQL',()=>{
         courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'60 weeks'}],fees:[{label:'Total',amountMinor:904000,conditional:false,condition:null}],
         instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:906500,includedConditionalFeeMinor:2500,components:[]}]};
       const first=await add('engagement_letter');await finish(first,engagement);
-      let state=await service.checklist(p,id);expect(state.items[0]).toMatchObject({completed:true,automatic:true,updatedBy:'SophiaAi'});expect(state.items[2].completed).toBe(false);
+      let state=await service.checklist(p,id);expect(state.items[0]).toMatchObject({completed:true,automatic:true,updatedBy:'SophiaAi',validationState:'passed'});expect(state.items[2]).toMatchObject({completed:false,validationState:'missing'});
       await expect(service.updateChecklist(p,id,{itemKey:'document_completeness',completed:true,recordVersion:0},'automation-spoof-complete')).rejects.toThrow('document checks');
       const pass=await add('passport');await finish(pass,passport);
       const loo=await add('letter_of_offer');await finish(loo,offer);
-      expect((await service.checklist(p,id)).items[2].completed).toBe(false); // Presence/proposal is not approval.
+      expect((await service.checklist(p,id)).items[2]).toMatchObject({completed:false,validationState:'needs_review'}); // Presence/proposal is not approval.
       const checked=await analysis.get(p,id,loo.document);
       await analysis.review(p,id,loo.document,{resultId:checked.resultId,expectedReviewVersion:0,expectedCaseVersion:checked.offer!.caseRecordVersion,decision:'confirmed',reason:'All synthetic tables reviewed',corrections:null,collegeId:college},'automation-confirm-offer');
-      state=await service.checklist(p,id);expect(state.items[2]).toMatchObject({completed:true,automatic:true});
+      state=await service.checklist(p,id);expect(state.items[2]).toMatchObject({completed:true,automatic:true,validationState:'passed'});
       for(const key of ['invoice_loo_consistency','pending_track_status']){
         const item=state.items.find(i=>i.key===key)!;state=await service.updateChecklist(p,id,{itemKey:key,completed:true,recordVersion:item.recordVersion},`automation-manual-${key}`);
       }
@@ -675,9 +675,9 @@ suite('Case management against disposable PostgreSQL',()=>{
       await reconcile('2030-01-02');state=await service.checklist(p,id);expect(state.items[2]).toMatchObject({completed:false,updatedBy:'SophiaAi'});
       expect(state.items.find(i=>i.key==='pending_track_status')!.completed).toBe(true);
       await reconcile(); // Restore current-date validity without another provider call.
-      const replacement=await add('engagement_letter');expect((await service.checklist(p,id)).items[0].completed).toBe(false);
+      const replacement=await add('engagement_letter');expect((await service.checklist(p,id)).items[0]).toMatchObject({completed:false,validationState:'checking'});
       await finish(replacement,{...engagement,status:'viewed',completed:false});
-      expect((await service.checklist(p,id)).items[0].completed).toBe(false);
+      expect((await service.checklist(p,id)).items[0]).toMatchObject({completed:false,validationState:'needs_review'});
       await expect(analysis.review(p,id,first.document,{resultId:(await analysis.get(p,id,first.document)).resultId,expectedReviewVersion:0,decision:'confirmed',reason:'Old evidence',corrections:null},'automation-old-confirm')).rejects.toThrow('newer document');
       const pending=await add('engagement_letter'),newest=await add('engagement_letter');
       await finish(pending,engagement);expect((await service.checklist(p,id)).items[0].completed).toBe(false); // Late old result.

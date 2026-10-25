@@ -280,7 +280,7 @@ export class StudentOperationsCasesService {
       // Read-only freshness guard: never display stale acceptance after expiry/replacement.
       const eligible=!automatic||evidence!.completed[item.key as typeof DOCUMENT_CHECKLIST_KEYS[number]];
       return {...item,completed:Boolean(row?.completed&&eligible),recordVersion:row?.record_version??0,updatedBy:row?.actor_name??null,updatedAt:row?.updated_at??null,
-        ...(automatic?{automatic:true,hint:item.key==='signed_engagement_letter'?'Updated from the latest engagement letter check.':'Updated when all required documents have passed their checks.'}:{})};
+        ...(automatic?{automatic:true,validationState:evidence!.validation[item.key as typeof DOCUMENT_CHECKLIST_KEYS[number]],hint:item.key==='signed_engagement_letter'?'Updated from the latest engagement letter check.':'Updated when all required documents have passed their checks.'}:{})};
     });
   }
 

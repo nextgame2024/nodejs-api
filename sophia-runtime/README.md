@@ -290,6 +290,12 @@ does not merge or rewrite historical colleges. Refreshing the local directory
 retains unsaved review edits and does not silently rebase the case version.
 The source-order course/fee/instalment cards are financial editors, not directory
 tables; they reuse manager inputs/selects, toasts, native dialog and touch/dark styles.
+The widened offer dialog now groups those editors into Details, Fee details,
+Instalment schedule and Evidence & review note tabs. Edits persist between tabs;
+validation selects the relevant tab, and Reject/Confirm stay outside the single
+content scroll. Upload success closes its modal and shows a page toast. Busy-save
+messages describe secure storage, not AI extraction: extraction remains a separate
+background job. This feedback does not establish an upload latency improvement.
 
 Managers can also `POST analysis/start` with `{}` and an Idempotency-Key for a
 completed, typed app-upload with a known stored hash that has no existing job.
@@ -350,6 +356,9 @@ identity changes need fresh review rather than inheriting an unrelated approval.
 Checklist GET remains local/read-only and suppresses stale document acceptance
 before the worker catches up. Configuration and cross-case profile changes are
 eventually reconciled by the bounded worker lane; this is not an exact-time SLA.
+Checklist responses also expose safe passed/needs_review/checking/missing metadata
+for document-driven items. The UI shows green completion or amber review icons
+beside the checkbox; missing files are not misleadingly labelled review failures.
 
 Only real boolean transitions produce activity: SophiaAi for automatic item and
 aggregate completion/reopening, authenticated identity for manual changes. Each
