@@ -20,6 +20,7 @@
     "migrate:dev": "tsx src/database/migrate.ts",
     "cases:migrate": "tsx scripts/migrate-student-cases.ts",
     "cases:documents": "node dist/operators/process-case-documents.js",
+    "cases:analyze": "node dist/operators/process-student-document-analysis.js",
     "cases:documents:dev": "tsx src/operators/process-case-documents.ts",
     "providers:provision": "node dist/operators/run-provider-operations.js provision",
     "providers:reconcile": "node dist/operators/run-provider-operations.js reconcile",

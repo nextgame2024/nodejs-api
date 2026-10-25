@@ -177,11 +177,75 @@ must finish within the lease, verify attachment content/hash and run outside
 database transactions. Authorized tenant scheduling, provider admission, manual
 retry and replacement/result-selection policy belong to the next phases.
 
-This foundation is deliberately inactive: no upload hook, running analysis worker,
-OpenAI extraction adapter, review endpoint/UI, college resolution or automated
-checklist mutation is wired yet. Existing upload/discovery paths continue as
-before. Migration application alone does not analyze existing documents. See
+Phase 2 connects the upload hook, worker and review surface described below.
+Migration application alone does not analyze existing documents. See
 `../docs/sophia/student-document-validation-plan.json` for remaining phases.
+
+### Passport and engagement analysis (phase 2)
+
+Apply owner migration `095_student_document_analysis_review.sql` after 094 and
+deploy Runtime API, shared student worker and Business Manager frontend together.
+The migration extends existing idempotency operations and adds lookup indexes;
+it does not trigger provider calls or change stored files.
+
+Configuration (leave disabled until the coordinated rollout is ready):
+
+- Runtime API and shared worker: `STUDENT_DOCUMENT_ANALYSIS_ENABLED=true`.
+- Shared worker: `OPENAI_API_KEY` using the existing server-side secret mechanism,
+  and `STUDENT_DOCUMENT_ANALYSIS_MODEL` set to an explicitly approved vision model
+  supporting Responses Structured Outputs. No model default is silently selected.
+- Shared worker retains `STUDENT_SYNC_DOCUMENT_CUSTOMER_IDS` as its explicit tenant
+  allowlist. Shared quota/backoff must be enabled; its startup checks reject missing
+  model/credential/migration dependencies before processing.
+
+Only new uploads mapped by active stable `passport` or `engagement_letter`
+requirement keys enqueue analysis, atomically with local upload finalization.
+Receipt recovery follows the same path. Replayed completed uploads do not enqueue
+duplicates; existing unclassified/imported attachments are not backfilled. Turn on
+the worker before enabling uploads on the API. Disabling the feature stops new
+enqueues and claims while preserving jobs, results, files and manual review history.
+
+The existing shared worker has an independent round-robin lane, with one analysis
+request in flight per process and five-second admission ticks throughout the day.
+It does not wait for the 03:00–06:00 discovery window or block invoice/student
+coordinator ticks. Shutdown drains its current analysis before closing pools.
+An optional standalone `npm run cases:analyze -- --once` uses
+`STUDENT_DOCUMENT_ANALYSIS_TENANT_IDS` and the same model/key/feature/quota flags;
+omit `--once` for continuous operation. Use one deployment mode, normally shared.
+
+The worker downloads through existing Xero quota/backoff admission, checks the
+stored content hash and 10 MB analysis bound, and calls a pack-local dedicated
+OpenAI adapter outside DB transactions. PDFs use direct `input_file`, images use
+`input_image`; no public file URL, hosted File, conversation, tool or vector store
+is created. `store:false`, bounded response size, strict per-kind schemas and
+safe error classifications are enforced. Source/AI timeouts stay within the lease.
+Provider retention controls are separate from `store:false`; no live extraction
+or provider accuracy evaluation is implied by mock tests.
+
+Case document lists project local status only. The browser polls pending metadata
+every ten seconds while visible, bounded per visit, and refreshes activity when
+checks finish. File preview/download are retained. Managers can open a native
+review dialog showing source evidence, edit student name/expiry/signer as
+applicable, add a required note, confirm or reject. Conflicting passport expiry
+requires explicit verification/correction; expired passports remain Invalid even
+after confirmation. Unknown evidence can be explicitly accepted with the review
+note; this records a human judgment, not model verification. Other roles receive
+safe status only. Raw extraction is not included in normal file lists.
+
+Authenticated routes under `.../workspace/cases/:caseId/documents/:documentId`:
+
+- `GET analysis` (private/no-store; case read scope, extraction only for managers).
+- `POST analysis/review` (existing cases.manage, strict payload, optimistic document
+  review version, actor-scoped Idempotency-Key, append-only review and case activity).
+- `POST analysis/retry` with `{jobId}` (same manager scope/idempotency; failed latest
+  jobs only; reuses the saved file, never performs another upload).
+
+Automatic result completion records `Document checked` as SophiaAi; manual review
+and retry events use the authenticated user's existing activity identity. No
+checklist completion/status transition is automated yet. Letter of Offer
+extraction, financial proposal persistence and college matching are phase 3;
+checklist automation is phase 4. Historical/replacement authoritative selection
+and wider model accuracy/cost evaluation remain documented rollout work.
 
 ### Status-based document requirements
 

@@ -1,7 +1,20 @@
 import {describe,expect,jest,test} from '@jest/globals';
-import {createStudentSyncCoordinator} from '../src/workers/student-sync-worker.js';
+import {createStudentSyncCoordinator,createDocumentAnalysisCoordinator} from '../src/workers/student-sync-worker.js';
 
 const tenant='11111111-1111-4111-8111-111111111111';
+test('analysis rotates tenants, prevents overlapping calls and stops on shutdown',async()=>{
+  const other='22222222-2222-4222-8222-222222222222';let finish;
+  const processOne=jest.fn(()=>new Promise(resolve=>{finish=resolve;}));
+  const loop=createDocumentAnalysisCoordinator({processOne,customerIds:[tenant,other]});
+  const pending=loop.tick();expect(await loop.tick()).toBe(false);expect(processOne).toHaveBeenCalledTimes(1);finish(true);await pending;
+  const second=loop.tick();expect(processOne).toHaveBeenLastCalledWith(other);finish(false);await second;
+  const stop=new AbortController();stop.abort();expect(await loop.tick(stop.signal)).toBe(false);expect(processOne).toHaveBeenCalledTimes(2);
+});
+test('analysis errors use safe metadata and release the lane',async()=>{
+  const processOne=jest.fn().mockRejectedValueOnce(new Error('private details')).mockResolvedValue(true),log=jest.fn();
+  const loop=createDocumentAnalysisCoordinator({processOne,customerIds:[tenant],log});
+  expect(await loop.tick()).toBe(false);expect(log).toHaveBeenCalledWith({event:'student_document_analysis_tick_failed'});expect(await loop.tick()).toBe(true);
+});
 function fixture(time='2026-10-20T02:00:00+10:00') {
   let clock=new Date(time).getTime();
   const events=[];

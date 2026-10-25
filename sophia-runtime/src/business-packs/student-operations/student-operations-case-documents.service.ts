@@ -12,6 +12,7 @@ import { StudentPrimaryXeroContact } from './student-primary-xero-contact.js';
 import { StudentDocumentContactStorage } from './student-document-contact-storage.js';
 import { documentRequirements } from './student-document-requirements.js';
 import { publicCaseStatus } from './student-operations-case-workflow.js';
+import { enqueueUploadedAnalysis,analysisVerdict } from './student-document-analysis.service.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -116,6 +117,7 @@ export class StudentOperationsCaseDocumentsService {
         ON CONFLICT(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id) DO UPDATE SET document_type_id=excluded.document_type_id,last_seen_at=now()
         RETURNING document_id`,[p.tenantId,id,row.xero_connection_id,row.source_kind,row.source_id,row.provider_attachment_id,row.file_name,row.mime_type,row.size_bytes,row.document_type_id]);
       await this.cases.activity(db,p,id,'case.document_uploaded','Document uploaded to Xero');
+      await enqueueUploadedAnalysis(db,p.tenantId,id,String(result.rows[0].document_id),row.document_type_id,row.content_sha256);
       await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='completed',document_id=$3,updated_at=now() WHERE customer_id=$1 AND upload_id=$2`,[p.tenantId,job.upload_id,result.rows[0].document_id]);
       return {documentId:String(result.rows[0].document_id)};
     });
@@ -134,7 +136,16 @@ export class StudentOperationsCaseDocumentsService {
         WHERE d.customer_id=$1 AND d.case_id=$2 ORDER BY d.file_name,d.document_id LIMIT $3 OFFSET $4`,[p.tenantId,id,limit,(page-1)*limit]);
       const jobs=await db.query(`SELECT status,error_code AS "errorCode",count(*)::int count FROM ${caseSchema()}.student_operations_document_jobs WHERE customer_id=$1 AND case_id=$2 GROUP BY status,error_code`,[p.tenantId,id]);
       const requirements=await documentRequirements(db,p.tenantId,publicCaseStatus(row.lifecycle_status),id);
-      return {documents:documents.rows,requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
+      const analyses=await db.query(`SELECT j.document_id,j.status,r.result_id,r.extraction,v.result_id AS review_result_id,v.corrections,v.decision,
+        s.legal_name FROM (SELECT DISTINCT ON(document_id) * FROM ${caseSchema()}.student_document_analysis_jobs
+        WHERE customer_id=$1 AND case_id=$2 ORDER BY document_id,created_at DESC,job_id DESC) j
+        JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=j.customer_id AND c.case_id=j.case_id
+        JOIN ${caseSchema()}.student_operations_students s ON s.customer_id=c.customer_id AND s.student_id=c.student_id
+        LEFT JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=j.customer_id AND r.job_id=j.job_id
+        LEFT JOIN LATERAL (SELECT * FROM ${caseSchema()}.student_document_reviews v WHERE v.customer_id=j.customer_id
+          AND v.case_id=j.case_id AND v.document_id=j.document_id ORDER BY review_version DESC LIMIT 1) v ON true`,[p.tenantId,id]);
+      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,analysisStatus:a?analysisVerdict(a,a.legal_name).status:null};}),
+        analysisPending:analyses.rows.some(j=>j.status==='queued'||j.status==='processing'),requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
     });
   }
 

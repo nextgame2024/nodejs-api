@@ -13,6 +13,8 @@ import { ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { XeroAttachment } from '../connectors/xero/xero.client.js';
 import { enqueueDocumentAnalysis, StudentDocumentAnalysisQueue } from '../business-packs/student-operations/student-document-analysis.queue.js';
+import { StudentDocumentAnalysisService } from '../business-packs/student-operations/student-document-analysis.service.js';
+import { StudentDocumentAnalysisWorker } from '../business-packs/student-operations/student-document-analysis.worker.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -74,6 +76,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT DELETE,UPDATE ON TABLES TO sophia_runtime_app');
     await pool.query((await readFile(new URL('./migrations/094_student_document_analysis.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE,UPDATE ON TABLES FROM sophia_runtime_app');
+    await pool.query((await readFile(new URL('./migrations/095_student_document_analysis_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -625,4 +628,47 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(transaction(otherTenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_requirement_defaults'))).rejects.toThrow('permission denied');
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
+  test('upload through analysis and audited review/retry respects permissions and optimistic versions',async()=>{
+    const restore=enableCreation(),old=process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;
+    process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='true';
+    try{
+      const student=await overflowStudent('Workflow Analysis'),mock=provider();
+      const db={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+      const analysis=new StudentDocumentAnalysisService(db,service);
+      const type=(await types.requirements(p,{status:'pre_sale'})).requirements.find(r=>r.requirementKey==='engagement_letter')!;
+      const uploaded=await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'analysis-upload-trigger');
+      expect(await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'analysis-upload-trigger')).toEqual(uploaded);
+      const documentId=String(uploaded.documentId);
+      expect((await mock.docs.list(p,student.caseId,{})).documents[0].analysisStatus).toBe('checking');
+      expect((await analysis.get(p,student.caseId,documentId)).status).toBe('checking');
+      const extraction={kind:'engagement_letter' as const,studentName:'Workflow Analysis',evidence:[{page:4,quote:'Signed and completed'}],issues:[],status:'signed',signerName:'Workflow Analysis',signedAt:'2026-09-15T02:59:31Z',completed:true,documentIdMatches:true};
+      const worker=new StudentDocumentAnalysisWorker(db,{attachmentContent:async()=>pdf.buffer} as unknown as XeroConnectorService,{extract:async()=>({extraction,provider:'fixture',model:'fixture',inputTokens:10,outputTokens:20})});
+      expect(await worker.processOne(tenant)).toBe(true);
+      const checked=await analysis.get(p,student.caseId,documentId);
+      expect(checked.status).toBe('passed');expect(checked.resultId).toBeTruthy();
+      const listed=await mock.docs.list(p,student.caseId,{});
+      expect(listed.documents[0].analysisStatus).toBe('passed');expect(JSON.stringify(listed)).not.toContain('Signed and completed');
+      const payload={resultId:checked.resultId,expectedReviewVersion:0,decision:'rejected',reason:'Please replace the file',corrections:null};
+      await expect(analysis.review({...p,role:'advisor'},student.caseId,documentId,payload,'analysis-advisor-denied')).rejects.toThrow();
+      await expect(analysis.get({...p,tenantId:'88888888-8888-4888-8888-888888888888'},student.caseId,documentId)).rejects.toThrow('not found');
+      expect(await analysis.review(p,student.caseId,documentId,payload,'analysis-review-reject')).toEqual({saved:true});
+      expect(await analysis.review(p,student.caseId,documentId,payload,'analysis-review-reject')).toEqual({saved:true});
+      expect((await analysis.get(p,student.caseId,documentId)).status).toBe('invalid');
+      await expect(analysis.review(p,student.caseId,documentId,payload,'analysis-review-stale')).rejects.toThrow('changed');
+      await analysis.review(p,student.caseId,documentId,{...payload,expectedReviewVersion:1,decision:'confirmed',reason:'Original checked'},'analysis-review-confirm');
+      expect((await analysis.get(p,student.caseId,documentId)).status).toBe('passed');
+      const activity=await service.activities(p,student.caseId,{});
+      expect(activity.activity.filter(a=>a.eventType==='case.document_reviewed')).toHaveLength(2);
+      expect(activity.activity.find(a=>a.eventType==='case.document_checked')?.actorName).toBe('SophiaAi');
+      // A failed check retries the same saved document, without an additional Xero upload.
+      const second=await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'analysis-upload-failure');
+      const queue=new StudentDocumentAnalysisQueue(db),lease=(await queue.claim(tenant))!;
+      await queue.fail(tenant,lease.jobId,lease.leaseToken,'provider_unavailable',false);
+      expect((await analysis.get(p,student.caseId,String(second.documentId))).status).toBe('check_failed');
+      const calls=mock.xero.uploadAttachment.mock.calls.length;
+      await analysis.retry(p,student.caseId,String(second.documentId),{jobId:lease.jobId},'analysis-retry-same-file');
+      expect(mock.xero.uploadAttachment).toHaveBeenCalledTimes(calls);
+      expect((await analysis.get(p,student.caseId,String(second.documentId))).status).toBe('checking');
+    }finally{restore();if(old===undefined)delete process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;else process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED=old;}
+  });
 });

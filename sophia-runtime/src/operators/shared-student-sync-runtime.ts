@@ -10,9 +10,11 @@ import { StudentOperationsCaseDocumentsService } from '../business-packs/student
 import { StudentDocumentRechecks } from '../business-packs/student-operations/student-document-rechecks.js';
 import { StudentSyncHealth } from './student-sync-health.js';
 import { studentDocumentFetchBudgetMinutes } from '../business-packs/student-operations/student-document-fetch-budget.js';
+import { StudentDocumentAnalysisWorker } from '../business-packs/student-operations/student-document-analysis.worker.js';
+import { OpenAIDocumentExtractionProvider } from '../business-packs/student-operations/openai-document-extraction.provider.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
-  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED'] as const;
+  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'] as const;
 function featureFlags() {
   // An explicit allowlist of booleans only: never log arbitrary environment
   // values, credentials or connection strings during startup diagnosis.
@@ -34,9 +36,16 @@ export function createSharedStudentSyncRuntime() {
   const scopeChecks=new Map<string,{checkedAt:number;ready:boolean}>();
   const rechecks=new StudentDocumentRechecks(database),recheckSchedules=new Map<string,number>();
   const health=new StudentSyncHealth(database);
+  const analysis=new StudentDocumentAnalysisWorker(database,xero,new OpenAIDocumentExtractionProvider());
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
+      if(process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED==='true') {
+        requireFlags('Document analysis requires shared quota and backoff.',['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED']);
+        if(!process.env.STUDENT_DOCUMENT_ANALYSIS_MODEL?.trim()||!runtimeConfig().openAi.apiKey)throw new Error('Document analysis requires an approved model and server OpenAI credentials.');
+        const ready=await database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS ready`,[`${schema}.student_document_analysis_jobs`,`${schema}.student_document_reviews`]);
+        if(!ready.rows[0]?.ready)throw new Error('Document analysis requires Runtime migration 094.');
+      }
       if(process.env.STUDENT_SYNC_HEALTH_LOGS_ENABLED==='true') requireFlags(
         'Sync health logs require quota, backoff and source deduplication.',
         ['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED']);
@@ -81,6 +90,7 @@ export function createSharedStudentSyncRuntime() {
     },
     documentPolicy:()=>({fetchBudgetMinutes:studentDocumentFetchBudgetMinutes()}),
     reportHealth:(customerId:string)=>health.report(customerId),
+    processDocumentAnalysis:(customerId:string)=>analysis.processOne(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(
         `SELECT customer_id,sync_run_id FROM ${schema}.claim_due_student_operations_xero_worker_runs(1)`);

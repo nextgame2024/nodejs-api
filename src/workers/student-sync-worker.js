@@ -66,3 +66,16 @@ export function createStudentSyncCoordinator({runtime,processUsers,customerIds,n
     },
   };
 }
+// Independent bounded analysis lane: one in-flight provider request, round-robin
+// tenant admission, no overnight window and no delay to invoice/student stages.
+export function createDocumentAnalysisCoordinator({processOne,customerIds,log=()=>{}}) {
+  if(!customerIds?.length||customerIds.some(id=>!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))throw new Error('Valid analysis customer IDs required.');
+  const tenants=[...new Set(customerIds)];let busy=false,index=0;
+  return {async tick(signal){
+    if(busy||signal?.aborted)return false;
+    busy=true;
+    try{return await processOne(tenants[index++%tenants.length]);}
+    catch{log({event:'student_document_analysis_tick_failed'});return false;}
+    finally{busy=false;}
+  }};
+}

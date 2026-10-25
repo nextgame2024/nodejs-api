@@ -1,6 +1,7 @@
 import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentDocumentTypesService } from './student-document-types.service.js';
+import { StudentDocumentAnalysisService } from './student-document-analysis.service.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
 import { StudentOperationsCasesService } from './student-operations-cases.service.js';
 import { StudentOperationsCaseDocumentsService } from './student-operations-case-documents.service.js';
@@ -9,7 +10,12 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @Controller('business-packs/student-operations/v1/workspace/cases')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
-  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService) {}
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService) {}
+  @Get(':caseId/documents/:documentId/analysis')
+  @Header('Cache-Control','private, no-store')
+  analysisStatus(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string){return this.analysis.get(r.studentOperationsPrincipal,id,doc);}
+  @Post(':caseId/documents/:documentId/analysis/review') reviewDocument(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.analysis.review(r.studentOperationsPrincipal,id,doc,body,key);}
+  @Post(':caseId/documents/:documentId/analysis/retry') retryAnalysis(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.analysis.retry(r.studentOperationsPrincipal,id,doc,body,key);}
   @Get('document-types') documentTypes(@Req() r:Request){return this.types.list(r.studentOperationsPrincipal);}
   @Get('document-requirements') documentRequirements(@Req() r:Request,@Query() query:unknown){return this.types.requirements(r.studentOperationsPrincipal,query);}
   @Post('document-types') createType(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.create(r.studentOperationsPrincipal,body,key);}

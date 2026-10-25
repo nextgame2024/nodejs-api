@@ -19,7 +19,7 @@ export interface AnalysisLease {
   kind: z.infer<typeof documentKind>; schemaVersion: string; leaseToken: string; attempts: number;
 }
 
-/** Called inside the upload finalization transaction in phase 2; deliberately not wired yet. */
+/** Called inside the upload finalization transaction. */
 export async function enqueueDocumentAnalysis(db: PoolClient, tenantId: string, input: unknown): Promise<string> {
   z.uuid().parse(tenantId);
   const value = enqueueInput.parse(input), s = caseSchema();
@@ -74,6 +74,8 @@ export class StudentDocumentAnalysisQueue {
         [tenantId, job.case_id, job.document_id, jobId, JSON.stringify(value.extraction), value.provider, value.model, value.inputTokens, value.outputTokens]);
       await db.query(`UPDATE ${s}.student_document_analysis_jobs SET status='succeeded',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE customer_id=$1 AND job_id=$2`, [tenantId, jobId]);
+      await db.query(`INSERT INTO ${s}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary,detail)
+        VALUES($1,$2,'system:document-analysis','case.document_checked','Document checked',jsonb_build_object('actorKind','automation','actorName','SophiaAi'))`,[tenantId,job.case_id]);
       return String(result.rows[0].result_id);
     });
   }

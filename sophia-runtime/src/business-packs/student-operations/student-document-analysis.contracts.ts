@@ -44,7 +44,7 @@ export interface StudentDocumentExtractionProvider {
     inputTokens: number; outputTokens: number }>;
 }
 
-// Future review endpoints accept corrections, never client-supplied actor/company authority.
+// Review endpoints accept corrections, never client-supplied actor/company authority.
 export const documentReview = z.object({
   resultId: z.uuid(), expectedReviewVersion: z.number().int().min(0),
   decision: z.enum(['confirmed', 'rejected']), reason: text,
