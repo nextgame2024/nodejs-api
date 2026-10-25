@@ -35,6 +35,9 @@ services:
       # before enabling on Runtime API and worker. Analysis runs throughout the day.
       - key: STUDENT_DOCUMENT_ANALYSIS_ENABLED
         value: "false"
+      # Apply 096 and deploy both backends/worker/frontend before enabling.
+      - key: STUDENT_OFFER_ANALYSIS_ENABLED
+        value: "false"
       # Worker only: retain 30 until rollout approval. 30-120; above 30 requires
       # quota/backoff/source dedup true. The 500-source cap and window stay fixed.
       - key: STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES

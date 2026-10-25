@@ -37,6 +37,14 @@ describe('Shared worker Runtime adapter',()=>{
       await worker.processDocumentAnalysis('tenant');expect(processAnalysis).toHaveBeenCalledWith('tenant');
     }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
   });
+  it('gates offer analysis on document analysis and migration 096',async()=>{
+    const keys=['STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);
+    try{process.env.STUDENT_OFFER_ANALYSIS_ENABLED='true';delete process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('Offer analysis requires document analysis');
+      process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='true';query.mockResolvedValue({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('096');
+    }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+  });
   it('validates the opt-in budget before database access and exposes only the numeric policy',async()=>{
     const keys=['STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES','XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED'];
     const previous=keys.map(key=>process.env[key]);
@@ -77,7 +85,7 @@ describe('Shared worker Runtime adapter',()=>{
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
     query.mockResolvedValue({rows:[{ready:true}]});
     try {
-      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false});
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false});
     } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
   });
   it('requires migration 085 before enabling document rechecks',async()=>{

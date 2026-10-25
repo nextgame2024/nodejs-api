@@ -6,6 +6,18 @@ jest.unstable_mockModule('../src/config/db.js', () => ({ default: { query, conne
 const colleges = await import('../src/models/bm.colleges.model.js');
 
 describe('Business Manager college data isolation', () => {
+  test('offer college creation serializes same-company names and reuses an active match on retry',async()=>{
+    const existing={collegeId:'college-1',collegeName:'Example College',abn:'12345678901'};
+    const db={query:jest.fn(async sql=>({rows:String(sql).includes('FROM bm_colleges')?[existing]:[]})),release:jest.fn()};connect.mockResolvedValueOnce(db);
+    expect(await colleges.createFromOffer('company-1',{college_name:' Example College ',abn:'12345678901'})).toEqual(existing);
+    expect(db.query.mock.calls[1][1]).toEqual(['offer-college:company-1:example college']);
+    expect(db.query.mock.calls[2][1]).toEqual(['company-1','example college']);expect(db.query.mock.calls.some(c=>c[0].includes('INSERT'))).toBe(false);
+    expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');expect(db.release).toHaveBeenCalled();
+  });
+  test('offer college creation does not silently choose duplicates or overwrite a conflicting ABN',async()=>{
+    const db={query:jest.fn(async sql=>({rows:String(sql).includes('FROM bm_colleges')?[{collegeId:'college-1',abn:'12345678901'}]:[]})),release:jest.fn()};connect.mockResolvedValueOnce(db);
+    await expect(colleges.createFromOffer('company-1',{college_name:'Example',abn:'99999999999'})).rejects.toMatchObject({code:'COLLEGE_MATCH_CONFLICT'});expect(db.query.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+  });
   test('list and count use the caller company, with bounded paging', async () => {
     query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1' }] })
       .mockResolvedValueOnce({ rows: [{ total: 1 }] });

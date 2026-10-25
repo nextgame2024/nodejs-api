@@ -49,6 +49,12 @@ describe('Document analysis execution',()=>{
     jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({status:'incomplete',output:[]})));
     await expect(new OpenAIDocumentExtractionProvider().extract({kind:'passport',bytes,mimeType:'application/pdf',schemaVersion:'1',signal:AbortSignal.timeout(1000)})).rejects.toMatchObject({code:'invalid_output',retryable:false});
   });
+  test('offers use the full structured schema and preserve conditional monetary fields',async()=>{
+    const offer={kind:'letter_of_offer',studentName:'Example Student',evidence:[],issues:[],collegeName:'Example College',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:904000,courses:[],fees:[{label:'Transfer fee',amountMinor:2500,conditional:true,condition:'International payments'}],instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:99500,includedConditionalFeeMinor:2500,components:[{label:'Material',amountMinor:5000},{label:'Tuition',amountMinor:72000}]}]};
+    const mock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(offer)}]}],usage:{input_tokens:100,output_tokens:200}})));
+    expect((await new OpenAIDocumentExtractionProvider().extract({kind:'letter_of_offer',bytes,mimeType:'application/pdf',schemaVersion:'2',signal:AbortSignal.timeout(1000)})).extraction).toEqual(offer);
+    const body=JSON.parse(String(mock.mock.calls[0][1]?.body));expect(body.max_output_tokens).toBe(12000);expect(body.text.format.schema.properties.instalments).toBeDefined();expect(body.store).toBe(false);
+  });
   test('HTTP errors never expose upstream private content',async()=>{
     jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private upstream payload',{status:429}));
     await expect(new OpenAIDocumentExtractionProvider().extract({kind:'passport',bytes,mimeType:'application/pdf',schemaVersion:'1',signal:AbortSignal.timeout(1000)})).rejects.toMatchObject({message:'rate_limited',retryable:true});

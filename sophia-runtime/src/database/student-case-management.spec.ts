@@ -77,6 +77,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/094_student_document_analysis.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE,UPDATE ON TABLES FROM sophia_runtime_app');
     await pool.query((await readFile(new URL('./migrations/095_student_document_analysis_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query('ALTER TABLE public.bm_colleges ADD COLUMN abn text');
+    await pool.query((await readFile(new URL('./migrations/096_student_offer_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -134,9 +136,8 @@ suite('Case management against disposable PostgreSQL',()=>{
       collegeName:'Example College',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:904000,
       courses:[],fees:[],instalments:[],
     }});
-    const offerId=String((await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offers
-      (customer_id,case_id,document_id,result_id,currency,stated_total_minor)
-      VALUES($1,$2,$3,$4,'AUD',904000) RETURNING offer_id`,[tenant,id,documentId,offerResult]))).rows[0].offer_id);
+    const offerId=String((await transaction(tenant,db=>db.query(`SELECT offer_id FROM sophia_runtime.student_case_offers
+      WHERE customer_id=$1 AND result_id=$2`,[tenant,offerResult]))).rows[0].offer_id);
     await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offer_fees
       (customer_id,offer_id,label,amount_minor,conditional,condition) VALUES($1,$2,'International transfer',2500,true,'International payments')`,[tenant,offerId]));
     await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offer_instalments
@@ -628,6 +629,63 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(transaction(otherTenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_requirement_defaults'))).rejects.toThrow('permission denied');
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
+  test('offer extraction saves proposals, matches the college and confirms immutable financial revisions',async()=>{
+    const restore=enableCreation(),old=process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED,oldOffer=process.env.STUDENT_OFFER_ANALYSIS_ENABLED;
+    process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED=process.env.STUDENT_OFFER_ANALYSIS_ENABLED='true';
+    try{
+      const collegeId=randomUUID();await pool.query(`INSERT INTO public.bm_colleges(college_id,company_id,college_name,status,abn) VALUES($1,$2,'East Coast College','active','11627536823')`,[collegeId,company]);
+      const student=await overflowStudent('Offer Workflow'),mock=provider(),db={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+      const analysis=new StudentDocumentAnalysisService(db,service),type=(await types.requirements(p,{status:'pre_sale'})).requirements.find(r=>r.requirementKey==='letter_of_offer')!;
+      process.env.STUDENT_OFFER_ANALYSIS_ENABLED='false';
+      const uploaded=await mock.docs.upload(p,student.caseId,{documentTypeId:type.documentTypeId},pdf,'offer-upload-trigger'),documentId=String(uploaded.documentId);
+      process.env.STUDENT_OFFER_ANALYSIS_ENABLED='true';
+      expect((await analysis.get(p,student.caseId,documentId)).canStart).toBe(true);
+      expect((await mock.docs.list(p,student.caseId,{})).documents[0].analysisStatus).toBe('not_checked');
+      expect(await analysis.start(p,student.caseId,documentId,{},'offer-start-saved')).toEqual({queued:true});
+      expect(await analysis.start(p,student.caseId,documentId,{},'offer-start-saved')).toEqual({queued:true});
+      expect(mock.xero.uploadAttachment).toHaveBeenCalledTimes(1);
+      const extraction={kind:'letter_of_offer' as const,studentName:'Offer Workflow',collegeName:'East Coast College',abn:'11627536823',cricosProviderCode:'03829G',currency:'AUD',statedTotalMinor:904000,evidence:[{page:2,quote:'Grand total AUD 9040.00'}],issues:[],
+        courses:[{name:'General English',code:'116682E',startsOn:'2027-01-25',endsOn:'2028-03-19',duration:'60 weeks'}],
+        fees:[{label:'Tuition and material',amountMinor:904000,conditional:false,condition:null},{label:'International transfer',amountMinor:2500,conditional:true,condition:'International payments only'}],
+        instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:99500,includedConditionalFeeMinor:2500,components:[{label:'Material',amountMinor:5000},{label:'Tuition',amountMinor:72000}]},{sequence:2,dueTerm:null,dueOn:'2028-01-31',totalMinor:807000,includedConditionalFeeMinor:0,components:[]}]};
+      const worker=new StudentDocumentAnalysisWorker(db,{attachmentContent:async()=>pdf.buffer} as unknown as XeroConnectorService,{extract:async()=>({extraction,provider:'fixture',model:'fixture',inputTokens:100,outputTokens:200})});
+      await worker.processOne(tenant);
+      const initial=await analysis.get(p,student.caseId,documentId);
+      expect(initial.status).toBe('needs_review');expect(initial.offer).toMatchObject({resolution:'exact',currentCollegeId:collegeId,selectedCollegeId:collegeId,totals:{statedTotalMinor:904000,instalmentTotalMinor:906500,includedConditionalFeesMinor:2500,unexplainedDifference:false}});
+      expect((await service.get(p,student.caseId)).colleges.some(c=>c.collegeId===collegeId&&c.isPrimary)).toBe(true);
+      const payload={resultId:initial.resultId,expectedReviewVersion:0,expectedCaseVersion:initial.offer!.caseRecordVersion,decision:'confirmed',reason:'Checked all source tables',corrections:extraction,collegeId,replaceCollege:false,acknowledgeTotals:false};
+      await expect(analysis.review(p,student.caseId,documentId,{...payload,collegeId:randomUUID()},'offer-foreign-college')).rejects.toThrow('active college');
+      await expect(analysis.review(p,student.caseId,documentId,{...payload,corrections:{...extraction,statedTotalMinor:910000}},'offer-unexplained')).rejects.toThrow('acknowledge');
+      expect(await analysis.review(p,student.caseId,documentId,payload,'offer-confirm')).toEqual({saved:true});
+      expect(await analysis.review(p,student.caseId,documentId,payload,'offer-confirm')).toEqual({saved:true});
+      const header=await transaction(tenant,db=>db.query(`SELECT offer_id,status,review_version,is_current FROM sophia_runtime.student_case_offers WHERE customer_id=$1 AND case_id=$2 ORDER BY review_version`,[tenant,student.caseId]));
+      expect(header.rows.map(r=>[r.review_version,r.is_current])).toEqual([[0,false],[1,true]]);
+      expect((await analysis.get(p,student.caseId,documentId)).status).toBe('passed');
+      expect((await service.get(p,student.caseId)).courseName).toBe('General English');
+      const payments=await transaction(tenant,db=>db.query(`SELECT total_minor::int,included_conditional_fee_minor::int,due_on,due_term FROM sophia_runtime.student_case_offer_instalments WHERE offer_id=$1 ORDER BY sequence`,[header.rows[1].offer_id]));
+      expect(payments.rows[0]).toEqual({total_minor:99500,included_conditional_fee_minor:2500,due_on:null,due_term:'Immediately'});
+      expect((await transaction(tenant,db=>db.query(`SELECT components FROM sophia_runtime.student_case_offer_instalments WHERE offer_id=$1 AND sequence=1`,[header.rows[1].offer_id]))).rows[0].components).toEqual(extraction.instalments[0].components);
+      expect((await pool.query('SELECT extraction FROM sophia_runtime.student_document_analysis_results WHERE result_id=$1',[initial.resultId])).rows[0].extraction).toEqual(extraction);
+      await expect(analysis.review(p,student.caseId,documentId,payload,'offer-stale-confirm')).rejects.toThrow('changed');
+      const revised=await analysis.get(p,student.caseId,documentId);
+      await analysis.review(p,student.caseId,documentId,{...payload,expectedReviewVersion:1,expectedCaseVersion:revised.offer!.caseRecordVersion,corrections:{...extraction,courses:[{...extraction.courses[0],name:'Reviewed English course'}]}},'offer-revise');
+      expect((await transaction(tenant,db=>db.query(`SELECT count(*)::int n FROM sophia_runtime.student_case_offers WHERE case_id=$1 AND is_current`,[student.caseId]))).rows[0].n).toBe(1);
+      expect((await pool.query('SELECT status FROM sophia_runtime.student_case_offers WHERE offer_id=$1',[header.rows[1].offer_id])).rows[0].status).toBe('superseded');
+      const other='88888888-8888-4888-8888-888888888888';expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_operations_offer_college_directory'))).rowCount).toBe(0);
+      expect((await service.activities(p,student.caseId,{})).activity.find(a=>a.eventType==='case.college_matched')?.actorName).toBe('SophiaAi');
+      const secondCase=String((await service.create(p,{userId:student.userId,collegeId:college},'offer-existing-college-case')).caseId);
+      const secondFile=String((await mock.docs.upload(p,secondCase,{documentTypeId:type.documentTypeId},pdf,'offer-second-upload')).documentId);
+      await worker.processOne(tenant);const existing=await analysis.get(p,secondCase,secondFile);
+      expect(existing.offer?.currentCollegeId).toBe(college); // Existing assignment was preserved.
+      const nextPayload={...payload,resultId:existing.resultId,expectedCaseVersion:existing.offer!.caseRecordVersion};
+      await service.update(p,secondCase,{recordVersion:existing.offer!.caseRecordVersion,title:'Changed in another editor'},'offer-concurrent-case-edit');
+      await expect(analysis.review(p,secondCase,secondFile,nextPayload,'offer-stale-case')).rejects.toThrow('Case changed');
+      const refreshed=await analysis.get(p,secondCase,secondFile),freshPayload={...nextPayload,expectedCaseVersion:refreshed.offer!.caseRecordVersion};
+      await expect(analysis.review(p,secondCase,secondFile,freshPayload,'offer-replace-denied')).rejects.toThrow('replacing');
+      await analysis.review(p,secondCase,secondFile,{...freshPayload,replaceCollege:true},'offer-replace-confirmed');
+      expect((await service.get(p,secondCase)).colleges.find(c=>c.isPrimary)?.collegeId).toBe(collegeId);
+    }finally{restore();if(old===undefined)delete process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;else process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED=old;if(oldOffer===undefined)delete process.env.STUDENT_OFFER_ANALYSIS_ENABLED;else process.env.STUDENT_OFFER_ANALYSIS_ENABLED=oldOffer;}
+  });
   test('upload through analysis and audited review/retry respects permissions and optimistic versions',async()=>{
     const restore=enableCreation(),old=process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;
     process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='true';

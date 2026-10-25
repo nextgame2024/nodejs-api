@@ -14,7 +14,7 @@ import { StudentDocumentAnalysisWorker } from '../business-packs/student-operati
 import { OpenAIDocumentExtractionProvider } from '../business-packs/student-operations/openai-document-extraction.provider.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
-  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'] as const;
+  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED'] as const;
 function featureFlags() {
   // An explicit allowlist of booleans only: never log arbitrary environment
   // values, credentials or connection strings during startup diagnosis.
@@ -40,6 +40,11 @@ export function createSharedStudentSyncRuntime() {
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
+      if(process.env.STUDENT_OFFER_ANALYSIS_ENABLED==='true'){
+        requireFlags('Offer analysis requires document analysis.',['STUDENT_DOCUMENT_ANALYSIS_ENABLED']);
+        const ready=await database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AS ready`,[`${schema}.student_operations_offer_college_directory`]);
+        if(!ready.rows[0]?.ready)throw new Error('Offer analysis requires Runtime migration 096.');
+      }
       if(process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED==='true') {
         requireFlags('Document analysis requires shared quota and backoff.',['XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED']);
         if(!process.env.STUDENT_DOCUMENT_ANALYSIS_MODEL?.trim()||!runtimeConfig().openAi.apiKey)throw new Error('Document analysis requires an approved model and server OpenAI credentials.');

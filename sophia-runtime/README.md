@@ -153,7 +153,7 @@ tenant-scoped durable analysis queue, append-only extraction results/reviews and
 case offer/course/fee/instalment stores. Every document/result reference includes
 its tenant and case; all seven stores force RLS and deny application deletion.
 Only jobs and offer headers permit updates. Source financial rows and review
-history remain append-only; a revised offer uses a new analysis result. One
+history remain append-only; phase 3 also supports reviewed versions of a result. One
 confirmed current offer is allowed per case.
 
 `student-document-analysis.contracts.ts` defines bounded strict extraction and
@@ -243,9 +243,66 @@ Authenticated routes under `.../workspace/cases/:caseId/documents/:documentId`:
 Automatic result completion records `Document checked` as SophiaAi; manual review
 and retry events use the authenticated user's existing activity identity. No
 checklist completion/status transition is automated yet. Letter of Offer
-extraction, financial proposal persistence and college matching are phase 3;
+extraction, financial proposal persistence and college matching are described below;
 checklist automation is phase 4. Historical/replacement authoritative selection
 and wider model accuracy/cost evaluation remain documented rollout work.
+
+### Letter of Offer review (phase 3)
+
+Apply owner migration `096_student_offer_review.sql` after 095. Deploy the Business
+Manager Express backend, Runtime API, shared worker and frontend together. Enable
+`STUDENT_OFFER_ANALYSIS_ENABLED=true` on **both Runtime API and shared worker**, with
+the existing analysis feature enabled. Keep the approved worker model (currently
+`gpt-4.1`) and server credential configured. The worker checks the 096 directory
+view before startup. Migration alone performs no provider calls or backfill.
+
+New uploads with the stable `letter_of_offer` requirement key enqueue schema v2
+extraction. The provider receives bounded PDF/image input with strict per-kind
+Structured Outputs and a 12,000-token offer output cap. Existing v1 stored offers
+remain readable. Source content is untrusted evidence, never model instructions.
+All courses, fee lines, instalments and per-payment components are preserved with
+integer minor-unit amounts. Stated totals and printed instalment totals remain
+distinct: the example retains 9,040 AUD and 9,065 AUD, with the first 25 AUD already
+included in its 995 AUD payment. Conditional-fee applicability is deferred to the
+future invoice flow. `Immediately` stays a literal due term with no invented date.
+
+Extraction appends an immutable result and proposed relational offer atomically.
+Confirmation adds an immutable reviewed version and makes it the case's one
+current confirmed offer; prior source and reviewed financial rows remain intact.
+Incomplete proposals retain their source extraction for correction. Financial
+children are bulk inserted. Normal page/status reads use local data, not providers.
+
+Only a unique normalized exact active same-company college match, with clear
+student/evidence and no identifier conflict, may auto-assign an unassigned case.
+Partial/duplicate/conflicting matches require selection. An existing different
+college is preserved until an explicit replacement is confirmed. Review requires
+a note, current document/case versions, complete financial fields and an explicit
+acknowledgement of unexplained total differences. The case summary uses the first
+course; all courses remain available on the offer. Automatic college matching and
+extraction activity use SophiaAi; confirmations/rejections use the signed-in actor.
+
+The existing review dialog includes an editable offer form and company-scoped
+college selection/creation. Creation follows College Details' required name and
+optional owner/ABN/notes through `POST /bm/colleges/from-offer`. A transaction lock
+serializes same-name offer creations; retries reuse a unique compatible active
+college, while duplicate matches or ABN conflicts return a safe conflict. This
+does not merge or rewrite historical colleges. Refreshing the local directory
+retains unsaved review edits and does not silently rebase the case version.
+The source-order course/fee/instalment cards are financial editors, not directory
+tables; they reuse manager inputs/selects, toasts, native dialog and touch/dark styles.
+
+Managers can also `POST analysis/start` with `{}` and an Idempotency-Key for a
+completed, typed app-upload with a known stored hash that has no existing job.
+This supports files uploaded before activation without reuploading or creating
+another Contact. Imported/unclassified files are not automatically analyzed.
+Existing retry continues to reuse saved files. Tenant RLS, manager-only evidence,
+active company college checks and optimistic/idempotent writes remain enforced.
+
+No invoices, fee applicability choices, automatic checklist completion or case
+status transitions are introduced. Phase 4 covers checklist integration and wider
+replacement/expiry reevaluation. Mock tests and local database/UI tests do not
+establish live provider accuracy, latency or cost; controlled live evaluation is
+still required after rollout.
 
 ### Status-based document requirements
 

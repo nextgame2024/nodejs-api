@@ -41,6 +41,14 @@ router.post('/bm/colleges', asyncHandler(async (req, res) => {
   res.status(201).json({ college: await colleges.create(req.user.companyId, { ...value, college_name: value.college_name.trim() }) });
 }));
 
+router.post('/bm/colleges/from-offer',asyncHandler(async(req,res)=>{
+  const value=body(req,'college');
+  if(!value||typeof value!=='object'||Object.keys(value).some(key=>!['college_name','owner_name','abn','notes'].includes(key)))return bad(res,'Enter the college details.');
+  if(!validName(value.college_name,200)||!validOptionalText(value.owner_name,200)||!validOptionalText(value.abn,80)||!validOptionalText(value.notes,5000))return bad(res,'Enter a college name and valid details.');
+  try{return res.status(201).json({college:await colleges.createFromOffer(req.user.companyId,value)});}
+  catch(error){if(error.code==='COLLEGE_MATCH_CONFLICT')return res.status(409).json({error:error.message});throw error;}
+}));
+
 router.get('/bm/colleges/:collegeId', asyncHandler(async (req, res) => {
   if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');
   const college = await colleges.get(req.user.companyId, req.params.collegeId);

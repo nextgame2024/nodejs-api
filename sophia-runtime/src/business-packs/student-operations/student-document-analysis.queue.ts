@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { DatabaseService } from '../../database/database.service.js';
 import { caseSchema } from './student-operations-cases.service.js';
 import { DOCUMENT_ANALYSIS_VERSION, documentExtraction, documentKind } from './student-document-analysis.contracts.js';
+import { persistOffer } from './student-case-offers.js';
 
 const enqueueInput = z.object({ caseId: z.uuid(), documentId: z.uuid(),
   contentSha256: z.string().regex(/^[a-f0-9]{64}$/), kind: documentKind,
@@ -68,14 +69,16 @@ export class StudentDocumentAnalysisQueue {
       const job = locked.rows[0];
       if (!job) return null; // Expired/stolen lease cannot publish evidence.
       if (job.document_kind !== value.extraction.kind) throw new Error('Extraction kind mismatch');
+      if(value.extraction.kind==='letter_of_offer')await db.query(`SELECT case_id FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2 FOR UPDATE`,[tenantId,job.case_id]);
       const result = await db.query(`INSERT INTO ${s}.student_document_analysis_results
         (customer_id,case_id,document_id,job_id,extraction,provider,model,input_tokens,output_tokens)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING result_id`,
         [tenantId, job.case_id, job.document_id, jobId, JSON.stringify(value.extraction), value.provider, value.model, value.inputTokens, value.outputTokens]);
+      if(value.extraction.kind==='letter_of_offer')await persistOffer(db,tenantId,job.case_id,job.document_id,String(result.rows[0].result_id),value.extraction);
       await db.query(`UPDATE ${s}.student_document_analysis_jobs SET status='succeeded',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE customer_id=$1 AND job_id=$2`, [tenantId, jobId]);
       await db.query(`INSERT INTO ${s}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary,detail)
-        VALUES($1,$2,'system:document-analysis','case.document_checked','Document checked',jsonb_build_object('actorKind','automation','actorName','SophiaAi'))`,[tenantId,job.case_id]);
+        VALUES($1,$2,'system:document-analysis','case.document_checked',$3,jsonb_build_object('actorKind','automation','actorName','SophiaAi'))`,[tenantId,job.case_id,value.extraction.kind==='letter_of_offer'?'Letter of Offer extracted':'Document checked']);
       return String(result.rows[0].result_id);
     });
   }

@@ -16,6 +16,7 @@ export class StudentOperationsCasesController {
   analysisStatus(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string){return this.analysis.get(r.studentOperationsPrincipal,id,doc);}
   @Post(':caseId/documents/:documentId/analysis/review') reviewDocument(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.analysis.review(r.studentOperationsPrincipal,id,doc,body,key);}
   @Post(':caseId/documents/:documentId/analysis/retry') retryAnalysis(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.analysis.retry(r.studentOperationsPrincipal,id,doc,body,key);}
+  @Post(':caseId/documents/:documentId/analysis/start') startAnalysis(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.analysis.start(r.studentOperationsPrincipal,id,doc,body,key);}
   @Get('document-types') documentTypes(@Req() r:Request){return this.types.list(r.studentOperationsPrincipal);}
   @Get('document-requirements') documentRequirements(@Req() r:Request,@Query() query:unknown){return this.types.requirements(r.studentOperationsPrincipal,query);}
   @Post('document-types') createType(@Req() r:Request,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.types.create(r.studentOperationsPrincipal,body,key);}

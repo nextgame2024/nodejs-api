@@ -53,6 +53,24 @@ export async function create(companyId, value) {
   return result.rows[0];
 }
 
+// Offer retries reuse a same-company active name instead of creating duplicates.
+// Existing ambiguous directory entries or conflicting ABNs require selection.
+export async function createFromOffer(companyId,value) {
+  const db=await pool.connect();
+  const normalized=value.college_name.trim().replace(/\s+/g,' ').toLocaleLowerCase('en');
+  try{
+    await db.query('BEGIN');
+    await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,[`offer-college:${companyId}:${normalized}`]);
+    const existing=await db.query(`SELECT ${fields} FROM bm_colleges WHERE company_id=$1 AND status='active'
+      AND lower(regexp_replace(btrim(college_name),'[[:space:]]+',' ','g'))=$2 ORDER BY college_id FOR UPDATE`,[companyId,normalized]);
+    const match=existing.rows[0];
+    if(existing.rows.length>1||(match?.abn&&value.abn&&match.abn.replace(/\D/g,'')!==value.abn.replace(/\D/g,''))){const error=new Error('Select an existing college or resolve its ABN before creating another.');error.code='COLLEGE_MATCH_CONFLICT';throw error;}
+    const college=match??(await db.query(`INSERT INTO bm_colleges(company_id,college_name,owner_name,abn,notes)
+      VALUES($1,$2,$3,$4,$5) RETURNING ${fields}`,[companyId,value.college_name.trim(),value.owner_name??null,value.abn??null,value.notes??null])).rows[0];
+    await db.query('COMMIT');return college;
+  }catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
+}
+
 export async function update(companyId, collegeId, value) {
   const keys = editable.filter((key) => value[key] !== undefined);
   if (!keys.length) return get(companyId, collegeId);

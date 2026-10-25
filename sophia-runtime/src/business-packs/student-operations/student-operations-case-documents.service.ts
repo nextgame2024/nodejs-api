@@ -12,7 +12,7 @@ import { StudentPrimaryXeroContact } from './student-primary-xero-contact.js';
 import { StudentDocumentContactStorage } from './student-document-contact-storage.js';
 import { documentRequirements } from './student-document-requirements.js';
 import { publicCaseStatus } from './student-operations-case-workflow.js';
-import { enqueueUploadedAnalysis,analysisVerdict } from './student-document-analysis.service.js';
+import { enqueueUploadedAnalysis,analysisVerdict,eligibleAnalysisUploads } from './student-document-analysis.service.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -144,7 +144,8 @@ export class StudentOperationsCaseDocumentsService {
         LEFT JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=j.customer_id AND r.job_id=j.job_id
         LEFT JOIN LATERAL (SELECT * FROM ${caseSchema()}.student_document_reviews v WHERE v.customer_id=j.customer_id
           AND v.case_id=j.case_id AND v.document_id=j.document_id ORDER BY review_version DESC LIMIT 1) v ON true`,[p.tenantId,id]);
-      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,analysisStatus:a?analysisVerdict(a,a.legal_name).status:null};}),
+      const eligible=hasStudentOperationsPermission(p.role,'cases.manage')?await eligibleAnalysisUploads(db,p.tenantId,id,documents.rows.map(d=>d.documentId)):[];
+      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,analysisStatus:a?analysisVerdict(a,a.legal_name??'').status:eligible.some(u=>u.document_id===d.documentId)?'not_checked':null};}),
         analysisPending:analyses.rows.some(j=>j.status==='queued'||j.status==='processing'),requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
     });
   }
