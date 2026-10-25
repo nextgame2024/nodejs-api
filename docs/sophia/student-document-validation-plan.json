@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "date": "2026-10-25",
+  "status": "Phase 1 implemented and verified locally: migration 094, extraction/review/provider contracts, deterministic validators and durable queue primitives. Upload activation, provider adapter, UI, college resolution and checklist automation remain phases 2-4. No production migration, deployment or live AI evaluation performed.",
+  "objective": "Validate uploaded engagement letters and passport expiry; extract and review case-specific offer courses, fees and instalments; resolve the college within the authenticated company.",
+  "repositoryEvidence": {
+    "upload": "student-operations-case-documents.service.ts finalizes document metadata and case activity after Xero upload. Enqueue analysis atomically at this durable finalization point, including receipt recovery paths.",
+    "ai": "Existing OpenAIResponsesReasoningProvider uses Responses with server credentials, timeouts and store:false, but is a conversational text/tool stream. Introduce a separate document-extraction provider interface/adapter reusing configuration conventions; do not route private documents through conversation history or grant model tools.",
+    "workflow": "Migration 093 supplies stable status requirement keys. Associate extractors with stable semantic keys, never editable type names or filenames. Custom document types remain uploadable without implying automatic validation support.",
+    "college": "Existing bm.colleges routes are company-scoped. College creation requires college_name; sites require city and have separate contact/address fields. Reuse this contract and manager form. Case association uses the tenant-local college directory; creation must make the new college available there before assignment, with recoverable retry if propagation fails.",
+    "samples": "Local PDFKit extraction found four engagement pages; final history contains Signed, a named signed event and completion with matching document ID. The seven-page offer has almost no extractable text, requiring vision/OCR. Supplied offer screenshots show a 9040 AUD base total, 9065 AUD listed instalment sum and a first 25 AUD transfer fee, plus conditional transfer-fee wording. Preserve the distinction rather than flagging a false mismatch or adding fees twice. The passport image expiry reads 2035-08-06. No sample binaries or personal identifiers copied into the repository; no live extraction API called."
+  },
+  "invoiceConditionalFeeDecision": {
+    "confirmedOn": "2026-10-25",
+    "requirement": "Preserve the offer's stated base total and original instalment amounts, including any transfer fee already included. Store the 25 AUD international transfer fee separately as conditional; extraction must not decide whether it applies.",
+    "futureInvoiceFlow": "At invoice creation, require the user to explicitly choose whether the transfer fee applies to that invoice/payment. A student paying from an Australian account may not incur it. Do not infer the choice from nationality, address or student location, and do not default an unresolved choice to inclusion or exclusion.",
+    "calculation": "Show the base amount, conditional transfer fee and resulting invoice total. If the source instalment already includes the fee, reconcile its component once rather than adding it again. For this sample the first payment is 970 AUD without the fee or 995 AUD with it. Preserve source totals of 9040 AUD and 9065 AUD unchanged as document evidence; the eventual invoice reflects the user's selection.",
+    "auditAndConsistency": "Persist the fee selection and amount with the future invoice, including actor and timestamp. Invoice/LoO consistency must account for this explicit conditional-fee decision rather than treating a justified 25 AUD difference as an error. Do not create invoices or apply fees during document extraction.",
+    "acceptance": "Test inclusion, exclusion, unresolved choice and a source amount already including the fee; verify one fee at most per applicable payment and no mutation of extracted source values."
+  },
+  "experience": [
+    "Save case, upload each document independently, then close the modal after durable upload. Start analysis immediately in a background queue; do not wait for all three documents or the overnight discovery window.",
+    "Document rows show Checking, Passed, Needs review, Invalid or Check failed. View/download remain available. Retry analysis reuses the stored attachment and never requires another upload or creates an overflow Contact.",
+    "Review opens an existing-style manager dialog/drawer with extracted values, source page/evidence, editable corrections and explicit confirm. Failed analysis is distinct from an invalid document. Preserve work after navigation/restart.",
+    "Offer review displays college, one or more courses, fee breakdown, instalments, currency and unresolved terms. Save extraction as a proposed case-linked offer immediately; mark confirmed values separately before future financial use.",
+    "A unique active normalized exact college-name match within the company may auto-assign when the case is unassigned and identifiers do not conflict. Preserve an existing different college and ask for review. Duplicate exact or partial matches require selection; never auto-select the first candidate.",
+    "If no suitable college exists, an authorized user can open the existing college creation form with extracted name/ABN prefilled, provide mandatory information, save and return to offer review. Missing privileges yield an actionable request to an authorized colleague.",
+    "Reuse manager controls, toasts, focus behavior and mobile/dark layouts. Poll only while jobs are pending and the case is visible; stop after terminal states. Page reads use local database projections."
+  ],
+  "validation": {
+    "common": "Validate actual document category and student text identity against the saved case; name variants or disagreement require review. Treat all document text as untrusted evidence, never instructions. Missing/unclear values remain null with reasons; do not fabricate. Source page numbers and concise evidence accompany fields. Model confidence alone cannot authorize a pass.",
+    "engagement": "Extract history status, student signer, signed timestamp, completion status, document ID and evidence pages; correlate history with the agreement and student. Sent/viewed alone never pass. Inspect signature pages when history is absent or ambiguous. Record signature evidence present, not cryptographic authenticity. Missing or conflicting evidence goes to manual review; verified e-signature-provider validation is a separate future capability.",
+    "passport": "Extract expiry and sufficient textual identity to compare with the case. Cross-check visible expiry against readable MRZ and check digits where available. Persist expiry as DATE and calculate expired against the company-local current date on reads/workflow checks, including later expiry without another AI call. Invalid date, unreadable content or conflicting readings require review. This check does not establish identity, authenticity, visa eligibility or a six-month-validity rule. Avoid retaining passport number, full MRZ or portrait unless a separately defined feature requires them.",
+    "offer": "Extract provider name/ABN/CRICOS where stated; courses as a list including code, duration and study dates; itemized fee amounts and stated totals; instalment number, literal due term, optional resolved DATE, itemized amounts and total; currency and conditional fees. Use decimal or integer minor-unit arithmetic. Keep Immediately as a term with unresolved date until confirmed; do not silently substitute upload date. Reconcile like-for-like totals and flag unexplained differences. Preserve conditional fees, discounts, packages and multiple courses without double counting.",
+    "replacement": "Every result references document version/hash and extraction/rule version. Late jobs cannot overwrite a replacement or reviewer corrections. Keep prior evidence and confirmation history; replacing an authoritative document marks dependent checks for reevaluation.",
+    "checklist": "Integrate via the existing audited checklist service. Signed engagement can complete only with qualifying evidence/review. Document completeness requires accepted current required documents, not mere file presence. Invoice/LoO consistency waits for an actual invoice comparison; Pending Track remains independent. Record automatic transitions as SophiaAi with reason/date, manual confirmations with authenticated user. Do not advance case status automatically."
+  },
+  "proposedSchema": [
+    {"table": "student_document_analysis_jobs", "purpose": "Tenant/case/document FK, content hash, extractor/version, state, attempts, next attempt, lease, safe error and usage metadata. Unique job identity prevents duplicate processing; durable reclaim after crashes."},
+    {"table": "student_document_analysis_results", "purpose": "Immutable versioned typed extraction JSON, source evidence, rule outcomes, provider/model/schema versions and timestamps. Restricted access and retention; never raw binary/provider response logs."},
+    {"table": "student_document_reviews", "purpose": "Result-linked actor, decision, corrections, reason and timestamp; optimistic version checks and audited authoritative result selection."},
+    {"table": "student_case_offers", "purpose": "Case/document/result link, version, proposed/confirmed/superseded state, extracted provider, resolved college ID, currency and stated totals. Explicit current offer; preserve revised offers."},
+    {"table": "student_case_offer_courses", "purpose": "Offer-linked course name/code, start/end dates, duration and ordering; supports package offers."},
+    {"table": "student_case_offer_fees", "purpose": "Offer/course-linked fee category, source label, exact amount, currency and conditional/included treatment."},
+    {"table": "student_case_offer_instalments", "purpose": "Offer/course reference, sequence, due term/date, exact total, component breakdown, conditional-fee terms and evidence."}
+  ],
+  "securityAndPerformance": [
+    "Use existing authenticated tenant and case permissions, forced RLS, composite tenant FKs and idempotent audited writes. Model output cannot supply trusted tenant/college IDs or authorize database writes.",
+    "Background worker downloads only authorized stored Xero attachments under existing quota/backoff, checks byte size/type/hash and processes in bounded memory. Xero remains durable storage until S3. Retain storage abstraction so provider migration does not affect results.",
+    "Separate analysis concurrency from overnight imports; durable queue, fair tenant admission, limited retries/backoff and dead-letter/manual retry. Enqueue transactionally with upload completion; repair missing jobs safely. Never hold a DB transaction open during Xero/OpenAI calls.",
+    "Use Responses PDF/image input and strict Structured Outputs; validate schema and business rules on server. Start with full bounded document input for reliability, then optimize page selection only against measured accuracy. Pin an approved configurable vision model after representative evaluation; do not assume cheapest is adequate.",
+    "Deduplicate extraction by tenant/hash/type/schema version; recompute case identity and current-date checks per association. No cross-company cache. Record latency, tokens, cost and review/error rates without document contents in logs.",
+    "Use store:false and direct in-memory inputs where feasible; verify configured provider retention separately because this is not a zero-retention guarantee. If provider Files are used, track cleanup. No vector store or conversational persistence needed."
+  ],
+  "delivery": [
+    {"phase": 1, "scope": "Schema, provider interface, strict extraction contracts, deterministic validators, durable queue and versioned review contract; fixtures and tenant/concurrency tests."},
+    {"phase": 2, "scope": "Upload-triggered background extraction, passport and engagement checks, per-row states, evidence review/correction/retry. Evaluate live model only in explicitly authorized environment."},
+    {"phase": 3, "scope": "Offer courses/fees/instalments persistence and review, exact/partial college resolution and existing create-college form integration."},
+    {"phase": 4, "scope": "Audited checklist automation, replacement/expiry reevaluation and operational measurements; controlled rollout behind a feature flag."}
+  ],
+  "acceptance": [
+    "Unsigned/viewed-only, wrong student, expired/unreadable passport, conflicting dates, scanned tables, Immediate due terms, conditional fees and multiple courses have deterministic expected outcomes.",
+    "One upload produces one logical analysis; restart/retry leaves one accepted result. Later replacement or manual correction survives stale job completion.",
+    "Unique college match, duplicate match, partial selection, no match, creation permissions and concurrent duplicate creation are covered. No cross-company college/result access.",
+    "Automatic/manual checklist transitions retain actor provenance and do not claim invoice consistency before comparison.",
+    "Measure p50/p95 upload completion, queue wait, extraction duration and case page responsiveness plus cost/document and false-pass rate on sanitized varied fixtures. Re-run existing real-estate protections and manager desktop/mobile light/dark checks."
+  ],
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/file-inputs",
+    "https://platform.openai.com/docs/guides/structured-outputs"
+  ]
+}

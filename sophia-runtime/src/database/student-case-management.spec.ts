@@ -12,6 +12,7 @@ import { StudentPrimaryXeroContact } from '../business-packs/student-operations/
 import { ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { XeroAttachment } from '../connectors/xero/xero.client.js';
+import { enqueueDocumentAnalysis, StudentDocumentAnalysisQueue } from '../business-packs/student-operations/student-document-analysis.queue.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -70,8 +71,79 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/092_student_case_checklists.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query(`INSERT INTO sophia_runtime.student_operations_document_types(customer_id,company_id,name,required) VALUES($1,$2,'letter of offer',false)`,[tenant,company]);
     await pool.query((await readFile(new URL('./migrations/093_student_status_document_requirements.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT DELETE,UPDATE ON TABLES TO sophia_runtime_app');
+    await pool.query((await readFile(new URL('./migrations/094_student_document_analysis.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE,UPDATE ON TABLES FROM sophia_runtime_app');
   });
   afterAll(async()=>{await pool.end();});
+  const analysisQueueTest=async()=>{
+    const id=String((await service.createStudent(p,{studentName:'Analysis Student',studentEmail:'analysis@example.test'},'analysis-create-student')).caseId);
+    const documentId=String((await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_case_documents
+      (customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes)
+      VALUES($1,$2,$3,'Contacts',$4,$5,'passport.pdf','application/pdf',100) RETURNING document_id`,[tenant,id,connection,invoice,randomUUID()]))).rows[0].document_id);
+    const queue=new StudentDocumentAnalysisQueue({tenantTransaction:transaction} as DatabaseService);
+    const input={caseId:id,documentId,contentSha256:'a'.repeat(64),kind:'passport'};
+    const [first,second]=await Promise.all([transaction(tenant,db=>enqueueDocumentAnalysis(db,tenant,input)),transaction(tenant,db=>enqueueDocumentAnalysis(db,tenant,input))]);
+    expect(second).toBe(first);
+    const [a,b]=await Promise.all([queue.claim(tenant),queue.claim(tenant)]);
+    expect([a,b].filter(Boolean)).toHaveLength(1);
+    const original=(a??b)!;
+    expect(original.jobId).toBe(first);
+    const payload={extraction:{kind:'passport',studentName:'Analysis Student',evidence:[{page:1,quote:'Expiry 2035-08-06'}],issues:[],expiresOn:'2035-08-06',mrzExpiryMatches:true},provider:'fixture',model:'fixture-v1',inputTokens:100,outputTokens:20};
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET lease_expires_at=now()-interval '1 second' WHERE job_id=$1`,[first]));
+    expect(await queue.complete(tenant,first,original.leaseToken,payload)).toBeNull();
+    const reclaimed=(await queue.claim(tenant))!;
+    expect(reclaimed.attempts).toBe(2);
+    expect(await queue.fail(tenant,first,original.leaseToken,'provider_unavailable',true)).toBe(false);
+    expect(await queue.fail(tenant,first,reclaimed.leaseToken,'rate_limited',true)).toBe(true);
+    expect(await queue.claim(tenant)).toBeNull();
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET next_attempt_at=now() WHERE job_id=$1`,[first]));
+    const retry=(await queue.claim(tenant))!;
+    await expect(queue.complete(tenant,first,retry.leaseToken,{...payload,extraction:{...payload.extraction,passportNumber:'must-not-persist'}})).rejects.toThrow();
+    const resultId=await queue.complete(tenant,first,retry.leaseToken,payload);
+    expect(resultId).toBeTruthy();
+    expect(await queue.complete(tenant,first,retry.leaseToken,payload)).toBeNull();
+    const other='88888888-8888-4888-8888-888888888888';
+    expect(await queue.claim(other)).toBeNull();
+    expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_document_analysis_results'))).rowCount).toBe(0);
+    await expect(transaction(other,db=>enqueueDocumentAnalysis(db,other,input))).rejects.toThrow();
+    await expect(transaction(tenant,db=>db.query('UPDATE sophia_runtime.student_document_analysis_results SET extraction=$1',[{}]))).rejects.toThrow('permission denied');
+    for(const tab of ['student_document_analysis_jobs','student_document_analysis_results','student_document_reviews','student_case_offers','student_case_offer_courses','student_case_offer_fees','student_case_offer_instalments']) {
+      await expect(transaction(tenant,db=>db.query(`DELETE FROM sophia_runtime.${tab}`))).rejects.toThrow('permission denied');
+    }
+    const reviewArgs=[tenant,id,documentId,resultId];
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_document_reviews(customer_id,case_id,document_id,result_id,review_version,decision,reason,actor_identity_user_id)
+      VALUES($1,$2,$3,$4,1,'confirmed','Checked expiry',$5)`,[...reviewArgs,advisor]));
+    await expect(transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_document_reviews(customer_id,case_id,document_id,result_id,review_version,decision,reason,actor_identity_user_id)
+      VALUES($1,$2,$3,$4,1,'rejected','Stale update',$5)`,[...reviewArgs,advisor]))).rejects.toThrow('duplicate key');
+    await expect(transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_document_reviews SET decision='rejected'`))).rejects.toThrow('permission denied');
+    // Final-attempt crash becomes terminal instead of staying processing forever.
+    const finalJob=await transaction(tenant,db=>enqueueDocumentAnalysis(db,tenant,{...input,schemaVersion:'2'}));
+    await queue.claim(tenant);
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET attempts=5,lease_expires_at=now()-interval '1 second' WHERE job_id=$1`,[finalJob]));
+    expect(await queue.claim(tenant)).toBeNull();
+    expect((await transaction(tenant,db=>db.query('SELECT status FROM sophia_runtime.student_document_analysis_jobs WHERE job_id=$1',[finalJob]))).rows[0].status).toBe('failed');
+    // Persist source financial values independently; no invoice applicability decision exists here.
+    const offerJob=await transaction(tenant,db=>enqueueDocumentAnalysis(db,tenant,{...input,kind:'letter_of_offer'}));
+    const offerLease=(await queue.claim(tenant))!;
+    const offerResult=await queue.complete(tenant,offerJob,offerLease.leaseToken,{...payload,extraction:{
+      kind:'letter_of_offer',studentName:'Analysis Student',evidence:[{page:1,quote:'Total AUD 9040'}],issues:[],
+      collegeName:'Example College',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:904000,
+      courses:[],fees:[],instalments:[],
+    }});
+    const offerId=String((await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offers
+      (customer_id,case_id,document_id,result_id,currency,stated_total_minor)
+      VALUES($1,$2,$3,$4,'AUD',904000) RETURNING offer_id`,[tenant,id,documentId,offerResult]))).rows[0].offer_id);
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offer_fees
+      (customer_id,offer_id,label,amount_minor,conditional,condition) VALUES($1,$2,'International transfer',2500,true,'International payments')`,[tenant,offerId]));
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_offer_instalments
+      (customer_id,offer_id,sequence,due_term,total_minor,included_conditional_fee_minor)
+      VALUES($1,$2,1,'Immediately',99500,2500)`,[tenant,offerId]));
+    expect((await transaction(tenant,db=>db.query('SELECT total_minor::int,due_on,included_conditional_fee_minor::int FROM sophia_runtime.student_case_offer_instalments WHERE offer_id=$1',[offerId]))).rows[0])
+      .toEqual({total_minor:99500,due_on:null,included_conditional_fee_minor:2500});
+    expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_case_offers'))).rowCount).toBe(0);
+    await expect(transaction(tenant,db=>db.query('UPDATE sophia_runtime.student_case_offers SET is_current=true WHERE offer_id=$1',[offerId]))).rejects.toThrow('check constraint');
+  };
   const checklists=async()=>{
     const created=await service.createStudent(p,{studentName:'Checklist Student',studentEmail:'checklist@example.test'},'checklist-create-student');
     const id=String(created.caseId),initial=await service.checklist(p,id);
@@ -552,4 +624,5 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(transaction(otherTenant,db=>db.query('SELECT * FROM sophia_runtime.customers'))).rejects.toThrow('permission denied');
     await expect(transaction(otherTenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_document_requirement_defaults'))).rejects.toThrow('permission denied');
   });
+  test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
 });

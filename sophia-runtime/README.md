@@ -146,6 +146,43 @@ deleting overflow Contacts, reservations or provider receipts. S3 and invoice-do
 App uploads retain PDF/JPEG/PNG and the 10 MB limit. No live Contact creation/file upload or production migration
 is part of local verification; use an explicitly approved real student/file for release smoke testing.
 
+### Document analysis foundation (phase 1)
+
+Owner migration `094_student_document_analysis.sql` follows 093. It creates a
+tenant-scoped durable analysis queue, append-only extraction results/reviews and
+case offer/course/fee/instalment stores. Every document/result reference includes
+its tenant and case; all seven stores force RLS and deny application deletion.
+Only jobs and offer headers permit updates. Source financial rows and review
+history remain append-only; a revised offer uses a new analysis result. One
+confirmed current offer is allowed per case.
+
+`student-document-analysis.contracts.ts` defines bounded strict extraction and
+optimistic review payloads plus the provider-neutral extraction interface. Dates
+are ISO calendar dates; money is integer minor units. Passport expiry is evaluated
+against a caller-supplied company-local current date (valid through the expiry
+date), so a persisted extraction can be reevaluated later. Ambiguous evidence or
+identity requires review. Signed engagement evidence is not cryptographic
+signature verification. Offer financial data always requires confirmation.
+Conditional fees retain their source inclusion: the explicit future invoice
+choice produces 970 AUD or 995 AUD for the example first payment without adding
+25 AUD twice. No invoice applicability decision is inferred during extraction.
+
+`enqueueDocumentAnalysis` accepts an existing transaction for atomic upload
+finalization in phase 2. `StudentDocumentAnalysisQueue` claims one tenant's due
+job with `SKIP LOCKED`, a three-minute lease and at most five attempts. Completion
+and result insertion are atomic; expired lease tokens cannot publish. Safe error
+codes and bounded exponential retry delays are persisted without raw upstream
+errors. A final-attempt crash is marked failed on the next claim. Worker calls
+must finish within the lease, verify attachment content/hash and run outside
+database transactions. Authorized tenant scheduling, provider admission, manual
+retry and replacement/result-selection policy belong to the next phases.
+
+This foundation is deliberately inactive: no upload hook, running analysis worker,
+OpenAI extraction adapter, review endpoint/UI, college resolution or automated
+checklist mutation is wired yet. Existing upload/discovery paths continue as
+before. Migration application alone does not analyze existing documents. See
+`../docs/sophia/student-document-validation-plan.json` for remaining phases.
+
 ### Status-based document requirements
 
 Apply owner migration `093_student_status_document_requirements.sql` after 092,
