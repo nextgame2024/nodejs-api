@@ -1,5 +1,17 @@
 {
   "schemaVersion": 1,
+  "studentOfferSingleRowPayments": {
+    "updatedOn": "2026-10-25",
+    "scope": "Only the requested instalment-field layout: five desktop columns in existing order, two tablet columns and one mobile column. Conditional fee already included label, payment components, monetary values, review behaviour and prior fee-editor changes remain unchanged. No document deletion/version/duplicate feature changes.",
+    "verification": "PASS: 33 focused offer/parent-review ChromeHeadless tests, including explicit five-field desktop alignment, mobile stacking, no horizontal overflow and light/dark touch geometry. Frontend production build passed with existing bundle/font/CommonJS/primeicons warnings. Both git diff checks passed. Business Manager consistency skill guided reuse of existing responsive form-grid/control styles. Frontend deployment only; no migration, flags, production data or provider calls."
+  },
+  "studentOfferCompactFees": {
+    "updatedOn": "2026-10-25",
+    "status": "Frontend-only change implemented locally; frontend deployment required. No migration, flag, provider call, production write or test-data cleanup.",
+    "implementation": "Fee cards now contain one desktop grid row in source order: Name, Amount, When it applies, Conditional fee, accessible SVG remove button. Existing fee legends/form controls/validation/busy guards are retained; tablet/mobile stack without overflow, with 44px remove controls and manager-native light/dark treatment. These are source-order financial editors, not sortable/paginated directories. Business Manager consistency skill guided existing controls and icon styles.",
+    "clarification": "Summary separates whole-offer stated total and printed all-instalment sum from the first scheduled payment. First payment preview uses the lowest unique valid instalment sequence, integer minor-unit arithmetic and its already-included conditional fee; it never hardcodes 970/995, mutates the schedule, sums source subtotal fee lines or decides invoice applicability. Invalid/ambiguous first-payment values suppress that preview. Sample remains 9040 stated, 9065 printed instalments, 25 already included, first 970 before/995 including that fee. First payment is part of the offer, not an additional fee.",
+    "verification": "PASS: 33 ChromeHeadless offer/parent-review tests, including compact desktop alignment, mobile/dark overflow and touch geometry, accessible draft-only row removal, reversed source-order first-payment selection, source-value preservation and invalid-preview suppression. Frontend app TypeScript passed; production build collected at handoff. Existing frontend build warnings remain. Progress JSON and both repository diff checks performed at handoff."
+  },
   "studentDocumentWorkflowUX": {
     "updatedOn": "2026-10-25",
     "status": "Implemented locally after user workflow test. Deploy frontend and Runtime API; shared worker can use the same Runtime release. No new migration or environment flag required. No live provider calls, production queries, deployments or test-record deletion performed.",
