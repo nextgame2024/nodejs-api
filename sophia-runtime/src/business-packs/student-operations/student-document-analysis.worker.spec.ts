@@ -62,5 +62,15 @@ describe('Document analysis execution',()=>{
   test('manual confirmation cannot make an expired passport pass',()=>{
     expect(analysisVerdict({status:'succeeded',extraction:{...extraction,expiresOn:'2020-01-01'},result_id:'r',review_result_id:'r',decision:'confirmed'},'Example Student').status).toBe('invalid');
     expect(analysisVerdict({status:'succeeded',extraction,result_id:'new',review_result_id:'old',decision:'rejected'},'Example Student').status).toBe('passed');
+    expect(analysisVerdict({status:'succeeded',extraction:{...extraction,expiresOn:'2020-01-01',issues:['Unclear name']},result_id:'r',review_result_id:'r',decision:'confirmed'},'Example Student').status).toBe('invalid');
+    const row={status:'succeeded',extraction:{...extraction,expiresOn:'2030-01-01'},result_id:'r'};
+    expect(analysisVerdict(row,'Example Student','2030-01-01').status).toBe('passed');
+    expect(analysisVerdict(row,'Example Student','2030-01-02').status).toBe('invalid');
+  });
+  test('manual identity acceptance is scoped to the student name at review time',()=>{
+    const row={status:'succeeded',extraction:{...extraction,studentName:'Example S'},result_id:'r',review_result_id:'r',decision:'confirmed',review_context:{studentNameAtReview:'Example Student'}};
+    expect(analysisVerdict(row,'Example Student').status).toBe('passed');
+    expect(analysisVerdict(row,'Different Student').status).toBe('needs_review');
+    expect(analysisVerdict({...row,review_context:{}},'Example Student').status).toBe('needs_review');
   });
 });

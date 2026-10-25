@@ -242,7 +242,7 @@ Authenticated routes under `.../workspace/cases/:caseId/documents/:documentId`:
 
 Automatic result completion records `Document checked` as SophiaAi; manual review
 and retry events use the authenticated user's existing activity identity. No
-checklist completion/status transition is automated yet. Letter of Offer
+checklist completion/status transition is automated in phase 2. Letter of Offer
 extraction, financial proposal persistence and college matching are described below;
 checklist automation is phase 4. Historical/replacement authoritative selection
 and wider model accuracy/cost evaluation remain documented rollout work.
@@ -299,10 +299,71 @@ Existing retry continues to reuse saved files. Tenant RLS, manager-only evidence
 active company college checks and optimistic/idempotent writes remain enforced.
 
 No invoices, fee applicability choices, automatic checklist completion or case
-status transitions are introduced. Phase 4 covers checklist integration and wider
-replacement/expiry reevaluation. Mock tests and local database/UI tests do not
+status transitions are introduced by phase 3 alone. Phase 4 below adds document
+checklist integration and replacement/expiry reevaluation. Mock tests and local database/UI tests do not
 establish live provider accuracy, latency or cost; controlled live evaluation is
 still required after rollout.
+
+### Evidence-based Pre-sale checklist (phase 4)
+
+Apply owner migration `097_student_document_checklist.sql` **after 096**, then
+deploy Runtime API, shared student worker (including its host script) and frontend.
+Enable `STUDENT_DOCUMENT_CHECKLIST_ENABLED=true` on Runtime API and worker only
+after rollout. Retain both analysis flags; the worker checks them and migration
+097 before startup. No new service or provider permission is required. No live
+provider request or production migration was performed as part of local verification.
+Enabling the flag also reconciles existing Pre-sale cases: previously checked
+document items can reopen when they lack accepted current evidence. Imported
+In-progress cases are not automatically moved into this workflow.
+
+With this opt-in flag, Signed engagement letter and Document completeness become
+evidence-controlled, read-only checklist items. Review/correction remains in the
+existing Document check dialog. The newest typed document is authoritative for
+each requirement (immutable discovery timestamp, then document UUID as a stable
+tie-breaker); a pending, failed, rejected or unreadable replacement cannot fall
+back to an older passing file. Untyped imports are not guessed from filenames.
+Signed engagement requires a passing extraction or audited human acceptance.
+Completeness requires every active required status binding's latest document to
+pass; a Letter of Offer must also be the current confirmed financial version.
+Archived types, missing evidence and unsupported custom validators fail closed.
+An empty requirement set never means complete. Merely uploading three files is
+not sufficient. Human signature acceptance is still not cryptographic verification.
+
+Upload finalization, worker result publication, review/retry and case edits
+reconcile under the existing case lock, in the same tenant transaction as their
+audit entries. Queue completion now locks case before job, matching API writes.
+Historical files remain readable but cannot be confirmed after a replacement.
+Late old offer results cannot auto-assign the college. Replacing an offer makes
+its old financial approval historical and reopens Invoice/LoO consistency; this
+item and Pending Track remain manual and are never automatically marked complete.
+No stage/status is advanced, no invoice is generated and no conditional fee is
+applied. Manual stage/status selection remains the existing workflow contract.
+
+The shared worker has a separate all-day local-only reconciliation lane: at most
+20 due Pre-sale cases per tenant tick, round-robin tenant admission every 15 seconds,
+15-minute per-case cooldown, SKIP LOCKED and shutdown drain. It does not wait for
+AI extraction or overnight discovery. Passport expiry is valid through its date
+and is reevaluated against Australia/Brisbane time, with no new AI call. A confirmed
+passport cannot pass after expiry, even if its extraction had other warnings.
+Human identity acceptance records the case student name at review time; later
+identity changes need fresh review rather than inheriting an unrelated approval.
+Checklist GET remains local/read-only and suppresses stale document acceptance
+before the worker catches up. Configuration and cross-case profile changes are
+eventually reconciled by the bounded worker lane; this is not an exact-time SLA.
+
+Only real boolean transitions produce activity: SophiaAi for automatic item and
+aggregate completion/reopening, authenticated identity for manual changes. Each
+automatic event retains rule version and scoped document/result/review references,
+not source text. The tenant cursor stores its latest evidence snapshot separately;
+normal app role RLS and composite case FK are enforced, with no DELETE grant.
+Repeated evaluation does not create duplicate completion events. The frontend
+reuses existing checkbox/card/dialog/toast styling and refreshes the checklist
+after uploads, review and polled result changes; no new page-level provider calls.
+
+Controlled live accuracy/cost/latency evaluation and invoice comparison with the
+user's explicit conditional-fee decision remain separate follow-up work. These
+must not be inferred from local synthetic tests. Disable the new flag on API and
+worker to stop automation without deleting files, results, reviews or audit history.
 
 ### Status-based document requirements
 

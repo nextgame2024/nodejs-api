@@ -8,6 +8,8 @@ const processOne=jest.fn(async(..._args:unknown[])=>true);
 const status=jest.fn<(...args:unknown[])=>Promise<unknown>>();
 const scheduleRechecks=jest.fn(async(_customer:string)=>0);
 const processAnalysis=jest.fn(async(_customer:string)=>true);
+const processChecklist=jest.fn(async(_customer:string)=>true);
+jest.unstable_mockModule('../business-packs/student-operations/student-document-checklist.js',()=>({StudentDocumentChecklistReconciler:class {processBatch=processChecklist;}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-analysis.worker.js',()=>({StudentDocumentAnalysisWorker:class {processOne=processAnalysis;}}));
 jest.unstable_mockModule('../business-packs/student-operations/openai-document-extraction.provider.js',()=>({OpenAIDocumentExtractionProvider:class {}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-rechecks.js',()=>({StudentDocumentRechecks:class {schedule=scheduleRechecks;}}));
@@ -24,6 +26,16 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('gates checklist reconciliation on analysis dependencies and migration 097',async()=>{
+    const keys=['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);
+    try{
+      process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED='true';delete process.env.STUDENT_OFFER_ANALYSIS_ENABLED;
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('Document checklist requires');
+      process.env.STUDENT_OFFER_ANALYSIS_ENABLED=process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='true';query.mockResolvedValue({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('097');
+      await createSharedStudentSyncRuntime().processDocumentChecklist('tenant');expect(processChecklist).toHaveBeenCalledWith('tenant');
+    }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+  });
   it('validates analysis configuration before activation and delegates its independent lane',async()=>{
     const keys=['STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_MODEL','OPENAI_API_KEY','XERO_SHARED_QUOTA_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED'];
     const previous=keys.map(k=>process.env[k]);
@@ -85,7 +97,7 @@ describe('Shared worker Runtime adapter',()=>{
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
     query.mockResolvedValue({rows:[{ready:true}]});
     try {
-      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false});
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false,STUDENT_DOCUMENT_CHECKLIST_ENABLED:false});
     } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
   });
   it('requires migration 085 before enabling document rechecks',async()=>{

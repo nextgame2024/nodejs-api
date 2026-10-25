@@ -15,6 +15,14 @@ test('analysis errors use safe metadata and release the lane',async()=>{
   const loop=createDocumentAnalysisCoordinator({processOne,customerIds:[tenant],log});
   expect(await loop.tick()).toBe(false);expect(log).toHaveBeenCalledWith({event:'student_document_analysis_tick_failed'});expect(await loop.tick()).toBe(true);
 });
+test('checklist lane remains independent of a slow analysis and logs only safe failure metadata',async()=>{
+  let finish;
+  const analysis=createDocumentAnalysisCoordinator({processOne:()=>new Promise(resolve=>{finish=resolve;}),customerIds:[tenant]});
+  const pending=analysis.tick(),log=jest.fn(),processOne=jest.fn().mockRejectedValueOnce(new Error('private evidence')).mockResolvedValue(true);
+  const checklist=createDocumentAnalysisCoordinator({processOne,customerIds:[tenant],log,failureEvent:'student_document_checklist_tick_failed'});
+  expect(await checklist.tick()).toBe(false);expect(log).toHaveBeenCalledWith({event:'student_document_checklist_tick_failed'});
+  expect(await checklist.tick()).toBe(true);finish(true);await pending;
+});
 function fixture(time='2026-10-20T02:00:00+10:00') {
   let clock=new Date(time).getTime();
   const events=[];

@@ -38,6 +38,9 @@ services:
       # Apply 096 and deploy both backends/worker/frontend before enabling.
       - key: STUDENT_OFFER_ANALYSIS_ENABLED
         value: "false"
+      # Enable on Runtime API and worker only after owner migration 097.
+      - key: STUDENT_DOCUMENT_CHECKLIST_ENABLED
+        value: "false"
       # Worker only: retain 30 until rollout approval. 30-120; above 30 requires
       # quota/backoff/source dedup true. The 500-source cap and window stay fixed.
       - key: STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES

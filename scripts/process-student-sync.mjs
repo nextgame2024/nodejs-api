@@ -12,6 +12,7 @@ const runtime=createSharedStudentSyncRuntime();
 const stop=new AbortController();
 for(const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>stop.abort());
 let analysisTimer=null,analysisWork=Promise.resolve();
+let checklistTimer=null,checklistWork=Promise.resolve();
 try {
   const coordinator=createStudentSyncCoordinator({runtime,processUsers:processSyncBatch,customerIds,
     log:entry=>console.log(JSON.stringify(entry))});
@@ -20,6 +21,13 @@ try {
     AND table_name='bm_xero_student_sync_runs' AND column_name IN ('trigger_type','source_connection_id')) AS ready`);
   if(!ready.rows[0]?.ready) throw new Error('Shared worker requires the identity pipeline migration.');
   console.log(JSON.stringify({event:'student_sync_worker_ready',features,documentPolicy:runtime.documentPolicy()}));
+  if(features.STUDENT_DOCUMENT_CHECKLIST_ENABLED){
+    const checklist=createDocumentAnalysisCoordinator({processOne:tenant=>runtime.processDocumentChecklist(tenant),customerIds,
+      failureEvent:'student_document_checklist_tick_failed',log:entry=>console.log(JSON.stringify(entry))});
+    let running=false;
+    const tick=()=>{if(running||stop.signal.aborted)return;running=true;checklistWork=checklist.tick(stop.signal).finally(()=>{running=false;});};
+    tick();checklistTimer=setInterval(tick,15000);checklistTimer.unref();
+  }
   if(features.STUDENT_DOCUMENT_ANALYSIS_ENABLED){
     const analysis=createDocumentAnalysisCoordinator({processOne:tenant=>runtime.processDocumentAnalysis(tenant),customerIds,log:entry=>console.log(JSON.stringify(entry))});
     let running=false;
@@ -30,4 +38,4 @@ try {
     const delay=await coordinator.tick(stop.signal);
     await sleep(delay,undefined,{signal:stop.signal}).catch(error=>{if(error.name!=='AbortError') throw error;});
   }
-} finally {stop.abort();if(analysisTimer)clearInterval(analysisTimer);await analysisWork;await Promise.allSettled([runtime.close(),pool.end()]);}
+} finally {stop.abort();if(analysisTimer)clearInterval(analysisTimer);if(checklistTimer)clearInterval(checklistTimer);await Promise.allSettled([analysisWork,checklistWork]);await Promise.allSettled([runtime.close(),pool.end()]);}

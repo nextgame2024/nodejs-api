@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service.js';
 import { caseSchema } from './student-operations-cases.service.js';
 import { DOCUMENT_ANALYSIS_VERSION, documentExtraction, documentKind } from './student-document-analysis.contracts.js';
 import { persistOffer } from './student-case-offers.js';
+import { reconcileDocumentChecklist } from './student-document-checklist.js';
 
 const enqueueInput = z.object({ caseId: z.uuid(), documentId: z.uuid(),
   contentSha256: z.string().regex(/^[a-f0-9]{64}$/), kind: documentKind,
@@ -63,13 +64,16 @@ export class StudentDocumentAnalysisQueue {
     const value = receipt.parse(input);
     return this.database.tenantTransaction(tenantId, async db => {
       const s = caseSchema();
+      // Case-first lock order matches review/upload/checklist and avoids retry deadlocks.
+      const scope=(await db.query(`SELECT case_id FROM ${s}.student_document_analysis_jobs WHERE customer_id=$1 AND job_id=$2`,[tenantId,jobId])).rows[0];
+      if(!scope)return null;
+      await db.query(`SELECT case_id FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2 FOR UPDATE`,[tenantId,scope.case_id]);
       const locked = await db.query(`SELECT * FROM ${s}.student_document_analysis_jobs
         WHERE customer_id=$1 AND job_id=$2 AND status='processing' AND lease_token=$3 AND lease_expires_at>now() FOR UPDATE`,
         [tenantId, jobId, leaseToken]);
       const job = locked.rows[0];
       if (!job) return null; // Expired/stolen lease cannot publish evidence.
       if (job.document_kind !== value.extraction.kind) throw new Error('Extraction kind mismatch');
-      if(value.extraction.kind==='letter_of_offer')await db.query(`SELECT case_id FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2 FOR UPDATE`,[tenantId,job.case_id]);
       const result = await db.query(`INSERT INTO ${s}.student_document_analysis_results
         (customer_id,case_id,document_id,job_id,extraction,provider,model,input_tokens,output_tokens)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING result_id`,
@@ -79,6 +83,7 @@ export class StudentDocumentAnalysisQueue {
         WHERE customer_id=$1 AND job_id=$2`, [tenantId, jobId]);
       await db.query(`INSERT INTO ${s}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary,detail)
         VALUES($1,$2,'system:document-analysis','case.document_checked',$3,jsonb_build_object('actorKind','automation','actorName','SophiaAi'))`,[tenantId,job.case_id,value.extraction.kind==='letter_of_offer'?'Letter of Offer extracted':'Document checked']);
+      await reconcileDocumentChecklist(db,tenantId,job.case_id);
       return String(result.rows[0].result_id);
     });
   }

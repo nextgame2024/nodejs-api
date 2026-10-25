@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { caseSchema } from './student-operations-cases.service.js';
 import { offerExtraction } from './student-document-analysis.contracts.js';
+import { isLatestTypedDocument } from './student-document-checklist.js';
 
 export type OfferExtraction=z.infer<typeof offerExtraction>;
 export interface OfferCollege { collegeId:string;name:string;abn:string|null; }
@@ -58,7 +59,8 @@ export async function persistOffer(db:PoolClient,tenant:string,caseId:string,doc
   const student=(await db.query(`SELECT s.legal_name FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_students s
     ON s.customer_id=c.customer_id AND s.student_id=c.student_id WHERE c.customer_id=$1 AND c.case_id=$2`,[tenant,caseId])).rows[0];
   const identity=value.studentName&&student?.legal_name&&normalized(value.studentName)===normalized(student.legal_name);
-  const auto=!review&&!primary&&identity&&!value.issues.length&&value.evidence.length&&match.exactCollegeId?directory.find(c=>c.collegeId===match.exactCollegeId):null;
+  const latest=await isLatestTypedDocument(db,tenant,caseId,documentId);
+  const auto=latest&&!review&&!primary&&identity&&!value.issues.length&&value.evidence.length&&match.exactCollegeId?directory.find(c=>c.collegeId===match.exactCollegeId):null;
   if(auto){await assignOfferCollege(db,tenant,caseId,auto);
     await db.query(`UPDATE ${s}.student_operations_cases SET record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,[tenant,caseId]);
     await db.query(`INSERT INTO ${s}.student_operations_case_activity(customer_id,case_id,actor_identity_user_id,event_type,summary,detail)

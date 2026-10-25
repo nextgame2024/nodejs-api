@@ -5,9 +5,12 @@ import { DatabaseService } from '../../database/database.service.js';
 import { StudentOperationsCasesService, caseId, caseSchema } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
-import { documentExtraction, documentReview, validateDocument,OFFER_ANALYSIS_VERSION,DOCUMENT_ANALYSIS_VERSION } from './student-document-analysis.contracts.js';
+import { documentExtraction, documentReview,OFFER_ANALYSIS_VERSION,DOCUMENT_ANALYSIS_VERSION } from './student-document-analysis.contracts.js';
 import { enqueueDocumentAnalysis } from './student-document-analysis.queue.js';
 import { assignOfferCollege,matchOfferColleges,offerCollegeDirectory,offerConfirmationProblems,offerTotals,persistOffer } from './student-case-offers.js';
+import { analysisVerdict } from './student-document-analysis-state.js';
+import { documentChecklistEnabled,isLatestTypedDocument,reconcileDocumentChecklist } from './student-document-checklist.js';
+export { analysisToday,analysisVerdict } from './student-document-analysis-state.js';
 
 const reviewSchema=documentReview.extend({collegeId:z.uuid().nullable().optional(),expectedCaseVersion:z.number().int().positive().optional(),
   replaceCollege:z.boolean().optional(),acknowledgeTotals:z.boolean().optional()}).strict();
@@ -22,20 +25,6 @@ export async function eligibleAnalysisUploads(db:PoolClient,tenant:string,id:str
     WHERE u.customer_id=$1 AND u.case_id=$2 AND u.document_id=ANY($3::uuid[]) AND u.status='completed'
       AND (r.requirement_key IN ('passport','engagement_letter') OR ($4 AND r.requirement_key='letter_of_offer'))
     GROUP BY u.document_id,u.document_type_id,u.content_sha256 HAVING count(DISTINCT r.requirement_key)=1`,[tenant,id,documents,process.env.STUDENT_OFFER_ANALYSIS_ENABLED==='true'])).rows;
-}
-export function analysisToday(now = new Date()): string {
-  // Current Business Manager deployment uses Australia/Brisbane; no browser timezone authority.
-  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
-  return ['year','month','day'].map(key=>parts.find(p=>p.type===key)!.value).join('-');
-}
-export function analysisVerdict(row:Record<string,any>,name:string) {
-  const extraction=row.review_result_id===row.result_id?(row.corrections??row.extraction):row.extraction;
-  const parsed=documentExtraction.safeParse(extraction);
-  const verdict=parsed.success?validateDocument(parsed.data,name,analysisToday()):null;
-  const reviewed=row.review_result_id===row.result_id?row.decision:null;
-  const status=row.status==='queued'||row.status==='processing'?'checking':row.status==='failed'?'check_failed':
-    reviewed==='rejected'?'invalid':parsed.success?(reviewed==='confirmed'&&verdict?.status==='needs_review'?'passed':verdict?.status):'not_checked';
-  return {status,parsed,verdict,reviewed};
 }
 export async function enqueueUploadedAnalysis(db: PoolClient, tenantId: string, id: string, documentId: string, typeId: string, hash: string) {
   if (!analysisEnabled()) return;
@@ -52,7 +41,7 @@ export class StudentDocumentAnalysisService {
   private manage(p: Principal) { if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException(); }
   private async snapshot(db: PoolClient,p: Principal,id: string,documentId: string) {
     const row=await db.query(`SELECT j.job_id,j.status,j.error_code,j.document_kind,r.result_id,r.extraction,
-      v.review_version,v.result_id AS review_result_id,v.decision,v.corrections,v.reason
+      v.review_version,v.result_id AS review_result_id,v.decision,v.corrections,v.reason,v.review_context
       FROM ${caseSchema()}.student_operations_case_documents d
       LEFT JOIN LATERAL (SELECT * FROM ${caseSchema()}.student_document_analysis_jobs j WHERE j.customer_id=d.customer_id
         AND j.case_id=d.case_id AND j.document_id=d.document_id ORDER BY created_at DESC,job_id DESC LIMIT 1) j ON true
@@ -87,7 +76,8 @@ export class StudentDocumentAnalysisService {
       }
       return {documentId,jobId:row.job_id??null,resultId:row.result_id??null,status,reviewVersion:row.review_version??0,
         extraction:manager&&parsed.success?parsed.data:null,reasons:manager?verdict?.reasons??[]:[],
-        reviewReason:manager&&reviewed?row.reason??null:null,decision:reviewed??null,enabled:analysisEnabled(),offer,canStart};
+        reviewReason:manager&&reviewed?row.reason??null:null,decision:reviewed??null,enabled:analysisEnabled(),offer,canStart,
+        ...(manager&&documentChecklistEnabled()?{currentForType:await isLatestTypedDocument(db,p.tenantId,id,documentId)}:{})};
     });
   }
   async review(p: Principal,id: string,documentId: string,input: unknown,key?: string) {
@@ -99,6 +89,7 @@ export class StudentDocumentAnalysisService {
       const caseRow=await this.cases.authorizedCase(db,p,id,true);
       const row=await this.snapshot(db,p,id,documentId);
       if(row.status!=='succeeded'||row.result_id!==value.resultId||(row.review_version??0)!==value.expectedReviewVersion)throw new ConflictException('Document check changed. Reload before saving.');
+      if(documentChecklistEnabled()&&value.decision==='confirmed'&&!await isLatestTypedDocument(db,p.tenantId,id,documentId))throw new ConflictException('A newer document of this type exists. Review the latest upload instead.');
       if(value.corrections && value.corrections.kind!==row.document_kind)throw new BadRequestException('The document type cannot be changed during review.');
       const corrected=documentExtraction.parse(value.corrections??row.extraction);
       let selected=null;
@@ -115,10 +106,11 @@ export class StudentDocumentAnalysisService {
         }
       }
       if(value.decision==='confirmed'&&corrected.kind==='passport'&&(!corrected.expiresOn||corrected.mrzExpiryMatches===false))throw new BadRequestException('Confirm the passport expiry and resolve conflicting dates before accepting.');
+      const studentNameAtReview=(await db.query(`SELECT legal_name FROM ${caseSchema()}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,caseRow.student_id])).rows[0]?.legal_name??'';
       const saved=await db.query(`INSERT INTO ${caseSchema()}.student_document_reviews
         (customer_id,case_id,document_id,result_id,review_version,decision,corrections,reason,actor_identity_user_id,review_context)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING review_id`,[p.tenantId,id,documentId,value.resultId,value.expectedReviewVersion+1,value.decision,value.corrections?JSON.stringify(value.corrections):null,value.reason,p.identityUserId,
-          JSON.stringify(corrected.kind==='letter_of_offer'?{collegeId:selected?.collegeId??null,expectedCaseVersion:value.expectedCaseVersion,replaceCollege:Boolean(value.replaceCollege),acknowledgeTotals:Boolean(value.acknowledgeTotals)}:{})]);
+          JSON.stringify({studentNameAtReview,...(corrected.kind==='letter_of_offer'?{collegeId:selected?.collegeId??null,expectedCaseVersion:value.expectedCaseVersion,replaceCollege:Boolean(value.replaceCollege),acknowledgeTotals:Boolean(value.acknowledgeTotals)}:{})})]);
       if(corrected.kind==='letter_of_offer'){
         if(selected){
           await assignOfferCollege(db,p.tenantId,id,selected);
@@ -131,6 +123,7 @@ export class StudentDocumentAnalysisService {
         }
       }
       await this.cases.activity(db,p,id,'case.document_reviewed',corrected.kind==='letter_of_offer'?(value.decision==='confirmed'?'Letter of Offer confirmed':'Letter of Offer rejected'):(value.decision==='confirmed'?'Document check confirmed':'Document check rejected'));
+      await reconcileDocumentChecklist(db,p.tenantId,id);
       return {saved:true};
     });
   }
@@ -146,6 +139,7 @@ export class StudentDocumentAnalysisService {
       await db.query(`UPDATE ${caseSchema()}.student_document_analysis_jobs SET status='queued',attempts=0,error_code=NULL,next_attempt_at=now(),updated_at=now()
         WHERE customer_id=$1 AND job_id=$2 AND status='failed'`,[p.tenantId,row.job_id]);
       await this.cases.activity(db,p,id,'case.document_analysis_retried','Document check retried');
+      await reconcileDocumentChecklist(db,p.tenantId,id);
       return {queued:true};
     });
   }
@@ -160,6 +154,7 @@ export class StudentDocumentAnalysisService {
       if(!upload)throw new BadRequestException('This saved document is not available for automatic checking.');
       await enqueueUploadedAnalysis(db,p.tenantId,id,documentId,upload.document_type_id,upload.content_sha256);
       await this.cases.activity(db,p,id,'case.document_check_requested','Document check requested');
+      await reconcileDocumentChecklist(db,p.tenantId,id);
       return {queued:true};
     });
   }

@@ -13,6 +13,7 @@ import { StudentDocumentContactStorage } from './student-document-contact-storag
 import { documentRequirements } from './student-document-requirements.js';
 import { publicCaseStatus } from './student-operations-case-workflow.js';
 import { enqueueUploadedAnalysis,analysisVerdict,eligibleAnalysisUploads } from './student-document-analysis.service.js';
+import { reconcileDocumentChecklist } from './student-document-checklist.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
@@ -119,6 +120,7 @@ export class StudentOperationsCaseDocumentsService {
       await this.cases.activity(db,p,id,'case.document_uploaded','Document uploaded to Xero');
       await enqueueUploadedAnalysis(db,p.tenantId,id,String(result.rows[0].document_id),row.document_type_id,row.content_sha256);
       await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='completed',document_id=$3,updated_at=now() WHERE customer_id=$1 AND upload_id=$2`,[p.tenantId,job.upload_id,result.rows[0].document_id]);
+      await reconcileDocumentChecklist(db,p.tenantId,id);
       return {documentId:String(result.rows[0].document_id)};
     });
   }
@@ -136,7 +138,7 @@ export class StudentOperationsCaseDocumentsService {
         WHERE d.customer_id=$1 AND d.case_id=$2 ORDER BY d.file_name,d.document_id LIMIT $3 OFFSET $4`,[p.tenantId,id,limit,(page-1)*limit]);
       const jobs=await db.query(`SELECT status,error_code AS "errorCode",count(*)::int count FROM ${caseSchema()}.student_operations_document_jobs WHERE customer_id=$1 AND case_id=$2 GROUP BY status,error_code`,[p.tenantId,id]);
       const requirements=await documentRequirements(db,p.tenantId,publicCaseStatus(row.lifecycle_status),id);
-      const analyses=await db.query(`SELECT j.document_id,j.status,r.result_id,r.extraction,v.result_id AS review_result_id,v.corrections,v.decision,
+      const analyses=await db.query(`SELECT j.document_id,j.status,r.result_id,r.extraction,v.result_id AS review_result_id,v.corrections,v.decision,v.review_context,
         s.legal_name FROM (SELECT DISTINCT ON(document_id) * FROM ${caseSchema()}.student_document_analysis_jobs
         WHERE customer_id=$1 AND case_id=$2 ORDER BY document_id,created_at DESC,job_id DESC) j
         JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=j.customer_id AND c.case_id=j.case_id
