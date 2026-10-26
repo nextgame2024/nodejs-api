@@ -1,4 +1,11 @@
 {
+  "studentInvoiceCatalogueUX": {
+    "updatedOn": "2026-10-26",
+    "status": "Local implementation complete; owner migration 099 and coordinated Runtime API/shared worker/frontend deployment pending. No live Xero import or production data mutation performed.",
+    "changes": "Linked invoices header Prepare invoices action; compact Xero-style line editor using searchable cached Items and read-only account/tax defaults; category/location fields removed; subtotal, effective tax, conditional fee and pinned total; four-decimal catalogue pricing. Existing student Contact versus advisor Sales Representative mapping preserved. Skill business-manager-consistency guided native dialog, ManagerSelect, toasts, loading states, responsive table/cards and 44px controls.",
+    "backend": "099 adds tenant-forced-RLS catalogue cache with fenced lease, daily independent allowlisted shared-worker refresh, safe retained-snapshot retry and no app DELETE. Read-only Items/Accounts/TaxRates reuse settings.read, tenant connector and quota policy. Proposal save requires current catalogue provenance and valid Item/account/tax defaults. Prior evidence/version/idempotency and explicit conditional fee safeguards preserved.",
+    "verification": "77 focused ChromeHeadless UI tests, 31 fresh disposable PostgreSQL integration tests, 50 focused Runtime tests and 14 shared-worker host tests passed. Runtime/frontend production builds passed; existing frontend bundle/font/CommonJS/missing-primeicons warnings remain. Synthetic inputs only; live scopes, provider catalogue availability and production performance are not claimed. See student-document-validation-plan.json invoiceCatalogueDelivery for rollout."
+  },
   "schemaVersion": 1,
   "studentVerifiedDocumentsAndInvoiceProposals": {
     "updatedOn": "2026-10-26",

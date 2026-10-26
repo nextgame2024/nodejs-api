@@ -13,6 +13,7 @@ import { studentDocumentFetchBudgetMinutes } from '../business-packs/student-ope
 import { StudentDocumentAnalysisWorker } from '../business-packs/student-operations/student-document-analysis.worker.js';
 import { OpenAIDocumentExtractionProvider } from '../business-packs/student-operations/openai-document-extraction.provider.js';
 import { StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
+import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
   'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_WORKFLOW_ENABLED'] as const;
@@ -39,13 +40,14 @@ export function createSharedStudentSyncRuntime() {
   const health=new StudentSyncHealth(database);
   const analysis=new StudentDocumentAnalysisWorker(database,xero,new OpenAIDocumentExtractionProvider());
   const checklist=new StudentDocumentChecklistReconciler(database);
+  const salesCatalogue=new StudentXeroSalesCatalogueSync(database,xero);
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
       if(process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED==='true'){
         requireFlags('Document workflow requires checklist, document and offer analysis.',['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
-        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',[`${schema}.student_case_invoice_draft_batches`]);
-        if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migration 098.');
+        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS ready',[`${schema}.student_case_invoice_draft_batches`,`${schema}.student_xero_sales_catalogues`]);
+        if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 and 099.');
       }
       if(process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED==='true'){
         requireFlags('Document checklist requires document and offer analysis.',['STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
@@ -109,6 +111,7 @@ export function createSharedStudentSyncRuntime() {
     reportHealth:(customerId:string)=>health.report(customerId),
     processDocumentAnalysis:(customerId:string)=>analysis.processOne(customerId),
     processDocumentChecklist:(customerId:string)=>checklist.processBatch(customerId),
+    processSalesCatalogue:(customerId:string)=>salesCatalogue.processOne(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(
         `SELECT customer_id,sync_run_id FROM ${schema}.claim_due_student_operations_xero_worker_runs(1)`);

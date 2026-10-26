@@ -17,6 +17,19 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('imports sales Items, account names and effective tax rates with read-only GETs and no bank details',async()=>{
+    const item='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({Items:[{ItemID:item,Code:'ELICOS ON-SHORE',Name:'English',IsSold:true,SalesDetails:{UnitPrice:180.0001,AccountCode:'812',TaxType:'BASEXCLUDED'}}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({Accounts:[{Code:'812',Name:'Tuition fee',Status:'ACTIVE',TaxType:'BASEXCLUDED',BankAccountNumber:'must-not-store'}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({TaxRates:[{Name:'BAS Excluded',TaxType:'BASEXCLUDED',Status:'ACTIVE',EffectiveRate:0}]})));
+    const result=await new XeroClient().salesCatalogue('test-token','test-tenant');expect(result.items[0]).toMatchObject({code:'ELICOS ON-SHORE',unitPrice:'180.0001',accountCode:'812'});expect(result.taxRates[0].rate).toBe('0');expect(JSON.stringify(result)).not.toContain('must-not-store');
+    expect(fetchMock).toHaveBeenCalledTimes(3);for(const [url,options] of fetchMock.mock.calls){expect(String(url)).toMatch(/\/(Items|Accounts|TaxRates)/);expect(options?.method).toBeUndefined();expect(options?.headers).toMatchObject({'xero-tenant-id':'test-tenant'});}
+  });
+  it('does not publish a malformed or partial item catalogue',async()=>{
+    jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({Items:[{ItemID:'invalid',Code:'bad'}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({Accounts:[]}))).mockResolvedValueOnce(new Response(JSON.stringify({TaxRates:[]})));
+    await expect(new XeroClient().salesCatalogue('test-token','test-tenant')).rejects.toThrow('invalid sales catalogue');
+  });
   it('uploads raw bytes only to Contacts with a stable idempotency key and observes quota headers',async()=>{
     const id='11111111-1111-4111-8111-111111111111',bytes=Buffer.from('%PDF-1.7\n%%EOF'),key='a'.repeat(64);
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Attachments:[{AttachmentID:id,FileName:'unique-passport.pdf',ContentLength:bytes.length}]}),{headers:{'x-daylimit-remaining':'20'}}));

@@ -238,6 +238,14 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId, connectionId, () => this.client.contactPage(accessToken, connection.xero_tenant_id, page, modifiedSince));
   }
 
+  async salesCatalogue(tenantId:string,connectionId:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
+      throw new ConflictException({errorCode:'xero_authorization_rejected',message:'Sales catalogue access requires read-only settings permission.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery');
+  }
+
   async syncInvoicePage(
     tenantId: string,
     connectionId: string,

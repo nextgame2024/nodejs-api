@@ -5,8 +5,8 @@ import type { OfferExtraction } from './student-case-offers.js';
 
 const source:OfferExtraction={kind:'letter_of_offer',studentName:'Fixture Student',collegeName:'Fixture College',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:97000,issues:[],evidence:[],courses:[],fees:[],
   instalments:[{sequence:1,dueOn:'2026-11-01',dueTerm:null,totalMinor:99500,includedConditionalFeeMinor:2500,components:[]}]};
-function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',category:'ELICOS',location:'ON-SHORE',reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
-  lines:[{kind:'tuition',description:'Tuition',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
+function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',catalogueRevision:1,reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
+  lines:[{kind:'tuition',description:'Tuition',itemId:'44444444-4444-4444-8444-444444444444',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
 describe('Sophia-only invoice draft contract',()=>{
   it('keeps the 970 base and 995 with transfer fee without double-counting',()=>{
     const v=request();expect(validateDraftSchedule(source,v)[0]).toMatchObject({totalMinor:97000,sourceTotalMinor:99500,differenceMinor:0,status:'DRAFT',paymentTrack:'PENDING',invoiceNumber:'INV-1'});
@@ -25,10 +25,10 @@ describe('Sophia-only invoice draft contract',()=>{
     const v=request();v.invoices[0].dueDate='2026-11-02';expect(()=>validateDraftSchedule(source,v)).toThrow('Explain');v.reviewNote='Client confirmed revised date';expect(validateDraftSchedule(source,v)[0].sourceDueDate).toBe('2026-11-01');
     v.reviewNote='';v.invoices[0].dueDate='2026-11-01';v.invoices[0].lines[0].amountMinor=98000;v.invoices[0].lines[0].unitAmountMinor=98000;expect(()=>validateDraftSchedule(source,v)).toThrow('Explain');
   });
-  it('rejects incorrect line maths, invalid dates and guessed course item codes',()=>{
+  it('rejects incorrect line maths, invalid dates and removed category/location inputs',()=>{
     const v=request();v.invoices[0].lines[0].amountMinor=1;expect(()=>validateDraftSchedule(source,v)).toThrow('quantities');
     const d=request();d.invoices[0].dueDate='2026-10-01';expect(()=>validateDraftSchedule(source,d)).toThrow('Due dates');
-    const c=request();c.invoices[0].lines[0].itemCode='VET ON-SHORE';expect(()=>validateDraftSchedule(source,c)).toThrow('course item code');
+    expect(invoiceDraftRequest.safeParse({...request(),category:'VET',location:'ON-SHORE'}).success).toBe(false);
   });
   it('rounds fractional quantities exactly once using integer minor units',()=>{expect(lineTotal('4',18000)).toBe(72000);expect(lineTotal('1.0001',5000)).toBe(5001);expect(lineTotal('0.5',1)).toBe(1);});
 });

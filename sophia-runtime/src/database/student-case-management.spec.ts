@@ -18,6 +18,7 @@ import { StudentDocumentAnalysisWorker } from '../business-packs/student-operati
 import { reconcileDocumentChecklist,StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
 import type { DocumentExtraction } from '../business-packs/student-operations/student-document-analysis.contracts.js';
 import { StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
+import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -84,6 +85,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/096_student_offer_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/097_student_document_checklist.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/098_student_verified_document_workflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query((await readFile(new URL('./migrations/099_student_xero_sales_catalogue.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -756,9 +758,14 @@ suite('Case management against disposable PostgreSQL',()=>{
         courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'8 weeks'}],fees:[{label:'Tuition',amountMinor:80000,conditional:false,condition:null}],
         instalments:Array.from({length:8},(_,i)=>({sequence:i+1,dueOn:null,dueTerm:'Immediately',totalMinor:i===0?12500:10000,includedConditionalFeeMinor:i===0?2500:0,components:[{label:'Tuition',amountMinor:10000}]}))});
       await review(offer,'confirmed');expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
-      const preparation=(await drafts.list(p,id)).preparation!;expect(preparation.source.instalments).toHaveLength(8);
+      const itemId=randomUUID(),catalogue={items:[{itemId,code:'ELICOS ON-SHORE',name:'English',description:'Synthetic course',unitPrice:'100.0000',accountCode:'812',taxType:'BASEXCLUDED'}],accounts:[{code:'812',name:'Tuition fee',taxType:'BASEXCLUDED'}],taxRates:[{taxType:'BASEXCLUDED',name:'BAS Excluded',rate:'0'}]};
+      let imports=0;const catalogueSync=new StudentXeroSalesCatalogueSync(database,{salesCatalogue:async()=>{imports++;return catalogue;}} as unknown as XeroConnectorService);
+      const results=await Promise.all([catalogueSync.processOne(tenant),catalogueSync.processOne(tenant)]);expect(results.filter(Boolean)).toHaveLength(1);expect(imports).toBe(1);
+      const preparation=(await drafts.list(p,id)).preparation!;expect(preparation.source.instalments).toHaveLength(8);expect(preparation.catalogue?.items[0].code).toBe('ELICOS ON-SHORE');
       const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'FIX15','Fixture Advisor','FIX15 Fixture Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
-      const payload={offerId:preparation.offerId,offerVersion:preparation.offerVersion,caseVersion:preparation.caseVersion,advisorId,category:'ELICOS',location:'ON-SHORE',reviewNote:'',invoices:preparation.source.instalments.map(i=>({sequence:i.sequence,issueDate:'2026-10-26',dueDate:'2026-10-26',conditionalFeeApplies:false,conditionalFeeMinor:0,lines:[{kind:'tuition',description:'English tuition',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:10000,amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}))};
+      const payload={offerId:preparation.offerId,offerVersion:preparation.offerVersion,caseVersion:preparation.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:preparation.catalogue!.revision,reviewNote:'',invoices:preparation.source.instalments.map(i=>({sequence:i.sequence,issueDate:'2026-10-26',dueDate:'2026-10-26',conditionalFeeApplies:false,conditionalFeeMinor:0,lines:[{kind:'tuition',description:'English tuition',itemId,itemCode:'ELICOS ON-SHORE',quantity:'1',unitPrice:'100.0000',amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}))};
+      await expect(drafts.prepare(p,id,{...payload,catalogueRevision:999},randomUUID())).rejects.toThrow('catalogue changed');
+      await expect(drafts.prepare(p,id,{...payload,invoices:payload.invoices.map(i=>({...i,lines:i.lines.map(l=>({...l,itemId:randomUUID()}))}))},randomUUID())).rejects.toThrow('available Xero item');
       const key=randomUUID(),[saved,replayed]=await Promise.all([drafts.prepare(p,id,payload,key),drafts.prepare(p,id,payload,key)]);expect(saved.count).toBe(8);expect(replayed).toEqual(saved);expect(await drafts.prepare(p,id,payload,key)).toEqual(saved);
       await expect(drafts.prepare(p,id,payload,randomUUID())).rejects.toThrow('already exist');
       const batch=(await drafts.list(p,id)).batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
@@ -767,6 +774,12 @@ suite('Case management against disposable PostgreSQL',()=>{
       const other=randomUUID();expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_case_invoice_draft_batches'))).rowCount).toBe(0);
       await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_draft_batches'))).rejects.toThrow('permission denied');
       await expect(transaction(tenant,db=>db.query("UPDATE sophia_runtime.student_case_invoice_draft_batches SET snapshot='{}'"))).rejects.toThrow('permission denied');
+      expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_xero_sales_catalogues'))).rowCount).toBe(0);
+      await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_xero_sales_catalogues'))).rejects.toThrow('permission denied');
+      await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_xero_sales_catalogues SET next_attempt_at=now() WHERE customer_id=$1`,[tenant]));
+      const failedSync=new StudentXeroSalesCatalogueSync(database,{salesCatalogue:async()=>{throw new Error('Synthetic upstream failure');}} as unknown as XeroConnectorService);
+      await failedSync.processOne(tenant);const preserved=await transaction(tenant,db=>db.query(`SELECT snapshot,revision,error_code,next_attempt_at>now() AS delayed FROM sophia_runtime.student_xero_sales_catalogues WHERE customer_id=$1`,[tenant]));
+      expect(preserved.rows[0]).toMatchObject({snapshot:catalogue,revision:1,error_code:'provider_unavailable',delayed:true});
       // Replacement reopens verification immediately; stale proposals remain audit-only.
       const next=await add(engagement);expect((await service.get(p,id)).currentStage).toBe('documents_requested');
       await expect(drafts.prepare(p,id,{...payload,caseVersion:(await service.get(p,id)).recordVersion},randomUUID())).rejects.toThrow('not verified');

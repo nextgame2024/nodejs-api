@@ -2,6 +2,7 @@ import { BadGatewayException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { xeroRateObservation, type XeroRequestPolicy } from './xero-rate-limit.js';
+import { parseSalesCatalogue,type XeroSalesCatalogue } from './xero-sales-catalogue.js';
 
 const XERO_CONTACT_PAGE_SIZE = 100;
 export type XeroAttachmentSource = 'Invoices' | 'CreditNotes' | 'Contacts';
@@ -303,6 +304,15 @@ export class XeroClient {
         status: optionalString(value.Status),
         bankAccountType: optionalString(value.BankAccountType),
       }));
+  }
+
+  async salesCatalogue(accessToken:string,tenantId:string):Promise<XeroSalesCatalogue>{
+    // Settings resources are unpaginated. Publish only a complete, validated snapshot.
+    const items=record(await this.json('https://api.xero.com/api.xro/2.0/Items?where=IsSold%3D%3Dtrue&order=Code%20ASC&unitdp=4',accessToken,tenantId));
+    const accounts=record(await this.json('https://api.xero.com/api.xro/2.0/Accounts',accessToken,tenantId));
+    const taxes=record(await this.json('https://api.xero.com/api.xro/2.0/TaxRates',accessToken,tenantId));
+    try{return parseSalesCatalogue(items.Items,accounts.Accounts,taxes.TaxRates);}
+    catch{throw new BadGatewayException('Xero returned an invalid sales catalogue.');}
   }
 
   async contactPage(
