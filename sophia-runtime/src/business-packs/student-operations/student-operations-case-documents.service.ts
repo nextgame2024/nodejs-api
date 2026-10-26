@@ -147,7 +147,11 @@ export class StudentOperationsCaseDocumentsService {
         LEFT JOIN LATERAL (SELECT * FROM ${caseSchema()}.student_document_reviews v WHERE v.customer_id=j.customer_id
           AND v.case_id=j.case_id AND v.document_id=j.document_id ORDER BY review_version DESC LIMIT 1) v ON true`,[p.tenantId,id]);
       const eligible=hasStudentOperationsPermission(p.role,'cases.manage')?await eligibleAnalysisUploads(db,p.tenantId,id,documents.rows.map(d=>d.documentId)):[];
-      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,analysisStatus:a?analysisVerdict(a,a.legal_name??'').status:eligible.some(u=>u.document_id===d.documentId)?'not_checked':null};}),
+      const latest=await db.query(`SELECT DISTINCT ON(document_type_id) document_id FROM ${caseSchema()}.student_operations_case_documents
+        WHERE customer_id=$1 AND case_id=$2 AND document_type_id IS NOT NULL ORDER BY document_type_id,discovered_at DESC,document_id DESC`,[p.tenantId,id]);
+      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,
+        canReplace:Boolean(a&&a.decision==='rejected'&&a.review_result_id===a.result_id&&latest.rows.some(r=>r.document_id===d.documentId)),
+        analysisStatus:a?analysisVerdict(a,a.legal_name??'').status:eligible.some(u=>u.document_id===d.documentId)?'not_checked':null};}),
         analysisPending:analyses.rows.some(j=>j.status==='queued'||j.status==='processing'),requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
     });
   }

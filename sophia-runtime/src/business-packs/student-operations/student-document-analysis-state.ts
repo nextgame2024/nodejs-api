@@ -1,5 +1,7 @@
 import { documentExtraction,validateDocument } from './student-document-analysis.contracts.js';
 
+export const documentWorkflowEnabled=()=>process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED==='true';
+
 export function analysisToday(now = new Date()): string {
   const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
   return ['year','month','day'].map(key=>parts.find(p=>p.type===key)!.value).join('-');
@@ -15,7 +17,9 @@ export function analysisVerdict(row:Record<string,any>,name:string,today=analysi
   const normalize=(s:string)=>s.normalize('NFKC').trim().replace(/\s+/g,' ').toLocaleLowerCase('en');
   const identityChanged=verdict?.reasons.includes('student_identity_needs_review')&&
     normalize(row.review_context?.studentNameAtReview??'')!==normalize(name);
-  const status=row.status==='queued'||row.status==='processing'?'checking':row.status==='failed'?'check_failed':
+  let status=row.status==='queued'||row.status==='processing'?'checking':row.status==='failed'?'check_failed':
     reviewed==='rejected'||expired?'invalid':parsed.success?(reviewed==='confirmed'&&!identityChanged&&verdict?.status==='needs_review'?'passed':verdict?.status):'not_checked';
+  // Initial rollout requires human approval; no model confidence threshold is implied.
+  if(documentWorkflowEnabled()&&status==='passed'&&reviewed!=='confirmed')status='needs_review';
   return {status,parsed,verdict,reviewed};
 }

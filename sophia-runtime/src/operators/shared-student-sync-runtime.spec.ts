@@ -26,6 +26,15 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('requires the document workflow dependencies and migration 098 before activation',async()=>{
+    const keys=['STUDENT_DOCUMENT_WORKFLOW_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);
+    try{
+      process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';delete process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED;
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('Document workflow requires');
+      keys.forEach(k=>process.env[k]='true');query.mockResolvedValue({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('098');
+    }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+  });
   it('gates checklist reconciliation on analysis dependencies and migration 097',async()=>{
     const keys=['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);
     try{
@@ -97,7 +106,7 @@ describe('Shared worker Runtime adapter',()=>{
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
     query.mockResolvedValue({rows:[{ready:true}]});
     try {
-      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false,STUDENT_DOCUMENT_CHECKLIST_ENABLED:false});
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false,STUDENT_DOCUMENT_CHECKLIST_ENABLED:false,STUDENT_DOCUMENT_WORKFLOW_ENABLED:false});
     } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
   });
   it('requires migration 085 before enabling document rechecks',async()=>{

@@ -1,6 +1,7 @@
 import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentDocumentTypesService } from './student-document-types.service.js';
+import { StudentCaseInvoiceDraftsService } from './student-case-invoice-drafts.js';
 import { StudentDocumentAnalysisService } from './student-document-analysis.service.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
 import { StudentOperationsCasesService } from './student-operations-cases.service.js';
@@ -10,7 +11,12 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @Controller('business-packs/student-operations/v1/workspace/cases')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
-  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService) {}
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService) {}
+  @Get(':caseId/invoice-drafts')
+  @Header('Cache-Control','private, no-store')
+  invoiceDrafts(@Req() r:Request,@Param('caseId') id:string){return this.drafts.list(r.studentOperationsPrincipal,id);}
+  @Post(':caseId/invoice-drafts')
+  prepareInvoiceDrafts(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.drafts.prepare(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/documents/:documentId/analysis')
   @Header('Cache-Control','private, no-store')
   analysisStatus(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string){return this.analysis.get(r.studentOperationsPrincipal,id,doc);}

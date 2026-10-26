@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import type { DatabaseService } from '../../database/database.service.js';
 import { caseSchema } from './student-operations-cases.service.js';
-import { analysisToday,analysisVerdict } from './student-document-analysis-state.js';
+import { analysisToday,analysisVerdict,documentWorkflowEnabled } from './student-document-analysis-state.js';
 
 export const documentChecklistEnabled=()=>process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED==='true';
 export const DOCUMENT_CHECKLIST_KEYS=['signed_engagement_letter','document_completeness'] as const;
@@ -20,7 +20,10 @@ export async function documentChecklistEvidence(db:PoolClient,tenant:string,id:s
   const rows=(await db.query(`SELECT q.requirement_key,q.required,t.status AS type_status,
       d.document_id,j.status,j.document_kind,r.result_id,r.extraction,
       v.result_id AS review_result_id,v.review_version,v.decision,v.corrections,v.review_context,
-      o.is_current AS offer_current,s.legal_name
+      o.is_current AS offer_current,s.legal_name,
+      EXISTS(SELECT 1 FROM ${s}.student_operations_case_documents old JOIN ${s}.student_document_reviews rejected
+        ON rejected.customer_id=old.customer_id AND rejected.case_id=old.case_id AND rejected.document_id=old.document_id
+        WHERE old.customer_id=c.customer_id AND old.case_id=c.case_id AND old.document_type_id=q.document_type_id AND rejected.decision='rejected') AS previously_rejected
     FROM ${s}.student_operations_cases c
     JOIN ${s}.student_operations_students s ON s.customer_id=c.customer_id AND s.student_id=c.student_id
     JOIN ${s}.student_operations_status_document_requirements q ON q.customer_id=c.customer_id AND q.case_status='pre_sale' AND q.status='active'
@@ -43,6 +46,7 @@ export async function documentChecklistEvidence(db:PoolClient,tenant:string,id:s
       (row.requirement_key!=='letter_of_offer'||(row.offer_current===true&&verdict.reviewed==='confirmed'));
     return {key:String(row.requirement_key),required:Boolean(row.required),documentId:row.document_id??null,
       resultId:row.result_id??null,reviewVersion:row.review_version??0,accepted,
+      rejected:verdict.reviewed==='rejected',previouslyRejected:Boolean(row.previously_rejected),
       validationState:accepted?'passed':!row.document_id?'missing':row.status==='queued'||row.status==='processing'?'checking':'needs_review'};
   });
   const engagement=evidence.find(e=>e.key==='engagement_letter');
@@ -58,8 +62,8 @@ export async function documentChecklistEvidence(db:PoolClient,tenant:string,id:s
 export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:string,today=analysisToday()) {
   if(!documentChecklistEnabled())return;
   const s=caseSchema();
-  const c=(await db.query(`SELECT lifecycle_status FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2`,[tenant,id])).rows[0];
-  if(c?.lifecycle_status!=='pre_sale')return;
+  const c=(await db.query(`SELECT * FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2`,[tenant,id])).rows[0];
+  if(!c||!['pre_sale','on_hold'].includes(c.lifecycle_status))return;
   // Replacement makes previous financial approval historical, without erasing it.
   await db.query(`UPDATE ${s}.student_case_offers o SET is_current=false,status='superseded',record_version=record_version+1
     FROM ${s}.student_operations_case_documents old
@@ -92,6 +96,24 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
   }
   const allComplete=DOCUMENT_CHECKLIST_KEYS.every(key=>completed[key])&&['invoice_loo_consistency','pending_track_status'].every(key=>before.find(r=>r.item_key===key)?.completed);
   if(wasComplete!==allComplete)await activity(allComplete?'case.checklist_completed':'case.checklist_reopened',allComplete?'Checklist complete':'Checklist reopened');
+  if(documentWorkflowEnabled()&&['documents_requested','checklist_complete'].includes(c.current_stage)){
+    const rejected=evidence.some(e=>(e.required||e.key==='engagement_letter')&&e.rejected);
+    let status=c.lifecycle_status,stage=c.current_stage,hold=c.document_review_hold;
+    if(rejected){
+      // Do not take ownership of a hold a person placed for another reason.
+      hold=status==='pre_sale'?true:hold;status='on_hold';stage='documents_requested';
+    }else{
+      // A replacement must be approved, not merely uploaded or still processing.
+      const replacements=evidence.filter(e=>e.previouslyRejected);
+      if(hold&&replacements.length&&replacements.every(e=>e.accepted)){status='pre_sale';hold=false;}
+      if(status==='pre_sale')stage=completed.signed_engagement_letter&&completed.document_completeness?'checklist_complete':'documents_requested';
+    }
+    if(status!==c.lifecycle_status||stage!==c.current_stage||hold!==c.document_review_hold){
+      await db.query(`UPDATE ${s}.student_operations_cases SET lifecycle_status=$3,current_stage=$4,document_review_hold=$5,
+        record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,[tenant,id,status,stage,hold]);
+      await activity('case.document_workflow_updated',status==='on_hold'?'Case placed on hold — document rejected':stage==='checklist_complete'?'Verified Documents':status!==c.lifecycle_status?'Document hold cleared':'Documents Requested — checks pending');
+    }
+  }
   await db.query(`INSERT INTO ${s}.student_document_checklist_evaluations(customer_id,case_id,evidence) VALUES($1,$2,$3)
     ON CONFLICT(customer_id,case_id) DO UPDATE SET evidence=excluded.evidence,checked_at=now()`,[tenant,id,JSON.stringify(evidence)]);
 }
@@ -104,7 +126,7 @@ export class StudentDocumentChecklistReconciler {
     return this.database.tenantTransaction(tenant,async db=>{
       const s=caseSchema(),due=(await db.query(`SELECT c.case_id FROM ${s}.student_operations_cases c
         LEFT JOIN ${s}.student_document_checklist_evaluations e ON e.customer_id=c.customer_id AND e.case_id=c.case_id
-        WHERE c.customer_id=$1 AND c.lifecycle_status='pre_sale' AND (e.checked_at IS NULL OR e.checked_at<now()-interval '15 minutes')
+        WHERE c.customer_id=$1 AND c.lifecycle_status IN ('pre_sale','on_hold') AND (e.checked_at IS NULL OR e.checked_at<now()-interval '15 minutes')
         ORDER BY e.checked_at NULLS FIRST,c.case_id LIMIT 20 FOR UPDATE OF c SKIP LOCKED`,[tenant])).rows;
       for(const row of due)await reconcileDocumentChecklist(db,tenant,row.case_id);
       return due.length>0;

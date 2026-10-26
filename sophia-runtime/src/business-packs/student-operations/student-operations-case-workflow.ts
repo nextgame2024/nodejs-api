@@ -15,7 +15,7 @@ export type CaseStatus = typeof CASE_STATUSES[number];
 
 export const ALLOWED_STAGE_STATUSES: Record<CaseStage, readonly CaseStatus[]> = {
   imported_pending_review: ['in_progress'],
-  documents_requested: ['pre_sale'],
+  documents_requested: ['pre_sale', 'on_hold'],
   checklist_complete: ['pre_sale'],
   awaiting_payment: ['pre_sale', 'on_hold'],
   payment_received: ['in_progress'],
@@ -27,7 +27,7 @@ export const ALLOWED_STAGE_STATUSES: Record<CaseStage, readonly CaseStatus[]> = 
 export const CASE_STAGE_LABELS: Record<CaseStage, string> = {
   imported_pending_review: 'Imported — Pending Review',
   documents_requested: 'Documents Requested',
-  checklist_complete: 'Checklist Complete',
+  checklist_complete: 'Verified Documents',
   awaiting_payment: 'Awaiting Payment',
   payment_received: 'Payment Received',
   invoices_created: 'Invoices Created',
@@ -67,7 +67,7 @@ export function resolveCaseWorkflow(
       throw new BadRequestException('Imported — Pending Review is only for migrated cases.');
     }
     const allowed = ALLOWED_STAGE_STATUSES[stage];
-    const status = requestedStatus ?? (stage === 'awaiting_payment' ? 'pre_sale' : allowed.length === 1 ? allowed[0] : null);
+    const status = requestedStatus ?? (['documents_requested','awaiting_payment'].includes(stage) ? 'pre_sale' : allowed.length === 1 ? allowed[0] : null);
     if (!status || !allowed.includes(status)) {
       throw new BadRequestException('Select a status allowed for the current stage.');
     }
@@ -85,7 +85,7 @@ export function resolveCaseWorkflow(
   if (!allowed) throw new BadRequestException('Select a current workflow stage.');
   const existingStatus = publicCaseStatus(currentStoredStatus!);
   const status = requestedStatus ?? (allowed.includes(existingStatus as CaseStatus)
-    ? existingStatus : stage === 'awaiting_payment' ? 'pre_sale' : allowed.length === 1 ? allowed[0] : null);
+    ? existingStatus : ['documents_requested','awaiting_payment'].includes(stage) ? 'pre_sale' : allowed.length === 1 ? allowed[0] : null);
   if (!status || !allowed.includes(status as CaseStatus)) {
     throw new BadRequestException('Select a status allowed for the current stage.');
   }

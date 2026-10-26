@@ -7,6 +7,7 @@ import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { ALLOWED_STAGE_STATUSES, CASE_STAGE_LABELS, CASE_STAGES, CASE_STATUS_LABELS, CASE_STATUSES, NEW_CASE_STAGES, publicCaseStatus, resolveCaseWorkflow } from './student-operations-case-workflow.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { DOCUMENT_CHECKLIST_KEYS,documentChecklistEnabled,documentChecklistEvidence,reconcileDocumentChecklist } from './student-document-checklist.js';
+import { documentWorkflowEnabled } from './student-document-analysis-state.js';
 
 const fields = z.object({
   title: z.string().trim().min(1).max(200).nullable().optional(),
@@ -30,8 +31,8 @@ const updateSchema = fields.extend({ recordVersion: z.number().int().positive() 
 const querySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25), userId: z.string().uuid().optional() }).strict();
 export const PRE_SALE_CHECKLIST = [
   {key:'signed_engagement_letter',label:'Signed engagement letter'},
-  {key:'invoice_loo_consistency',label:'Invoice/LoO consistency'},
   {key:'document_completeness',label:'Document completeness'},
+  {key:'invoice_loo_consistency',label:'Invoice/LoO consistency'},
   {key:'pending_track_status',label:'Pending Track status'},
 ] as const;
 const checklistUpdateSchema=z.object({
@@ -121,6 +122,7 @@ export class StudentOperationsCasesService {
     assertManage(p);
     const value = parse(createSchema, input);
     const workflow = resolveCaseWorkflow(null, null, value.currentStage, value.status);
+    if(documentWorkflowEnabled()&&workflow.stage==='checklist_complete')throw new BadRequestException('Approve the required documents before selecting Verified Documents.');
     return this.write(p, 'case.create', value, key, db=>this.insertCase(db,p,value,workflow));
   }
 
@@ -128,6 +130,7 @@ export class StudentOperationsCasesService {
     assertManage(p);
     const value=parse(createStudentSchema,input);
     const workflow=resolveCaseWorkflow(null,null,value.currentStage,value.status);
+    if(documentWorkflowEnabled()&&workflow.stage==='checklist_complete')throw new BadRequestException('Approve the required documents before selecting Verified Documents.');
     try {
       return await this.write(p,'case.create_student',value,key,async db=>{
         const account=await db.query(`SELECT ${caseSchema()}.create_student_case_account($1,$2,$3,$4) AS user_id`,
@@ -169,6 +172,11 @@ export class StudentOperationsCasesService {
       const row = await this.authorizedCase(db,p,id,true);
       if (row.record_version !== value.recordVersion) throw new ConflictException('Case changed. Reload before saving.');
       const workflow = resolveCaseWorkflow(row.current_stage,row.lifecycle_status,value.currentStage,value.status);
+      if(documentWorkflowEnabled()&&workflow.stage==='checklist_complete'){
+        const evidence=await documentChecklistEvidence(db,p.tenantId,id);
+        if(!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness)throw new ConflictException('Approve all required documents before selecting Verified Documents.');
+      }
+      if(documentWorkflowEnabled()&&(workflow.status!==row.lifecycle_status||workflow.stage!==row.current_stage))await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET document_review_hold=false WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
       await db.query(`UPDATE ${caseSchema()}.student_operations_cases SET title=$3,course_name=$4,current_stage=$5,lifecycle_status=$6,closed_on=CASE WHEN $6 IN ('closed','completed','cancelled') THEN coalesce(closed_on,CURRENT_DATE) ELSE NULL END,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,
       [p.tenantId,id,value.title === undefined ? row.title : value.title,value.courseName === undefined ? row.course_name : value.courseName,workflow.stage,workflow.status]);
       await this.assign(db,p,id,value);

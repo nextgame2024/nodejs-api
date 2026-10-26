@@ -15,7 +15,7 @@ import { OpenAIDocumentExtractionProvider } from '../business-packs/student-oper
 import { StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
 
 const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
-  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED'] as const;
+  'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_WORKFLOW_ENABLED'] as const;
 function featureFlags() {
   // An explicit allowlist of booleans only: never log arbitrary environment
   // values, credentials or connection strings during startup diagnosis.
@@ -42,6 +42,11 @@ export function createSharedStudentSyncRuntime() {
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
+      if(process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED==='true'){
+        requireFlags('Document workflow requires checklist, document and offer analysis.',['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
+        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',[`${schema}.student_case_invoice_draft_batches`]);
+        if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migration 098.');
+      }
       if(process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED==='true'){
         requireFlags('Document checklist requires document and offer analysis.',['STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
         const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AS ready',[`${schema}.student_document_checklist_evaluations`]);

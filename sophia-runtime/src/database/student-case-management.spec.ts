@@ -17,6 +17,7 @@ import { StudentDocumentAnalysisService } from '../business-packs/student-operat
 import { StudentDocumentAnalysisWorker } from '../business-packs/student-operations/student-document-analysis.worker.js';
 import { reconcileDocumentChecklist,StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
 import type { DocumentExtraction } from '../business-packs/student-operations/student-document-analysis.contracts.js';
+import { StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -82,6 +83,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query('ALTER TABLE public.bm_colleges ADD COLUMN abn text');
     await pool.query((await readFile(new URL('./migrations/096_student_offer_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/097_student_document_checklist.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query((await readFile(new URL('./migrations/098_student_verified_document_workflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -657,22 +659,22 @@ suite('Case management against disposable PostgreSQL',()=>{
         courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'60 weeks'}],fees:[{label:'Total',amountMinor:904000,conditional:false,condition:null}],
         instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:906500,includedConditionalFeeMinor:2500,components:[]}]};
       const first=await add('engagement_letter');await finish(first,engagement);
-      let state=await service.checklist(p,id);expect(state.items[0]).toMatchObject({completed:true,automatic:true,updatedBy:'SophiaAi',validationState:'passed'});expect(state.items[2]).toMatchObject({completed:false,validationState:'missing'});
+      let state=await service.checklist(p,id);expect(state.items[0]).toMatchObject({completed:true,automatic:true,updatedBy:'SophiaAi',validationState:'passed'});expect(state.items[1]).toMatchObject({completed:false,validationState:'missing'});
       await expect(service.updateChecklist(p,id,{itemKey:'document_completeness',completed:true,recordVersion:0},'automation-spoof-complete')).rejects.toThrow('document checks');
       const pass=await add('passport');await finish(pass,passport);
       const loo=await add('letter_of_offer');await finish(loo,offer);
-      expect((await service.checklist(p,id)).items[2]).toMatchObject({completed:false,validationState:'needs_review'}); // Presence/proposal is not approval.
+      expect((await service.checklist(p,id)).items[1]).toMatchObject({completed:false,validationState:'needs_review'}); // Presence/proposal is not approval.
       const checked=await analysis.get(p,id,loo.document);
       await analysis.review(p,id,loo.document,{resultId:checked.resultId,expectedReviewVersion:0,expectedCaseVersion:checked.offer!.caseRecordVersion,decision:'confirmed',reason:'All synthetic tables reviewed',corrections:null,collegeId:college},'automation-confirm-offer');
-      state=await service.checklist(p,id);expect(state.items[2]).toMatchObject({completed:true,automatic:true,validationState:'passed'});
+      state=await service.checklist(p,id);expect(state.items[1]).toMatchObject({completed:true,automatic:true,validationState:'passed'});
       for(const key of ['invoice_loo_consistency','pending_track_status']){
         const item=state.items.find(i=>i.key===key)!;state=await service.updateChecklist(p,id,{itemKey:key,completed:true,recordVersion:item.recordVersion},`automation-manual-${key}`);
       }
       const reconcile=async(today?:string)=>transaction(tenant,async db=>{await service.authorizedCase(db,p,id,true);await reconcileDocumentChecklist(db,tenant,id,today);});
       await Promise.all([reconcile(),reconcile()]);
       expect((await service.activities(p,id,{})).activity.filter(a=>a.eventType==='case.checklist_completed')).toHaveLength(1);
-      await reconcile('2030-01-01');expect((await service.checklist(p,id)).items[2].completed).toBe(true);
-      await reconcile('2030-01-02');state=await service.checklist(p,id);expect(state.items[2]).toMatchObject({completed:false,updatedBy:'SophiaAi'});
+      await reconcile('2030-01-01');expect((await service.checklist(p,id)).items[1].completed).toBe(true);
+      await reconcile('2030-01-02');state=await service.checklist(p,id);expect(state.items[1]).toMatchObject({completed:false,updatedBy:'SophiaAi'});
       expect(state.items.find(i=>i.key==='pending_track_status')!.completed).toBe(true);
       await reconcile(); // Restore current-date validity without another provider call.
       const replacement=await add('engagement_letter');expect((await service.checklist(p,id)).items[0]).toMatchObject({completed:false,validationState:'checking'});
@@ -685,7 +687,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       const replacedOffer=await add('letter_of_offer');
       state=await service.checklist(p,id);expect(state.items.find(i=>i.key==='invoice_loo_consistency')!.completed).toBe(false);
       expect((await transaction(tenant,db=>db.query(`SELECT offer_id FROM sophia_runtime.student_case_offers WHERE case_id=$1 AND is_current`,[id]))).rowCount).toBe(0);
-      await finish(replacedOffer,offer);expect((await service.checklist(p,id)).items[2].completed).toBe(false);
+      await finish(replacedOffer,offer);expect((await service.checklist(p,id)).items[1].completed).toBe(false);
       const activities=await service.activities(p,id,{limit:100});
       expect(activities.activity.some(a=>a.eventType==='case.checklist_reopened'&&a.actorName==='SophiaAi')).toBe(true);
       expect((await service.get(p,id)).status).toBe('pre_sale');expect((await service.get(p,id)).currentStage).toBe('documents_requested');
@@ -717,6 +719,61 @@ suite('Case management against disposable PostgreSQL',()=>{
     }
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
+  test('manual review controls document holds and prepares eight immutable tenant-scoped Sophia drafts without Xero writes',async()=>{
+    const keys=['STUDENT_DOCUMENT_WORKFLOW_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);keys.forEach(k=>process.env[k]='true');
+    try{
+      await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='active' WHERE customer_id=$1 AND name IN ('Passport','Engagement letter')`,[tenant]));
+      const id=String((await service.createStudent(p,{studentName:'Workflow Fixture',studentEmail:'workflow-fixture@example.test'},'workflow-fixture-create')).caseId);
+      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,analysis=new StudentDocumentAnalysisService(database,service),drafts=new StudentCaseInvoiceDraftsService(database,service),queue=new StudentDocumentAnalysisQueue(database);
+      const requirements=(await types.requirements(p,{status:'pre_sale'})).requirements;
+      const identity={studentName:'Workflow Fixture',evidence:[{page:1,quote:'Synthetic workflow evidence'}],issues:[]};
+      const engagement:DocumentExtraction={...identity,kind:'engagement_letter',status:'signed',completed:true,signerName:'Workflow Fixture',signedAt:'2026-01-01T01:00:00Z',documentIdMatches:true};
+      const add=async(extraction:DocumentExtraction)=>{
+        const value=await transaction(tenant,async db=>{
+          await service.authorizedCase(db,p,id,true);
+          const type=requirements.find(r=>r.requirementKey===extraction.kind)!.documentTypeId;
+          const document=(await db.query(`INSERT INTO sophia_runtime.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes,document_type_id)
+            VALUES($1,$2,$3,'Contacts',$4,$5,'workflow-fixture.pdf','application/pdf',10,$6) RETURNING document_id`,[tenant,id,connection,randomUUID(),randomUUID(),type])).rows[0].document_id;
+          const job=await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId:document,kind:extraction.kind,contentSha256:'e'.repeat(64),schemaVersion:extraction.kind==='letter_of_offer'?'2':'1'}),lease=randomUUID();
+          await db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET status='processing',attempts=1,lease_token=$2,lease_expires_at=now()+interval '3 minutes' WHERE job_id=$1`,[job,lease]);
+          await reconcileDocumentChecklist(db,tenant,id);return {document,job,lease};
+        });
+        await queue.complete(tenant,value.job,value.lease,{extraction,provider:'fixture',model:'fixture',inputTokens:1,outputTokens:1});return value.document;
+      };
+      const review=async(document:string,decision:'confirmed'|'rejected')=>{
+        const state=await analysis.get(p,id,document);
+        return analysis.review(p,id,document,{resultId:state.resultId,expectedReviewVersion:state.reviewVersion,decision,reason:'Synthetic manual review',corrections:null,...(state.offer?{collegeId:college,expectedCaseVersion:state.offer.caseRecordVersion}:{})},randomUUID());
+      };
+      const first=await add(engagement);expect((await analysis.get(p,id,first)).status).toBe('needs_review');
+      await review(first,'rejected');expect(await service.get(p,id)).toMatchObject({status:'on_hold',currentStage:'documents_requested'});
+      expect((await types.requirements(p,{status:'on_hold'})).requirements.map(r=>r.requirementKey)).toEqual(expect.arrayContaining(['engagement_letter','passport','letter_of_offer']));
+      const docs=new StudentOperationsCaseDocumentsService(database,service,{} as XeroConnectorService);
+      expect((await docs.list(p,id,{})).documents.find(d=>d.documentId===first)?.canReplace).toBe(true);
+      const replacement=await add(engagement);expect((await service.get(p,id)).status).toBe('on_hold');
+      await review(replacement,'confirmed');expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'documents_requested'});
+      const passport=await add({...identity,kind:'passport',expiresOn:'2035-01-01',mrzExpiryMatches:true});await review(passport,'confirmed');
+      const offer=await add({...identity,kind:'letter_of_offer',collegeName:'York Business',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:80000,
+        courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'8 weeks'}],fees:[{label:'Tuition',amountMinor:80000,conditional:false,condition:null}],
+        instalments:Array.from({length:8},(_,i)=>({sequence:i+1,dueOn:null,dueTerm:'Immediately',totalMinor:i===0?12500:10000,includedConditionalFeeMinor:i===0?2500:0,components:[{label:'Tuition',amountMinor:10000}]}))});
+      await review(offer,'confirmed');expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
+      const preparation=(await drafts.list(p,id)).preparation!;expect(preparation.source.instalments).toHaveLength(8);
+      const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'FIX15','Fixture Advisor','FIX15 Fixture Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+      const payload={offerId:preparation.offerId,offerVersion:preparation.offerVersion,caseVersion:preparation.caseVersion,advisorId,category:'ELICOS',location:'ON-SHORE',reviewNote:'',invoices:preparation.source.instalments.map(i=>({sequence:i.sequence,issueDate:'2026-10-26',dueDate:'2026-10-26',conditionalFeeApplies:false,conditionalFeeMinor:0,lines:[{kind:'tuition',description:'English tuition',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:10000,amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}))};
+      const key=randomUUID(),[saved,replayed]=await Promise.all([drafts.prepare(p,id,payload,key),drafts.prepare(p,id,payload,key)]);expect(saved.count).toBe(8);expect(replayed).toEqual(saved);expect(await drafts.prepare(p,id,payload,key)).toEqual(saved);
+      await expect(drafts.prepare(p,id,payload,randomUUID())).rejects.toThrow('already exist');
+      const batch=(await drafts.list(p,id)).batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
+      expect(batch.snapshot.invoices[0]).toMatchObject({invoiceNumber:'INV-1',sourceTotalMinor:12500,sourceIncludedConditionalFeeMinor:2500});
+      await expect(drafts.list({...p,role:'advisor'},id)).rejects.toThrow('financial access');
+      const other=randomUUID();expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_case_invoice_draft_batches'))).rowCount).toBe(0);
+      await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_draft_batches'))).rejects.toThrow('permission denied');
+      await expect(transaction(tenant,db=>db.query("UPDATE sophia_runtime.student_case_invoice_draft_batches SET snapshot='{}'"))).rejects.toThrow('permission denied');
+      // Replacement reopens verification immediately; stale proposals remain audit-only.
+      const next=await add(engagement);expect((await service.get(p,id)).currentStage).toBe('documents_requested');
+      await expect(drafts.prepare(p,id,{...payload,caseVersion:(await service.get(p,id)).recordVersion},randomUUID())).rejects.toThrow('not verified');
+      await service.update(p,id,{recordVersion:(await service.get(p,id)).recordVersion,status:'on_hold'},randomUUID());
+      await review(next,'confirmed');expect((await service.get(p,id)).status).toBe('on_hold'); // Manual holds are not released.
+    }finally{keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+  });
   test('offer extraction saves proposals, matches the college and confirms immutable financial revisions',async()=>{
     const restore=enableCreation(),old=process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED,oldOffer=process.env.STUDENT_OFFER_ANALYSIS_ENABLED;
     process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED=process.env.STUDENT_OFFER_ANALYSIS_ENABLED='true';
