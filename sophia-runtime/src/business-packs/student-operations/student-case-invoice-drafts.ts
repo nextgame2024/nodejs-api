@@ -30,6 +30,16 @@ export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.numbe
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
 const exportRequest=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 
+export function xeroPreflightFailure(error:unknown){
+  if(!(error instanceof ConflictException))return {};
+  const response=error.getResponse();
+  const detail=typeof response==='string'?{message:response}:response&&typeof response==='object'?response as {errorCode?:unknown;message?:unknown}:{};
+  return {
+    ...(typeof detail.errorCode==='string'?{errorCode:detail.errorCode}:{}),
+    ...(typeof detail.message==='string'?{message:detail.message}:{}),
+  };
+}
+
 /** Integer minor units and four-decimal quantities; round only once per line. */
 export function lineTotal(quantity:string,unitAmountMinor:number){
   const [whole,fraction='']=quantity.split('.'),q=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));
@@ -203,7 +213,7 @@ export class StudentCaseInvoiceDraftsService {
       }
       return {snapshot,connectionId,contact,rows};
     });
-    const results=[] as Array<{sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null}>;
+    const results=[] as Array<{sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string}>;
     for(const item of claim.rows){
       if(!item.owned){results.push({sequence:item.invoice.sequence,status:item.status==='created'?'already_created':item.status});continue;}
       const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:claim.snapshot.advisorLabel}];
@@ -233,7 +243,10 @@ export class StudentCaseInvoiceDraftsService {
       }catch(error){
         const status=!providerReturned&&error instanceof ConflictException?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
-        results.push({sequence:item.invoice.sequence,status});
+        const detail=xeroPreflightFailure(error);
+        results.push({sequence:item.invoice.sequence,status,
+          ...(status==='not_attempted'?detail:{}),
+        });
       }
     }
     return {created:results.filter(r=>r.status==='created').length,skipped:results.filter(r=>r.status!=='created').length,results};
