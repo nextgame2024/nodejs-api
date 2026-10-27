@@ -36,7 +36,7 @@ describe("XeroClient", () => {
     const client=new XeroClient();await expect(client.invoiceById('token','tenant',invoiceId)).resolves.toMatchObject({invoiceId,invoiceNumber:'INV-10577',contactId,total:970});
     await expect(client.invoiceCandidates('token','tenant',contactId,'2026-10-27')).resolves.toHaveLength(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}`);
-    const candidateUrl=new URL(String(fetchMock.mock.calls[1]?.[0]));expect(candidateUrl.searchParams.get('ContactIDs')).toBe(contactId);expect(candidateUrl.searchParams.get('createdByMyApp')).toBe('true');expect(candidateUrl.searchParams.get('pageSize')).toBe('100');expect(candidateUrl.searchParams.get('where')).toContain('DateTime(2026,10,27)');
+    const candidateUrl=new URL(String(fetchMock.mock.calls[1]?.[0]));expect(candidateUrl.searchParams.get('ContactIDs')).toBe(contactId);expect(candidateUrl.searchParams.has('createdByMyApp')).toBe(false);expect(candidateUrl.searchParams.get('summaryOnly')).toBe('true');expect(candidateUrl.searchParams.get('pageSize')).toBe('100');expect(candidateUrl.searchParams.get('where')).toContain('DateTime(2026,10,27)');
   });
   it('classifies a confirmed Xero invoice validation failure as correctable without calling it a duplicate',async()=>{
     const id='11111111-1111-4111-8111-111111111111';jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{HasValidationErrors:true,ValidationErrors:[{Message:'Tracking option is invalid'}]}]})));

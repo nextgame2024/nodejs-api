@@ -48,14 +48,24 @@ export function lineTotal(quantity:string,unitAmountMinor:number){
 }
 const decimalNumber=(value:string|number|null)=>value===null?null:Math.round(Number(value)*10000);
 const trackingKey=(items:Array<{name:string;option:string}>)=>items.map(item=>`${item.name.trim().toLowerCase()}=${item.option.trim().toLowerCase()}`).sort().join('|');
-export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
+const normalizedDescription=(value:string|null)=>value?.replace(/\r\n?/g,'\n').trim()??'';
+export function matchesXeroInvoiceHeader(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
   if(candidate.type!=='ACCREC'||['DELETED','VOIDED'].includes(candidate.status)||candidate.contactId!==expected.contactId||candidate.invoiceDate!==expected.date||candidate.dueDate!==expected.dueDate||
-    candidate.currencyCode!==expected.currencyCode||(candidate.invoiceReference??null)!==(expected.reference??null)||Math.round(candidate.total*100)!==totalMinor||candidate.lineItems.length!==expected.lines.length)return false;
-  const actual=candidate.lineItems.map(line=>JSON.stringify({description:line.description??'',quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
+    candidate.currencyCode!==expected.currencyCode||(candidate.invoiceReference??null)!==(expected.reference??null)||Math.round(candidate.total*100)!==totalMinor)return false;
+  return true;
+}
+export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
+  if(!matchesXeroInvoiceHeader(candidate,expected,totalMinor)||candidate.lineItems.length!==expected.lines.length)return false;
+  const actual=candidate.lineItems.map(line=>JSON.stringify({description:normalizedDescription(line.description),quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
     accountCode:line.accountCode??'',taxType:line.taxType??'',tracking:trackingKey(line.tracking)})).sort();
-  const wanted=expected.lines.map(line=>JSON.stringify({description:line.description,quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
+  const wanted=expected.lines.map(line=>JSON.stringify({description:normalizedDescription(line.description),quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
     accountCode:line.accountCode,taxType:line.taxType,tracking:trackingKey(line.tracking)})).sort();
   return isDeepStrictEqual(actual,wanted);
+}
+export async function exactXeroInvoiceMatches(candidates:XeroInvoiceRecord[],expected:XeroInvoiceCreate,totalMinor:number,read:(invoiceId:string)=>Promise<XeroInvoiceRecord>){
+  const plausible=candidates.filter(candidate=>matchesXeroInvoiceHeader(candidate,expected,totalMinor));
+  const complete=await Promise.all(plausible.map(candidate=>read(candidate.invoiceId)));
+  return complete.filter(candidate=>matchesXeroInvoice(candidate,expected,totalMinor));
 }
 export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string){
   const sequences=value.invoices.map(i=>i.sequence);
@@ -171,12 +181,12 @@ export class StudentCaseInvoiceDraftsService {
         }
         const updated=(await db.query(`UPDATE ${s}.student_case_invoice_draft_batches SET advisor_id=$4,advisor_label=$5,snapshot=$6,actor_identity_user_id=$7,updated_at=now(),revision=revision+1
           WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 RETURNING revision,updated_at AS "updatedAt"`,[p.tenantId,id,existing.batch_id,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
-        await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} Sophia invoice drafts updated — Payment Track PENDING`);
+        await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} invoice drafts updated — Payment Track PENDING`);
         return {batchId:existing.batch_id,count:invoices.length,updated:true,revision:updated.revision,updatedAt:updated.updatedAt};
       }
       const batch=(await db.query(`INSERT INTO ${s}.student_case_invoice_draft_batches(customer_id,case_id,offer_id,advisor_id,advisor_label,snapshot,actor_identity_user_id)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING batch_id,revision,updated_at AS "updatedAt"`,[p.tenantId,id,value.offerId,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
-      await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} Sophia invoice drafts prepared — Payment Track PENDING`);
+      await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} invoice drafts prepared — Payment Track PENDING`);
       return {batchId:batch.batch_id,count:invoices.length,updated:false,revision:batch.revision,updatedAt:batch.updatedAt};
     });
   }
@@ -276,7 +286,7 @@ export class StudentCaseInvoiceDraftsService {
         let verified:XeroInvoiceRecord|undefined;
         try{const candidate=await this.xero.invoiceById(p.tenantId,claim.connectionId,receipt.invoiceId);if(matchesXeroInvoice(candidate,value,item.invoice.totalMinor))verified=candidate;}catch{}
         const projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contact,claim.snapshot,item.invoice,receipt,verified);
-        results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. Sophia queued a register refresh to complete local indexing.'}:{})});
+        results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. A register refresh was queued to complete local indexing.'}:{})});
       }catch(error){
         const status=!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException)?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
@@ -305,17 +315,18 @@ export class StudentCaseInvoiceDraftsService {
     if(claim.alreadyCreated)return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'already_created'}]};
     const value=this.xeroValue(claim.snapshot,invoice,claim.contactId);
     try{
-      const candidates=(await this.xero.invoiceCandidates(p.tenantId,claim.connectionId,claim.contactId,invoice.issueDate)).filter(candidate=>matchesXeroInvoice(candidate,value,invoice.totalMinor));
-      if(candidates.length!==1)return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',message:candidates.length
+      const candidates=await this.xero.invoiceCandidates(p.tenantId,claim.connectionId,claim.contactId,invoice.issueDate);
+      const matches=await exactXeroInvoiceMatches(candidates,value,invoice.totalMinor,invoiceId=>this.xero.invoiceById(p.tenantId,claim.connectionId,invoiceId));
+      if(matches.length!==1)return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',message:matches.length
         ?'More than one exact Xero invoice matches this draft. An administrator must resolve the duplicate records in Xero.'
-        :'No exact Xero invoice is visible yet. Wait briefly, then check Xero again; do not resend this invoice.'}]};
-      const candidate=candidates[0],projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contactId,claim.snapshot,invoice,
+        :candidates.length?'Xero invoices were found for this contact and date, but none exactly match the reviewed invoice. Review the Xero invoice details; do not resend it.':'No matching Xero invoice is visible yet. Wait briefly, then check Xero again; do not resend this invoice.'}]};
+      const candidate=matches[0],projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contactId,claim.snapshot,invoice,
         {invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,status:candidate.status,total:candidate.total},candidate);
       return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'created',invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,
-        message:projectionPending?'Confirmed in Xero. Sophia queued a register refresh to complete local indexing.':'Confirmed against the exact invoice in Xero.'}]};
+        message:projectionPending?'Confirmed in Xero. A register refresh was queued to complete local indexing.':'Confirmed against the exact invoice in Xero.'}]};
     }catch(error){
       const detail=xeroPreflightFailure(error);
-      return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',...detail,message:detail.message??'Sophia could not complete the Xero verification. Try Check Xero status again.'}]};
+      return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',...detail,message:detail.message??'The Xero verification could not be completed. Try Check Xero status again.'}]};
     }
   }
 }

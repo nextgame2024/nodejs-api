@@ -420,7 +420,11 @@ export class XeroClient {
   async invoiceCandidates(accessToken:string,tenantId:string,contactId:string,date:string):Promise<XeroInvoiceRecord[]>{
     if(!/^[0-9a-f-]{36}$/i.test(contactId)||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new BadGatewayException('Invalid Xero invoice reconciliation request.');
     const [year,month,day]=date.split('-').map(Number),url=new URL('https://api.xero.com/api.xro/2.0/Invoices');
-    url.search=new URLSearchParams({ContactIDs:contactId,createdByMyApp:'true',where:`Type=="ACCREC" AND Date==DateTime(${year},${month},${day})`,page:'1',pageSize:'100'}).toString();
+    // Reconciliation can happen after an OAuth app reconnect or credential
+    // replacement, so an app-identity filter would be too restrictive. This
+    // bounded contact/date query is discovery only; callers fetch plausible
+    // invoices by ID before comparing the complete reviewed payload.
+    url.search=new URLSearchParams({ContactIDs:contactId,where:`Type=="ACCREC" AND Date==DateTime(${year},${month},${day})`,page:'1',pageSize:'100',summaryOnly:'true'}).toString();
     const payload=record(await this.json(url.toString(),accessToken,tenantId));
     if(!Array.isArray(payload.Invoices))throw new BadGatewayException('Xero returned an invalid invoice reconciliation response.');
     return payload.Invoices.map(record).map(xeroInvoiceRecord).filter(invoice=>invoice.type==='ACCREC');

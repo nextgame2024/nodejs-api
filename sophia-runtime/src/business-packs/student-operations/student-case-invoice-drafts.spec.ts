@@ -1,6 +1,6 @@
-import { afterEach,describe,expect,it } from '@jest/globals';
+import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
-import { invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
+import { exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
 import type { OfferExtraction } from './student-case-offers.js';
 
@@ -45,6 +45,13 @@ describe('Sophia-only invoice draft contract',()=>{
       type:'ACCREC',status:'DRAFT',invoiceDate:value.date,dueDate:value.dueDate,currencyCode:'AUD',total:720,amountPaid:0,amountDue:720,updatedAt:null};
     expect(matchesXeroInvoice(candidate,value,72000)).toBe(true);expect(matchesXeroInvoice({...candidate,total:721},value,72000)).toBe(false);
     expect(matchesXeroInvoice({...candidate,lineItems:[{...candidate.lineItems[0],description:'Different'}]},value,72000)).toBe(false);
+  });
+  it('hydrates plausible summary candidates by invoice ID before exact reconciliation',async()=>{
+    const value={contactId:'11111111-1111-4111-8111-111111111111',date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition\nline two',quantity:'5.00',unitAmount:'144.00',itemCode:'ELICOS ON-SHORE',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'}]}]};
+    const summary={invoiceId:'22222222-2222-4222-8222-222222222222',contactId:value.contactId,invoiceNumber:'INV-10577',invoiceReference:value.reference,concept:null,advisorName:null,collegeName:value.reference,paymentTrack:null,sentToContact:false,lineItems:[],type:'ACCREC',status:'DRAFT',invoiceDate:value.date,dueDate:value.dueDate,currencyCode:'AUD',total:720,amountPaid:0,amountDue:720,updatedAt:null};
+    const read=jest.fn(async()=>({...summary,lineItems:[{lineItemId:null,itemCode:'ELICOS ON-SHORE',description:'Tuition\r\nline two',quantity:5,unitAmount:144,discountRate:null,accountCode:'812',taxType:'BASEXCLUDED',taxAmount:0,lineAmount:720,tracking:[{name:'Payment Track',option:'PENDING'}]}]}));
+    await expect(exactXeroInvoiceMatches([summary],value,72000,read)).resolves.toHaveLength(1);expect(read).toHaveBeenCalledWith(summary.invoiceId);
+    await expect(exactXeroInvoiceMatches([{...summary,total:721}],value,72000,read)).resolves.toHaveLength(0);expect(read).toHaveBeenCalledTimes(1);
   });
   it('returns a safe actionable reason when Xero rejects the request before sending',()=>{
     expect(xeroPreflightFailure(new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'}))).toEqual({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'});
