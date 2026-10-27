@@ -1,6 +1,6 @@
 import { afterEach,describe,expect,it } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
-import { invoiceDraftRequest,lineTotal,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
+import { invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
 import type { OfferExtraction } from './student-case-offers.js';
 
@@ -38,6 +38,14 @@ describe('Sophia-only invoice draft contract',()=>{
     expect(invoiceDraftRequest.safeParse({...request(),category:'VET',location:'ON-SHORE'}).success).toBe(false);
   });
   it('rounds fractional quantities exactly once using integer minor units',()=>{expect(lineTotal('4',18000)).toBe(72000);expect(lineTotal('1.0001',5000)).toBe(5001);expect(lineTotal('0.5',1)).toBe(1);});
+  it('reconciles only one exact Xero invoice payload, including lines and tracking',()=>{
+    const value={contactId:'11111111-1111-4111-8111-111111111111',date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'5.00',unitAmount:'144.00',itemCode:'ELICOS ON-SHORE',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'}]}]};
+    const candidate={invoiceId:'22222222-2222-4222-8222-222222222222',contactId:value.contactId,invoiceNumber:'INV-10577',invoiceReference:value.reference,concept:'Tuition',advisorName:null,collegeName:value.reference,paymentTrack:'PENDING',sentToContact:false,
+      lineItems:[{lineItemId:null,itemCode:'ELICOS ON-SHORE',description:'Tuition',quantity:5,unitAmount:144,discountRate:null,accountCode:'812',taxType:'BASEXCLUDED',taxAmount:0,lineAmount:720,tracking:[{name:'Payment Track',option:'PENDING'}]}],
+      type:'ACCREC',status:'DRAFT',invoiceDate:value.date,dueDate:value.dueDate,currencyCode:'AUD',total:720,amountPaid:0,amountDue:720,updatedAt:null};
+    expect(matchesXeroInvoice(candidate,value,72000)).toBe(true);expect(matchesXeroInvoice({...candidate,total:721},value,72000)).toBe(false);
+    expect(matchesXeroInvoice({...candidate,lineItems:[{...candidate.lineItems[0],description:'Different'}]},value,72000)).toBe(false);
+  });
   it('returns a safe actionable reason when Xero rejects the request before sending',()=>{
     expect(xeroPreflightFailure(new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'}))).toEqual({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'});
     expect(xeroPreflightFailure(new BadGatewayException({errorCode:'xero_invoice_idempotency_conflict',message:'Review Xero.'}))).toEqual({errorCode:'xero_invoice_idempotency_conflict',message:'Review Xero.'});

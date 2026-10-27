@@ -386,6 +386,22 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,value,key));
   }
 
+  async invoiceById(tenantId:string,connectionId:string,invoiceId:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length)
+      throw new ConflictException({errorCode:'xero_invoice_read_scope_missing',message:'An administrator must reconnect Xero and authorize invoice verification.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId));
+  }
+
+  async invoiceCandidates(tenantId:string,connectionId:string,contactId:string,date:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length)
+      throw new ConflictException({errorCode:'xero_invoice_read_scope_missing',message:'An administrator must reconnect Xero and authorize invoice verification.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceCandidates(accessToken,connection.xero_tenant_id,contactId,date));
+  }
+
   private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>,kind:XeroRequestKind='operational'): Promise<T> {
     // Additive rollout: apply 082 first, then enable on both Runtime API and
     // shared worker. A missing/inaccessible store fails closed before fetch.

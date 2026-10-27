@@ -1,7 +1,7 @@
 import { BadGatewayException, BadRequestException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { xeroRateObservation, type XeroRequestPolicy } from './xero-rate-limit.js';
+import { xeroRateObservation, type XeroRequestPolicy,type XeroRequestTicket } from './xero-rate-limit.js';
 import { parseSalesCatalogue,type XeroSalesCatalogue } from './xero-sales-catalogue.js';
 
 const XERO_CONTACT_PAGE_SIZE = 100;
@@ -145,14 +145,18 @@ export class XeroClient {
   async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<{invoiceId:string;invoiceNumber:string|null;status:string;total:number}> {
     if(!/^[0-9a-f-]{36}$/i.test(value.contactId)||!/^[a-f0-9]{64}$/.test(key)||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!/^\d{4}-\d{2}-\d{2}$/.test(value.dueDate))
       throw new BadGatewayException('Invalid Xero invoice request.');
-    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    const policy=this.requestPolicy.getStore();let response:Response|undefined,ticket:XeroRequestTicket|void=undefined;
     const invoice={Type:'ACCREC',Contact:{ContactID:value.contactId},Date:value.date,DueDate:value.dueDate,Status:'DRAFT',CurrencyCode:value.currencyCode,
       ...(value.reference?{Reference:value.reference}:{}),LineAmountTypes:'Exclusive',LineItems:value.lines.map(line=>({Description:line.description,Quantity:line.quantity,
         UnitAmount:line.unitAmount,...(line.itemCode?{ItemCode:line.itemCode}:{}),AccountCode:line.accountCode,TaxType:line.taxType,
         Tracking:line.tracking.map(item=>({Name:item.name,Option:item.option}))}))};
-    try{response=await fetch('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4',{method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,
-      'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},body:JSON.stringify({Invoices:[invoice]}),redirect:'error',signal:AbortSignal.timeout(30_000)});
-    }catch{throw xeroUnavailableError();}
+    for(let attempt=0;attempt<3&&!response;attempt++){
+      ticket=await policy?.beforeRequest();
+      try{response=await fetch('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4',{method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,
+        'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},body:JSON.stringify({Invoices:[invoice]}),redirect:'error',signal:AbortSignal.timeout(15_000)});}
+      catch{if(attempt===2)throw xeroUnavailableError();}
+    }
+    if(!response)throw xeroUnavailableError();
     try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
     if(!response.ok){await response.body?.cancel();throw providerError(response);}
     const payload=record(await parseJson(response));if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Xero invoice confirmation is invalid.');
@@ -399,38 +403,27 @@ export class XeroClient {
     }
     const itemCount = paginationItemCount(payload);
     return {
-      items: payload.Invoices.map(record).map((value) => {
-        const contact = record(value.Contact);
-        const lineItems = Array.isArray(value.LineItems) ? value.LineItems.map(record) : [];
-        const total = optionalNumber(value.Total) ?? 0;
-        const amountPaid = optionalNumber(value.AmountPaid) ?? 0;
-        const invoiceReference = optionalString(value.Reference);
-        return {
-          invoiceId: requiredString(value.InvoiceID, "invoice id"),
-          contactId: requiredString(contact.ContactID, "contact id"),
-          invoiceNumber: optionalString(value.InvoiceNumber),
-          invoiceReference,
-          concept: invoiceConcept(lineItems),
-          advisorName: trackingOption(lineItems, ["sales representative", "advisor", "adviser", "counsellor", "consultant", "agent"]),
-          collegeName: invoiceReference,
-          paymentTrack: trackingOption(lineItems, ["payment track"]),
-          sentToContact: value.SentToContact === true,
-          lineItems: lineItems.map(invoiceLineItem),
-          type: requiredString(value.Type, "invoice type"),
-          status: requiredString(value.Status, "invoice status"),
-          invoiceDate: optionalDate(value.DateString) ?? optionalXeroDate(value.Date),
-          dueDate: optionalDate(value.DueDateString) ?? optionalXeroDate(value.DueDate),
-          currencyCode: optionalString(value.CurrencyCode),
-          total,
-          amountPaid,
-          amountDue: optionalNumber(value.AmountDue) ?? Math.max(0, total - amountPaid),
-          updatedAt: optionalTimestamp(value.UpdatedDateUTCString) ?? optionalXeroTimestamp(value.UpdatedDateUTC),
-        };
-      }).filter((invoice) => invoice.type === "ACCREC"),
+      items: payload.Invoices.map(record).map(xeroInvoiceRecord).filter((invoice) => invoice.type === "ACCREC"),
       page,
       pageCount: paginationPageCount(payload, page, payload.Invoices.length, XERO_INVOICE_PAGE_SIZE),
       ...(itemCount === undefined ? {} : { itemCount }),
     };
+  }
+
+  async invoiceById(accessToken:string,tenantId:string,invoiceId:string):Promise<XeroInvoiceRecord>{
+    if(!/^[0-9a-f-]{36}$/i.test(invoiceId))throw new BadGatewayException('Invalid Xero invoice identity.');
+    const payload=record(await this.json(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}`,accessToken,tenantId));
+    if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Xero did not return the created invoice.');
+    return xeroInvoiceRecord(record(payload.Invoices[0]));
+  }
+
+  async invoiceCandidates(accessToken:string,tenantId:string,contactId:string,date:string):Promise<XeroInvoiceRecord[]>{
+    if(!/^[0-9a-f-]{36}$/i.test(contactId)||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new BadGatewayException('Invalid Xero invoice reconciliation request.');
+    const [year,month,day]=date.split('-').map(Number),url=new URL('https://api.xero.com/api.xro/2.0/Invoices');
+    url.search=new URLSearchParams({ContactIDs:contactId,createdByMyApp:'true',where:`Type=="ACCREC" AND Date==DateTime(${year},${month},${day})`,page:'1',pageSize:'100'}).toString();
+    const payload=record(await this.json(url.toString(),accessToken,tenantId));
+    if(!Array.isArray(payload.Invoices))throw new BadGatewayException('Xero returned an invalid invoice reconciliation response.');
+    return payload.Invoices.map(record).map(xeroInvoiceRecord).filter(invoice=>invoice.type==='ACCREC');
   }
 
   async creditNotePage(
@@ -910,6 +903,17 @@ function invoiceLineItem(lineItem: Record<string, unknown>): XeroInvoiceLineItem
       return name && option ? [{ name: name.slice(0, 200), option: option.slice(0, 200) }] : [];
     }),
   };
+}
+
+function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
+  const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];
+  const total=optionalNumber(value.Total)??0,amountPaid=optionalNumber(value.AmountPaid)??0,invoiceReference=optionalString(value.Reference);
+  return {invoiceId:requiredString(value.InvoiceID,'invoice id'),contactId:requiredString(contact.ContactID,'contact id'),invoiceNumber:optionalString(value.InvoiceNumber),
+    invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
+    collegeName:invoiceReference,paymentTrack:trackingOption(lineItems,['payment track']),sentToContact:value.SentToContact===true,lineItems:lineItems.map(invoiceLineItem),
+    type:requiredString(value.Type,'invoice type'),status:requiredString(value.Status,'invoice status'),invoiceDate:optionalDate(value.DateString)??optionalXeroDate(value.Date),
+    dueDate:optionalDate(value.DueDateString)??optionalXeroDate(value.DueDate),currencyCode:optionalString(value.CurrencyCode),total,amountPaid,
+    amountDue:optionalNumber(value.AmountDue)??Math.max(0,total-amountPaid),updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
 function optionalDate(value: unknown): string | null {

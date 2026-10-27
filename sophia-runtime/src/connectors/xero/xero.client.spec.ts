@@ -24,6 +24,20 @@ describe("XeroClient", () => {
     const [url,options]=fetchMock.mock.calls[0];expect(url).toBe('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4');expect(options).toMatchObject({method:'PUT',redirect:'error',headers:{'Idempotency-Key':key}});
     const body=JSON.parse(String(options?.body));expect(body.Invoices[0]).toMatchObject({Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:id},Date:'2026-10-27',DueDate:'2026-10-27',Reference:'Example College',LineAmountTypes:'Exclusive'});expect(body.Invoices[0].LineItems[0].Tracking).toHaveLength(2);
   });
+  it('retries an unreadable create response immediately with the identical idempotency key',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',key='c'.repeat(64),fetchMock=jest.spyOn(globalThis,'fetch').mockRejectedValueOnce(new TypeError('connection closed'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-10577',Status:'DRAFT',Total:970}]})));
+    await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'970.00',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},key)).resolves.toMatchObject({invoiceId:id,invoiceNumber:'INV-10577'});
+    expect(fetchMock).toHaveBeenCalledTimes(2);expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({'Idempotency-Key':key});expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({'Idempotency-Key':key});
+  });
+  it('reads a created invoice by id and finds bounded same-day app-created candidates for reconciliation',async()=>{
+    const invoiceId='11111111-1111-4111-8111-111111111111',contactId='22222222-2222-4222-8222-222222222222',payload={Invoices:[{InvoiceID:invoiceId,InvoiceNumber:'INV-10577',Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:contactId},DateString:'2026-10-27',DueDateString:'2026-10-27',CurrencyCode:'AUD',Reference:'Fixture College',Total:970,LineItems:[]}]};
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify(payload)));
+    const client=new XeroClient();await expect(client.invoiceById('token','tenant',invoiceId)).resolves.toMatchObject({invoiceId,invoiceNumber:'INV-10577',contactId,total:970});
+    await expect(client.invoiceCandidates('token','tenant',contactId,'2026-10-27')).resolves.toHaveLength(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}`);
+    const candidateUrl=new URL(String(fetchMock.mock.calls[1]?.[0]));expect(candidateUrl.searchParams.get('ContactIDs')).toBe(contactId);expect(candidateUrl.searchParams.get('createdByMyApp')).toBe('true');expect(candidateUrl.searchParams.get('pageSize')).toBe('100');expect(candidateUrl.searchParams.get('where')).toContain('DateTime(2026,10,27)');
+  });
   it('classifies a confirmed Xero invoice validation failure as correctable without calling it a duplicate',async()=>{
     const id='11111111-1111-4111-8111-111111111111';jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{HasValidationErrors:true,ValidationErrors:[{Message:'Tracking option is invalid'}]}]})));
     await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2026-10-27',dueDate:'2026-10-27',reference:null,currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100.00',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},'b'.repeat(64)))

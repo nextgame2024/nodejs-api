@@ -13,7 +13,7 @@ import { offerExtraction,paymentWithConditionalFee } from './student-document-an
 import { readSalesCatalogue } from './student-xero-sales-catalogue.js';
 import { decimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xero-sales-catalogue.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
-import type { XeroInvoiceCreate } from '../../connectors/xero/xero.client.js';
+import type { XeroInvoiceCreate,XeroInvoiceRecord } from '../../connectors/xero/xero.client.js';
 
 const text=z.string().trim().min(1).max(500),money=z.number().int().min(0).max(1_000_000_000);
 const date=z.iso.date();
@@ -29,6 +29,7 @@ export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.numbe
 }).strict().refine(value=>(value.draftBatchId===undefined)===(value.draftRevision===undefined),{message:'Draft identity and revision must be provided together.'});
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
 const exportRequest=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
+const reconcileRequest=z.object({sequence:z.number().int().positive()}).strict();
 
 export function xeroPreflightFailure(error:unknown){
   if(!(error instanceof HttpException))return {};
@@ -44,6 +45,17 @@ export function xeroPreflightFailure(error:unknown){
 export function lineTotal(quantity:string,unitAmountMinor:number){
   const [whole,fraction='']=quantity.split('.'),q=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));
   return Number((q*BigInt(unitAmountMinor)+5000n)/10000n);
+}
+const decimalNumber=(value:string|number|null)=>value===null?null:Math.round(Number(value)*10000);
+const trackingKey=(items:Array<{name:string;option:string}>)=>items.map(item=>`${item.name.trim().toLowerCase()}=${item.option.trim().toLowerCase()}`).sort().join('|');
+export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
+  if(candidate.type!=='ACCREC'||['DELETED','VOIDED'].includes(candidate.status)||candidate.contactId!==expected.contactId||candidate.invoiceDate!==expected.date||candidate.dueDate!==expected.dueDate||
+    candidate.currencyCode!==expected.currencyCode||(candidate.invoiceReference??null)!==(expected.reference??null)||Math.round(candidate.total*100)!==totalMinor||candidate.lineItems.length!==expected.lines.length)return false;
+  const actual=candidate.lineItems.map(line=>JSON.stringify({description:line.description??'',quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
+    accountCode:line.accountCode??'',taxType:line.taxType??'',tracking:trackingKey(line.tracking)})).sort();
+  const wanted=expected.lines.map(line=>JSON.stringify({description:line.description,quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
+    accountCode:line.accountCode,taxType:line.taxType,tracking:trackingKey(line.tracking)})).sort();
+  return isDeepStrictEqual(actual,wanted);
 }
 export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string){
   const sequences=value.invoices.map(i=>i.sequence);
@@ -82,9 +94,10 @@ export class StudentCaseInvoiceDraftsService {
     const missing=['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED'].filter(k=>process.env[k]!=='true');
     if(missing.length)throw new Error(`Document workflow requires exactly true: ${missing.join(', ')}.`);
     const ready=await this.database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL
-      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_invoice_draft_batches' AND column_name='updated_at') AS ready`,
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_invoice_draft_batches' AND column_name='updated_at')
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_invoices' AND column_name='last_seen_sync_run_id' AND is_nullable='YES') AS ready`,
       [`${caseSchema()}.student_case_invoice_draft_batches`,`${caseSchema()}.student_xero_sales_catalogues`,`${caseSchema()}.student_case_xero_invoice_exports`,caseSchema()]);
-    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 101.');
+    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 102.');
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
@@ -168,6 +181,45 @@ export class StudentCaseInvoiceDraftsService {
     });
   }
 
+  private xeroValue(snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],contactId:string):XeroInvoiceCreate{
+    const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:snapshot.advisorLabel}],first=invoice.lines[0];
+    const lines:XeroInvoiceCreate['lines']=invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
+      accountCode:line.accountCode,taxType:line.taxType,tracking}));
+    if(invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(invoice.conditionalFeeMinor/100).toFixed(2),accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});
+    return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:snapshot.collegeName||null,currencyCode:snapshot.currency,lines};
+  }
+
+  private async confirmCreated(p:Principal,id:string,batchId:string,connectionId:string,contactId:string,snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],receipt:{invoiceId:string;invoiceNumber:string|null;status:string;total:number},verified?:XeroInvoiceRecord){
+    const s=caseSchema();
+    await this.database.tenantTransaction(p.tenantId,async db=>{
+      const updated=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='created',xero_invoice_id=$4,xero_invoice_number=$5,provider_status=$6,completed_at=now()
+        WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status IN ('creating','review_required') RETURNING 1`,[p.tenantId,batchId,invoice.sequence,receipt.invoiceId,receipt.invoiceNumber,receipt.status]);
+      if(!updated.rowCount){
+        const existing=(await db.query(`SELECT status,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence])).rows[0];
+        if(existing?.status!=='created'||existing.xero_invoice_id!==receipt.invoiceId)throw new ConflictException('Invoice creation receipt requires review.');
+      }
+      await this.cases.activity(db,p,id,'case.xero_invoice_created',`${invoice.invoiceNumber} created as Xero ${receipt.invoiceNumber??receipt.invoiceId}`);
+    });
+    try{
+      await this.database.tenantTransaction(p.tenantId,async db=>{
+        const c=await this.cases.authorizedCase(db,p,id),lineItems=verified?.lineItems??[],total=verified?.total??receipt.total;
+        await db.query(`INSERT INTO ${s}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,due_date,advisor_name,invoice_reference,college_name,payment_track,total,amount_paid,amount_due,currency_code,sent_to_contact,line_items,provider_updated_at)
+          VALUES($1,$2,$3,$4,$5,$6,'ACCREC',$7,$8,$9,$10,$11,$11,'PENDING',$12,0,$12,$13,$14,$15,$16)
+          ON CONFLICT(customer_id,xero_connection_id,xero_invoice_id) DO UPDATE SET invoice_number=EXCLUDED.invoice_number,invoice_status=EXCLUDED.invoice_status,invoice_date=EXCLUDED.invoice_date,due_date=EXCLUDED.due_date,
+            advisor_name=EXCLUDED.advisor_name,invoice_reference=EXCLUDED.invoice_reference,college_name=EXCLUDED.college_name,payment_track=EXCLUDED.payment_track,total=EXCLUDED.total,amount_due=EXCLUDED.amount_due,
+            currency_code=EXCLUDED.currency_code,sent_to_contact=EXCLUDED.sent_to_contact,line_items=EXCLUDED.line_items,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()`,
+          [p.tenantId,connectionId,receipt.invoiceId,contactId,c.student_reference,receipt.invoiceNumber,verified?.status??receipt.status,invoice.issueDate,invoice.dueDate,snapshot.advisorLabel,snapshot.collegeName,total,snapshot.currency,verified?.sentToContact??false,JSON.stringify(lineItems),verified?.updatedAt??null]);
+        await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
+          SELECT $1,$2,c.student_id,c.student_reference,$3,$4,$5 FROM ${s}.student_operations_cases c WHERE c.customer_id=$1 AND c.case_id=$2 ON CONFLICT DO NOTHING`,
+          [p.tenantId,id,connectionId,receipt.invoiceId,p.identityUserId]);
+      });
+      return false;
+    }catch{
+      try{await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_operations_xero_sync_configurations SET next_sync_at=now(),updated_at=now() WHERE customer_id=$1 AND xero_connection_id=$2`,[p.tenantId,connectionId]));}catch{}
+      return true;
+    }
+  }
+
   async createXero(p:Principal,id:string,batchId:string,input:unknown){
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.approve'))throw new ForbiddenException('Xero invoice approval is required.');
     if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException('Xero invoice creation is not enabled.');
@@ -216,30 +268,15 @@ export class StudentCaseInvoiceDraftsService {
     const results=[] as Array<{sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string}>;
     for(const item of claim.rows){
       if(!item.owned){results.push({sequence:item.invoice.sequence,status:item.status==='created'?'already_created':item.status});continue;}
-      const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:claim.snapshot.advisorLabel}];
-      const first=item.invoice.lines[0];
-      const lines:XeroInvoiceCreate['lines']=item.invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
-        accountCode:line.accountCode,taxType:line.taxType,tracking}));
-      if(item.invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(item.invoice.conditionalFeeMinor/100).toFixed(2),
-        accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});
+      const value=this.xeroValue(claim.snapshot,item.invoice,claim.contact);
       let providerReturned=false;
       try{
-        const receipt=await this.xero.createInvoice(p.tenantId,claim.connectionId,{contactId:claim.contact,date:item.invoice.issueDate,dueDate:item.invoice.dueDate,
-          reference:claim.snapshot.collegeName||null,currencyCode:claim.snapshot.currency,lines},item.provider_key);
+        const receipt=await this.xero.createInvoice(p.tenantId,claim.connectionId,value,item.provider_key);
         providerReturned=true;
-        await this.database.tenantTransaction(p.tenantId,async db=>{
-          const updated=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='created',xero_invoice_id=$4,xero_invoice_number=$5,provider_status=$6,completed_at=now()
-            WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating' RETURNING 1`,[p.tenantId,batchId,item.invoice.sequence,receipt.invoiceId,receipt.invoiceNumber,receipt.status]);
-          if(!updated.rowCount)throw new ConflictException('Invoice creation receipt requires review.');
-          await db.query(`INSERT INTO ${s}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,due_date,advisor_name,invoice_reference,college_name,payment_track,total,amount_paid,amount_due,currency_code)
-            VALUES($1,$2,$3,$4,$5,$6,'ACCREC',$7,$8,$9,$10,$11,$11,'PENDING',$12,0,$12,$13) ON CONFLICT(customer_id,xero_connection_id,xero_invoice_id) DO NOTHING`,
-            [p.tenantId,claim.connectionId,receipt.invoiceId,claim.contact,(await this.cases.authorizedCase(db,p,id)).student_reference,receipt.invoiceNumber,receipt.status,item.invoice.issueDate,item.invoice.dueDate,claim.snapshot.advisorLabel,claim.snapshot.collegeName,receipt.total,claim.snapshot.currency]);
-          await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
-            SELECT $1,$2,c.student_id,c.student_reference,$3,$4,$5 FROM ${s}.student_operations_cases c WHERE c.customer_id=$1 AND c.case_id=$2 ON CONFLICT DO NOTHING`,
-            [p.tenantId,id,claim.connectionId,receipt.invoiceId,p.identityUserId]);
-          await this.cases.activity(db,p,id,'case.xero_invoice_created',`${item.invoice.invoiceNumber} created as a Xero draft`);
-        });
-        results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber});
+        let verified:XeroInvoiceRecord|undefined;
+        try{const candidate=await this.xero.invoiceById(p.tenantId,claim.connectionId,receipt.invoiceId);if(matchesXeroInvoice(candidate,value,item.invoice.totalMinor))verified=candidate;}catch{}
+        const projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contact,claim.snapshot,item.invoice,receipt,verified);
+        results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. Sophia queued a register refresh to complete local indexing.'}:{})});
       }catch(error){
         const status=!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException)?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
@@ -249,9 +286,41 @@ export class StudentCaseInvoiceDraftsService {
     }
     return {created:results.filter(r=>r.status==='created').length,skipped:results.filter(r=>r.status!=='created').length,results};
   }
+
+  async reconcileXero(p:Principal,id:string,batchId:string,input:unknown){
+    this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.approve'))throw new ForbiddenException('Xero invoice approval is required.');
+    const parsed=reconcileRequest.safeParse(input),parsedBatch=z.uuid().safeParse(batchId);if(!parsed.success||!parsedBatch.success)throw new BadRequestException('Select one invoice that needs Xero review.');
+    batchId=parsedBatch.data;const s=caseSchema();
+    const claim=await this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id);
+      const row=(await db.query(`SELECT b.snapshot,e.status,e.xero_connection_id AS "connectionId",e.xero_contact_id AS "contactId"
+        FROM ${s}.student_case_invoice_draft_batches b JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=b.customer_id AND e.batch_id=b.batch_id
+        WHERE b.customer_id=$1 AND b.case_id=$2 AND b.batch_id=$3 AND e.sequence=$4`,[p.tenantId,id,batchId,parsed.data.sequence])).rows[0];
+      if(!row)throw new NotFoundException('Invoice review receipt not found.');
+      if(row.status==='created')return {...row,alreadyCreated:true,snapshot:invoiceSnapshot.parse(row.snapshot)};
+      if(row.status!=='review_required'&&row.status!=='creating')throw new ConflictException('This invoice does not require Xero reconciliation.');
+      return {...row,alreadyCreated:false,snapshot:invoiceSnapshot.parse(row.snapshot)};
+    });
+    const invoice=claim.snapshot.invoices.find((item:InvoiceSnapshot['invoices'][number])=>item.sequence===parsed.data.sequence);if(!invoice)throw new NotFoundException('Invoice draft not found.');
+    if(claim.alreadyCreated)return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'already_created'}]};
+    const value=this.xeroValue(claim.snapshot,invoice,claim.contactId);
+    try{
+      const candidates=(await this.xero.invoiceCandidates(p.tenantId,claim.connectionId,claim.contactId,invoice.issueDate)).filter(candidate=>matchesXeroInvoice(candidate,value,invoice.totalMinor));
+      if(candidates.length!==1)return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',message:candidates.length
+        ?'More than one exact Xero invoice matches this draft. An administrator must resolve the duplicate records in Xero.'
+        :'No exact Xero invoice is visible yet. Wait briefly, then check Xero again; do not resend this invoice.'}]};
+      const candidate=candidates[0],projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contactId,claim.snapshot,invoice,
+        {invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,status:candidate.status,total:candidate.total},candidate);
+      return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'created',invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,
+        message:projectionPending?'Confirmed in Xero. Sophia queued a register refresh to complete local indexing.':'Confirmed against the exact invoice in Xero.'}]};
+    }catch(error){
+      const detail=xeroPreflightFailure(error);
+      return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',...detail,message:detail.message??'Sophia could not complete the Xero verification. Try Check Xero status again.'}]};
+    }
+  }
 }
 
 const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
-  invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,invoiceNumber:text,
+  invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
     lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:money,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
 type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;

@@ -19,6 +19,8 @@ export class StudentOperationsCasesController {
   prepareInvoiceDrafts(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.drafts.prepare(r.studentOperationsPrincipal,id,body,key);}
   @Post(':caseId/invoice-drafts/:batchId/xero')
   createXeroInvoices(@Req() r:Request,@Param('caseId') id:string,@Param('batchId') batchId:string,@Body() body:unknown){return this.drafts.createXero(r.studentOperationsPrincipal,id,batchId,body);}
+  @Post(':caseId/invoice-drafts/:batchId/xero/reconcile')
+  reconcileXeroInvoice(@Req() r:Request,@Param('caseId') id:string,@Param('batchId') batchId:string,@Body() body:unknown){return this.drafts.reconcileXero(r.studentOperationsPrincipal,id,batchId,body);}
   @Get(':caseId/documents/:documentId/analysis')
   @Header('Cache-Control','private, no-store')
   analysisStatus(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') doc:string){return this.analysis.get(r.studentOperationsPrincipal,id,doc);}

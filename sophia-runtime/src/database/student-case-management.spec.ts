@@ -88,6 +88,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/099_student_xero_sales_catalogue.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/100_student_xero_invoice_exports.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
