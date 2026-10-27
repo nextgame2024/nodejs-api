@@ -378,12 +378,39 @@ export class XeroConnectorService {
   }
 
   async createInvoice(tenantId:string,connectionId:string,value:import('./xero.client.js').XeroInvoiceCreate,key:string) {
-    if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
-    const connection=await this.loadConnection(tenantId,connectionId);
-    if(missingScopes(connection.granted_scopes,['accounting.invoices']).length&&missingScopes(connection.granted_scopes,['accounting.transactions']).length)
-      throw new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'An administrator must reconnect Xero and authorize invoice creation.'});
-    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,value,key));
+    return (await this.invoiceCreationSession(tenantId,connectionId)).createInvoice(value,key);
+  }
+
+  async invoiceCreationSession(tenantId:string,connectionId:string) {
+    // A batch shares authorization lookup/refresh, but never shares credentials
+    // across requests or tenants. Long batches recheck authorization every minute.
+    const load=async()=>{
+      if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
+      const connection=await this.loadConnection(tenantId,connectionId);
+      if(missingScopes(connection.granted_scopes,['accounting.invoices']).length&&missingScopes(connection.granted_scopes,['accounting.transactions']).length)
+        throw new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'An administrator must reconnect Xero and authorize invoice creation.'});
+      const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+      return {connection,accessToken,validUntil:Date.now()+60_000};
+    };
+    let current=await load(),refresh:ReturnType<typeof load>|undefined;
+    const credentials=async()=>{
+      if(Date.now()<current.validUntil)return current;
+      if(!refresh)refresh=load().then(value=>current=value).finally(()=>{refresh=undefined;});
+      return refresh;
+    };
+    return {
+      createInvoice:async(value:import('./xero.client.js').XeroInvoiceCreate,key:string)=>{
+        const {connection,accessToken}=await credentials();
+        if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
+        return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,value,key));
+      },
+      invoiceById:async(invoiceId:string)=>{
+        const {connection,accessToken}=await credentials();
+        if(missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length)
+          throw new ConflictException({errorCode:'xero_invoice_read_scope_missing',message:'An administrator must reconnect Xero and authorize invoice verification.'});
+        return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId));
+      },
+    };
   }
 
   async invoiceById(tenantId:string,connectionId:string,invoiceId:string){

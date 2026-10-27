@@ -121,6 +121,12 @@ export type XeroInvoiceCreate = {
     tracking:Array<{name:string;option:string}>}>;
 };
 
+export type XeroInvoiceReceipt = {
+  invoiceId:string;invoiceNumber:string|null;status:string;total:number;
+  /** Parsed provider result, when the create response contains the full invoice. */
+  invoice?:XeroInvoiceRecord;
+};
+
 export type XeroPage<T> = {
   items: T[];
   page: number;
@@ -142,7 +148,7 @@ export class XeroClient {
     return this.requestPolicy.run(policy, request);
   }
 
-  async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<{invoiceId:string;invoiceNumber:string|null;status:string;total:number}> {
+  async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<XeroInvoiceReceipt> {
     if(!/^[0-9a-f-]{36}$/i.test(value.contactId)||!/^[a-f0-9]{64}$/.test(key)||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!/^\d{4}-\d{2}-\d{2}$/.test(value.dueDate))
       throw new BadGatewayException('Invalid Xero invoice request.');
     const policy=this.requestPolicy.getStore();let response:Response|undefined,ticket:XeroRequestTicket|void=undefined;
@@ -167,7 +173,11 @@ export class XeroClient {
       if(first&&/idempotency[ -]?key/i.test(first))throw new BadGatewayException({errorCode:'xero_invoice_idempotency_conflict',message:'Xero reported an idempotency conflict. Confirm whether the invoice exists in Xero before retrying.'});
       throw new BadRequestException({errorCode:'xero_invoice_validation_failed',message:first?`Xero rejected the invoice: ${first}`:'Xero rejected the invoice details. Review the invoice and retry.'});
     }
-    return {invoiceId:requiredString(item.InvoiceID,'invoice id'),invoiceNumber:optionalString(item.InvoiceNumber),status:requiredString(item.Status,'invoice status'),total:optionalNumber(item.Total)??0};
+    const receipt:XeroInvoiceReceipt={invoiceId:requiredString(item.InvoiceID,'invoice id'),invoiceNumber:optionalString(item.InvoiceNumber),status:requiredString(item.Status,'invoice status'),total:optionalNumber(item.Total)??0};
+    // Keep the authoritative creation receipt even if provider details are
+    // incomplete. The caller can read by ID before projecting full details.
+    try{receipt.invoice=xeroInvoiceRecord(item);}catch{}
+    return receipt;
   }
 
   async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<{contactId:string}> {

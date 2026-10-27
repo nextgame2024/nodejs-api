@@ -30,6 +30,14 @@ describe("XeroClient", () => {
     await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'970.00',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},key)).resolves.toMatchObject({invoiceId:id,invoiceNumber:'INV-10577'});
     expect(fetchMock).toHaveBeenCalledTimes(2);expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({'Idempotency-Key':key});expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({'Idempotency-Key':key});
   });
+  it('returns full create-response details for confirmation without requiring another provider read',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',contact='22222222-2222-4222-8222-222222222222';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-42',Type:'ACCREC',Status:'DRAFT',Total:100,Contact:{ContactID:contact},
+      DateString:'2026-10-28',DueDateString:'2026-11-01',CurrencyCode:'AUD',Reference:'Fixture College',LineItems:[{Description:'Tuition',Quantity:1,UnitAmount:100,AccountCode:'812',TaxType:'BASEXCLUDED',LineAmount:100,TaxAmount:0,Tracking:[]}]}]})));
+    expect(await new XeroClient().createInvoice('token','tenant',{contactId:contact,date:'2026-10-28',dueDate:'2026-11-01',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},'a'.repeat(64)))
+      .toMatchObject({invoiceId:id,invoice:{invoiceId:id,contactId:contact,invoiceDate:'2026-10-28',dueDate:'2026-11-01',lineItems:[{description:'Tuition',quantity:1,unitAmount:100,accountCode:'812'}]}});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('reads a created invoice by id and finds bounded same-day app-created candidates for reconciliation',async()=>{
     const invoiceId='11111111-1111-4111-8111-111111111111',contactId='22222222-2222-4222-8222-222222222222',payload={Invoices:[{InvoiceID:invoiceId,InvoiceNumber:'INV-10577',Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:contactId},DateString:'2026-10-27',DueDateString:'2026-10-27',CurrencyCode:'AUD',Reference:'Fixture College',Total:970,LineItems:[]}]};
     const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify(payload)));

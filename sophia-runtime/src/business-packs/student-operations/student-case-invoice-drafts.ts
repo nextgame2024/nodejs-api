@@ -1,4 +1,4 @@
-import { BadRequestException,ConflictException,ForbiddenException,HttpException,Inject,Injectable,NotFoundException } from '@nestjs/common';
+import { BadRequestException,ConflictException,ForbiddenException,HttpException,Inject,Injectable,Logger,NotFoundException } from '@nestjs/common';
 import { createHash,randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
@@ -109,6 +109,7 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
 
 @Injectable()
 export class StudentCaseInvoiceDraftsService {
+  private readonly logger=new Logger(StudentCaseInvoiceDraftsService.name);
   constructor(@Inject(DatabaseService) private readonly database:DatabaseService,private readonly cases:StudentOperationsCasesService,private readonly xero:XeroConnectorService){}
   async onModuleInit(){
     if(!documentWorkflowEnabled())return;
@@ -234,17 +235,21 @@ export class StudentCaseInvoiceDraftsService {
             currency_code=EXCLUDED.currency_code,sent_to_contact=EXCLUDED.sent_to_contact,line_items=EXCLUDED.line_items,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()`,
           [p.tenantId,connectionId,receipt.invoiceId,contactId,c.student_reference,receipt.invoiceNumber,verified?.status??receipt.status,invoice.issueDate,invoice.dueDate,snapshot.advisorLabel,snapshot.collegeName,total,snapshot.currency,verified?.sentToContact??false,JSON.stringify(lineItems),verified?.updatedAt??null]);
         await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
-          SELECT $1,$2,c.student_id,c.student_reference,$3,$4,$5 FROM ${s}.student_operations_cases c WHERE c.customer_id=$1 AND c.case_id=$2 ON CONFLICT DO NOTHING`,
-          [p.tenantId,id,connectionId,receipt.invoiceId,p.identityUserId]);
+          VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+          [p.tenantId,id,c.student_id,c.student_reference,connectionId,receipt.invoiceId,p.identityUserId]);
       });
       return false;
-    }catch{
+    }catch(error){
+      // Safe classification only: never log provider payloads, SQL detail or tokens.
+      const code=(error as {code?:unknown})?.code;
+      this.logger.warn({event:'xero_invoice_projection_pending',code:typeof code==='string'&&/^[A-Z0-9]{5}$/.test(code)?code:'projection_failed'});
       try{await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_operations_xero_sync_configurations SET next_sync_at=now(),updated_at=now() WHERE customer_id=$1 AND xero_connection_id=$2`,[p.tenantId,connectionId]));}catch{}
       return true;
     }
   }
 
   async createXero(p:Principal,id:string,batchId:string,input:unknown){
+    const startedAt=Date.now();
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.approve'))throw new ForbiddenException('Xero invoice approval is required.');
     if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException('Xero invoice creation is not enabled.');
     const parsed=exportRequest.safeParse(input),parsedBatch=z.uuid().safeParse(batchId);if(!parsed.success||!parsedBatch.success)throw new BadRequestException('Review confirmation and invoice selection are required.');
@@ -289,25 +294,43 @@ export class StudentCaseInvoiceDraftsService {
       }
       return {snapshot,connectionId,contact,rows};
     });
-    const results=[] as Array<{sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string}>;
-    for(const item of claim.rows){
-      if(!item.owned){results.push({sequence:item.invoice.sequence,status:item.status==='created'?'already_created':item.status});continue;}
+    const claimMs=Date.now()-startedAt;
+    type Result={sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string};
+    let session:ReturnType<XeroConnectorService['invoiceCreationSession']>|undefined;
+    const execute=async(item:typeof claim.rows[number]):Promise<Result>=>{
+      if(!item.owned)return {sequence:item.invoice.sequence,status:item.status==='created'?'already_created':item.status};
       const value=this.xeroValue(claim.snapshot,item.invoice,claim.contact);
       let providerReturned=false;
       try{
-        const receipt=await this.xero.createInvoice(p.tenantId,claim.connectionId,value,item.provider_key);
+        const connection=await (session??=this.xero.invoiceCreationSession(p.tenantId,claim.connectionId));
+        const receipt=await connection.createInvoice(value,item.provider_key);
         providerReturned=true;
-        let verified:XeroInvoiceRecord|undefined;
-        try{const candidate=await this.xero.invoiceById(p.tenantId,claim.connectionId,receipt.invoiceId);if(matchesXeroInvoice(candidate,value,item.invoice.totalMinor))verified=candidate;}catch{}
+        let verified=receipt.invoice&&matchesXeroInvoice(receipt.invoice,value,item.invoice.totalMinor)?receipt.invoice:undefined;
+        if(!verified)try{const candidate=await connection.invoiceById(receipt.invoiceId);if(candidate.invoiceId===receipt.invoiceId&&matchesXeroInvoice(candidate,value,item.invoice.totalMinor))verified=candidate;}catch{}
         const projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contact,claim.snapshot,item.invoice,receipt,verified);
-        results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. A register refresh was queued to complete local indexing.'}:{})});
+        return {sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. A register refresh was queued to complete local indexing.'}:{})};
       }catch(error){
         const status=!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException)?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
         const detail=xeroPreflightFailure(error);
-        results.push({sequence:item.invoice.sequence,status,...detail});
+        return {sequence:item.invoice.sequence,status,...detail};
       }
-    }
+    };
+    // Three workers leave provider capacity for other operations. Each invoice
+    // retains its own durable claim and provider idempotency key. Results stay
+    // in proposal order, regardless of provider completion order.
+    const results:Result[]=new Array(claim.rows.length);let next=0,stopped=false;
+    const workers=await Promise.allSettled(Array.from({length:Math.min(3,claim.rows.length)},async()=>{
+      while(!stopped){
+        const index=next++;if(index>=claim.rows.length)return;
+        try{results[index]=await execute(claim.rows[index]);}
+        catch(error){stopped=true;throw error;}
+      }
+    }));
+    // Drain in-flight work before returning a fatal storage failure. The
+    // persisted claims still prevent duplicate sends after a lost response.
+    const failed=workers.find(worker=>worker.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
+    this.logger.log({event:'xero_invoice_batch_completed',durationMs:Date.now()-startedAt,claimMs,selected:results.length,created:results.filter(r=>r.status==='created').length});
     return {created:results.filter(r=>r.status==='created').length,skipped:results.filter(r=>r.status!=='created').length,results};
   }
 

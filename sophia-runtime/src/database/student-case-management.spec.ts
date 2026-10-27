@@ -51,8 +51,9 @@ suite('Case management against disposable PostgreSQL',()=>{
       CREATE TABLE sophia_runtime.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,organisation_role text);
       CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,contact_status text,legal_name text,contact_number text,provider_updated_at timestamptz);
       GRANT SELECT ON sophia_runtime.xero_connections,sophia_runtime.student_operations_xero_sync_configurations,sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app;
-      CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,payment_track text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
-      GRANT SELECT ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
+      CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,payment_track text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,
+        sent_to_contact boolean NOT NULL DEFAULT false,line_items jsonb NOT NULL DEFAULT '[]',provider_updated_at timestamptz,last_seen_sync_run_id uuid,updated_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
+      GRANT SELECT, INSERT, UPDATE ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
     `);
     for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql','074_student_case_profile_edit.sql','075_student_advisor_directory.sql','087_student_account_case_creation.sql']) {
       await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
@@ -729,7 +730,9 @@ suite('Case management against disposable PostgreSQL',()=>{
     try{
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='active' WHERE customer_id=$1 AND name IN ('Passport','Engagement letter')`,[tenant]));
       const id=String((await service.createStudent(p,{studentName:'Workflow Fixture',studentEmail:'workflow-fixture@example.test'},'workflow-fixture-create')).caseId);
-      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,analysis=new StudentDocumentAnalysisService(database,service),createInvoice=jest.fn(async()=>({invoiceId:randomUUID(),invoiceNumber:`XERO-${createInvoice.mock.calls.length}`,status:'DRAFT',total:100})),drafts=new StudentCaseInvoiceDraftsService(database,service,{createInvoice} as unknown as XeroConnectorService),queue=new StudentDocumentAnalysisQueue(database);
+      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,analysis=new StudentDocumentAnalysisService(database,service),createInvoice=jest.fn(async()=>({invoiceId:randomUUID(),invoiceNumber:`XERO-${createInvoice.mock.calls.length}`,status:'DRAFT',total:100})),
+        invoiceCreationSession=async()=>({createInvoice,invoiceById:async()=>{throw new Error('Synthetic minimal provider response');}}),
+        drafts=new StudentCaseInvoiceDraftsService(database,service,{invoiceCreationSession} as unknown as XeroConnectorService),queue=new StudentDocumentAnalysisQueue(database);
       const requirements=(await types.requirements(p,{status:'pre_sale'})).requirements;
       const identity={studentName:'Workflow Fixture',evidence:[{page:1,quote:'Synthetic workflow evidence'}],issues:[]};
       const engagement:DocumentExtraction={...identity,kind:'engagement_letter',status:'signed',completed:true,signerName:'Workflow Fixture',signedAt:'2026-01-01T01:00:00Z',documentIdMatches:true};
@@ -769,17 +772,22 @@ suite('Case management against disposable PostgreSQL',()=>{
       const payload={offerId:preparation.offerId,offerVersion:preparation.offerVersion,caseVersion:preparation.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:preparation.catalogue!.revision,reviewNote:'',invoices:preparation.source.instalments.map(i=>({sequence:i.sequence,issueDate:'2026-10-26',dueDate:'2026-10-26',conditionalFeeApplies:false,conditionalFeeMinor:0,lines:[{kind:'tuition',description:'English tuition',itemId,itemCode:'ELICOS ON-SHORE',quantity:'1',unitPrice:'100.0000',amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}))};
       await expect(drafts.prepare(p,id,{...payload,catalogueRevision:999},randomUUID())).rejects.toThrow('catalogue changed');
       await expect(drafts.prepare(p,id,{...payload,invoices:payload.invoices.map(i=>({...i,lines:i.lines.map(l=>({...l,itemId:randomUUID()}))}))},randomUUID())).rejects.toThrow('available Xero item');
-      const key=randomUUID(),[saved,replayed]=await Promise.all([drafts.prepare(p,id,payload,key),drafts.prepare(p,id,payload,key)]);expect(saved.count).toBe(8);expect(replayed).toEqual(saved);expect(await drafts.prepare(p,id,payload,key)).toEqual(saved);
+      const key=randomUUID(),[saved,replayed]=await Promise.all([drafts.prepare(p,id,payload,key),drafts.prepare(p,id,payload,key)]);expect(saved.count).toBe(8);
+      // Idempotency stores the HTTP representation, which serializes pg dates.
+      const wire=(value:unknown)=>JSON.parse(JSON.stringify(value));expect(wire(replayed)).toEqual(wire(saved));expect(wire(await drafts.prepare(p,id,payload,key))).toEqual(wire(saved));
       const revised={...payload,draftBatchId:saved.batchId,draftRevision:saved.revision,reviewNote:'Saved review note'},revisedResult=await drafts.prepare(p,id,revised,randomUUID());expect(revisedResult).toMatchObject({batchId:saved.batchId,count:8,updated:true,revision:2});
       const listedAfterSave=await drafts.list(p,id);expect(listedAfterSave.preparation?.savedBatch).toMatchObject({batchId:saved.batchId,advisorId});
       const batch=listedAfterSave.batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
       expect(batch.snapshot.invoices[0]).toMatchObject({invoiceNumber:'INV-1',sourceTotalMinor:12500,sourceIncludedConditionalFeeMinor:2500});
       const oldCreate=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';
       try{
-        const target=randomUUID(),student=(await transaction(tenant,db=>db.query(`SELECT c.student_id,c.student_reference FROM sophia_runtime.student_operations_cases c WHERE c.case_id=$1`,[id]))).rows[0];
+        const target=randomUUID(),student=(await transaction(tenant,db=>db.query(`SELECT c.student_id,l.student_reference FROM sophia_runtime.student_operations_cases c
+          JOIN sophia_runtime.student_operations_student_user_links l USING(customer_id,student_id) WHERE c.case_id=$1`,[id]))).rows[0];
         await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Workflow Fixture',NULL,now())`,[tenant,connection,target]);
         await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at) VALUES($1,$2,$3,$4,$5,'Workflow Fixture','external_reference',now())`,[tenant,student.student_id,connection,target,`sophia:${student.student_id}`]));
-        expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true})).toMatchObject({created:1,skipped:0});expect(createInvoice).toHaveBeenCalledTimes(1);
+        const firstCreated=await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});
+        expect(firstCreated).toMatchObject({created:1,skipped:0});expect(firstCreated.results[0].message).toBeUndefined();expect(createInvoice).toHaveBeenCalledTimes(1);
+        const linked=await service.invoices(p,id,{});expect(linked.invoices.some(i=>i.invoiceNumber==='XERO-1')).toBe(true);
         const current={...revised,draftRevision:revisedResult.revision};
         const changedCreated={...current,invoices:current.invoices.map(invoice=>invoice.sequence===1?{...invoice,lines:invoice.lines.map(line=>({...line,description:'Changed after creation'}))}:invoice)};
         await expect(drafts.prepare(p,id,changedCreated,randomUUID())).rejects.toThrow('read-only');
