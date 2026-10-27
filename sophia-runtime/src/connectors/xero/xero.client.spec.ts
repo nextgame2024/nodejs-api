@@ -24,6 +24,16 @@ describe("XeroClient", () => {
     const [url,options]=fetchMock.mock.calls[0];expect(url).toBe('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4');expect(options).toMatchObject({method:'PUT',redirect:'error',headers:{'Idempotency-Key':key}});
     const body=JSON.parse(String(options?.body));expect(body.Invoices[0]).toMatchObject({Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:id},Date:'2026-10-27',DueDate:'2026-10-27',Reference:'Example College',LineAmountTypes:'Exclusive'});expect(body.Invoices[0].LineItems[0].Tracking).toHaveLength(2);
   });
+  it('classifies a confirmed Xero invoice validation failure as correctable without calling it a duplicate',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{HasValidationErrors:true,ValidationErrors:[{Message:'Tracking option is invalid'}]}]})));
+    await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2026-10-27',dueDate:'2026-10-27',reference:null,currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100.00',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},'b'.repeat(64)))
+      .rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_invoice_validation_failed',message:'Xero rejected the invoice: Tracking option is invalid'})});
+  });
+  it('keeps an idempotency conflict in review without exposing the provider key',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',key='b'.repeat(64);jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{HasValidationErrors:true,ValidationErrors:[{Message:`Idempotency Key: ${key} is used with a different request.`}]}]})));
+    await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2026-10-27',dueDate:'2026-10-27',reference:null,currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100.00',accountCode:'812',taxType:'BASEXCLUDED',tracking:[]}]},key))
+      .rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_invoice_idempotency_conflict',message:expect.not.stringContaining(key)})});
+  });
   it('imports sales Items, account names and effective tax rates with read-only GETs and no bank details',async()=>{
     const item='11111111-1111-4111-8111-111111111111';
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({Items:[{ItemID:item,Code:'ELICOS ON-SHORE',Name:'English',IsSold:true,SalesDetails:{UnitPrice:180.0001,AccountCode:'812',TaxType:'BASEXCLUDED'}}]})))

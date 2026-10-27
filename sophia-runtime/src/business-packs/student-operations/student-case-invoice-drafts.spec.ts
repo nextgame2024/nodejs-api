@@ -1,5 +1,5 @@
 import { afterEach,describe,expect,it } from '@jest/globals';
-import { ConflictException } from '@nestjs/common';
+import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { invoiceDraftRequest,lineTotal,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
 import type { OfferExtraction } from './student-case-offers.js';
@@ -40,6 +40,7 @@ describe('Sophia-only invoice draft contract',()=>{
   it('rounds fractional quantities exactly once using integer minor units',()=>{expect(lineTotal('4',18000)).toBe(72000);expect(lineTotal('1.0001',5000)).toBe(5001);expect(lineTotal('0.5',1)).toBe(1);});
   it('returns a safe actionable reason when Xero rejects the request before sending',()=>{
     expect(xeroPreflightFailure(new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'}))).toEqual({errorCode:'xero_invoice_write_scope_missing',message:'Reconnect Xero.'});
+    expect(xeroPreflightFailure(new BadGatewayException({errorCode:'xero_invoice_idempotency_conflict',message:'Review Xero.'}))).toEqual({errorCode:'xero_invoice_idempotency_conflict',message:'Review Xero.'});
     expect(xeroPreflightFailure(new Error('provider detail'))).toEqual({});
   });
 });

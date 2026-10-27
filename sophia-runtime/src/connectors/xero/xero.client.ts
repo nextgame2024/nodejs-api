@@ -1,4 +1,4 @@
-import { BadGatewayException, Injectable } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { xeroRateObservation, type XeroRequestPolicy } from './xero-rate-limit.js';
@@ -157,7 +157,12 @@ export class XeroClient {
     if(!response.ok){await response.body?.cancel();throw providerError(response);}
     const payload=record(await parseJson(response));if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Xero invoice confirmation is invalid.');
     const item=record(payload.Invoices[0]),errors=Array.isArray(item.ValidationErrors)?item.ValidationErrors:[];
-    if(item.HasErrors===true||item.HasValidationErrors===true||errors.length)throw new BadGatewayException('Xero rejected the invoice.');
+    if(item.HasErrors===true||item.HasValidationErrors===true||errors.length){
+      const messages=errors.map(error=>record(error).Message).filter((message):message is string=>typeof message==='string'&&message.trim().length>0);
+      const first=messages[0]?.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,300);
+      if(first&&/idempotency[ -]?key/i.test(first))throw new BadGatewayException({errorCode:'xero_invoice_idempotency_conflict',message:'Xero reported an idempotency conflict. Confirm whether the invoice exists in Xero before retrying.'});
+      throw new BadRequestException({errorCode:'xero_invoice_validation_failed',message:first?`Xero rejected the invoice: ${first}`:'Xero rejected the invoice details. Review the invoice and retry.'});
+    }
     return {invoiceId:requiredString(item.InvoiceID,'invoice id'),invoiceNumber:optionalString(item.InvoiceNumber),status:requiredString(item.Status,'invoice status'),total:optionalNumber(item.Total)??0};
   }
 

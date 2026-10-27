@@ -1,5 +1,5 @@
-import { BadRequestException,ConflictException,ForbiddenException,Inject,Injectable,NotFoundException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { BadRequestException,ConflictException,ForbiddenException,HttpException,Inject,Injectable,NotFoundException } from '@nestjs/common';
+import { createHash,randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
@@ -31,7 +31,7 @@ export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
 const exportRequest=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 
 export function xeroPreflightFailure(error:unknown){
-  if(!(error instanceof ConflictException))return {};
+  if(!(error instanceof HttpException))return {};
   const response=error.getResponse();
   const detail=typeof response==='string'?{message:response}:response&&typeof response==='object'?response as {errorCode?:unknown;message?:unknown}:{};
   return {
@@ -112,10 +112,10 @@ export class StudentCaseInvoiceDraftsService {
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const catalogue=await readSalesCatalogue(db,p.tenantId);
       const savedBatch=batches.find(batch=>batch.offerId===offer.row.offer_id)??null;
-      const hasEditableInvoice=!savedBatch||savedBatch.snapshot.invoices.some((invoice:{sequence:number})=>{
-        const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status==='not_attempted';
+      const hasUnresolvedInvoice=!savedBatch||savedBatch.snapshot.invoices.some((invoice:{sequence:number})=>{
+        const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status!=='created';
       });
-      if(!hasEditableInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!hasUnresolvedInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,
         savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)};
     });
@@ -205,8 +205,8 @@ export class StudentCaseInvoiceDraftsService {
         let receipt=(await db.query(`SELECT status,provider_key FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence])).rows[0];
         let owned=inserted.rowCount===1;
         if(!owned&&receipt.status==='not_attempted'){
-          const retry=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='creating',requested_by_identity_user_id=$4,requested_at=now()
-            WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='not_attempted' RETURNING status,provider_key`,[p.tenantId,batchId,invoice.sequence,p.identityUserId]);
+          const retry=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='creating',requested_by_identity_user_id=$4,requested_at=now(),provider_key=$5
+            WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='not_attempted' RETURNING status,provider_key`,[p.tenantId,batchId,invoice.sequence,p.identityUserId,randomBytes(32).toString('hex')]);
           if(retry.rowCount){receipt=retry.rows[0];owned=true;}
         }
         rows.push({invoice,status:receipt.status,provider_key:receipt.provider_key,owned});
@@ -241,12 +241,10 @@ export class StudentCaseInvoiceDraftsService {
         });
         results.push({sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber});
       }catch(error){
-        const status=!providerReturned&&error instanceof ConflictException?'not_attempted':'review_required';
+        const status=!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException)?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
         const detail=xeroPreflightFailure(error);
-        results.push({sequence:item.invoice.sequence,status,
-          ...(status==='not_attempted'?detail:{}),
-        });
+        results.push({sequence:item.invoice.sequence,status,...detail});
       }
     }
     return {created:results.filter(r=>r.status==='created').length,skipped:results.filter(r=>r.status!=='created').length,results};
