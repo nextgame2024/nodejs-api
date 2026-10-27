@@ -239,8 +239,26 @@ export class StudentOperationsCasesService {
       await this.authorizedCase(db,p,id);
       const s=caseSchema();
       const financial=hasStudentOperationsPermission(p.role,'payments.read_all');
-      const rows=await db.query(`SELECT i.xero_invoice_id AS "invoiceId",i.invoice_number AS "invoiceNumber",i.invoice_status AS status,i.invoice_type AS type,i.invoice_date AS date,i.due_date AS "dueDate"${financial ? ',i.invoice_reference AS reference,i.payment_track AS "paymentTrack",i.currency_code AS currency,i.total,i.amount_paid AS "amountPaid",i.amount_due AS "amountDue"' : ''} FROM ${s}.student_operations_case_invoice_links l JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=l.customer_id AND i.xero_connection_id=l.xero_connection_id AND i.xero_invoice_id=l.xero_invoice_id WHERE l.customer_id=$1 AND l.case_id=$2 ORDER BY i.invoice_date DESC NULLS LAST,i.xero_invoice_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
-      const count=await db.query(`SELECT count(*)::int total FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
+      // Creation receipts are authoritative even before local indexing finishes.
+      // Use the same deduplicated set for rows and pagination/counts; never count
+      // drafts or uncertain provider outcomes as linked invoices.
+      const invoiceIds=`SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
+        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'`;
+      const rows=await db.query(`WITH invoice_ids AS (${invoiceIds})
+        SELECT ids.xero_invoice_id AS "invoiceId",coalesce(i.invoice_number,e.xero_invoice_number) AS "invoiceNumber",
+          coalesce(i.invoice_status,e.provider_status,'DRAFT') AS status,coalesce(i.invoice_type,'ACCREC') AS type,
+          coalesce(i.invoice_date,(d.invoice->>'issueDate')::date) AS date,coalesce(i.due_date,(d.invoice->>'dueDate')::date) AS "dueDate",
+          e.batch_id AS "draftBatchId",e.sequence AS "draftSequence"
+          ${financial?`,coalesce(i.invoice_reference,b.snapshot->>'collegeName') AS reference,coalesce(i.payment_track,CASE WHEN e.batch_id IS NOT NULL THEN 'PENDING' END) AS "paymentTrack",
+            coalesce(i.currency_code,b.snapshot->>'currency') AS currency,coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100) AS total,
+            coalesce(i.amount_paid,0) AS "amountPaid",coalesce(i.amount_due,(d.invoice->>'totalMinor')::numeric/100) AS "amountDue"`:''}
+        FROM invoice_ids ids
+        LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
+        LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
+        LEFT JOIN ${s}.student_case_invoice_draft_batches b ON b.customer_id=e.customer_id AND b.batch_id=e.batch_id
+        LEFT JOIN LATERAL (SELECT value AS invoice FROM jsonb_array_elements(b.snapshot->'invoices') WHERE (value->>'sequence')::int=e.sequence) d ON true
+        ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
+      const count=await db.query(`SELECT count(*)::int total FROM (${invoiceIds}) invoices`,[p.tenantId,id]);
       return {invoices:rows.rows,total:count.rows[0].total,page:q.page,limit:q.limit};
     });
   }

@@ -787,7 +787,7 @@ suite('Case management against disposable PostgreSQL',()=>{
         await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at) VALUES($1,$2,$3,$4,$5,'Workflow Fixture','external_reference',now())`,[tenant,student.student_id,connection,target,`sophia:${student.student_id}`]));
         const firstCreated=await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});
         expect(firstCreated).toMatchObject({created:1,skipped:0});expect(firstCreated.results[0].message).toBeUndefined();expect(createInvoice).toHaveBeenCalledTimes(1);
-        const linked=await service.invoices(p,id,{});expect(linked.invoices.some(i=>i.invoiceNumber==='XERO-1')).toBe(true);
+        const linked=await service.invoices(p,id,{});expect(linked.total).toBe(1);expect(linked.invoices.some(i=>i.invoiceNumber==='XERO-1')).toBe(true);
         const current={...revised,draftRevision:revisedResult.revision};
         const changedCreated={...current,invoices:current.invoices.map(invoice=>invoice.sequence===1?{...invoice,lines:invoice.lines.map(line=>({...line,description:'Changed after creation'}))}:invoice)};
         await expect(drafts.prepare(p,id,changedCreated,randomUUID())).rejects.toThrow('read-only');
@@ -796,6 +796,19 @@ suite('Case management against disposable PostgreSQL',()=>{
         expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1,2,3,4,5,6,7,8],confirmed:true})).toMatchObject({created:7,skipped:1});expect(createInvoice).toHaveBeenCalledTimes(8);
         await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(8);
         const refreshed=(await drafts.list(p,id)).batches[0];expect(refreshed.exports['1']).toMatchObject({status:'created'});
+        // Receipts and indexed links represent the same eight invoices.
+        const allCreated=await service.invoices(p,id,{});expect(allCreated.total).toBe(8);expect(allCreated.invoices).toHaveLength(8);
+        expect(new Set(allCreated.invoices.map(i=>i.invoiceId)).size).toBe(8);
+        // Reproduce older confirmed invoices whose local projection failed.
+        const unindexed=allCreated.invoices[0];
+        await pool.query('DELETE FROM sophia_runtime.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2 AND xero_invoice_id=$3',[tenant,id,unindexed.invoiceId]);
+        await pool.query('DELETE FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1 AND xero_invoice_id=$2',[tenant,unindexed.invoiceId]);
+        const fallback=await service.invoices(p,id,{});expect(fallback.total).toBe(8);expect(fallback.invoices).toHaveLength(8);
+        const recovered=fallback.invoices.find(i=>i.invoiceId===unindexed.invoiceId)!;
+        expect(recovered).toMatchObject({invoiceNumber:unindexed.invoiceNumber,draftBatchId:batch.batchId,status:'DRAFT',currency:'AUD'});expect(Number(recovered.amountDue)).toBe(100);
+        const pages=await Promise.all([1,2,3].map(page=>service.invoices(p,id,{page,limit:3})));
+        expect(pages.every(page=>page.total===8)).toBe(true);expect(new Set(pages.flatMap(page=>page.invoices.map(i=>i.invoiceId))).size).toBe(8);
+        await expect(service.invoices({...p,tenantId:randomUUID()},id,{})).rejects.toThrow('Case not found');
         expect((await transaction(randomUUID(),db=>db.query('SELECT * FROM sophia_runtime.student_case_xero_invoice_exports'))).rowCount).toBe(0);
         await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_xero_invoice_exports'))).rejects.toThrow('permission denied');
       }finally{if(oldCreate===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldCreate;}
