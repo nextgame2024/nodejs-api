@@ -37,6 +37,16 @@ describe('Sophia-only invoice draft contract',()=>{
     const d=request();d.invoices[0].dueDate='2026-10-01';expect(()=>validateDraftSchedule(source,d)).toThrow('Due dates');
     expect(invoiceDraftRequest.safeParse({...request(),category:'VET',location:'ON-SHORE'}).success).toBe(false);
   });
+  it('preserves saved default dates on the next day without changing frozen invoice snapshots',()=>{
+    const v=request();v.invoices[0].issueDate='2026-10-27';v.invoices[0].dueDate='2026-10-27';
+    const saved=validateDraftSchedule(source,v,()=>0,'2026-10-27');
+    expect(()=>validateDraftSchedule(source,v,()=>0,'2026-10-28')).toThrow('Explain');
+    expect(validateDraftSchedule(source,v,()=>0,'2026-10-28',saved)).toEqual(saved);
+    v.invoices[0].dueDate='2026-10-29';
+    expect(()=>validateDraftSchedule(source,v,()=>0,'2026-10-28',saved)).toThrow('Explain');
+    v.invoices[0].dueDate='2026-10-27';v.invoices[0].lines[0].unitAmountMinor=98000;v.invoices[0].lines[0].amountMinor=98000;
+    expect(()=>validateDraftSchedule(source,v,()=>0,'2026-10-28',saved)).toThrow('Explain');
+  });
   it('rounds fractional quantities exactly once using integer minor units',()=>{expect(lineTotal('4',18000)).toBe(72000);expect(lineTotal('1.0001',5000)).toBe(5001);expect(lineTotal('0.5',1)).toBe(1);});
   it('reconciles only one exact Xero invoice payload, including lines and tracking',()=>{
     const value={contactId:'11111111-1111-4111-8111-111111111111',date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'5.00',unitAmount:'144.00',itemCode:'ELICOS ON-SHORE',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'}]}]};

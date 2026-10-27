@@ -73,7 +73,8 @@ export async function exactXeroInvoiceMatches(candidates:XeroInvoiceRecord[],exp
   for(const candidate of plausible)complete.push(await read(candidate.invoiceId));
   return complete.filter(candidate=>matchesXeroInvoice(candidate,expected,totalMinor));
 }
-export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string){
+type AcceptedDraftDates={sequence:number;issueDate:string;dueDate:string};
+export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string,acceptedDefaultDates:AcceptedDraftDates[]=[]){
   const sequences=value.invoices.map(i=>i.sequence);
   if(new Set(sequences).size!==sequences.length||value.invoices.length!==source.instalments.length||source.instalments.some(i=>!sequences.includes(i.sequence)))throw new BadRequestException('Prepare exactly one invoice for each offer instalment.');
   return value.invoices.map(invoice=>{
@@ -93,7 +94,11 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     // The invoice editor deliberately starts both dates at the organisation's
     // current date. That generated default is not an operator change to the
     // offer schedule and therefore must not require a review explanation.
-    const usesSystemDefaultDates=systemDefaultDate!==undefined&&invoice.issueDate===systemDefaultDate&&invoice.dueDate===systemDefaultDate;
+    // Previously accepted defaults remain defaults after midnight. This list
+    // comes only from the locked, revision-checked server snapshot, never from
+    // request metadata. Both dates and the instalment identity must match.
+    const retainsAcceptedDefault=acceptedDefaultDates.some(saved=>saved.sequence===invoice.sequence&&saved.issueDate===saved.dueDate&&saved.issueDate===invoice.issueDate&&saved.dueDate===invoice.dueDate);
+    const usesSystemDefaultDates=(systemDefaultDate!==undefined&&invoice.issueDate===systemDefaultDate&&invoice.dueDate===systemDefaultDate)||retainsAcceptedDefault;
     const changesSourceDueDate=Boolean(original.dueOn&&original.dueOn!==invoice.dueDate&&!usesSystemDefaultDates);
     if((difference!==0||changesSourceDueDate)&&!value.reviewNote)throw new BadRequestException('Explain changes from the offer amounts or dates in the review note.');
     return {...invoice,lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
@@ -170,13 +175,16 @@ export class StudentCaseInvoiceDraftsService {
         const item=catalogue.items.find(i=>i.itemId===line.itemId),account=catalogue.accounts.find(a=>a.code===item?.accountCode),tax=catalogue.taxRates.find(t=>t.taxType===item?.taxType);
         if(!item||item.code!==line.itemCode||!account||account.code!==line.accountCode||!tax||tax.taxType!==line.taxType||tax.rate===null)throw new BadRequestException('Select an available Xero item with valid sales account and tax defaults.');
       }
-      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday()),advisorLabel=`${advisor.code} ${advisor.name}`;
+      const previous=existing?invoiceSnapshot.parse(existing.snapshot):null;
+      // A saved date accepted without a review explanation is a trusted default.
+      // Keep requiring explanations for manually reviewed exceptions.
+      const acceptedDefaultDates=previous&&existing.snapshot.reviewNote===''?previous.invoices:[];
+      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates),advisorLabel=`${advisor.code} ${advisor.name}`;
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
         collegeName:offer.source.collegeName,reviewNote:value.reviewNote,invoices};
-      if(existing){
-        const previous=invoiceSnapshot.parse(existing.snapshot);
+      if(existing&&previous){
         const frozen=(await db.query(`SELECT sequence,status FROM ${s}.student_case_xero_invoice_exports
           WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted' FOR UPDATE`,[p.tenantId,existing.batch_id])).rows as Array<{sequence:number;status:string}>;
         if(frozen.length&&existing.advisor_id!==value.advisorId)throw new ConflictException('The advisor cannot change after Xero invoice creation has started.');
