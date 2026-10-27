@@ -377,6 +377,14 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.ensureStudentContact(accessToken,connection.xero_tenant_id,value,key));
   }
 
+  async createInvoice(tenantId:string,connectionId:string,value:import('./xero.client.js').XeroInvoiceCreate,key:string) {
+    if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.transactions']).length)throw new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'An administrator must reconnect Xero and authorize invoice creation.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,value,key));
+  }
+
   private providerRequest<T>(tenantId: string, connectionId: string, request: () => Promise<T>,kind:XeroRequestKind='operational'): Promise<T> {
     // Additive rollout: apply 082 first, then enable on both Runtime API and
     // shared worker. A missing/inaccessible store fails closed before fetch.

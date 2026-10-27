@@ -115,6 +115,12 @@ export type XeroInvoiceLineItemRecord = {
   tracking: Array<{ name: string; option: string }>;
 };
 
+export type XeroInvoiceCreate = {
+  contactId:string;date:string;dueDate:string;reference:string|null;currencyCode:string;
+  lines:Array<{description:string;quantity:string;unitAmount:string;itemCode?:string;accountCode:string;taxType:string;
+    tracking:Array<{name:string;option:string}>}>;
+};
+
 export type XeroPage<T> = {
   items: T[];
   page: number;
@@ -134,6 +140,25 @@ export class XeroClient {
 
   withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
     return this.requestPolicy.run(policy, request);
+  }
+
+  async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<{invoiceId:string;invoiceNumber:string|null;status:string;total:number}> {
+    if(!/^[0-9a-f-]{36}$/i.test(value.contactId)||!/^[a-f0-9]{64}$/.test(key)||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!/^\d{4}-\d{2}-\d{2}$/.test(value.dueDate))
+      throw new BadGatewayException('Invalid Xero invoice request.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    const invoice={Type:'ACCREC',Contact:{ContactID:value.contactId},Date:value.date,DueDate:value.dueDate,Status:'DRAFT',CurrencyCode:value.currencyCode,
+      ...(value.reference?{Reference:value.reference}:{}),LineAmountTypes:'Exclusive',LineItems:value.lines.map(line=>({Description:line.description,Quantity:line.quantity,
+        UnitAmount:line.unitAmount,...(line.itemCode?{ItemCode:line.itemCode}:{}),AccountCode:line.accountCode,TaxType:line.taxType,
+        Tracking:line.tracking.map(item=>({Name:item.name,Option:item.option}))}))};
+    try{response=await fetch('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4',{method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,
+      'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},body:JSON.stringify({Invoices:[invoice]}),redirect:'error',signal:AbortSignal.timeout(30_000)});
+    }catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Xero invoice confirmation is invalid.');
+    const item=record(payload.Invoices[0]),errors=Array.isArray(item.ValidationErrors)?item.ValidationErrors:[];
+    if(item.HasErrors===true||item.HasValidationErrors===true||errors.length)throw new BadGatewayException('Xero rejected the invoice.');
+    return {invoiceId:requiredString(item.InvoiceID,'invoice id'),invoiceNumber:optionalString(item.InvoiceNumber),status:requiredString(item.Status,'invoice status'),total:optionalNumber(item.Total)??0};
   }
 
   async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<{contactId:string}> {

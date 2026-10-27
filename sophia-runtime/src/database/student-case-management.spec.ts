@@ -86,6 +86,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/097_student_document_checklist.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/098_student_verified_document_workflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/099_student_xero_sales_catalogue.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query((await readFile(new URL('./migrations/100_student_xero_invoice_exports.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -648,7 +649,7 @@ suite('Case management against disposable PostgreSQL',()=>{
         const type=requirements.find(r=>r.requirementKey===kind)!.documentTypeId;
         const document=(await db.query(`INSERT INTO sophia_runtime.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes,document_type_id)
           VALUES($1,$2,$3,'Contacts',$4,$5,'fixture.pdf','application/pdf',100,$6) RETURNING document_id`,[tenant,id,connection,randomUUID(),randomUUID(),type])).rows[0].document_id;
-        const job=await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId:document,kind,contentSha256:'d'.repeat(64),schemaVersion:kind==='letter_of_offer'?'2':'1'});
+        const job=await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId:document,kind,contentSha256:'d'.repeat(64),schemaVersion:kind==='letter_of_offer'?'3':'1'});
         const lease=randomUUID();await db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET status='processing',attempts=1,lease_token=$2,lease_expires_at=now()+interval '3 minutes' WHERE job_id=$1`,[job,lease]);
         await reconcileDocumentChecklist(db,tenant,id);
         return {document,job,lease};
@@ -726,7 +727,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     try{
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='active' WHERE customer_id=$1 AND name IN ('Passport','Engagement letter')`,[tenant]));
       const id=String((await service.createStudent(p,{studentName:'Workflow Fixture',studentEmail:'workflow-fixture@example.test'},'workflow-fixture-create')).caseId);
-      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,analysis=new StudentDocumentAnalysisService(database,service),drafts=new StudentCaseInvoiceDraftsService(database,service),queue=new StudentDocumentAnalysisQueue(database);
+      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,analysis=new StudentDocumentAnalysisService(database,service),createInvoice=jest.fn(async()=>({invoiceId:randomUUID(),invoiceNumber:`XERO-${createInvoice.mock.calls.length}`,status:'DRAFT',total:100})),drafts=new StudentCaseInvoiceDraftsService(database,service,{createInvoice} as unknown as XeroConnectorService),queue=new StudentDocumentAnalysisQueue(database);
       const requirements=(await types.requirements(p,{status:'pre_sale'})).requirements;
       const identity={studentName:'Workflow Fixture',evidence:[{page:1,quote:'Synthetic workflow evidence'}],issues:[]};
       const engagement:DocumentExtraction={...identity,kind:'engagement_letter',status:'signed',completed:true,signerName:'Workflow Fixture',signedAt:'2026-01-01T01:00:00Z',documentIdMatches:true};
@@ -736,7 +737,7 @@ suite('Case management against disposable PostgreSQL',()=>{
           const type=requirements.find(r=>r.requirementKey===extraction.kind)!.documentTypeId;
           const document=(await db.query(`INSERT INTO sophia_runtime.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes,document_type_id)
             VALUES($1,$2,$3,'Contacts',$4,$5,'workflow-fixture.pdf','application/pdf',10,$6) RETURNING document_id`,[tenant,id,connection,randomUUID(),randomUUID(),type])).rows[0].document_id;
-          const job=await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId:document,kind:extraction.kind,contentSha256:'e'.repeat(64),schemaVersion:extraction.kind==='letter_of_offer'?'2':'1'}),lease=randomUUID();
+          const job=await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId:document,kind:extraction.kind,contentSha256:'e'.repeat(64),schemaVersion:extraction.kind==='letter_of_offer'?'3':'1'}),lease=randomUUID();
           await db.query(`UPDATE sophia_runtime.student_document_analysis_jobs SET status='processing',attempts=1,lease_token=$2,lease_expires_at=now()+interval '3 minutes' WHERE job_id=$1`,[job,lease]);
           await reconcileDocumentChecklist(db,tenant,id);return {document,job,lease};
         });
@@ -770,6 +771,18 @@ suite('Case management against disposable PostgreSQL',()=>{
       await expect(drafts.prepare(p,id,payload,randomUUID())).rejects.toThrow('already exist');
       const batch=(await drafts.list(p,id)).batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
       expect(batch.snapshot.invoices[0]).toMatchObject({invoiceNumber:'INV-1',sourceTotalMinor:12500,sourceIncludedConditionalFeeMinor:2500});
+      const oldCreate=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';
+      try{
+        const target=randomUUID(),student=(await transaction(tenant,db=>db.query(`SELECT c.student_id,c.student_reference FROM sophia_runtime.student_operations_cases c WHERE c.case_id=$1`,[id]))).rows[0];
+        await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Workflow Fixture',NULL,now())`,[tenant,connection,target]);
+        await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at) VALUES($1,$2,$3,$4,$5,'Workflow Fixture','external_reference',now())`,[tenant,student.student_id,connection,target,`sophia:${student.student_id}`]));
+        expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true})).toMatchObject({created:1,skipped:0});expect(createInvoice).toHaveBeenCalledTimes(1);
+        expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1,2,3,4,5,6,7,8],confirmed:true})).toMatchObject({created:7,skipped:1});expect(createInvoice).toHaveBeenCalledTimes(8);
+        await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(8);
+        const refreshed=(await drafts.list(p,id)).batches[0];expect(refreshed.exports['1']).toMatchObject({status:'created'});
+        expect((await transaction(randomUUID(),db=>db.query('SELECT * FROM sophia_runtime.student_case_xero_invoice_exports'))).rowCount).toBe(0);
+        await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_xero_invoice_exports'))).rejects.toThrow('permission denied');
+      }finally{if(oldCreate===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldCreate;}
       await expect(drafts.list({...p,role:'advisor'},id)).rejects.toThrow('financial access');
       const other=randomUUID();expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_case_invoice_draft_batches'))).rowCount).toBe(0);
       await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_draft_batches'))).rejects.toThrow('permission denied');

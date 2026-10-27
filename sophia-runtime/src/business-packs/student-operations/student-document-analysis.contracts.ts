@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const DOCUMENT_ANALYSIS_VERSION = '1';
-export const OFFER_ANALYSIS_VERSION='2';
+export const OFFER_ANALYSIS_VERSION='3';
 export const documentKind = z.enum(['engagement_letter', 'passport', 'letter_of_offer']);
 const text = z.string().trim().min(1).max(500);
 const date = z.iso.date();
@@ -21,7 +21,7 @@ export const passportExtraction = z.object({
 }).strict();
 export const offerExtraction = z.object({
   kind: z.literal('letter_of_offer'), ...common,
-  collegeName: text.nullable(), abn: text.nullable(), cricosProviderCode: text.nullable(),
+  collegeName: text.nullable(), campusAddress: text.nullable().optional(), abn: text.nullable(), cricosProviderCode: text.nullable(),
   currency: z.string().regex(/^[A-Z]{3}$/), statedTotalMinor: money.nullable(),
   courses: z.array(z.object({ name: text, code: text.nullable(),
     startsOn: date.nullable(), endsOn: date.nullable(), duration: text.nullable() }).strict()).max(30),
@@ -34,7 +34,7 @@ export const offerExtraction = z.object({
   }).strict()).max(200),
 }).strict();
 // Provider output is strict/all-required; stored v1 offers remain readable.
-export const offerProviderExtraction=offerExtraction.extend({instalments:z.array(offerExtraction.shape.instalments.element.extend({components:paymentComponents})).max(200)});
+export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),instalments:z.array(offerExtraction.shape.instalments.element.extend({components:paymentComponents})).max(200)});
 export const documentExtraction = z.discriminatedUnion('kind', [engagementExtraction, passportExtraction, offerExtraction]);
 export type DocumentExtraction = z.infer<typeof documentExtraction>;
 export type DocumentKind = z.infer<typeof documentKind>;

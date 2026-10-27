@@ -107,9 +107,24 @@ XERO_CONTACT_CREATION_ENABLED=true
 An integration administrator must reauthorize Xero from company integrations to grant `accounting.attachments`
 and `accounting.contacts`. Deploy the updated worker before reauthorization: its read checks accept full
 Contacts permission in place of Contacts read-only permission. Invoice/payment write permissions remain
-unrequested. Disabling Contact creation does not prevent uploads to an already linked Contact; disabling
+unrequested unless the separate invoice-creation rollout below is enabled. Disabling Contact creation does not prevent uploads to an already linked Contact; disabling
 attachment uploads stops file writes. Roll back feature flags/UI without deleting bindings or provider files.
 Older frontend requests may only resume their already-persisted upload; new uploads require the refreshed UI.
+
+### Xero invoice creation
+
+Apply owner migration `100_student_xero_invoice_exports.sql`, then deploy Runtime API and Business Manager
+before setting `XERO_INVOICE_CREATION_ENABLED=true` on Runtime API only. Reconnect Xero from company
+integrations to grant `accounting.transactions`; existing read scopes remain requested. The action creates
+unsent `DRAFT` ACCREC invoices only. It never authorises, emails or pays an invoice.
+
+Only `payments.approve` users see and may invoke creation. Every request reauthorises the case, current offer,
+TRUST connection and active student Contact, and requires the visible review confirmation. Migration 100
+stores one tenant-scoped execution receipt per proposal instalment. A create-all request skips receipts already
+created by a prior one-at-a-time request. Concurrent requests are claimed by one transaction and also carry a
+stable Xero `Idempotency-Key`. An uncertain result is marked `review_required` and is not replayed after Xero's
+short idempotency window; reconcile it with Xero before any manual action. Disable the flag to roll back without
+deleting Sophia receipts or Xero drafts.
 
 Xero [limits each Contact to ten attachments](https://developer.xero.com/documentation/api/accounting/contacts).
 Migration 091 adds automatic **document-only overflow**, approved while S3/AWS migration is deferred:
