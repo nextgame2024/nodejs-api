@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const DOCUMENT_ANALYSIS_VERSION = '1';
-export const OFFER_ANALYSIS_VERSION='3';
+export const OFFER_ANALYSIS_VERSION='4';
 export const documentKind = z.enum(['engagement_letter', 'passport', 'letter_of_offer']);
 const text = z.string().trim().min(1).max(500);
 const date = z.iso.date();

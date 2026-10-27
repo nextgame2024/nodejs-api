@@ -55,6 +55,13 @@ describe('Document analysis execution',()=>{
     expect((await new OpenAIDocumentExtractionProvider().extract({kind:'letter_of_offer',bytes,mimeType:'application/pdf',schemaVersion:'2',signal:AbortSignal.timeout(1000)})).extraction).toEqual(offer);
     const body=JSON.parse(String(mock.mock.calls[0][1]?.body));expect(body.max_output_tokens).toBe(12000);expect(body.text.format.schema.properties.instalments).toBeDefined();expect(body.store).toBe(false);
   });
+  test('current offers extract the labelled Address for invoice campus and retain total tuition',async()=>{
+    const offer={kind:'letter_of_offer',studentName:'Example Student',evidence:[{page:1,quote:'Address: 16 Cook St, MORTDALE, NSW, 2223'}],issues:[],collegeName:'Example College',campusAddress:'16 Cook St, MORTDALE, NSW, 2223',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:904000,courses:[],fees:[{label:'Total Tuition Fee',amountMinor:864000,conditional:false,condition:null}],instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:72000,includedConditionalFeeMinor:0,components:[{label:'Tuition',amountMinor:72000}]}]};
+    const mock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(offer)}]}],usage:{input_tokens:100,output_tokens:200}})));
+    expect((await new OpenAIDocumentExtractionProvider().extract({kind:'letter_of_offer',bytes,mimeType:'application/pdf',schemaVersion:'4',signal:AbortSignal.timeout(1000)})).extraction).toEqual(offer);
+    const body=JSON.parse(String(mock.mock.calls[0][1]?.body));const prompt=body.input[0].content[1].text;
+    expect(prompt).toContain('field labelled Address');expect(prompt).toContain('Total Tuition Fee');expect(body.text.format.schema.required).toContain('campusAddress');
+  });
   test('HTTP errors never expose upstream private content',async()=>{
     jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private upstream payload',{status:429}));
     await expect(new OpenAIDocumentExtractionProvider().extract({kind:'passport',bytes,mimeType:'application/pdf',schemaVersion:'1',signal:AbortSignal.timeout(1000)})).rejects.toMatchObject({message:'rate_limited',retryable:true});
