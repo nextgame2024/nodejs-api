@@ -45,6 +45,16 @@ describe('Sophia-only invoice draft contract',()=>{
       type:'ACCREC',status:'DRAFT',invoiceDate:value.date,dueDate:value.dueDate,currencyCode:'AUD',total:720,amountPaid:0,amountDue:720,updatedAt:null};
     expect(matchesXeroInvoice(candidate,value,72000)).toBe(true);expect(matchesXeroInvoice({...candidate,total:721},value,72000)).toBe(false);
     expect(matchesXeroInvoice({...candidate,lineItems:[{...candidate.lineItems[0],description:'Different'}]},value,72000)).toBe(false);
+    const advisor={name:'Sales Representative',option:'S15 Fixture Advisor'};
+    const expected={...value,lines:[{...value.lines[0],tracking:[...value.lines[0].tracking,advisor]}]};
+    const unassigned={...candidate,paymentTrack:null,lineItems:[{...candidate.lineItems[0],tracking:[advisor]}]};
+    // Regression: Xero accepted all financial fields and the advisor but omitted
+    // the optional PENDING category, as observed on the affected invoice.
+    expect(matchesXeroInvoice(unassigned,expected,72000)).toBe(true);
+    expect(matchesXeroInvoice({...unassigned,lineItems:[{...unassigned.lineItems[0],tracking:[]}]},expected,72000)).toBe(false);
+    expect(matchesXeroInvoice({...unassigned,lineItems:[{...unassigned.lineItems[0],tracking:[advisor,{name:'Payment Track',option:'Paid out'}]}]},expected,72000)).toBe(false);
+    expect(matchesXeroInvoice({...unassigned,lineItems:[{...unassigned.lineItems[0],unitAmount:145}]},expected,72000)).toBe(false);
+    expect(matchesXeroInvoice({...unassigned,contactId:'different'},expected,72000)).toBe(false);
   });
   it('hydrates plausible summary candidates by invoice ID before exact reconciliation',async()=>{
     const value={contactId:'11111111-1111-4111-8111-111111111111',date:'2026-10-27',dueDate:'2026-10-27',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition\nline two',quantity:'5.00',unitAmount:'144.00',itemCode:'ELICOS ON-SHORE',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'}]}]};

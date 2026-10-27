@@ -47,7 +47,12 @@ export function lineTotal(quantity:string,unitAmountMinor:number){
   return Number((q*BigInt(unitAmountMinor)+5000n)/10000n);
 }
 const decimalNumber=(value:string|number|null)=>value===null?null:Math.round(Number(value)*10000);
-const trackingKey=(items:Array<{name:string;option:string}>)=>items.map(item=>`${item.name.trim().toLowerCase()}=${item.option.trim().toLowerCase()}`).sort().join('|');
+// PENDING is the local initial payment state. Xero can accept the invoice
+// without assigning that optional category. Only this default may be absent;
+// a different payment state, missing advisor, or other category still differs.
+const trackingKey=(items:Array<{name:string;option:string}>)=>items
+  .filter(item=>!(item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'))
+  .map(item=>`${item.name.trim().toLowerCase()}=${item.option.trim().toLowerCase()}`).sort().join('|');
 const normalizedDescription=(value:string|null)=>value?.replace(/\r\n?/g,'\n').trim()??'';
 export function matchesXeroInvoiceHeader(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
   if(candidate.type!=='ACCREC'||['DELETED','VOIDED'].includes(candidate.status)||candidate.contactId!==expected.contactId||candidate.invoiceDate!==expected.date||candidate.dueDate!==expected.dueDate||
@@ -64,7 +69,8 @@ export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvo
 }
 export async function exactXeroInvoiceMatches(candidates:XeroInvoiceRecord[],expected:XeroInvoiceCreate,totalMinor:number,read:(invoiceId:string)=>Promise<XeroInvoiceRecord>){
   const plausible=candidates.filter(candidate=>matchesXeroInvoiceHeader(candidate,expected,totalMinor));
-  const complete=await Promise.all(plausible.map(candidate=>read(candidate.invoiceId)));
+  const complete:XeroInvoiceRecord[]=[];
+  for(const candidate of plausible)complete.push(await read(candidate.invoiceId));
   return complete.filter(candidate=>matchesXeroInvoice(candidate,expected,totalMinor));
 }
 export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string){
@@ -323,7 +329,8 @@ export class StudentCaseInvoiceDraftsService {
       const candidate=matches[0],projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contactId,claim.snapshot,invoice,
         {invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,status:candidate.status,total:candidate.total},candidate);
       return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'created',invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,
-        message:projectionPending?'Confirmed in Xero. A register refresh was queued to complete local indexing.':'Confirmed against the exact invoice in Xero.'}]};
+        message:(projectionPending?'Confirmed in Xero. A register refresh was queued to complete local indexing.':'Confirmed against the invoice in Xero.')+
+          (candidate.lineItems.some(line=>!line.tracking.some(item=>item.name.trim().toLowerCase()==='payment track'))?' Payment Track is unassigned in Xero; the local payment status remains PENDING.':'')}]};
     }catch(error){
       const detail=xeroPreflightFailure(error);
       return {created:0,skipped:1,results:[{sequence:invoice.sequence,status:'review_required',...detail,message:detail.message??'The Xero verification could not be completed. Try Check Xero status again.'}]};
