@@ -25,6 +25,12 @@ describe('Sophia-only invoice draft contract',()=>{
     const v=request();v.invoices[0].dueDate='2026-11-02';expect(()=>validateDraftSchedule(source,v)).toThrow('Explain');v.reviewNote='Client confirmed revised date';expect(validateDraftSchedule(source,v)[0].sourceDueDate).toBe('2026-11-01');
     v.reviewNote='';v.invoices[0].dueDate='2026-11-01';v.invoices[0].lines[0].amountMinor=98000;v.invoices[0].lines[0].unitAmountMinor=98000;expect(()=>validateDraftSchedule(source,v)).toThrow('Explain');
   });
+  it('accepts the server-generated current-date defaults without a review note',()=>{
+    const v=request();v.invoices[0].issueDate='2026-10-27';v.invoices[0].dueDate='2026-10-27';
+    expect(validateDraftSchedule(source,v,()=>0,'2026-10-27')[0]).toMatchObject({issueDate:'2026-10-27',dueDate:'2026-10-27',differenceMinor:0});
+    v.invoices[0].issueDate='2026-10-28';v.invoices[0].dueDate='2026-10-28';
+    expect(()=>validateDraftSchedule(source,v,()=>0,'2026-10-27')).toThrow('Explain');
+  });
   it('rejects incorrect line maths, invalid dates and removed category/location inputs',()=>{
     const v=request();v.invoices[0].lines[0].amountMinor=1;expect(()=>validateDraftSchedule(source,v)).toThrow('quantities');
     const d=request();d.invoices[0].dueDate='2026-10-01';expect(()=>validateDraftSchedule(source,d)).toThrow('Due dates');

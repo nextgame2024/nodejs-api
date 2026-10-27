@@ -33,7 +33,7 @@ export function lineTotal(quantity:string,unitAmountMinor:number){
   const [whole,fraction='']=quantity.split('.'),q=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));
   return Number((q*BigInt(unitAmountMinor)+5000n)/10000n);
 }
-export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0){
+export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string){
   const sequences=value.invoices.map(i=>i.sequence);
   if(new Set(sequences).size!==sequences.length||value.invoices.length!==source.instalments.length||source.instalments.some(i=>!sequences.includes(i.sequence)))throw new BadRequestException('Prepare exactly one invoice for each offer instalment.');
   return value.invoices.map(invoice=>{
@@ -50,7 +50,12 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     const base=lines.reduce((n,l)=>n+l.amountMinor,0),tax=lines.reduce((n,l)=>n+l.taxAmountMinor,0),total=base+tax+fee;
     if(total>1_000_000_000)throw new BadRequestException('Invoice amount exceeds the supported limit.');
     const difference=total-expected;
-    if((difference!==0||(original.dueOn&&original.dueOn!==invoice.dueDate))&&!value.reviewNote)throw new BadRequestException('Explain changes from the offer amounts or dates in the review note.');
+    // The invoice editor deliberately starts both dates at the organisation's
+    // current date. That generated default is not an operator change to the
+    // offer schedule and therefore must not require a review explanation.
+    const usesSystemDefaultDates=systemDefaultDate!==undefined&&invoice.issueDate===systemDefaultDate&&invoice.dueDate===systemDefaultDate;
+    const changesSourceDueDate=Boolean(original.dueOn&&original.dueOn!==invoice.dueDate&&!usesSystemDefaultDates);
+    if((difference!==0||changesSourceDueDate)&&!value.reviewNote)throw new BadRequestException('Explain changes from the offer amounts or dates in the review note.');
     return {...invoice,lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
       sourceTotalMinor:original.totalMinor,sourceDueDate:original.dueOn,sourceDueTerm:original.dueTerm,
       sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,expectedTotalMinor:expected,differenceMinor:difference,totalMinor:total};
@@ -115,7 +120,7 @@ export class StudentCaseInvoiceDraftsService {
         const item=catalogue.items.find(i=>i.itemId===line.itemId),account=catalogue.accounts.find(a=>a.code===item?.accountCode),tax=catalogue.taxRates.find(t=>t.taxType===item?.taxType);
         if(!item||item.code!==line.itemCode||!account||account.code!==line.accountCode||!tax||tax.taxType!==line.taxType||tax.rate===null)throw new BadRequestException('Select an available Xero item with valid sales account and tax defaults.');
       }
-      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!)),advisorLabel=`${advisor.code} ${advisor.name}`;
+      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday()),advisorLabel=`${advisor.code} ${advisor.name}`;
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
