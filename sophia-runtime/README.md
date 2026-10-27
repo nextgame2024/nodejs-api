@@ -115,7 +115,8 @@ Older frontend requests may only resume their already-persisted upload; new uplo
 
 Apply owner migration `100_student_xero_invoice_exports.sql`, then deploy Runtime API and Business Manager
 before setting `XERO_INVOICE_CREATION_ENABLED=true` on Runtime API only. Reconnect Xero from company
-integrations to grant `accounting.transactions`; existing read scopes remain requested. The action creates
+integrations to grant granular `accounting.invoices`; legacy connections already granted
+`accounting.transactions` remain accepted during Xero's migration window. The action creates
 unsent `DRAFT` ACCREC invoices only. It never authorises, emails or pays an invoice.
 
 Only `payments.approve` users see and may invoke creation. Every request reauthorises the case, current offer,

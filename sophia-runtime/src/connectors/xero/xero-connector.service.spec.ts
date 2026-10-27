@@ -27,10 +27,14 @@ describe("XeroConnectorService", () => {
       expect(xeroRequestedScopes()).not.toContain('accounting.invoices');expect(xeroRequestedScopes()).not.toContain('accounting.contacts');
     } finally {if(old===undefined)delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;else process.env.XERO_ATTACHMENT_UPLOAD_ENABLED=old;}
   });
-  it('requests transaction write permission only when invoice creation is explicitly enabled',()=>{
+  it('requests granular invoice write permission only when invoice creation is explicitly enabled',()=>{
     const old=process.env.XERO_INVOICE_CREATION_ENABLED;
-    try{delete process.env.XERO_INVOICE_CREATION_ENABLED;expect(xeroRequestedScopes()).not.toContain('accounting.transactions');process.env.XERO_INVOICE_CREATION_ENABLED='true';expect(xeroRequestedScopes()).toContain('accounting.transactions');expect(xeroRequestedScopes()).toContain('accounting.invoices.read');}
+    try{delete process.env.XERO_INVOICE_CREATION_ENABLED;expect(xeroRequestedScopes()).toContain('accounting.invoices.read');process.env.XERO_INVOICE_CREATION_ENABLED='true';expect(xeroRequestedScopes()).toContain('accounting.invoices');expect(xeroRequestedScopes()).not.toContain('accounting.invoices.read');expect(xeroRequestedScopes()).not.toContain('accounting.transactions');}
     finally{if(old===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=old;}
+  });
+  it('treats granular invoice write permission as satisfying invoice discovery reads',async()=>{
+    const service=new XeroConnectorService({tenantReadTransaction:async(_id:string,work:(db:unknown)=>Promise<unknown>)=>work({query:async()=>({rows:[{granted_scopes:['accounting.invoices','accounting.payments.read','accounting.contacts.read']}]})})} as never,{} as never,{} as never);
+    expect((await service.status('tenant')).connections[0].missingStudentDiscoveryScopes).toEqual([]);
   });
   it('does not allow full attachment permission to break existing read-scope reporting',async()=>{
     const service=new XeroConnectorService({tenantReadTransaction:async(_id:string,work:(db:unknown)=>Promise<unknown>)=>work({query:async()=>({rows:[{granted_scopes:['accounting.attachments']}]})})} as never,{} as never,{} as never);
