@@ -1,5 +1,6 @@
 import { BadRequestException,ConflictException,ForbiddenException,Inject,Injectable,NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
 import { StudentOperationsCasesService,caseSchema } from './student-operations-cases.service.js';
@@ -20,11 +21,12 @@ const line=z.object({kind:z.enum(['tuition','enrolment','materials','visa','oshc
   itemCode:text,quantity:z.string().regex(/^\d{1,6}(\.\d{1,4})?$/),unitAmountMinor:money.optional(),unitPrice:decimal4.optional(),amountMinor:money,
   accountCode:text,taxType:text}).strict().refine(l=>l.unitPrice!==undefined||l.unitAmountMinor!==undefined);
 export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.number().int().positive(),caseVersion:z.number().int().positive(),advisorId:z.uuid(),
+  draftBatchId:z.uuid().optional(),draftRevision:z.number().int().positive().optional(),
   catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),
   reviewNote:z.string().trim().max(500),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,
     conditionalFeeApplies:z.boolean(),conditionalFeeMinor:money,lines:z.array(line).min(1).max(30)}).strict()).min(1).max(200),
-}).strict();
+}).strict().refine(value=>(value.draftBatchId===undefined)===(value.draftRevision===undefined),{message:'Draft identity and revision must be provided together.'});
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
 const exportRequest=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 
@@ -69,8 +71,10 @@ export class StudentCaseInvoiceDraftsService {
     if(!documentWorkflowEnabled())return;
     const missing=['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED'].filter(k=>process.env[k]!=='true');
     if(missing.length)throw new Error(`Document workflow requires exactly true: ${missing.join(', ')}.`);
-    const ready=await this.database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL AS ready',[`${caseSchema()}.student_case_invoice_draft_batches`,`${caseSchema()}.student_xero_sales_catalogues`,`${caseSchema()}.student_case_xero_invoice_exports`]);
-    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098, 099 and 100.');
+    const ready=await this.database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_invoice_draft_batches' AND column_name='updated_at') AS ready`,
+      [`${caseSchema()}.student_case_invoice_draft_batches`,`${caseSchema()}.student_xero_sales_catalogues`,`${caseSchema()}.student_case_xero_invoice_exports`,caseSchema()]);
+    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 101.');
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
@@ -85,7 +89,7 @@ export class StudentCaseInvoiceDraftsService {
     this.financial(p);
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
-      const batches=(await db.query(`SELECT b.batch_id AS "batchId",b.offer_id AS "offerId",b.snapshot,b.created_at AS "createdAt",o.is_current AS "currentOffer",
+      const batches=(await db.query(`SELECT b.batch_id AS "batchId",b.offer_id AS "offerId",b.advisor_id AS "advisorId",b.revision,b.snapshot,b.created_at AS "createdAt",b.updated_at AS "updatedAt",o.is_current AS "currentOffer",
         COALESCE((SELECT jsonb_object_agg(e.sequence,jsonb_build_object('status',e.status,'invoiceId',e.xero_invoice_id,'invoiceNumber',e.xero_invoice_number))
           FROM ${s}.student_case_xero_invoice_exports e WHERE e.customer_id=b.customer_id AND e.batch_id=b.batch_id),'{}'::jsonb) AS exports
         FROM ${s}.student_case_invoice_draft_batches b JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
@@ -93,11 +97,17 @@ export class StudentCaseInvoiceDraftsService {
       const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete';
       if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       const evidence=await documentChecklistEvidence(db,p.tenantId,id),offer=await this.offer(db,p,id);
-      if(!offer||!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness||batches.some(b=>b.offerId===offer.row.offer_id))return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!offer||!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const catalogue=await readSalesCatalogue(db,p.tenantId);
-      return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue},canCreateXero:this.canCreate(p)};
+      const savedBatch=batches.find(batch=>batch.offerId===offer.row.offer_id)??null;
+      const hasEditableInvoice=!savedBatch||savedBatch.snapshot.invoices.some((invoice:{sequence:number})=>{
+        const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status==='not_attempted';
+      });
+      if(!hasEditableInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,
+        savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)};
     });
   }
   async prepare(p:Principal,id:string,input:unknown,key?:string){
@@ -110,8 +120,9 @@ export class StudentCaseInvoiceDraftsService {
       if(c.record_version!==value.caseVersion||c.lifecycle_status!=='pre_sale'||c.current_stage!=='checklist_complete')throw new ConflictException('The case changed or its documents are not verified. Reload the preview.');
       const evidence=await documentChecklistEvidence(db,p.tenantId,id),offer=await this.offer(db,p,id);
       if(!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness||!offer||offer.row.offer_id!==value.offerId||offer.row.record_version!==value.offerVersion)throw new ConflictException('The approved offer or required documents changed. Reload the preview.');
-      const existing=(await db.query(`SELECT batch_id FROM ${s}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2 AND offer_id=$3`,[p.tenantId,id,value.offerId])).rows[0];
-      if(existing)throw new ConflictException('Drafts already exist for this approved offer.');
+      const existing=(await db.query(`SELECT batch_id,advisor_id,revision,snapshot FROM ${s}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2 AND offer_id=$3 FOR UPDATE`,[p.tenantId,id,value.offerId])).rows[0];
+      if(existing&&(value.draftBatchId!==existing.batch_id||value.draftRevision!==existing.revision))throw new ConflictException('The saved invoice drafts changed. Reload them before saving.');
+      if(!existing&&value.draftBatchId!==undefined)throw new ConflictException('The saved invoice drafts no longer exist. Reload before saving.');
       const advisor=(await db.query(`SELECT code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND advisor_id=$2 AND status='active'`,[p.tenantId,value.advisorId])).rows[0];
       if(!advisor)throw new BadRequestException('Select an active advisor in this organisation.');
       const catalogue=await readSalesCatalogue(db,p.tenantId,true);
@@ -125,10 +136,25 @@ export class StudentCaseInvoiceDraftsService {
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
         collegeName:offer.source.collegeName,reviewNote:value.reviewNote,invoices};
+      if(existing){
+        const previous=invoiceSnapshot.parse(existing.snapshot);
+        const frozen=(await db.query(`SELECT sequence,status FROM ${s}.student_case_xero_invoice_exports
+          WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted' FOR UPDATE`,[p.tenantId,existing.batch_id])).rows as Array<{sequence:number;status:string}>;
+        if(frozen.length&&existing.advisor_id!==value.advisorId)throw new ConflictException('The advisor cannot change after Xero invoice creation has started.');
+        if(frozen.length&&previous.catalogueConnectionId!==snapshot.catalogueConnectionId)throw new ConflictException('The Xero organisation cannot change after invoice creation has started.');
+        for(const receipt of frozen){
+          const before=previous.invoices.find(invoice=>invoice.sequence===receipt.sequence),after=invoices.find(invoice=>invoice.sequence===receipt.sequence);
+          if(!before||!after||!isDeepStrictEqual(before,after))throw new ConflictException(`INV-${receipt.sequence} is read-only because Xero invoice creation has started.`);
+        }
+        const updated=(await db.query(`UPDATE ${s}.student_case_invoice_draft_batches SET advisor_id=$4,advisor_label=$5,snapshot=$6,actor_identity_user_id=$7,updated_at=now(),revision=revision+1
+          WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 RETURNING revision,updated_at AS "updatedAt"`,[p.tenantId,id,existing.batch_id,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
+        await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} Sophia invoice drafts updated — Payment Track PENDING`);
+        return {batchId:existing.batch_id,count:invoices.length,updated:true,revision:updated.revision,updatedAt:updated.updatedAt};
+      }
       const batch=(await db.query(`INSERT INTO ${s}.student_case_invoice_draft_batches(customer_id,case_id,offer_id,advisor_id,advisor_label,snapshot,actor_identity_user_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING batch_id`,[p.tenantId,id,value.offerId,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
+        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING batch_id,revision,updated_at AS "updatedAt"`,[p.tenantId,id,value.offerId,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
       await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} Sophia invoice drafts prepared — Payment Track PENDING`);
-      return {batchId:batch.batch_id,count:invoices.length};
+      return {batchId:batch.batch_id,count:invoices.length,updated:false,revision:batch.revision,updatedAt:batch.updatedAt};
     });
   }
 

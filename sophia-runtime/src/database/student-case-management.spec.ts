@@ -87,6 +87,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/098_student_verified_document_workflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/099_student_xero_sales_catalogue.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/100_student_xero_invoice_exports.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -768,8 +769,9 @@ suite('Case management against disposable PostgreSQL',()=>{
       await expect(drafts.prepare(p,id,{...payload,catalogueRevision:999},randomUUID())).rejects.toThrow('catalogue changed');
       await expect(drafts.prepare(p,id,{...payload,invoices:payload.invoices.map(i=>({...i,lines:i.lines.map(l=>({...l,itemId:randomUUID()}))}))},randomUUID())).rejects.toThrow('available Xero item');
       const key=randomUUID(),[saved,replayed]=await Promise.all([drafts.prepare(p,id,payload,key),drafts.prepare(p,id,payload,key)]);expect(saved.count).toBe(8);expect(replayed).toEqual(saved);expect(await drafts.prepare(p,id,payload,key)).toEqual(saved);
-      await expect(drafts.prepare(p,id,payload,randomUUID())).rejects.toThrow('already exist');
-      const batch=(await drafts.list(p,id)).batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
+      const revised={...payload,draftBatchId:saved.batchId,draftRevision:saved.revision,reviewNote:'Saved review note'},revisedResult=await drafts.prepare(p,id,revised,randomUUID());expect(revisedResult).toMatchObject({batchId:saved.batchId,count:8,updated:true,revision:2});
+      const listedAfterSave=await drafts.list(p,id);expect(listedAfterSave.preparation?.savedBatch).toMatchObject({batchId:saved.batchId,advisorId});
+      const batch=listedAfterSave.batches[0];expect(batch.snapshot.invoices).toHaveLength(8);expect(batch.snapshot.invoices.every((i:any)=>i.status==='DRAFT'&&i.paymentTrack==='PENDING'&&i.totalMinor===10000)).toBe(true);
       expect(batch.snapshot.invoices[0]).toMatchObject({invoiceNumber:'INV-1',sourceTotalMinor:12500,sourceIncludedConditionalFeeMinor:2500});
       const oldCreate=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';
       try{
@@ -777,6 +779,11 @@ suite('Case management against disposable PostgreSQL',()=>{
         await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Workflow Fixture',NULL,now())`,[tenant,connection,target]);
         await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at) VALUES($1,$2,$3,$4,$5,'Workflow Fixture','external_reference',now())`,[tenant,student.student_id,connection,target,`sophia:${student.student_id}`]));
         expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true})).toMatchObject({created:1,skipped:0});expect(createInvoice).toHaveBeenCalledTimes(1);
+        const current={...revised,draftRevision:revisedResult.revision};
+        const changedCreated={...current,invoices:current.invoices.map(invoice=>invoice.sequence===1?{...invoice,lines:invoice.lines.map(line=>({...line,description:'Changed after creation'}))}:invoice)};
+        await expect(drafts.prepare(p,id,changedCreated,randomUUID())).rejects.toThrow('read-only');
+        const changedUncreated={...current,invoices:current.invoices.map(invoice=>invoice.sequence===2?{...invoice,lines:invoice.lines.map(line=>({...line,description:'Editable before creation'}))}:invoice)};
+        await expect(drafts.prepare(p,id,changedUncreated,randomUUID())).resolves.toMatchObject({batchId:batch.batchId,updated:true});
         expect(await drafts.createXero(p,id,batch.batchId,{sequences:[1,2,3,4,5,6,7,8],confirmed:true})).toMatchObject({created:7,skipped:1});expect(createInvoice).toHaveBeenCalledTimes(8);
         await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(8);
         const refreshed=(await drafts.list(p,id)).batches[0];expect(refreshed.exports['1']).toMatchObject({status:'created'});
@@ -786,7 +793,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       await expect(drafts.list({...p,role:'advisor'},id)).rejects.toThrow('financial access');
       const other=randomUUID();expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_case_invoice_draft_batches'))).rowCount).toBe(0);
       await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_draft_batches'))).rejects.toThrow('permission denied');
-      await expect(transaction(tenant,db=>db.query("UPDATE sophia_runtime.student_case_invoice_draft_batches SET snapshot='{}'"))).rejects.toThrow('permission denied');
+      await expect(transaction(tenant,db=>db.query("UPDATE sophia_runtime.student_case_invoice_draft_batches SET created_at=now()"))).rejects.toThrow('permission denied');
       expect((await transaction(other,db=>db.query('SELECT * FROM sophia_runtime.student_xero_sales_catalogues'))).rowCount).toBe(0);
       await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_xero_sales_catalogues'))).rejects.toThrow('permission denied');
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_xero_sales_catalogues SET next_attempt_at=now() WHERE customer_id=$1`,[tenant]));
