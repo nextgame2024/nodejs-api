@@ -9,6 +9,7 @@ const status=jest.fn<(...args:unknown[])=>Promise<unknown>>();
 const scheduleRechecks=jest.fn(async(_customer:string)=>0);
 const processAnalysis=jest.fn(async(_customer:string)=>true);
 const processChecklist=jest.fn(async(_customer:string)=>true);
+jest.unstable_mockModule('../business-packs/student-operations/student-invoice-projection-recovery.js',()=>({StudentInvoiceProjectionRecovery:class {processBatch=async()=>false;}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-checklist.js',()=>({StudentDocumentChecklistReconciler:class {processBatch=processChecklist;}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-analysis.worker.js',()=>({StudentDocumentAnalysisWorker:class {processOne=processAnalysis;}}));
 jest.unstable_mockModule('../business-packs/student-operations/openai-document-extraction.provider.js',()=>({OpenAIDocumentExtractionProvider:class {}}));

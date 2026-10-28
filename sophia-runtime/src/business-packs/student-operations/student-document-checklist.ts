@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import type { DatabaseService } from '../../database/database.service.js';
 import { caseSchema } from './student-operations-cases.service.js';
 import { analysisToday,analysisVerdict,documentWorkflowEnabled } from './student-document-analysis-state.js';
-import {INVOICE_CHECKLIST_KEYS,invoiceChecklistEvidence} from './student-invoice-checklist.js';
+import {INVOICE_CHECKLIST_KEYS,reconcileInvoiceChecklist} from './student-invoice-checklist.js';
 
 export const documentChecklistEnabled=()=>process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED==='true';
 export const DOCUMENT_CHECKLIST_KEYS=['signed_engagement_letter','document_completeness'] as const;
@@ -97,7 +97,7 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
   }
   // Financial milestones are evaluated before payment waiting begins, not
   // reopened later merely because the first invoice is paid or tracking changes.
-  const financial=['documents_requested','checklist_complete'].includes(c.current_stage)?await invoiceChecklistEvidence(db,tenant,id,s):null;
+  const financial=['documents_requested','checklist_complete'].includes(c.current_stage)?await reconcileInvoiceChecklist(db,tenant,id,s):null;
   if(financial)for(const key of INVOICE_CHECKLIST_KEYS){
     const prior=before.find(r=>r.item_key===key);
     if(Boolean(prior?.completed)===financial[key])continue;
@@ -141,7 +141,8 @@ export class StudentDocumentChecklistReconciler {
     return this.database.tenantTransaction(tenant,async db=>{
       const s=caseSchema(),due=(await db.query(`SELECT c.case_id FROM ${s}.student_operations_cases c
         LEFT JOIN ${s}.student_document_checklist_evaluations e ON e.customer_id=c.customer_id AND e.case_id=c.case_id
-        WHERE c.customer_id=$1 AND c.lifecycle_status IN ('pre_sale','on_hold') AND (e.checked_at IS NULL OR e.checked_at<now()-interval '15 minutes')
+        WHERE c.customer_id=$1 AND c.lifecycle_status IN ('pre_sale','on_hold') AND (e.checked_at IS NULL OR e.checked_at<now()-interval '15 minutes'
+          OR (e.invoice_dirty AND c.current_stage IN ('documents_requested','checklist_complete')))
         ORDER BY e.checked_at NULLS FIRST,c.case_id LIMIT 20 FOR UPDATE OF c SKIP LOCKED`,[tenant])).rows;
       for(const row of due)await reconcileDocumentChecklist(db,tenant,row.case_id);
       return due.length>0;

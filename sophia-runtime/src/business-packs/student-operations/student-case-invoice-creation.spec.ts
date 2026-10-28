@@ -21,13 +21,15 @@ function fixture(count=7){
     if(sql.includes('SELECT b.snapshot'))return {rows:[{snapshot,offer_id:'offer',is_current:true}]};
     if(sql.includes('SELECT 1 FROM')&&sql.includes('xero_connections'))return {rows:[{}]};
     if(sql.includes('coalesce(primary_contact'))return {rows:[{xero_contact_id:contact}]};
+    if(sql.includes('SELECT c.student_id')&&sql.includes('ensure_case_xero_student_identity'))return {rows:[{student_id:'student-uuid',student_reference:'STD-FIXTURE'}],rowCount:1};
     if(sql.includes('INSERT INTO')&&sql.includes('student_case_xero_invoice_exports')){
       const sequence=params[3] as number;if(exports.has(sequence))return {rows:[],rowCount:0};
       exports.set(sequence,{status:'creating',provider_key:params[6] as string});return {rows:[{}],rowCount:1};
     }
     if(sql.includes('SELECT status,provider_key'))return {rows:[exports.get(params[2] as number)]};
     if(sql.includes('UPDATE')&&sql.includes('student_case_xero_invoice_exports')){
-      exports.get(params[2] as number)!.status=sql.includes("SET status='created'")?'created':params[3] as string;
+      if(sql.includes("SET status='created'"))exports.get(params[2] as number)!.status='created';
+      else if(sql.includes('SET status=$4'))exports.get(params[2] as number)!.status=params[3] as string;
       return {rows:[{}],rowCount:1};
     }
     if(sql.includes('INSERT INTO')&&sql.includes('student_operations_xero_invoices')&&projectionFails)throw Object.assign(new Error('sensitive SQL detail'),{code:'23503'});
@@ -86,7 +88,7 @@ describe('bounded Xero invoice creation',()=>{
       return {invoiceId:invoice.invoiceId,invoiceNumber:invoice.invoiceNumber,status:invoice.status,total:100,invoice};});
     expect(await f.run()).toMatchObject({created:1});
     const params=f.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO')&&sql.includes('student_operations_xero_invoices'))![1]!;
-    expect(params[6]).toBe('PAID');expect(params.slice(16,19)).toEqual([null,100,0]);
+    expect(params[7]).toBe('PAID');expect(params[13]).toBeNull();expect(params.slice(15,17)).toEqual([100,0]);
   });
   it('isolates validation failures and ambiguous sends while completing the other invoices',async()=>{
     const f=fixture(3);f.createInvoice.mockRejectedValueOnce(new BadRequestException('Invalid item')).mockRejectedValueOnce(new BadGatewayException('timeout'));

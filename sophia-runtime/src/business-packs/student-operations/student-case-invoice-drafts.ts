@@ -17,6 +17,7 @@ import { decimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xer
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroInvoiceCreate,XeroInvoiceRecord } from '../../connectors/xero/xero.client.js';
 import { publishXeroContact } from './student-xero-contact-projection.js';
+import { projectCaseInvoice } from './student-invoice-projection.js';
 
 class MissingContactProjection extends Error {
   constructor(readonly connectionId:string,readonly contactId:string){super('Contact projection missing');}
@@ -98,9 +99,11 @@ export class StudentCaseInvoiceDraftsService {
     const ready=await this.database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL
       AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_invoice_draft_batches' AND column_name='updated_at')
       AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_invoices' AND column_name='last_seen_sync_run_id' AND is_nullable='YES')
-      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_contacts' AND column_name='last_seen_sync_run_id' AND is_nullable='YES') AS ready`,
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_contacts' AND column_name='last_seen_sync_run_id' AND is_nullable='YES')
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_document_checklist_evaluations' AND column_name='invoice_dirty')
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_xero_invoice_exports' AND column_name='verified_invoice') AS ready`,
       [`${caseSchema()}.student_case_invoice_draft_batches`,`${caseSchema()}.student_xero_sales_catalogues`,`${caseSchema()}.student_case_xero_invoice_exports`,caseSchema()]);
-    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 103.');
+    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 105.');
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
@@ -201,8 +204,8 @@ export class StudentCaseInvoiceDraftsService {
   private async confirmCreated(p:Principal,id:string,batchId:string,connectionId:string,contactId:string,snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],receipt:{invoiceId:string;invoiceNumber:string|null;status:string;total:number},verified?:XeroInvoiceRecord){
     const s=caseSchema();
     await this.database.tenantTransaction(p.tenantId,async db=>{
-      const updated=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='created',xero_invoice_id=$4,xero_invoice_number=$5,provider_status=$6,completed_at=now()
-        WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status IN ('creating','review_required') RETURNING 1`,[p.tenantId,batchId,invoice.sequence,receipt.invoiceId,receipt.invoiceNumber,receipt.status]);
+      const updated=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='created',xero_invoice_id=$4,xero_invoice_number=$5,provider_status=$6,completed_at=now(),verified_invoice=$7::jsonb
+        WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status IN ('creating','review_required') RETURNING 1`,[p.tenantId,batchId,invoice.sequence,receipt.invoiceId,receipt.invoiceNumber,receipt.status,verified?JSON.stringify(verified):null]);
       if(!updated.rowCount){
         const existing=(await db.query(`SELECT status,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence])).rows[0];
         if(existing?.status!=='created'||existing.xero_invoice_id!==receipt.invoiceId)throw new ConflictException('Invoice creation receipt requires review.');
@@ -211,19 +214,12 @@ export class StudentCaseInvoiceDraftsService {
     });
     try{
       await this.database.tenantTransaction(p.tenantId,async db=>{
-        const c=await this.cases.authorizedCase(db,p,id),lineItems=verified?.lineItems??[],total=verified?.total??receipt.total;
-        await db.query(`INSERT INTO ${s}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,due_date,advisor_name,invoice_reference,college_name,payment_track,total,amount_paid,amount_due,currency_code,sent_to_contact,line_items,provider_updated_at)
-          VALUES($1,$2,$3,$4,$5,$6,'ACCREC',$7,$8,$9,$10,$11,$11,$17,$12,$18,$19,$13,$14,$15,$16)
-          ON CONFLICT(customer_id,xero_connection_id,xero_invoice_id) DO UPDATE SET invoice_number=EXCLUDED.invoice_number,invoice_status=EXCLUDED.invoice_status,invoice_date=EXCLUDED.invoice_date,due_date=EXCLUDED.due_date,
-            advisor_name=EXCLUDED.advisor_name,invoice_reference=EXCLUDED.invoice_reference,college_name=EXCLUDED.college_name,payment_track=EXCLUDED.payment_track,total=EXCLUDED.total,amount_paid=EXCLUDED.amount_paid,amount_due=EXCLUDED.amount_due,
-            currency_code=EXCLUDED.currency_code,sent_to_contact=EXCLUDED.sent_to_contact,line_items=EXCLUDED.line_items,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()
-            WHERE student_operations_xero_invoices.provider_updated_at IS NULL OR (EXCLUDED.provider_updated_at IS NOT NULL AND EXCLUDED.provider_updated_at>=student_operations_xero_invoices.provider_updated_at)`,
-          [p.tenantId,connectionId,receipt.invoiceId,contactId,c.student_reference,receipt.invoiceNumber,verified?.status??receipt.status,verified?.invoiceDate??invoice.issueDate,verified?.dueDate??invoice.dueDate,
-            verified?verified.advisorName:snapshot.advisorLabel,verified?verified.invoiceReference:snapshot.collegeName,total,verified?.currencyCode??snapshot.currency,verified?.sentToContact??false,JSON.stringify(lineItems),verified?.updatedAt??null,
-            verified?verified.paymentTrack:'PENDING',verified?.amountPaid??0,verified?.amountDue??total]);
-        await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
-          VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
-          [p.tenantId,id,c.student_id,c.student_reference,connectionId,receipt.invoiceId,p.identityUserId]);
+        await this.cases.authorizedCase(db,p,id);
+        const details=verified??{invoiceId:receipt.invoiceId,contactId,invoiceNumber:receipt.invoiceNumber,type:'ACCREC',status:receipt.status,
+          invoiceDate:invoice.issueDate,dueDate:invoice.dueDate,advisorName:snapshot.advisorLabel,invoiceReference:snapshot.collegeName,collegeName:snapshot.collegeName,
+          concept:null,paymentTrack:null,total:receipt.total,amountPaid:0,amountDue:receipt.total,currencyCode:snapshot.currency,sentToContact:false,lineItems:[],updatedAt:null} as XeroInvoiceRecord;
+        await projectCaseInvoice(db,p.tenantId,id,connectionId,details,p.identityUserId);
+        if(verified)await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET projection_next_attempt_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence]);
       });
       return false;
     }catch(error){
@@ -274,6 +270,8 @@ export class StudentCaseInvoiceDraftsService {
         if(missing)throw new MissingContactProjection(connectionId,missing.xero_contact_id);
         throw new ConflictException({errorCode:'student_invoice_contact_unavailable',message:'Link this student to an active Xero Contact before creating invoices.'});
       }
+      // Satisfy the shared invoice/student FK before any provider write.
+      await db.query(`SELECT ${s}.ensure_case_xero_student_identity($1)`,[id]);
       const rows=[] as Array<{invoice:InvoiceSnapshot['invoices'][number];status:string;provider_key:string;owned:boolean}>;
       for(const invoice of targets){
         const providerKey=createHash('sha256').update(`student-invoice:${p.tenantId}:${batchId}:${invoice.sequence}`).digest('hex');

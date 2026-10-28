@@ -9,6 +9,7 @@ import { runCaseMigration } from '../../scripts/migrate-student-cases.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { XeroConnectorService } from '../connectors/xero/xero-connector.service.js';
 import { StudentPrimaryXeroContact } from '../business-packs/student-operations/student-primary-xero-contact.js';
+import {StudentInvoiceProjectionRecovery} from '../business-packs/student-operations/student-invoice-projection-recovery.js';
 import { publishXeroContact } from '../business-packs/student-operations/student-xero-contact-projection.js';
 import { ConflictException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -46,6 +47,9 @@ suite('Case management against disposable PostgreSQL',()=>{
       CREATE TABLE public.bm_student_id_counter(id boolean PRIMARY KEY,last_value bigint NOT NULL);
       INSERT INTO public.bm_student_id_counter VALUES(true,1);
       CREATE TABLE public.users(id uuid PRIMARY KEY,company_id uuid,student_id text UNIQUE,name text,email text,cel text,tel text,type text,status text,username text UNIQUE,password text,image text,bio text,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
+      CREATE UNIQUE INDEX users_company_student_identity ON public.users(company_id,student_id);
+      CREATE TABLE public.bm_xero_student_identities(customer_id uuid REFERENCES sophia_runtime.customers(customer_id),company_id uuid,student_id text,
+        PRIMARY KEY(customer_id,student_id),FOREIGN KEY(company_id,student_id) REFERENCES public.users(company_id,student_id));
       CREATE TABLE public.bm_colleges(college_id uuid PRIMARY KEY,company_id uuid,college_name text,status text);
       CREATE TABLE public.bm_xero_student_contact_links(customer_id uuid,connection_id uuid,contact_id uuid,student_id text);
       CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,pack_id text,status text,role_key text);
@@ -56,7 +60,8 @@ suite('Case management against disposable PostgreSQL',()=>{
         email text,account_number text,last_seen_sync_run_id uuid NOT NULL,PRIMARY KEY(customer_id,xero_connection_id,xero_contact_id));
       GRANT SELECT ON sophia_runtime.xero_connections,sophia_runtime.student_operations_xero_sync_configurations,sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,payment_track text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,
-        sent_to_contact boolean NOT NULL DEFAULT false,line_items jsonb NOT NULL DEFAULT '[]',concept text,provider_updated_at timestamptz,last_seen_sync_run_id uuid,updated_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
+        sent_to_contact boolean NOT NULL DEFAULT false,line_items jsonb NOT NULL DEFAULT '[]',concept text,provider_updated_at timestamptz,last_seen_sync_run_id uuid,updated_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id),
+        FOREIGN KEY(customer_id,student_id) REFERENCES public.bm_xero_student_identities(customer_id,student_id));
       GRANT SELECT, INSERT, UPDATE ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(customer_id uuid,sync_run_id uuid,lease_owner uuid,lease_expires_at timestamptz,status text,invoice_count int);
       GRANT SELECT, UPDATE ON sophia_runtime.student_operations_xero_sync_runs TO sophia_runtime_app;
@@ -68,6 +73,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query(`INSERT INTO sophia_runtime.customers VALUES($1,$2,'active')`,[tenant,company]);
     await pool.query(`INSERT INTO public.bm_company VALUES($1,'student_operations')`,[company]);
     await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,cel,tel,type,status) VALUES($1,$2,'STD-1','Example Student','student@example.test','0412 345 678','07 3333 4444','student','active'),($3,$2,NULL,'Advisor One','advisor@example.test',NULL,NULL,'advisor','active')`,[user,company,advisor]);
+    await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,'STD-1')`,[tenant,company]);
     await pool.query(`INSERT INTO sophia_runtime.business_pack_entitlements VALUES($1,$2,'student-operations','active','advisor')`,[tenant,advisor]);
     await pool.query(`INSERT INTO public.bm_colleges VALUES($1,$2,'York Business','active')`,[college,company]);
     await pool.query(`INSERT INTO sophia_runtime.xero_connections(xero_connection_id,customer_id) VALUES($1,$2)`,[connection,tenant]);
@@ -98,6 +104,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -417,6 +424,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     const created=await service.createStudent(p,{studentName:'Historical Student',studentEmail:'history@example.test'},'primary-history-student');
     const id=String(created.caseId),detail=await service.get(p,id);
     const older='a1111111-1111-4111-8111-111111111111',newer='a2222222-2222-4222-8222-222222222222';
+    await transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1)',[detail.caseId]));
     for(const [contact,date] of [[older,'2020-01-01'],[newer,'2026-10-20']]) {
       await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Historical Student',NULL,now())`,[tenant,connection,contact]);
       await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status,invoice_date) VALUES($1,$2,$3,$3,$4,'ACCREC','PAID',$5)`,[tenant,connection,contact,detail.studentReference,date]);
@@ -553,6 +561,7 @@ suite('Case management against disposable PostgreSQL',()=>{
   });
   test('reuses free space on historical linked Contacts before creating overflow',async()=>{
     const student=await overflowStudent('Legacy Capacity'),mock=provider(),type=(await types.list(p)).types[0],primary=randomUUID(),legacy=randomUUID();
+    await transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1)',[student.caseId]));
     for(const [id,date]of [[primary,'2026-10-24'],[legacy,'2020-01-01']]) {
       await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts VALUES($1,$2,$3,'ACTIVE','Legacy Capacity',NULL,now())`,[tenant,connection,id]);
       await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status,invoice_date) VALUES($1,$2,$3,$3,$4,'ACCREC','PAID',$5)`,[tenant,connection,id,student.studentReference,date]);
@@ -802,6 +811,10 @@ suite('Case management against disposable PostgreSQL',()=>{
         const target=randomUUID(),student=(await transaction(tenant,db=>db.query(`SELECT c.student_id,l.student_reference FROM sophia_runtime.student_operations_cases c
           JOIN sophia_runtime.student_operations_student_user_links l USING(customer_id,student_id) WHERE c.case_id=$1`,[id]))).rows[0];
         await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at) VALUES($1,$2,$3,$4,$5,'Workflow Fixture','external_reference',now())`,[tenant,student.student_id,connection,target,`sophia:${student.student_id}`]));
+        // Exact production failure: a fresh student has no legacy sync identity.
+        expect((await pool.query('SELECT 1 FROM public.bm_xero_student_identities WHERE customer_id=$1 AND student_id=$2',[tenant,student.student_reference])).rowCount).toBe(0);
+        await expect(pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status)
+          VALUES($1,$2,$3,$4,$5,'ACCREC','DRAFT')`,[tenant,connection,randomUUID(),target,student.student_reference])).rejects.toMatchObject({code:'23503'});
         contactById.mockImplementationOnce(async()=>({contactId:target,status:'ARCHIVED',legalName:'Workflow Fixture',email:null,contactNumber:null,accountNumber:null,updatedAt:null}));
         await expect(drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true})).rejects.toThrow('not active');
         expect(createInvoice).not.toHaveBeenCalled();
@@ -810,6 +823,9 @@ suite('Case management against disposable PostgreSQL',()=>{
         expect(contactById).toHaveBeenLastCalledWith(tenant,connection,target);
         expect((await pool.query('SELECT contact_status,last_seen_sync_run_id FROM sophia_runtime.student_operations_xero_contacts WHERE xero_contact_id=$1',[target])).rows).toEqual([{contact_status:'ACTIVE',last_seen_sync_run_id:null}]);
         expect(firstCreated).toMatchObject({created:1,skipped:0});expect(firstCreated.results[0].message).toBeUndefined();expect(createInvoice).toHaveBeenCalledTimes(1);
+        expect((await pool.query('SELECT 1 FROM public.bm_xero_student_identities WHERE customer_id=$1 AND student_id=$2',[tenant,student.student_reference])).rowCount).toBe(1);
+        await expect(transaction(tenant,db=>db.query('SELECT * FROM public.bm_xero_student_identities'))).rejects.toThrow('permission denied');
+        await expect(transaction(randomUUID(),db=>db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1)',[id]))).rejects.toThrow('unavailable');
         const linked=await service.invoices(p,id,{});expect(linked.total).toBe(1);expect(linked.invoices.some(i=>i.invoiceNumber==='XERO-1')).toBe(true);
         const current={...revised,draftRevision:revisedResult.revision};
         const changedCreated={...current,invoices:current.invoices.map(invoice=>invoice.sequence===1?{...invoice,lines:invoice.lines.map(line=>({...line,description:'Changed after creation'}))}:invoice)};
@@ -823,10 +839,37 @@ suite('Case management against disposable PostgreSQL',()=>{
         // Receipts and indexed links represent the same eight invoices.
         const allCreated=await service.invoices(p,id,{});expect(allCreated.total).toBe(8);expect(allCreated.invoices).toHaveLength(8);
         expect(new Set(allCreated.invoices.map(i=>i.invoiceId)).size).toBe(8);
+        // Recover already-created invoices with missing projections, without
+        // ever re-sending them or waiting for a full nightly provider import.
+        await pool.query('DELETE FROM sophia_runtime.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2',[tenant,id]);
+        await pool.query('DELETE FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1 AND student_id=$2',[tenant,student.student_reference]);
+        const invoiceById=jest.fn(async(_tenant:string,_connection:string,invoiceId:string)=>{
+          const sequence=Number(Object.entries(refreshed.exports).find(([,value])=>value.invoiceId===invoiceId)![0]);
+          const source=refreshed.snapshot.invoices.find(i=>i.sequence===sequence)!,value=invoiceDraftXeroValue(refreshed.snapshot,source,target);
+          return {invoiceId,contactId:target,invoiceNumber:`XERO-${sequence}`,type:'ACCREC',status:'DRAFT',invoiceDate:value.date,dueDate:value.dueDate,
+            currencyCode:'AUD',invoiceReference:value.reference,collegeName:value.reference,concept:null,advisorName:refreshed.snapshot.advisorLabel,
+            total:100,amountPaid:0,amountDue:100,paymentTrack:sequence===1?null:'PENDING',sentToContact:false,updatedAt:null,
+            lineItems:value.lines.map(line=>({...line,quantity:Number(line.quantity),unitAmount:Number(line.unitAmount),lineAmount:100,taxAmount:0}))};
+        });
+        const recovery=new StudentInvoiceProjectionRecovery(database,{invoiceById} as unknown as XeroConnectorService);
+        await recovery.processBatch(tenant);await recovery.processBatch(tenant);await recovery.processBatch(tenant);
+        expect(invoiceById).toHaveBeenCalledTimes(8);expect(createInvoice).toHaveBeenCalledTimes(8);
+        expect(await recovery.processBatch(tenant)).toBe(false);expect(invoiceById).toHaveBeenCalledTimes(8);
+        expect((await service.invoices(p,id,{})).total).toBe(8);
+        // A durable verified receipt repairs a later local write failure without
+        // another provider call. Fenced recovery cannot create a second invoice.
+        await pool.query('DELETE FROM sophia_runtime.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2 AND xero_invoice_id=$3',[tenant,id,refreshed.exports['1'].invoiceId]);
+        await pool.query('DELETE FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1 AND xero_invoice_id=$2',[tenant,refreshed.exports['1'].invoiceId]);
+        await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET projection_next_attempt_at=now(),projection_attempts=0 WHERE customer_id=$1 AND batch_id=$2 AND sequence=1`,[tenant,batch.batchId]);
+        expect(await recovery.processBatch(tenant)).toBe(true);expect(invoiceById).toHaveBeenCalledTimes(8);expect((await service.invoices(p,id,{})).total).toBe(8);
         // Minimal create receipts alone must not advance the case or fabricate
         // tracking confirmation. Simulate hydration into the shared read model.
         expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
         const reconcileInvoices=()=>transaction(tenant,async db=>{await service.authorizedCase(db,p,id,true);await reconcileDocumentChecklist(db,tenant,id);});
+        const evaluatedAt=async()=>(await pool.query('SELECT invoice_checked_at FROM sophia_runtime.student_document_checklist_evaluations WHERE customer_id=$1 AND case_id=$2',[tenant,id])).rows[0].invoice_checked_at.toISOString();
+        const unchanged=await evaluatedAt();await service.checklist(p,id);await reconcileInvoices();await reconcileInvoices();expect(await evaluatedAt()).toBe(unchanged);
+        await pool.query('UPDATE sophia_runtime.student_operations_xero_invoices SET updated_at=now() WHERE customer_id=$1 AND xero_invoice_id=$2',[tenant,refreshed.exports['1'].invoiceId]);
+        await reconcileInvoices();expect(await evaluatedAt()).toBe(unchanged); // unchanged sync data does not invalidate
         for(const invoice of refreshed.snapshot.invoices){
           const value=invoiceDraftXeroValue(refreshed.snapshot,invoice,target);
           const lines=value.lines.map(line=>({description:line.description,itemCode:line.itemCode,quantity:Number(line.quantity),unitAmount:Number(line.unitAmount),accountCode:line.accountCode,taxType:line.taxType,taxAmount:0,lineAmount:100,tracking:line.tracking}));
@@ -910,7 +953,6 @@ suite('Case management against disposable PostgreSQL',()=>{
     // Reuse this suite's synthetic eight-invoice case, never a live database.
     await pool.query(`CREATE TABLE IF NOT EXISTS sophia_runtime.student_operations_document_sources(customer_id uuid,xero_connection_id uuid,source_id uuid);
       CREATE TABLE sophia_runtime.student_operations_xero_candidate_reviews(customer_id uuid,student_id uuid,FOREIGN KEY(student_id,customer_id) REFERENCES sophia_runtime.student_operations_students(student_id,customer_id));
-      CREATE TABLE public.bm_xero_student_identities(customer_id uuid,company_id uuid,student_id text,PRIMARY KEY(customer_id,student_id));
       CREATE TABLE public.bm_xero_student_sync_candidates(customer_id uuid,connection_id uuid,student_id text,contact_ids uuid[]);
       ALTER TABLE sophia_runtime.student_operations_xero_sync_runs ADD COLUMN xero_connection_id uuid;`);
     const root=(await pool.query(`SELECT c.case_id,c.case_reference,s.student_id,s.legal_name,s.email,l.user_id,l.student_reference,l.company_id,
@@ -920,7 +962,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       JOIN sophia_runtime.student_case_xero_invoice_exports e USING(customer_id,case_id)
       WHERE c.customer_id=$1 AND s.legal_name='Workflow Fixture' LIMIT 1`,[tenant])).rows[0];
     expect(root).toBeTruthy();
-    await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,$3)`,[tenant,root.company_id,root.student_reference]);
+    await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[tenant,root.company_id,root.student_reference]);
     await pool.query(`INSERT INTO public.bm_xero_student_sync_candidates VALUES($1,$2,$3,ARRAY[$4::uuid])`,[tenant,connection,root.student_reference,root.xero_contact_id]);
     await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET xero_invoice_number='INV-'||(10576+sequence)::text WHERE customer_id=$1 AND case_id=$2`,[tenant,root.case_id]);
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,total,amount_paid,amount_due)

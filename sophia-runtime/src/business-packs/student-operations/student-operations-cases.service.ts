@@ -7,7 +7,7 @@ import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { ALLOWED_STAGE_STATUSES, CASE_STAGE_LABELS, CASE_STAGES, CASE_STATUS_LABELS, CASE_STATUSES, NEW_CASE_STAGES, publicCaseStatus, resolveCaseWorkflow } from './student-operations-case-workflow.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { DOCUMENT_CHECKLIST_KEYS,documentChecklistEnabled,documentChecklistEvidence,reconcileDocumentChecklist } from './student-document-checklist.js';
-import {INVOICE_CHECKLIST_KEYS,invoiceChecklistEvidence} from './student-invoice-checklist.js';
+import {INVOICE_CHECKLIST_KEYS,readInvoiceChecklist} from './student-invoice-checklist.js';
 import { documentWorkflowEnabled } from './student-document-analysis-state.js';
 
 function caseInvoiceSource(s:string){return {
@@ -342,7 +342,7 @@ export class StudentOperationsCasesService {
   private async checklistRows(db:PoolClient,p:Principal,id:string) {
     const result=await db.query(`SELECT item_key,completed,record_version,actor_name,updated_at FROM ${caseSchema()}.student_operations_case_checklist WHERE customer_id=$1 AND case_id=$2 AND checklist_status='pre_sale'`,[p.tenantId,id]);
     const evidence=documentChecklistEnabled()?await documentChecklistEvidence(db,p.tenantId,id):null;
-    const financial=documentChecklistEnabled()?await invoiceChecklistEvidence(db,p.tenantId,id,caseSchema()):null;
+    const financial=documentChecklistEnabled()?await readInvoiceChecklist(db,p.tenantId,id,caseSchema()):null;
     return PRE_SALE_CHECKLIST.map(item=>{
       const row=result.rows.find(r=>r.item_key===item.key);
       const documentAutomatic=Boolean(evidence&&DOCUMENT_CHECKLIST_KEYS.some(key=>key===item.key));
@@ -350,7 +350,9 @@ export class StudentOperationsCasesService {
       // Read-only freshness guard: never display stale acceptance after expiry/replacement.
       const eligible=!documentAutomatic||evidence!.completed[item.key as typeof DOCUMENT_CHECKLIST_KEYS[number]];
       return {...item,completed:Boolean(row?.completed&&eligible),recordVersion:row?.record_version??0,updatedBy:row?.actor_name??null,updatedAt:row?.updated_at??null,
-        ...(documentAutomatic?{automatic:true,validationState:evidence!.validation[item.key as typeof DOCUMENT_CHECKLIST_KEYS[number]],hint:item.key==='signed_engagement_letter'?'Updated from the latest engagement letter check.':'Updated when all required documents have passed their checks.'}:financialAutomatic?{automatic:true,validationState:row?.completed?'passed':'checking',hint:item.key==='invoice_loo_consistency'?'Completed when every reviewed invoice is confirmed in Xero.':'Completed when all created invoice lines have confirmed PENDING tracking.'}:{})};
+        ...(documentAutomatic?{automatic:true,validationState:evidence!.validation[item.key as typeof DOCUMENT_CHECKLIST_KEYS[number]],hint:item.key==='signed_engagement_letter'?'Updated from the latest engagement letter check.':'Updated when all required documents have passed their checks.'}:financialAutomatic?{automatic:true,
+          validationState:row?.completed?'passed':['needs_review','indexing_failed'].includes(financial!.state)?'needs_review':'pending',
+          hint:row?.completed?'Confirmed from the created Xero invoices.':financial!.state==='waiting_invoices'?'Waiting for all reviewed invoices to be created.':financial!.state==='awaiting_sync'?'Invoices created; verified invoice details are awaiting indexing.':financial!.state==='indexing_failed'?'Invoice indexing failed after bounded retries. Ask an administrator to review synchronization.':financial!.state==='needs_review'?'Invoice details or PENDING tracking do not match. Review the invoices.':'Waiting for the invoice-change validation to finish.'}:{})};
     });
   }
 
@@ -369,7 +371,7 @@ export class StudentOperationsCasesService {
       const row=await this.authorizedCase(db,p,id,true);
       if(publicCaseStatus(row.lifecycle_status)!=='pre_sale')throw new ConflictException('This checklist is only editable for Pre-sale cases.');
       if(documentChecklistEnabled()&&DOCUMENT_CHECKLIST_KEYS.some(key=>key===value.itemKey))throw new ConflictException('This item is updated from document checks. Review the latest documents instead.');
-      if(documentChecklistEnabled()&&INVOICE_CHECKLIST_KEYS.some(key=>key===value.itemKey)&&await invoiceChecklistEvidence(db,p.tenantId,id,caseSchema()))throw new ConflictException('This item is updated from confirmed Xero invoices. Review the invoice outcomes and tracking instead.');
+      if(documentChecklistEnabled()&&INVOICE_CHECKLIST_KEYS.some(key=>key===value.itemKey)&&await readInvoiceChecklist(db,p.tenantId,id,caseSchema()))throw new ConflictException('This item is updated from confirmed Xero invoices. Review the invoice outcomes and tracking instead.');
       await reconcileDocumentChecklist(db,p.tenantId,id);
       const before=await this.checklistRows(db,p,id),item=before.find(i=>i.key===value.itemKey)!;
       if(item.recordVersion!==value.recordVersion)throw new ConflictException('Checklist changed. Reload before saving.');
