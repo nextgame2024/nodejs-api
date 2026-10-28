@@ -43,7 +43,7 @@ function fixture(count=7){
   const cases={authorizedCase:jest.fn(async()=>({student_id:'student-uuid',student_reference:'STD-FIXTURE'})),activity:jest.fn(async()=>{})};
   const service=new StudentCaseInvoiceDraftsService({tenantTransaction:transaction} as never,cases as never,{invoiceCreationSession} as never);
   const run=()=>service.createXero(principal as never,'fixture-case',batch,{sequences:snapshot.invoices.map(invoice=>invoice.sequence),confirmed:true});
-  return {service,run,query,exports,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
+  return {service,run,snapshot,query,exports,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
 }
 describe('bounded Xero invoice creation',()=>{
   const previous={enabled:process.env.XERO_INVOICE_CREATION_ENABLED,url:process.env.SOPHIA_RUNTIME_DATABASE_URL};
@@ -63,6 +63,18 @@ describe('bounded Xero invoice creation',()=>{
     const f=fixture(1);f.createInvoice.mockImplementationOnce(async(value)=>{const invoice=record(value,1);return {invoiceId:invoice.invoiceId,invoiceNumber:invoice.invoiceNumber,status:invoice.status,total:100,invoice:{...invoice,total:101}};});
     expect(await f.run()).toMatchObject({created:1,skipped:0});expect(f.invoiceById).toHaveBeenCalledTimes(1);
     expect(f.query.mock.calls.find(([sql])=>sql.includes('student_operations_case_invoice_links'))?.[1]).toEqual([tenant,'fixture-case','student-uuid','STD-FIXTURE',connection,expect.any(String),'fixture-actor']);
+  });
+  it('sends each saved issue/due date and PENDING tracking on every line, including the first invoice and fee',async()=>{
+    const f=fixture(3);
+    f.snapshot.invoices.forEach((invoice,index)=>{invoice.issueDate=`2027-0${index+1}-01`;invoice.dueDate=`2027-0${index+1}-15`;});
+    f.snapshot.invoices[0].conditionalFeeMinor=2500;f.snapshot.invoices[0].totalMinor=12500;
+    await f.run();
+    expect(f.createInvoice).toHaveBeenCalledTimes(3);
+    f.createInvoice.mock.calls.forEach(([value],index)=>{
+      expect(value.date).toBe(f.snapshot.invoices[index].issueDate);expect(value.dueDate).toBe(f.snapshot.invoices[index].dueDate);
+      for(const line of value.lines)expect(line.tracking).toEqual([{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:'Fixture Advisor'}]);
+    });
+    expect(f.createInvoice.mock.calls[0][0].lines).toHaveLength(2);
   });
   it('retains confirmed receipts and queues indexing if projection fails without exposing SQL detail',async()=>{
     const f=fixture(1);f.projectionFailure();expect(await f.run()).toMatchObject({created:1,results:[{status:'created',message:expect.stringContaining('register refresh')}]});

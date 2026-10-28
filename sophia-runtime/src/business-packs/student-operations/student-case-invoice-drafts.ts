@@ -91,9 +91,9 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     const base=lines.reduce((n,l)=>n+l.amountMinor,0),tax=lines.reduce((n,l)=>n+l.taxAmountMinor,0),total=base+tax+fee;
     if(total>1_000_000_000)throw new BadRequestException('Invoice amount exceeds the supported limit.');
     const difference=total-expected;
-    // The invoice editor deliberately starts both dates at the organisation's
-    // current date. That generated default is not an operator change to the
-    // offer schedule and therefore must not require a review explanation.
+    // Legacy editors started both dates at the organisation's current date.
+    // Retain those accepted defaults without requiring a new review note.
+    // New editors use the offer schedule; its due date already matches above.
     // Previously accepted defaults remain defaults after midnight. This list
     // comes only from the locked, revision-checked server snapshot, never from
     // request metadata. Both dates and the instalment identity must match.
