@@ -367,6 +367,14 @@ export class XeroConnectorService {
     });
   }
 
+  async contactById(tenantId:string,connectionId:string,contactId:string) {
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.contacts']).length&&missingScopes(connection.granted_scopes,['accounting.contacts.read']).length)
+      throw new ConflictException({errorCode:'xero_contact_read_scope_missing',message:'An administrator must authorize Xero contact access in company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.contactById(accessToken,connection.xero_tenant_id,contactId));
+  }
+
   async ensureStudentContact(tenantId:string,connectionId:string,value:{contactNumber:string;name:string;email:string|null},key:string) {
     if(process.env.XERO_CONTACT_CREATION_ENABLED!=='true' || process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true')
       throw new ConflictException({errorCode:'student_document_setup_required',message:'An administrator must enable student document storage in company integrations.'});

@@ -181,7 +181,17 @@ export class XeroClient {
     return receipt;
   }
 
-  async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<{contactId:string}> {
+  async contactById(accessToken:string,tenantId:string,contactId:string):Promise<XeroContactRecord> {
+    attachmentPath('Contacts',contactId); // Validate identity before constructing a provider URL.
+    const payload=record(await this.json(`https://api.xero.com/api.xro/2.0/Contacts/${contactId}`,accessToken,tenantId));
+    if(!Array.isArray(payload.Contacts)||payload.Contacts.length!==1)
+      throw new BadGatewayException('Xero contact confirmation failed.');
+    const contact=xeroContactRecord(payload.Contacts[0]);
+    if(contact.contactId!==contactId)throw new BadGatewayException('Xero contact confirmation failed.');
+    return contact;
+  }
+
+  async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<XeroContactRecord> {
     if(!/^sophia:[0-9a-f-]{36}(?::docs:[2-9]|:docs:[1-9][0-9]{1,5})?$/i.test(value.contactNumber) || !value.name.trim() || value.name.length>255
       || (value.email!==null && value.email.length>320) || !/^[a-f0-9]{64}$/.test(key))
       throw new BadGatewayException('Invalid student document storage request.');
@@ -195,7 +205,7 @@ export class XeroClient {
         || (Array.isArray(item.ValidationErrors) && item.ValidationErrors.length))
         throw new BadGatewayException('Student document storage requires administrator attention.');
       const contactId=requiredString(item.ContactID,'contact id');attachmentPath('Contacts',contactId);
-      return {contactId};
+      return xeroContactRecord(item);
     };
     if(existing.Contacts.length) return verified(existing.Contacts[0]);
     const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();
@@ -939,6 +949,16 @@ function invoiceLineItem(lineItem: Record<string, unknown>): XeroInvoiceLineItem
       return name && option ? [{ name: name.slice(0, 200), option: option.slice(0, 200) }] : [];
     }),
   };
+}
+
+function xeroContactRecord(raw:unknown):XeroContactRecord {
+  const value=record(raw);
+  if(value.HasValidationErrors===true||(Array.isArray(value.ValidationErrors)&&value.ValidationErrors.length))
+    throw new BadGatewayException('Xero contact confirmation failed.');
+  return {contactId:requiredString(value.ContactID,'contact id'),status:optionalString(value.ContactStatus),
+    legalName:requiredString(value.Name,'contact name'),email:optionalString(value.EmailAddress),
+    contactNumber:optionalString(value.ContactNumber),accountNumber:optionalString(value.AccountNumber),
+    updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
 function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{

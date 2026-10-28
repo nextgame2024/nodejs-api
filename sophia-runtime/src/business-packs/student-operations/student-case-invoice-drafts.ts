@@ -16,6 +16,11 @@ import { readSalesCatalogue } from './student-xero-sales-catalogue.js';
 import { decimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xero-sales-catalogue.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroInvoiceCreate,XeroInvoiceRecord } from '../../connectors/xero/xero.client.js';
+import { publishXeroContact } from './student-xero-contact-projection.js';
+
+class MissingContactProjection extends Error {
+  constructor(readonly connectionId:string,readonly contactId:string){super('Contact projection missing');}
+}
 
 const text=z.string().trim().min(1).max(500),money=z.number().int().min(0).max(1_000_000_000);
 const date=z.iso.date();
@@ -92,9 +97,10 @@ export class StudentCaseInvoiceDraftsService {
     if(missing.length)throw new Error(`Document workflow requires exactly true: ${missing.join(', ')}.`);
     const ready=await this.database.query<{ready:boolean}>(`SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL
       AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_case_invoice_draft_batches' AND column_name='updated_at')
-      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_invoices' AND column_name='last_seen_sync_run_id' AND is_nullable='YES') AS ready`,
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_invoices' AND column_name='last_seen_sync_run_id' AND is_nullable='YES')
+      AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=$4 AND table_name='student_operations_xero_contacts' AND column_name='last_seen_sync_run_id' AND is_nullable='YES') AS ready`,
       [`${caseSchema()}.student_case_invoice_draft_batches`,`${caseSchema()}.student_xero_sales_catalogues`,`${caseSchema()}.student_case_xero_invoice_exports`,caseSchema()]);
-    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 102.');
+    if(!ready.rows[0]?.ready)throw new Error('Document workflow requires Runtime migrations 098 through 103.');
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
@@ -236,7 +242,7 @@ export class StudentCaseInvoiceDraftsService {
     const parsed=exportRequest.safeParse(input),parsedBatch=z.uuid().safeParse(batchId);if(!parsed.success||!parsedBatch.success)throw new BadRequestException('Review confirmation and invoice selection are required.');
     batchId=parsedBatch.data;
     const selected=[...new Set(parsed.data.sequences)].sort((a,b)=>a-b),s=caseSchema();
-    const claim=await this.database.tenantTransaction(p.tenantId,async db=>{
+    const claimInvoices=()=>this.database.tenantTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id,true);
       const batch=(await db.query(`SELECT b.snapshot,b.offer_id,o.is_current FROM ${s}.student_case_invoice_draft_batches b
         JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
@@ -258,7 +264,16 @@ export class StudentCaseInvoiceDraftsService {
           WHERE i.customer_id=$1 AND i.student_id=$4 AND i.xero_connection_id=$3
           AND i.invoice_status NOT IN ('DELETED','VOIDED') ORDER BY i.invoice_date DESC NULLS LAST,i.xero_invoice_id DESC LIMIT 1) latest ON true`,
         [p.tenantId,c.student_id,connectionId,c.student_reference])).rows[0]?.xero_contact_id;
-      if(!contact)throw new ConflictException('Link this student to an active Xero Contact before creating invoices.');
+      if(!contact){
+        // Repair pre-fix bindings by reading the exact provider ID, never by
+        // name/email and never by creating another Contact. No claim exists yet.
+        const missing=(await db.query(`SELECT pc.xero_contact_id FROM ${s}.student_operations_primary_xero_contacts pc
+          WHERE pc.customer_id=$1 AND pc.student_id=$2 AND pc.xero_connection_id=$3 AND pc.xero_contact_id IS NOT NULL
+          AND NOT EXISTS(SELECT 1 FROM ${s}.student_operations_xero_contacts xc WHERE xc.customer_id=pc.customer_id
+            AND xc.xero_connection_id=pc.xero_connection_id AND xc.xero_contact_id=pc.xero_contact_id)`,[p.tenantId,c.student_id,connectionId])).rows[0];
+        if(missing)throw new MissingContactProjection(connectionId,missing.xero_contact_id);
+        throw new ConflictException({errorCode:'student_invoice_contact_unavailable',message:'Link this student to an active Xero Contact before creating invoices.'});
+      }
       const rows=[] as Array<{invoice:InvoiceSnapshot['invoices'][number];status:string;provider_key:string;owned:boolean}>;
       for(const invoice of targets){
         const providerKey=createHash('sha256').update(`student-invoice:${p.tenantId}:${batchId}:${invoice.sequence}`).digest('hex');
@@ -274,6 +289,23 @@ export class StudentCaseInvoiceDraftsService {
         rows.push({invoice,status:receipt.status,provider_key:receipt.provider_key,owned});
       }
       return {snapshot,connectionId,contact,rows};
+    });
+    const claim=await claimInvoices().catch(async error=>{
+      if(!(error instanceof MissingContactProjection))throw error;
+      // Provider I/O is outside the transaction/locks and remains quota governed.
+      const contact=await this.xero.contactById(p.tenantId,error.connectionId,error.contactId);
+      if(contact.contactId!==error.contactId||contact.status!=='ACTIVE')
+        throw new ConflictException({errorCode:'student_invoice_contact_unavailable',message:'The linked Xero Contact is not active. Ask an administrator to review the student contact.'});
+      await this.database.tenantTransaction(p.tenantId,async db=>{
+        const c=await this.cases.authorizedCase(db,p,id,true);
+        const binding=await db.query(`SELECT 1 FROM ${s}.student_operations_primary_xero_contacts
+          WHERE customer_id=$1 AND student_id=$2 AND xero_connection_id=$3 AND xero_contact_id=$4`,[p.tenantId,c.student_id,error.connectionId,error.contactId]);
+        if(!binding.rowCount)throw new ConflictException('The student contact changed. Reload the invoice drafts.');
+        await publishXeroContact(db,p.tenantId,error.connectionId,contact);
+      });
+      // Reauthorize, revalidate the current offer/connection and ACTIVE cache
+      // after publication, including a concurrent sync/archive. Retry only once.
+      return claimInvoices();
     });
     const claimMs=Date.now()-startedAt;
     type Result={sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string};

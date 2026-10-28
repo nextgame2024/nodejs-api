@@ -4,21 +4,29 @@ import { XeroClient } from './xero.client.js';
 afterEach(()=>jest.restoreAllMocks());
 const contactId='11111111-1111-4111-8111-111111111111';
 const value={contactNumber:`sophia:${contactId}`,name:'Example Student (STD-1)',email:'student@example.test'},key='a'.repeat(64);
-const contact={ContactID:contactId,ContactNumber:value.contactNumber,ContactStatus:'ACTIVE'};
+const contact={ContactID:contactId,ContactNumber:value.contactNumber,ContactStatus:'ACTIVE',Name:value.name,EmailAddress:value.email};
+const receipt={contactId,status:'ACTIVE',legalName:value.name,email:value.email,contactNumber:value.contactNumber,accountNumber:null,updatedAt:null};
 const response=(contacts:unknown[])=>new Response(JSON.stringify({Contacts:contacts}),{status:200,headers:{'Content-Type':'application/json'}});
 
 describe('student Contact provisioning',()=>{
+  it('reads the exact existing Contact for missing-cache recovery without creating or changing it',async()=>{
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(response([contact])).mockResolvedValueOnce(response([{...contact,ContactID:'22222222-2222-4222-8222-222222222222'}]));
+    expect(await new XeroClient().contactById('fake','organisation',contactId)).toEqual(receipt);
+    expect(fetch.mock.calls[0][0]).toBe(`https://api.xero.com/api.xro/2.0/Contacts/${contactId}`);
+    expect(fetch.mock.calls[0][1]?.method??'GET').toBe('GET');
+    await expect(new XeroClient().contactById('fake','organisation',contactId)).rejects.toThrow('confirmation failed');
+  });
   it('supports explicit overflow references but rejects malformed or first-bucket aliases',async()=>{
     const overflow={...value,contactNumber:`${value.contactNumber}:docs:2`,name:'Example Student — Documents 2',email:null};
     const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(response([{...contact,ContactNumber:overflow.contactNumber}]));
-    expect(await new XeroClient().ensureStudentContact('fake','organisation',overflow,key)).toEqual({contactId});
+    expect(await new XeroClient().ensureStudentContact('fake','organisation',overflow,key)).toEqual({...receipt,contactNumber:overflow.contactNumber});
     for(const suffix of [':docs:1',':docs:0',':docs:02',':docs:1000000',':docs:2"'])
       await expect(new XeroClient().ensureStudentContact('fake','organisation',{...value,contactNumber:value.contactNumber+suffix},key)).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
   it('reconciles by exact external reference before creating, without matching names or emails',async()=>{
     const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(response([contact]));
-    expect(await new XeroClient().ensureStudentContact('fake','organisation',value,key)).toEqual({contactId});
+    expect(await new XeroClient().ensureStudentContact('fake','organisation',value,key)).toEqual(receipt);
     expect(fetch).toHaveBeenCalledTimes(1);
     const url=new URL(String(fetch.mock.calls[0][0]));
     expect(url.origin+url.pathname).toBe('https://api.xero.com/api.xro/2.0/Contacts');
@@ -28,7 +36,7 @@ describe('student Contact provisioning',()=>{
   it('creates only when absent, using the durable snapshot, key and shared per-request admission',async()=>{
     const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(response([])).mockResolvedValueOnce(response([contact]));
     const beforeRequest=jest.fn(async()=>undefined),observe=jest.fn(async()=>{}),client=new XeroClient();
-    expect(await client.withRequestPolicy({beforeRequest,observe},()=>client.ensureStudentContact('fake','organisation',value,key))).toEqual({contactId});
+    expect(await client.withRequestPolicy({beforeRequest,observe},()=>client.ensureStudentContact('fake','organisation',value,key))).toEqual(receipt);
     expect(beforeRequest).toHaveBeenCalledTimes(2);expect(observe).toHaveBeenCalledTimes(2);
     const options=fetch.mock.calls[1][1]!;
     expect(options.method).toBe('PUT');expect(options.redirect).toBe('error');
@@ -40,7 +48,7 @@ describe('student Contact provisioning',()=>{
     const client=new XeroClient();await expect(client.ensureStudentContact('fake','organisation',value,key)).rejects.toThrow();
     expect(fetch).toHaveBeenCalledTimes(2);
     fetch.mockResolvedValueOnce(response([contact]));
-    expect(await client.ensureStudentContact('fake','organisation',value,key)).toEqual({contactId});
+    expect(await client.ensureStudentContact('fake','organisation',value,key)).toEqual(receipt);
     expect(fetch).toHaveBeenCalledTimes(3);
   });
   for(const contacts of [[{...contact,ContactStatus:'ARCHIVED'}],[{...contact,ContactNumber:'another-student'}],[contact,contact],[{...contact,HasValidationErrors:true}]])

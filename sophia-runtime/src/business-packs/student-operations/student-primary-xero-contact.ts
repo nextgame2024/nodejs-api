@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service.js';
 import type { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import { caseSchema,StudentOperationsCasesService } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
+import { publishXeroContact } from './student-xero-contact-projection.js';
 
 // Explicit upload mutation only: no provider requests or writes on page/dialog GETs.
 export class StudentPrimaryXeroContact {
@@ -86,6 +87,7 @@ export class StudentPrimaryXeroContact {
         WHERE customer_id=$1 AND student_id=$2 AND xero_connection_id=$3 AND lease_token=$4 RETURNING student_id`,
         [p.tenantId,row.student_id,row.xero_connection_id,lease,contact.contactId]);
       if(!result.rowCount) throw new ConflictException('Document storage confirmation is pending. Retry this file.');
+      await publishXeroContact(db,p.tenantId,row.xero_connection_id,contact);
       await this.cases.activity(db,p,caseId,'student.document_storage_linked','Student document storage linked');
     });
     return {xero_connection_id:row.xero_connection_id,source_id:contact.contactId};
