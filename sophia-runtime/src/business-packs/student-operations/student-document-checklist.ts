@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import type { DatabaseService } from '../../database/database.service.js';
 import { caseSchema } from './student-operations-cases.service.js';
 import { analysisToday,analysisVerdict,documentWorkflowEnabled } from './student-document-analysis-state.js';
+import {INVOICE_CHECKLIST_KEYS,invoiceChecklistEvidence} from './student-invoice-checklist.js';
 
 export const documentChecklistEnabled=()=>process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED==='true';
 export const DOCUMENT_CHECKLIST_KEYS=['signed_engagement_letter','document_completeness'] as const;
@@ -94,7 +95,21 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
     before.find(r=>r.item_key==='invoice_loo_consistency')!.completed=false;
     await activity('case.checklist_item_updated','Invoice/LoO consistency reopened');
   }
-  const allComplete=DOCUMENT_CHECKLIST_KEYS.every(key=>completed[key])&&['invoice_loo_consistency','pending_track_status'].every(key=>before.find(r=>r.item_key===key)?.completed);
+  // Financial milestones are evaluated before payment waiting begins, not
+  // reopened later merely because the first invoice is paid or tracking changes.
+  const financial=['documents_requested','checklist_complete'].includes(c.current_stage)?await invoiceChecklistEvidence(db,tenant,id,s):null;
+  if(financial)for(const key of INVOICE_CHECKLIST_KEYS){
+    const prior=before.find(r=>r.item_key===key);
+    if(Boolean(prior?.completed)===financial[key])continue;
+    await db.query(`INSERT INTO ${s}.student_operations_case_checklist(customer_id,case_id,item_key,completed,actor_identity_user_id,actor_kind,actor_name)
+      VALUES($1,$2,$3,$4,'system:invoice-checklist','automation','SophiaAi')
+      ON CONFLICT(customer_id,case_id,checklist_status,item_key) DO UPDATE SET completed=excluded.completed,
+        record_version=student_operations_case_checklist.record_version+1,actor_identity_user_id=excluded.actor_identity_user_id,
+        actor_kind=excluded.actor_kind,actor_name=excluded.actor_name,updated_at=now()`,[tenant,id,key,financial[key]]);
+    if(prior)prior.completed=financial[key];else before.push({item_key:key,completed:financial[key]});
+    await activity('case.checklist_item_updated',`${key==='invoice_loo_consistency'?'Invoice/LoO consistency':'Pending Track status'} ${financial[key]?'completed':'reopened'}`);
+  }
+  const allComplete=DOCUMENT_CHECKLIST_KEYS.every(key=>completed[key])&&INVOICE_CHECKLIST_KEYS.every(key=>before.find(r=>r.item_key===key)?.completed);
   if(wasComplete!==allComplete)await activity(allComplete?'case.checklist_completed':'case.checklist_reopened',allComplete?'Checklist complete':'Checklist reopened');
   if(documentWorkflowEnabled()&&['documents_requested','checklist_complete'].includes(c.current_stage)){
     const rejected=evidence.some(e=>(e.required||e.key==='engagement_letter')&&e.rejected);
@@ -106,12 +121,12 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
       // A replacement must be approved, not merely uploaded or still processing.
       const replacements=evidence.filter(e=>e.previouslyRejected);
       if(hold&&replacements.length&&replacements.every(e=>e.accepted)){status='pre_sale';hold=false;}
-      if(status==='pre_sale')stage=completed.signed_engagement_letter&&completed.document_completeness?'checklist_complete':'documents_requested';
+      if(status==='pre_sale')stage=allComplete&&financial?.invoice_loo_consistency&&financial.pending_track_status?'awaiting_payment':completed.signed_engagement_letter&&completed.document_completeness?'checklist_complete':'documents_requested';
     }
     if(status!==c.lifecycle_status||stage!==c.current_stage||hold!==c.document_review_hold){
       await db.query(`UPDATE ${s}.student_operations_cases SET lifecycle_status=$3,current_stage=$4,document_review_hold=$5,
         record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,[tenant,id,status,stage,hold]);
-      await activity('case.document_workflow_updated',status==='on_hold'?'Case placed on hold — document rejected':stage==='checklist_complete'?'Verified Documents':status!==c.lifecycle_status?'Document hold cleared':'Documents Requested — checks pending');
+      await activity('case.document_workflow_updated',status==='on_hold'?'Case placed on hold — document rejected':stage==='awaiting_payment'?'Awaiting Payment — all reviewed invoices created with PENDING tracking':stage==='checklist_complete'?'Verified Documents':status!==c.lifecycle_status?'Document hold cleared':'Documents Requested — checks pending');
     }
   }
   await db.query(`INSERT INTO ${s}.student_document_checklist_evaluations(customer_id,case_id,evidence) VALUES($1,$2,$3)

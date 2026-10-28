@@ -6,7 +6,9 @@ import { DatabaseService } from '../../database/database.service.js';
 import { StudentOperationsCasesService,caseSchema } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
-import { documentChecklistEvidence } from './student-document-checklist.js';
+import { documentChecklistEvidence,documentChecklistEnabled,reconcileDocumentChecklist } from './student-document-checklist.js';
+import {matchesXeroInvoice,exactXeroInvoiceMatches,invoiceDraftXeroValue} from './student-case-invoice-matching.js';
+export {matchesXeroInvoice,matchesXeroInvoiceHeader,exactXeroInvoiceMatches} from './student-case-invoice-matching.js';
 import { analysisToday,documentWorkflowEnabled } from './student-document-analysis-state.js';
 import type { PoolClient } from 'pg';
 import { offerExtraction,paymentWithConditionalFee } from './student-document-analysis.contracts.js';
@@ -45,33 +47,6 @@ export function xeroPreflightFailure(error:unknown){
 export function lineTotal(quantity:string,unitAmountMinor:number){
   const [whole,fraction='']=quantity.split('.'),q=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));
   return Number((q*BigInt(unitAmountMinor)+5000n)/10000n);
-}
-const decimalNumber=(value:string|number|null)=>value===null?null:Math.round(Number(value)*10000);
-// PENDING is the local initial payment state. Xero can accept the invoice
-// without assigning that optional category. Only this default may be absent;
-// a different payment state, missing advisor, or other category still differs.
-const trackingKey=(items:Array<{name:string;option:string}>)=>items
-  .filter(item=>!(item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'))
-  .map(item=>`${item.name.trim().toLowerCase()}=${item.option.trim().toLowerCase()}`).sort().join('|');
-const normalizedDescription=(value:string|null)=>value?.replace(/\r\n?/g,'\n').trim()??'';
-export function matchesXeroInvoiceHeader(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
-  if(candidate.type!=='ACCREC'||['DELETED','VOIDED'].includes(candidate.status)||candidate.contactId!==expected.contactId||candidate.invoiceDate!==expected.date||candidate.dueDate!==expected.dueDate||
-    candidate.currencyCode!==expected.currencyCode||(candidate.invoiceReference??null)!==(expected.reference??null)||Math.round(candidate.total*100)!==totalMinor)return false;
-  return true;
-}
-export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
-  if(!matchesXeroInvoiceHeader(candidate,expected,totalMinor)||candidate.lineItems.length!==expected.lines.length)return false;
-  const actual=candidate.lineItems.map(line=>JSON.stringify({description:normalizedDescription(line.description),quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
-    accountCode:line.accountCode??'',taxType:line.taxType??'',tracking:trackingKey(line.tracking)})).sort();
-  const wanted=expected.lines.map(line=>JSON.stringify({description:normalizedDescription(line.description),quantity:decimalNumber(line.quantity),unitAmount:decimalNumber(line.unitAmount),itemCode:line.itemCode??'',
-    accountCode:line.accountCode,taxType:line.taxType,tracking:trackingKey(line.tracking)})).sort();
-  return isDeepStrictEqual(actual,wanted);
-}
-export async function exactXeroInvoiceMatches(candidates:XeroInvoiceRecord[],expected:XeroInvoiceCreate,totalMinor:number,read:(invoiceId:string)=>Promise<XeroInvoiceRecord>){
-  const plausible=candidates.filter(candidate=>matchesXeroInvoiceHeader(candidate,expected,totalMinor));
-  const complete:XeroInvoiceRecord[]=[];
-  for(const candidate of plausible)complete.push(await read(candidate.invoiceId));
-  return complete.filter(candidate=>matchesXeroInvoice(candidate,expected,totalMinor));
 }
 type AcceptedDraftDates={sequence:number;issueDate:string;dueDate:string};
 export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string,acceptedDefaultDates:AcceptedDraftDates[]=[]){
@@ -207,11 +182,14 @@ export class StudentCaseInvoiceDraftsService {
   }
 
   private xeroValue(snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],contactId:string):XeroInvoiceCreate{
-    const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:snapshot.advisorLabel}],first=invoice.lines[0];
-    const lines:XeroInvoiceCreate['lines']=invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
-      accountCode:line.accountCode,taxType:line.taxType,tracking}));
-    if(invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(invoice.conditionalFeeMinor/100).toFixed(2),accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});
-    return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:snapshot.collegeName||null,currencyCode:snapshot.currency,lines};
+    return invoiceDraftXeroValue(snapshot,invoice,contactId);
+  }
+
+  private async refreshWorkflow(p:Principal,id:string){
+    if(!documentChecklistEnabled()||!documentWorkflowEnabled())return;
+    try{await this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id,true);await reconcileDocumentChecklist(db,p.tenantId,id);
+    });}catch{this.logger.warn({event:'xero_invoice_workflow_refresh_pending'});}
   }
 
   private async confirmCreated(p:Principal,id:string,batchId:string,connectionId:string,contactId:string,snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],receipt:{invoiceId:string;invoiceNumber:string|null;status:string;total:number},verified?:XeroInvoiceRecord){
@@ -333,6 +311,7 @@ export class StudentCaseInvoiceDraftsService {
     // Drain in-flight work before returning a fatal storage failure. The
     // persisted claims still prevent duplicate sends after a lost response.
     const failed=workers.find(worker=>worker.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
+    await this.refreshWorkflow(p,id);
     this.logger.log({event:'xero_invoice_batch_completed',durationMs:Date.now()-startedAt,claimMs,selected:results.length,created:results.filter(r=>r.status==='created').length});
     return {created:results.filter(r=>r.status==='created').length,skipped:results.filter(r=>r.status!=='created').length,results};
   }
@@ -362,6 +341,7 @@ export class StudentCaseInvoiceDraftsService {
         :candidates.length?'Xero invoices were found for this contact and date, but none exactly match the reviewed invoice. Review the Xero invoice details; do not resend it.':'No matching Xero invoice is visible yet. Wait briefly, then check Xero again; do not resend this invoice.'}]};
       const candidate=matches[0],projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contactId,claim.snapshot,invoice,
         {invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,status:candidate.status,total:candidate.total},candidate);
+      await this.refreshWorkflow(p,id);
       return {created:1,skipped:0,results:[{sequence:invoice.sequence,status:'created',invoiceId:candidate.invoiceId,invoiceNumber:candidate.invoiceNumber,
         message:(projectionPending?'Confirmed in Xero. A register refresh was queued to complete local indexing.':'Confirmed against the invoice in Xero.')+
           (candidate.lineItems.some(line=>!line.tracking.some(item=>item.name.trim().toLowerCase()==='payment track'))?' Payment Track is unassigned in Xero; the local payment status remains PENDING.':'')}]};
@@ -375,4 +355,4 @@ export class StudentCaseInvoiceDraftsService {
 const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
     lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:money,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
-type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;
+export type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;

@@ -18,6 +18,7 @@ import { StudentDocumentAnalysisWorker } from '../business-packs/student-operati
 import { reconcileDocumentChecklist,StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
 import type { DocumentExtraction } from '../business-packs/student-operations/student-document-analysis.contracts.js';
 import { StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
+import {invoiceDraftXeroValue} from '../business-packs/student-operations/student-case-invoice-matching.js';
 import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
 import { StudentOperationsXeroSyncService } from '../business-packs/student-operations/student-operations-xero-sync.service.js';
 
@@ -804,6 +805,37 @@ suite('Case management against disposable PostgreSQL',()=>{
         // Receipts and indexed links represent the same eight invoices.
         const allCreated=await service.invoices(p,id,{});expect(allCreated.total).toBe(8);expect(allCreated.invoices).toHaveLength(8);
         expect(new Set(allCreated.invoices.map(i=>i.invoiceId)).size).toBe(8);
+        // Minimal create receipts alone must not advance the case or fabricate
+        // tracking confirmation. Simulate hydration into the shared read model.
+        expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
+        const reconcileInvoices=()=>transaction(tenant,async db=>{await service.authorizedCase(db,p,id,true);await reconcileDocumentChecklist(db,tenant,id);});
+        for(const invoice of refreshed.snapshot.invoices){
+          const value=invoiceDraftXeroValue(refreshed.snapshot,invoice,target);
+          const lines=value.lines.map(line=>({description:line.description,itemCode:line.itemCode,quantity:Number(line.quantity),unitAmount:Number(line.unitAmount),accountCode:line.accountCode,taxType:line.taxType,taxAmount:0,lineAmount:100,tracking:line.tracking}));
+          await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_xero_invoices SET line_items=$3,payment_track=$4 WHERE customer_id=$1 AND xero_invoice_id=$2`,
+            [tenant,refreshed.exports[String(invoice.sequence)].invoiceId,JSON.stringify(lines),invoice.sequence===1?null:'PENDING']));
+        }
+        await reconcileInvoices();expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
+        let checklist=await service.checklist(p,id);
+        expect(checklist.items.find(i=>i.key==='invoice_loo_consistency')).toMatchObject({completed:true,automatic:true});
+        expect(checklist.items.find(i=>i.key==='pending_track_status')).toMatchObject({completed:false,automatic:true});
+        await expect(service.updateChecklist(p,id,{itemKey:'pending_track_status',completed:true,recordVersion:0},randomUUID())).rejects.toThrow('confirmed Xero invoices');
+        await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_xero_invoices SET payment_track='PENDING' WHERE customer_id=$1 AND xero_invoice_id=$2`,[tenant,refreshed.exports['1'].invoiceId]));
+        // The normal create/reconcile completion hook uses the same case lock
+        // and evaluator as the background checklist worker.
+        await drafts.createXero(p,id,batch.batchId,{sequences:[1],confirmed:true});
+        expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'awaiting_payment'});
+        checklist=await service.checklist(p,id);expect(checklist.items.every(i=>i.completed)).toBe(true);
+        const stageEvents=() => service.activities(p,id,{}).then(data=>data.activity.filter(a=>a.summary.startsWith('Awaiting Payment')));
+        expect(await stageEvents()).toHaveLength(1);
+        await Promise.all([reconcileInvoices(),reconcileInvoices()]);expect(await stageEvents()).toHaveLength(1);
+        await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='on_hold',current_stage='documents_requested' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
+        await reconcileInvoices();expect(await service.get(p,id)).toMatchObject({status:'on_hold',currentStage:'documents_requested'});
+        await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='open',current_stage='payment_received' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
+        await reconcileInvoices();expect((await service.get(p,id)).currentStage).toBe('payment_received');
+        // Restore only this disposable fixture's stage for the independent
+        // nightly-sync and replacement-document scenarios below.
+        await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='pre_sale',current_stage='checklist_complete' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
         // The real nightly persistence stage updates a newly created invoice
         // in place; both list and detail immediately read that same cached row.
         const updated=allCreated.invoices[1],runId=randomUUID(),owner=randomUUID();
