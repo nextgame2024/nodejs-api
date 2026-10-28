@@ -19,6 +19,7 @@ import { reconcileDocumentChecklist,StudentDocumentChecklistReconciler } from '.
 import type { DocumentExtraction } from '../business-packs/student-operations/student-document-analysis.contracts.js';
 import { StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
 import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
+import { StudentOperationsXeroSyncService } from '../business-packs/student-operations/student-operations-xero-sync.service.js';
 
 const url=process.env.LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL;
 if(url && !['localhost','127.0.0.1'].includes(new URL(url).hostname)) throw new Error('A disposable local database is required');
@@ -52,8 +53,10 @@ suite('Case management against disposable PostgreSQL',()=>{
       CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,contact_status text,legal_name text,contact_number text,provider_updated_at timestamptz);
       GRANT SELECT ON sophia_runtime.xero_connections,sophia_runtime.student_operations_xero_sync_configurations,sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app;
       CREATE TABLE sophia_runtime.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,xero_contact_id uuid,student_id text,invoice_number text,invoice_type text,invoice_status text,invoice_date date,due_date date,advisor_name text,invoice_reference text,college_name text,payment_track text,total numeric,amount_paid numeric,amount_due numeric,currency_code text,
-        sent_to_contact boolean NOT NULL DEFAULT false,line_items jsonb NOT NULL DEFAULT '[]',provider_updated_at timestamptz,last_seen_sync_run_id uuid,updated_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
+        sent_to_contact boolean NOT NULL DEFAULT false,line_items jsonb NOT NULL DEFAULT '[]',concept text,provider_updated_at timestamptz,last_seen_sync_run_id uuid,updated_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       GRANT SELECT, INSERT, UPDATE ON sophia_runtime.student_operations_xero_invoices TO sophia_runtime_app;
+      CREATE TABLE sophia_runtime.student_operations_xero_sync_runs(customer_id uuid,sync_run_id uuid,lease_owner uuid,lease_expires_at timestamptz,status text,invoice_count int);
+      GRANT SELECT, UPDATE ON sophia_runtime.student_operations_xero_sync_runs TO sophia_runtime_app;
     `);
     for(const name of ['064_student_operations_student_writes.sql','065_student_operations_write_least_privilege.sql','069_student_case_foundation.sql','070_student_register_advisor_projection.sql','071_student_case_management.sql','072_student_case_contact_projection.sql','073_student_case_workflow.sql','074_student_case_profile_edit.sql','075_student_advisor_directory.sql','087_student_account_case_creation.sql']) {
       await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
@@ -222,6 +225,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(detail.courseName).toBeNull();
     expect(detail.colleges[0].collegeId).toBe(college);
     expect((await service.invoices(p,detail.caseId,{})).total).toBe(1);
+    expect(await service.invoiceDetail(p,detail.caseId,connection,invoice)).toMatchObject({invoiceNumber:'INV-1',status:'PAID',lineItems:[]});
+    expect(await service.invoiceDetail(p,detail.caseId,null,invoice)).toMatchObject({invoiceNumber:'INV-1',status:'PAID',lineItems:[]});
   });
   test('supports multiple cases, idempotency, optimistic concurrency and advisor access',async()=>{
     const first=await service.create(p,{userId:user,advisorUserId:advisor,collegeId:college,courseName:'English'},'create-case-2');
@@ -799,12 +804,34 @@ suite('Case management against disposable PostgreSQL',()=>{
         // Receipts and indexed links represent the same eight invoices.
         const allCreated=await service.invoices(p,id,{});expect(allCreated.total).toBe(8);expect(allCreated.invoices).toHaveLength(8);
         expect(new Set(allCreated.invoices.map(i=>i.invoiceId)).size).toBe(8);
+        // The real nightly persistence stage updates a newly created invoice
+        // in place; both list and detail immediately read that same cached row.
+        const updated=allCreated.invoices[1],runId=randomUUID(),owner=randomUUID();
+        await pool.query("INSERT INTO sophia_runtime.student_operations_xero_sync_runs VALUES($1,$2,$3,now()+interval '10 minutes','processing',0)",[tenant,runId,owner]);
+        const sync=new StudentOperationsXeroSyncService(database,{} as never);
+        await (sync as any).persistInvoices(tenant,{sync_run_id:runId,xero_connection_id:connection},owner,[{
+          invoiceId:updated.invoiceId,contactId:target,invoiceNumber:updated.invoiceNumber,type:'ACCREC',status:'PAID',invoiceDate:'2026-10-26',dueDate:'2026-10-26',
+          invoiceReference:'Updated college',concept:'Updated by nightly sync',advisorName:'New advisor',collegeName:'Updated college',paymentTrack:'Paid out',sentToContact:true,
+          currencyCode:'AUD',total:100,amountPaid:100,amountDue:0,updatedAt:'2026-10-28T02:00:00.000Z',lineItems:[{lineItemId:randomUUID(),description:'Updated by nightly sync',quantity:1,unitAmount:100,accountCode:'812',taxType:'BASEXCLUDED',taxAmount:0,lineAmount:100,tracking:[]}],
+        }],1);
+        const latest=await service.invoiceDetail(p,id,connection,updated.invoiceId);
+        expect(await service.invoiceDetail(p,id,null,updated.invoiceId)).toEqual(latest);
+        expect(latest).toMatchObject({status:'PAID',paymentTrack:'Paid out',reference:'Updated college',lineItems:[{description:'Updated by nightly sync'}]});
+        expect(Number(latest.amountPaid)).toBe(100);expect(Number(latest.amountDue)).toBe(0);
+        expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===updated.invoiceId)?.status).toBe('PAID');
+        await (drafts as any).confirmCreated(p,id,batch.batchId,connection,target,refreshed.snapshot,refreshed.snapshot.invoices.find((i:any)=>i.sequence===updated.draftSequence),
+          {invoiceId:updated.invoiceId,invoiceNumber:updated.invoiceNumber,status:'DRAFT',total:100});
+        expect((await service.invoiceDetail(p,id,connection,updated.invoiceId)).status).toBe('PAID'); // Late confirmation cannot undo a newer sync.
+        expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_invoice_id=$1',[updated.invoiceId])).rows[0].student_id).toBe(student.student_reference);
+        await expect(service.invoiceDetail({...p,role:'advisor'},id,connection,updated.invoiceId)).rejects.toThrow('financial access');
+        await expect(service.invoiceDetail(p,id,connection,randomUUID())).rejects.toThrow('Case invoice not found');
         // Reproduce older confirmed invoices whose local projection failed.
         const unindexed=allCreated.invoices[0];
         await pool.query('DELETE FROM sophia_runtime.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2 AND xero_invoice_id=$3',[tenant,id,unindexed.invoiceId]);
         await pool.query('DELETE FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1 AND xero_invoice_id=$2',[tenant,unindexed.invoiceId]);
         const fallback=await service.invoices(p,id,{});expect(fallback.total).toBe(8);expect(fallback.invoices).toHaveLength(8);
         const recovered=fallback.invoices.find(i=>i.invoiceId===unindexed.invoiceId)!;
+        expect((await service.invoiceDetail(p,id,connection,unindexed.invoiceId)).lineItems.length).toBeGreaterThan(0);
         expect(recovered).toMatchObject({invoiceNumber:unindexed.invoiceNumber,draftBatchId:batch.batchId,status:'DRAFT',currency:'AUD'});expect(Number(recovered.amountDue)).toBe(100);
         const pages=await Promise.all([1,2,3].map(page=>service.invoices(p,id,{page,limit:3})));
         expect(pages.every(page=>page.total===8)).toBe(true);expect(new Set(pages.flatMap(page=>page.invoices.map(i=>i.invoiceId))).size).toBe(8);

@@ -229,11 +229,14 @@ export class StudentCaseInvoiceDraftsService {
       await this.database.tenantTransaction(p.tenantId,async db=>{
         const c=await this.cases.authorizedCase(db,p,id),lineItems=verified?.lineItems??[],total=verified?.total??receipt.total;
         await db.query(`INSERT INTO ${s}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,due_date,advisor_name,invoice_reference,college_name,payment_track,total,amount_paid,amount_due,currency_code,sent_to_contact,line_items,provider_updated_at)
-          VALUES($1,$2,$3,$4,$5,$6,'ACCREC',$7,$8,$9,$10,$11,$11,'PENDING',$12,0,$12,$13,$14,$15,$16)
+          VALUES($1,$2,$3,$4,$5,$6,'ACCREC',$7,$8,$9,$10,$11,$11,$17,$12,$18,$19,$13,$14,$15,$16)
           ON CONFLICT(customer_id,xero_connection_id,xero_invoice_id) DO UPDATE SET invoice_number=EXCLUDED.invoice_number,invoice_status=EXCLUDED.invoice_status,invoice_date=EXCLUDED.invoice_date,due_date=EXCLUDED.due_date,
-            advisor_name=EXCLUDED.advisor_name,invoice_reference=EXCLUDED.invoice_reference,college_name=EXCLUDED.college_name,payment_track=EXCLUDED.payment_track,total=EXCLUDED.total,amount_due=EXCLUDED.amount_due,
-            currency_code=EXCLUDED.currency_code,sent_to_contact=EXCLUDED.sent_to_contact,line_items=EXCLUDED.line_items,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()`,
-          [p.tenantId,connectionId,receipt.invoiceId,contactId,c.student_reference,receipt.invoiceNumber,verified?.status??receipt.status,invoice.issueDate,invoice.dueDate,snapshot.advisorLabel,snapshot.collegeName,total,snapshot.currency,verified?.sentToContact??false,JSON.stringify(lineItems),verified?.updatedAt??null]);
+            advisor_name=EXCLUDED.advisor_name,invoice_reference=EXCLUDED.invoice_reference,college_name=EXCLUDED.college_name,payment_track=EXCLUDED.payment_track,total=EXCLUDED.total,amount_paid=EXCLUDED.amount_paid,amount_due=EXCLUDED.amount_due,
+            currency_code=EXCLUDED.currency_code,sent_to_contact=EXCLUDED.sent_to_contact,line_items=EXCLUDED.line_items,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()
+            WHERE student_operations_xero_invoices.provider_updated_at IS NULL OR (EXCLUDED.provider_updated_at IS NOT NULL AND EXCLUDED.provider_updated_at>=student_operations_xero_invoices.provider_updated_at)`,
+          [p.tenantId,connectionId,receipt.invoiceId,contactId,c.student_reference,receipt.invoiceNumber,verified?.status??receipt.status,verified?.invoiceDate??invoice.issueDate,verified?.dueDate??invoice.dueDate,
+            verified?verified.advisorName:snapshot.advisorLabel,verified?verified.invoiceReference:snapshot.collegeName,total,verified?.currencyCode??snapshot.currency,verified?.sentToContact??false,JSON.stringify(lineItems),verified?.updatedAt??null,
+            verified?verified.paymentTrack:'PENDING',verified?.amountPaid??0,verified?.amountDue??total]);
         await db.query(`INSERT INTO ${s}.student_operations_case_invoice_links(customer_id,case_id,student_id,student_reference,xero_connection_id,xero_invoice_id,linked_by_identity)
           VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
           [p.tenantId,id,c.student_id,c.student_reference,connectionId,receipt.invoiceId,p.identityUserId]);

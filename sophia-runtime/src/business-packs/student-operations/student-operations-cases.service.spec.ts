@@ -4,6 +4,14 @@ import { StudentOperationsCasesService } from './student-operations-cases.servic
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
 describe('Case view data', () => {
+  it('does not guess a connection when an invoice identity is ambiguous within the case',async()=>{
+    const tenantId='11111111-1111-4111-8111-111111111111',caseId='22222222-2222-4222-8222-222222222222',invoiceId='33333333-3333-4333-8333-333333333333';
+    const query=jest.fn(async(sql:string)=>({rows:sql.includes('student_operations_student_user_links')?[{case_id:caseId,student_id:invoiceId}]:[{invoiceId},{invoiceId}]}));
+    const database={tenantReadTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
+    const service=new StudentOperationsCasesService(database as never);
+    await expect(service.invoiceDetail({tenantId,identityUserId:tenantId,role:'chief_executive'} as never,caseId,null,invoiceId)).rejects.toThrow('More than one linked invoice');
+    expect(query.mock.calls[1][0]).toContain('($3::uuid IS NULL OR ids.xero_connection_id=$3)');
+  });
   it('loads tenant-scoped advisor and college edit choices only for case managers', async () => {
     const tenantId = '11111111-1111-4111-8111-111111111111';
     const queries: string[] = [];

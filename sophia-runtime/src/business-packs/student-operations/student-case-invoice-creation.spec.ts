@@ -69,6 +69,13 @@ describe('bounded Xero invoice creation',()=>{
     expect(f.exports.get(1)?.status).toBe('created');expect(f.query.mock.calls.some(([sql])=>sql.includes('SET next_sync_at=now()'))).toBe(true);
     expect(Logger.prototype.warn).toHaveBeenCalledWith({event:'xero_invoice_projection_pending',code:'23503'});
   });
+  it('seeds verified payment amounts and unassigned tracking without inventing draft defaults',async()=>{
+    const f=fixture(1);f.createInvoice.mockImplementationOnce(async(value)=>{const invoice={...record(value,1),status:'PAID',amountPaid:100,amountDue:0,paymentTrack:null};
+      return {invoiceId:invoice.invoiceId,invoiceNumber:invoice.invoiceNumber,status:invoice.status,total:100,invoice};});
+    expect(await f.run()).toMatchObject({created:1});
+    const params=f.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO')&&sql.includes('student_operations_xero_invoices'))![1]!;
+    expect(params[6]).toBe('PAID');expect(params.slice(16,19)).toEqual([null,100,0]);
+  });
   it('isolates validation failures and ambiguous sends while completing the other invoices',async()=>{
     const f=fixture(3);f.createInvoice.mockRejectedValueOnce(new BadRequestException('Invalid item')).mockRejectedValueOnce(new BadGatewayException('timeout'));
     expect(await f.run()).toMatchObject({created:1,skipped:2,results:[{sequence:1,status:'not_attempted'},{sequence:2,status:'review_required'},{sequence:3,status:'created'}]});

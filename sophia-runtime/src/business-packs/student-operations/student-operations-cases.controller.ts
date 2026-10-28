@@ -43,6 +43,12 @@ export class StudentOperationsCasesController {
   @Get(':caseId') get(@Req() r:Request,@Param('caseId') id:string){return this.cases.get(r.studentOperationsPrincipal,id);}
   @Patch(':caseId') update(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.update(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/invoices') invoices(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.invoices(r.studentOperationsPrincipal,id,query);}
+  @Get(':caseId/invoices/:connectionId/:invoiceId')
+  @Header('Cache-Control','private, no-store')
+  invoiceDetail(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string){return this.cases.invoiceDetail(r.studentOperationsPrincipal,id,connectionId,invoiceId);}
+  @Get(':caseId/invoices/:invoiceId')
+  @Header('Cache-Control','private, no-store')
+  invoiceDetailById(@Req() r:Request,@Param('caseId') id:string,@Param('invoiceId') invoiceId:string){return this.cases.invoiceDetail(r.studentOperationsPrincipal,id,null,invoiceId);}
   @Post(':caseId/invoices') linkInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.linkInvoice(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/activity') activity(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.activities(r.studentOperationsPrincipal,id,query);}
   @Get(':caseId/checklist') checklist(@Req() r:Request,@Param('caseId') id:string){return this.cases.checklist(r.studentOperationsPrincipal,id);}

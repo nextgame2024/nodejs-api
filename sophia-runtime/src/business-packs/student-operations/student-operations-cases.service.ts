@@ -9,6 +9,16 @@ import type { StudentOperationsWorkspacePrincipal as Principal } from './student
 import { DOCUMENT_CHECKLIST_KEYS,documentChecklistEnabled,documentChecklistEvidence,reconcileDocumentChecklist } from './student-document-checklist.js';
 import { documentWorkflowEnabled } from './student-document-analysis-state.js';
 
+function caseInvoiceSource(s:string){return {
+  ids:`SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
+    UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'`,
+  joins:`FROM invoice_ids ids
+    LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
+    LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
+    LEFT JOIN ${s}.student_case_invoice_draft_batches b ON b.customer_id=e.customer_id AND b.batch_id=e.batch_id
+    LEFT JOIN LATERAL (SELECT value AS invoice FROM jsonb_array_elements(b.snapshot->'invoices') WHERE (value->>'sequence')::int=e.sequence) d ON true`,
+};}
+
 const fields = z.object({
   title: z.string().trim().min(1).max(200).nullable().optional(),
   courseName: z.string().trim().min(1).max(200).nullable().optional(),
@@ -242,24 +252,55 @@ export class StudentOperationsCasesService {
       // Creation receipts are authoritative even before local indexing finishes.
       // Use the same deduplicated set for rows and pagination/counts; never count
       // drafts or uncertain provider outcomes as linked invoices.
-      const invoiceIds=`SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
-        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'`;
+      const {ids:invoiceIds,joins}=caseInvoiceSource(s);
       const rows=await db.query(`WITH invoice_ids AS (${invoiceIds})
-        SELECT ids.xero_invoice_id AS "invoiceId",coalesce(i.invoice_number,e.xero_invoice_number) AS "invoiceNumber",
+        SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",coalesce(i.invoice_number,e.xero_invoice_number) AS "invoiceNumber",
           coalesce(i.invoice_status,e.provider_status,'DRAFT') AS status,coalesce(i.invoice_type,'ACCREC') AS type,
           coalesce(i.invoice_date,(d.invoice->>'issueDate')::date) AS date,coalesce(i.due_date,(d.invoice->>'dueDate')::date) AS "dueDate",
           e.batch_id AS "draftBatchId",e.sequence AS "draftSequence"
-          ${financial?`,coalesce(i.invoice_reference,b.snapshot->>'collegeName') AS reference,coalesce(i.payment_track,CASE WHEN e.batch_id IS NOT NULL THEN 'PENDING' END) AS "paymentTrack",
+          ${financial?`,CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.invoice_reference ELSE b.snapshot->>'collegeName' END AS reference,
+            CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.payment_track ELSE 'PENDING' END AS "paymentTrack",
             coalesce(i.currency_code,b.snapshot->>'currency') AS currency,coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100) AS total,
             coalesce(i.amount_paid,0) AS "amountPaid",coalesce(i.amount_due,(d.invoice->>'totalMinor')::numeric/100) AS "amountDue"`:''}
-        FROM invoice_ids ids
-        LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
-        LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
-        LEFT JOIN ${s}.student_case_invoice_draft_batches b ON b.customer_id=e.customer_id AND b.batch_id=e.batch_id
-        LEFT JOIN LATERAL (SELECT value AS invoice FROM jsonb_array_elements(b.snapshot->'invoices') WHERE (value->>'sequence')::int=e.sequence) d ON true
+        ${joins}
         ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       const count=await db.query(`SELECT count(*)::int total FROM (${invoiceIds}) invoices`,[p.tenantId,id]);
       return {invoices:rows.rows,total:count.rows[0].total,page:q.page,limit:q.limit};
+    });
+  }
+
+  async invoiceDetail(p:Principal,id:string,connectionId:string|null,invoiceId:string){
+    if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');
+    const value=parse(z.object({connectionId:z.uuid().nullable(),invoiceId:z.uuid()}),{connectionId,invoiceId});
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      const c=await this.authorizedCase(db,p,id),s=caseSchema(),source=caseInvoiceSource(s);
+      const rows=(await db.query(`WITH invoice_ids AS (${source.ids})
+        SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",i.xero_invoice_id IS NOT NULL AS indexed,
+          coalesce(i.invoice_number,e.xero_invoice_number) AS "invoiceNumber",coalesce(i.invoice_status,e.provider_status,'DRAFT') AS status,
+          coalesce(i.invoice_type,'ACCREC') AS type,coalesce(i.invoice_date,(d.invoice->>'issueDate')::date) AS date,
+          coalesce(i.due_date,(d.invoice->>'dueDate')::date) AS "dueDate",coalesce(i.currency_code,b.snapshot->>'currency') AS currency,
+          CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.invoice_reference ELSE b.snapshot->>'collegeName' END AS reference,
+          CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.advisor_name ELSE b.snapshot->>'advisorLabel' END AS "advisorName",
+          CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.payment_track ELSE 'PENDING' END AS "paymentTrack",
+          coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100) AS total,coalesce(i.amount_paid,0) AS "amountPaid",
+          coalesce(i.amount_due,(d.invoice->>'totalMinor')::numeric/100) AS "amountDue",i.line_items AS "lineItems",
+          i.provider_updated_at AS "updatedAt",i.last_seen_sync_run_id IS NOT NULL AS synchronized,d.invoice AS draft,b.snapshot AS snapshot,profile.legal_name AS "studentName"
+        ${source.joins}
+        JOIN ${s}.student_operations_students profile ON profile.customer_id=$1 AND profile.student_id=$5
+        WHERE ($3::uuid IS NULL OR ids.xero_connection_id=$3) AND ids.xero_invoice_id=$4 LIMIT 2`,[p.tenantId,id,value.connectionId,value.invoiceId,c.student_id])).rows;
+      if(rows.length>1)throw new ConflictException('More than one linked invoice has this identity. Reload the invoice list before opening its details.');
+      const row=rows[0];
+      if(!row)throw new NotFoundException('Case invoice not found.');
+      const {indexed,synchronized,draft,snapshot,...detail}=row;
+      if(!indexed||(!synchronized&&!detail.lineItems?.length&&draft)){
+        const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:snapshot.advisorLabel}];
+        detail.lineItems=draft.lines.map((line:Record<string,any>)=>({lineItemId:null,itemCode:line.itemCode,description:line.description,quantity:Number(line.quantity),discountRate:null,
+          unitAmount:line.unitPrice!==undefined?Number(line.unitPrice):Number(line.unitAmountMinor)/100,accountCode:line.accountCode,taxType:line.taxType,
+          taxAmount:line.taxAmountMinor===undefined?null:Number(line.taxAmountMinor)/100,lineAmount:line.amountMinor===undefined?null:Number(line.amountMinor)/100,tracking}));
+        if(draft.conditionalFeeMinor>0)detail.lineItems.push({lineItemId:null,itemCode:null,description:'Conditional transfer fee',quantity:1,unitAmount:draft.conditionalFeeMinor/100,discountRate:null,
+          accountCode:draft.lines[0].accountCode,taxType:'BASEXCLUDED',taxAmount:0,lineAmount:draft.conditionalFeeMinor/100,tracking});
+      }
+      return {...detail,lineItems:Array.isArray(detail.lineItems)?detail.lineItems:[]};
     });
   }
 
