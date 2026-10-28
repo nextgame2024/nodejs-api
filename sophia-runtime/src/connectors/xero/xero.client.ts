@@ -116,9 +116,9 @@ export type XeroInvoiceLineItemRecord = {
 };
 
 export type XeroInvoiceCreate = {
-  contactId:string;date:string;dueDate:string;reference:string|null;currencyCode:string;
+  contactId:string;date:string;dueDate:string;reference:string|null;currencyCode:string;brandingThemeId?:string;
   lines:Array<{description:string;quantity:string;unitAmount:string;itemCode?:string;accountCode:string;taxType:string;
-    tracking:Array<{name:string;option:string}>}>;
+    tracking:Array<{name:string;option:string;trackingCategoryId?:string;trackingOptionId?:string}>}>;
 };
 
 export type XeroInvoiceReceipt = {
@@ -149,13 +149,14 @@ export class XeroClient {
   }
 
   async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<XeroInvoiceReceipt> {
+    if(value.brandingThemeId!==undefined&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.brandingThemeId))throw new BadGatewayException('Invalid Xero invoice branding theme.');
     if(!/^[0-9a-f-]{36}$/i.test(value.contactId)||!/^[a-f0-9]{64}$/.test(key)||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!/^\d{4}-\d{2}-\d{2}$/.test(value.dueDate))
       throw new BadGatewayException('Invalid Xero invoice request.');
     const policy=this.requestPolicy.getStore();let response:Response|undefined,ticket:XeroRequestTicket|void=undefined;
     const invoice={Type:'ACCREC',Contact:{ContactID:value.contactId},Date:value.date,DueDate:value.dueDate,Status:'DRAFT',CurrencyCode:value.currencyCode,
-      ...(value.reference?{Reference:value.reference}:{}),LineAmountTypes:'Exclusive',LineItems:value.lines.map(line=>({Description:line.description,Quantity:line.quantity,
+      ...(value.reference?{Reference:value.reference}:{}),...(value.brandingThemeId?{BrandingThemeID:value.brandingThemeId}:{}),LineAmountTypes:'Exclusive',LineItems:value.lines.map(line=>({Description:line.description,Quantity:line.quantity,
         UnitAmount:line.unitAmount,...(line.itemCode?{ItemCode:line.itemCode}:{}),AccountCode:line.accountCode,TaxType:line.taxType,
-        Tracking:line.tracking.map(item=>({Name:item.name,Option:item.option}))}))};
+        Tracking:line.tracking.map(item=>({Name:item.name,Option:item.option,...(item.trackingCategoryId?{TrackingCategoryID:item.trackingCategoryId}:{}),...(item.trackingOptionId?{TrackingOptionID:item.trackingOptionId}:{})}))}))};
     for(let attempt=0;attempt<3&&!response;attempt++){
       ticket=await policy?.beforeRequest();
       try{response=await fetch('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4',{method:'PUT',headers:{Authorization:`Bearer ${accessToken}`,
@@ -357,6 +358,27 @@ export class XeroClient {
     const taxes=record(await this.json('https://api.xero.com/api.xro/2.0/TaxRates',accessToken,tenantId));
     try{return parseSalesCatalogue(items.Items,accounts.Accounts,taxes.TaxRates);}
     catch{throw new BadGatewayException('Xero returned an invalid sales catalogue.');}
+  }
+
+  async brandingThemes(accessToken:string,tenantId:string):Promise<Array<{brandingThemeId:string;name:string}>>{
+    const payload=record(await this.json('https://api.xero.com/api.xro/2.0/BrandingThemes',accessToken,tenantId));
+    if(!Array.isArray(payload.BrandingThemes))throw new BadGatewayException('Xero returned invalid branding themes.');
+    return payload.BrandingThemes.map(record).filter(item=>!item.Type||item.Type==='INVOICE').map(item=>{
+      const brandingThemeId=requiredString(item.BrandingThemeID,'branding theme id'),name=requiredString(item.Name,'branding theme name');
+      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(brandingThemeId))throw new BadGatewayException('Xero returned an invalid branding theme identifier.');
+      return {brandingThemeId,name};
+    });
+  }
+
+  async trackingCategories(accessToken:string,tenantId:string):Promise<Array<{trackingCategoryId:string;name:string;options:Array<{trackingOptionId:string;name:string}>}>>{
+    const payload=record(await this.json('https://api.xero.com/api.xro/2.0/TrackingCategories?includeArchived=false',accessToken,tenantId));
+    if(!Array.isArray(payload.TrackingCategories))throw new BadGatewayException('Xero returned invalid tracking categories.');
+    const identifier=(value:unknown)=>{const id=requiredString(value,'tracking identifier');if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))throw new BadGatewayException('Xero returned an invalid tracking identifier.');return id;};
+    return payload.TrackingCategories.map(record).filter(category=>category.Status==='ACTIVE').map(category=>{
+      if(!Array.isArray(category.Options))throw new BadGatewayException('Xero returned invalid tracking options.');
+      return {trackingCategoryId:identifier(category.TrackingCategoryID),name:requiredString(category.Name,'tracking category name'),
+        options:category.Options.map(record).filter(option=>option.Status==='ACTIVE').map(option=>({trackingOptionId:identifier(option.TrackingOptionID),name:requiredString(option.Name,'tracking option name')}))};
+    });
   }
 
   async contactPage(

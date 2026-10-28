@@ -17,6 +17,30 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('reads only active tracking options and sends exact option names with their IDs',async()=>{
+    const category='22222222-2222-4222-8222-222222222222',option='33333333-3333-4333-8333-333333333333',id='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({TrackingCategories:[{TrackingCategoryID:category,Name:'Payment Track',Status:'ACTIVE',Options:[{TrackingOptionID:option,Name:'Pending',Status:'ACTIVE'},{TrackingOptionID:id,Name:'Old pending',Status:'ARCHIVED'}]}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-42',Status:'DRAFT',Total:100}]})));
+    const client=new XeroClient();expect(await client.trackingCategories('token','organisation')).toEqual([{trackingCategoryId:category,name:'Payment Track',options:[{trackingOptionId:option,name:'Pending'}]}]);
+    await client.createInvoice('token','organisation',{contactId:id,date:'2027-01-01',dueDate:'2027-01-15',reference:null,currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'Pending',trackingCategoryId:category,trackingOptionId:option}]}]},'b'.repeat(64));
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).Invoices[0].LineItems[0].Tracking).toEqual([{Name:'Payment Track',Option:'Pending',TrackingCategoryID:category,TrackingOptionID:option}]);
+  });
+  it('reads organisation-scoped invoice themes and serializes the explicit branding ID',async()=>{
+    const theme='22222222-2222-4222-8222-222222222222',id='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({BrandingThemes:[{BrandingThemeID:theme,Name:'Trust Open for Australia acc',SortOrder:1,Type:'INVOICE'}]})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-42',Status:'DRAFT',Total:100}]})));
+    const client=new XeroClient();expect(await client.brandingThemes('token','organisation')).toEqual([{brandingThemeId:theme,name:'Trust Open for Australia acc'}]);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.xero.com/api.xro/2.0/BrandingThemes');
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({'xero-tenant-id':'organisation'});
+    await client.createInvoice('token','organisation',{contactId:id,date:'2027-01-01',dueDate:'2027-01-15',reference:null,currencyCode:'AUD',brandingThemeId:theme,lines:[]},'b'.repeat(64));
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).Invoices[0].BrandingThemeID).toBe(theme);
+  });
+  it('rejects invalid branding responses and malformed branding IDs before sending an invoice',async()=>{
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({BrandingThemes:[{BrandingThemeID:'not-an-id',Name:'Trust Open for Australia acc'}]})));
+    await expect(new XeroClient().brandingThemes('token','tenant')).rejects.toThrow('invalid branding theme identifier');
+    fetchMock.mockClear();await expect(new XeroClient().createInvoice('token','tenant',{contactId:'11111111-1111-4111-8111-111111111111',date:'2027-01-01',dueDate:'2027-01-15',reference:null,currencyCode:'AUD',brandingThemeId:'bad',lines:[]},'b'.repeat(64))).rejects.toThrow('branding theme');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it('creates one unsent Xero draft with reviewed lines, tracking and provider idempotency',async()=>{
     const id='11111111-1111-4111-8111-111111111111',key='b'.repeat(64);
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-42',Status:'DRAFT',Total:720}]})));

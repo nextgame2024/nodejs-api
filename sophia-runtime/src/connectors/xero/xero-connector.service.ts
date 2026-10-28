@@ -398,11 +398,40 @@ export class XeroConnectorService {
       if(!refresh)refresh=load().then(value=>current=value).finally(()=>{refresh=undefined;});
       return refresh;
     };
+    const themeName=process.env.XERO_INVOICE_BRANDING_THEME_NAME?.trim()||'Trust Open for Australia acc';
+    let brandingTheme:Promise<string>|undefined;
+    const resolveBrandingTheme=()=>brandingTheme??= (async()=>{
+      const {connection,accessToken}=await credentials();
+      if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
+        throw new ConflictException({errorCode:'xero_branding_theme_scope_missing',message:'Invoice branding could not be checked. An administrator must authorize Xero settings access.'});
+      let themes:Awaited<ReturnType<XeroClient['brandingThemes']>>;
+      try{themes=await this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));}
+      catch{throw new ConflictException({errorCode:'xero_branding_theme_unavailable',message:'Invoice branding could not be verified. No invoice was sent; retry when Xero settings are available.'});}
+      const matches=themes.filter(theme=>theme.name.trim().toLowerCase()===themeName.toLowerCase());
+      if(matches.length!==1)throw new ConflictException({errorCode:'xero_branding_theme_missing',message:`Configure one Xero invoice branding theme named "${themeName}" before creating invoices.`});
+      return matches[0].brandingThemeId;
+    })();
+    let pendingTracking:Promise<{name:string;option:string;trackingCategoryId:string;trackingOptionId:string}>|undefined;
+    const resolvePendingTracking=()=>pendingTracking??= (async()=>{
+      const {connection,accessToken}=await credentials();
+      if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
+        throw new ConflictException({errorCode:'xero_tracking_scope_missing',message:'An administrator must authorize Xero settings access before checking invoice tracking.'});
+      let categories:Awaited<ReturnType<XeroClient['trackingCategories']>>;
+      try{categories=await this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id));}
+      catch{throw new ConflictException({errorCode:'xero_pending_tracking_unavailable',message:'PENDING tracking could not be verified. No invoice was sent; retry when Xero settings are available.'});}
+      const matches=categories.filter(category=>category.name.trim().toLowerCase()==='payment track');
+      const options=matches.length===1?matches[0].options.filter(option=>option.name.trim().toLowerCase()==='pending'):[];
+      if(matches.length!==1||options.length!==1)throw new ConflictException({errorCode:'xero_pending_tracking_missing',message:'Configure one active Pending option in the Xero Payment Track category before creating invoices.'});
+      return {name:matches[0].name,option:options[0].name,trackingCategoryId:matches[0].trackingCategoryId,trackingOptionId:options[0].trackingOptionId};
+    })();
     return {
       createInvoice:async(value:import('./xero.client.js').XeroInvoiceCreate,key:string)=>{
+        if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
+        const [brandingThemeId,pending]=await Promise.all([resolveBrandingTheme(),resolvePendingTracking()]);
         const {connection,accessToken}=await credentials();
         if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
-        return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,value,key));
+        const lines=value.lines.map(line=>({...line,tracking:line.tracking.map(item=>item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'?pending:item)}));
+        return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,{...value,lines,brandingThemeId},key));
       },
       invoiceById:async(invoiceId:string)=>{
         const {connection,accessToken}=await credentials();
