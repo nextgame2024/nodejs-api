@@ -52,6 +52,7 @@ export class StudentOperationsCasesController {
   @Post(':caseId/invoices') linkInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.linkInvoice(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/activity') activity(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.cases.activities(r.studentOperationsPrincipal,id,query);}
   @Get(':caseId/checklist') checklist(@Req() r:Request,@Param('caseId') id:string){return this.cases.checklist(r.studentOperationsPrincipal,id);}
+  @Get(':caseId/checklist/progress') checklistProgress(@Req() r:Request,@Param('caseId') id:string){return this.cases.checklistProgress(r.studentOperationsPrincipal,id);}
   @Patch(':caseId/checklist') updateChecklist(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.updateChecklist(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/documents') listDocuments(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.documents.list(r.studentOperationsPrincipal,id,query);}
   @Post(':caseId/documents/discovery') discover(@Req() r:Request,@Param('caseId') id:string){return this.documents.enqueue(r.studentOperationsPrincipal,id);}

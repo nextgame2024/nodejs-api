@@ -4,6 +4,31 @@ import { StudentOperationsCasesService } from './student-operations-cases.servic
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
 describe('Case view data', () => {
+  it('refuses progress for an unauthorized case before reading its saved validation state',async()=>{
+    const query=jest.fn(async()=>({rows:[]}));
+    const database={tenantReadTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
+    const service=new StudentOperationsCasesService(database as never);
+    await expect(service.checklistProgress({tenantId:'11111111-1111-4111-8111-111111111111',identityUserId:'actor',role:'advisor'} as never,'22222222-2222-4222-8222-222222222222')).rejects.toThrow('Case not found');
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+  it('observes cached financial workflow progress without validating, writing, or reading provider details',async()=>{
+    const before=process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED;process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED='true';
+    try{
+      const p={tenantId:'11111111-1111-4111-8111-111111111111',identityUserId:'actor',role:'chief_executive'};
+      const c={record_version:1,current_stage:'checklist_complete',lifecycle_status:'pre_sale'};
+      let state={has_batch:true,invoice_dirty:true,state:null as string|null,queued:false,invoice_checked_at:null};
+      const query=jest.fn(async(sql:string)=>({rows:[sql.includes('student_operations_student_user_links')?c:state]}));
+      const database={tenantReadTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
+      const service=new StudentOperationsCasesService(database as never),id='22222222-2222-4222-8222-222222222222';
+      expect(await service.checklistProgress(p as never,id)).toMatchObject({backgroundPending:true});
+      state={...state,invoice_dirty:false,state:'passed'};c.current_stage='awaiting_payment';c.record_version=2;
+      expect(await service.checklistProgress(p as never,id)).toMatchObject({backgroundPending:false});
+      c.current_stage='checklist_complete';state={...state,has_batch:false,invoice_dirty:true};
+      expect(await service.checklistProgress(p as never,id)).toMatchObject({backgroundPending:false});
+      expect(query.mock.calls).toHaveLength(6);
+      expect(query.mock.calls.every(([sql])=>!/(UPDATE|INSERT|line_items|student_document_analysis)/.test(sql))).toBe(true);
+    }finally{if(before===undefined)delete process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED;else process.env.STUDENT_DOCUMENT_CHECKLIST_ENABLED=before;}
+  });
   it('does not guess a connection when an invoice identity is ambiguous within the case',async()=>{
     const tenantId='11111111-1111-4111-8111-111111111111',caseId='22222222-2222-4222-8222-222222222222',invoiceId='33333333-3333-4333-8333-333333333333';
     const query=jest.fn(async(sql:string)=>({rows:sql.includes('student_operations_student_user_links')?[{case_id:caseId,student_id:invoiceId}]:[{invoiceId},{invoiceId}]}));

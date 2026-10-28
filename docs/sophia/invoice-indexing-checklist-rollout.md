@@ -1,5 +1,7 @@
 # Invoice indexing and event-driven financial checklist
 
+The API/frontend also expose and observe `/cases/:caseId/checklist/progress`. This is a lightweight authenticated saved-state read, not a validation or Xero request. Observation starts only for a current invoice batch with pending background work, at five-second intervals for at most five minutes, pauses in hidden tabs and while editing, and stops on completion, navigation, destruction or request failure. Terminal completion reloads the checklist and refreshes the case stage, linked invoices and activity once. There is no observation for stable/completed cases or document-only cases. A visible Refresh status action is offered if observation stops before completion. Deploy API and frontend together for this behavior; it needs no additional migration beyond 104-105.
+
 Apply Runtime owner migrations 104 and 105 in sequence, after existing migrations through 103. Use the existing Runtime migration runner (`npm run migrate` from the compiled Runtime package), with the approved migration-owner connection and configured schema. These migrations have not been applied to production by Codex.
 
 Then deploy the Runtime API and shared student-sync worker together, and deploy the frontend. Existing document-workflow/checklist and worker tenant-scope configuration remains required; no new feature flag or provider write is introduced.

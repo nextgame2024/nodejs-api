@@ -359,7 +359,28 @@ export class StudentOperationsCasesService {
   async checklist(p:Principal,id:string) {
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       const row=await this.authorizedCase(db,p,id);
-      return {status:publicCaseStatus(row.lifecycle_status),items:await this.checklistRows(db,p,id)};
+      return {status:publicCaseStatus(row.lifecycle_status),items:await this.checklistRows(db,p,id),progress:await this.checklistProgressRows(db,p,id,row)};
+    });
+  }
+
+  private async checklistProgressRows(db:PoolClient,p:Principal,id:string,c:{record_version:number;current_stage:string;lifecycle_status:string}){
+    if(!documentChecklistEnabled())return {revision:String(c.record_version),backgroundPending:false};
+    const row=(await db.query(`SELECT v.invoice_dirty,v.invoice_result->>'state' AS state,v.invoice_checked_at,
+      EXISTS(SELECT 1 FROM ${caseSchema()}.student_case_invoice_draft_batches b JOIN ${caseSchema()}.student_case_offers o USING(customer_id,offer_id)
+        WHERE b.customer_id=$1 AND b.case_id=$2 AND o.is_current AND o.status='confirmed') AS has_batch,
+      EXISTS(SELECT 1 FROM ${caseSchema()}.student_case_xero_invoice_exports e WHERE e.customer_id=$1 AND e.case_id=$2
+        AND (e.status='creating' OR (e.status='created' AND e.projection_next_attempt_at IS NOT NULL))) AS queued
+      FROM (SELECT 1) seed LEFT JOIN ${caseSchema()}.student_document_checklist_evaluations v ON v.customer_id=$1 AND v.case_id=$2`,[p.tenantId,id])).rows[0];
+    const pending=Boolean(['pre_sale','on_hold'].includes(c.lifecycle_status)&&['documents_requested','checklist_complete'].includes(c.current_stage)
+      &&row?.has_batch&&(row?.invoice_dirty||row?.state==='awaiting_sync'||row?.queued));
+    return {revision:JSON.stringify([c.record_version,row?.invoice_checked_at??null,row?.invoice_dirty??false,row?.state??null,pending]),backgroundPending:pending};
+  }
+
+  /** Lightweight saved-state observation only: no validation, writes or providers. */
+  async checklistProgress(p:Principal,id:string){
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      const row=await this.authorizedCase(db,p,id);
+      return this.checklistProgressRows(db,p,id,row);
     });
   }
 
