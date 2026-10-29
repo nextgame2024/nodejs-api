@@ -104,7 +104,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -201,7 +201,12 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(service.checklist({...p,tenantId:'88888888-8888-4888-8888-888888888888'},id)).rejects.toThrow('not found');
     expect((await transaction('88888888-8888-4888-8888-888888888888',db=>db.query('SELECT * FROM sophia_runtime.student_operations_case_checklist'))).rowCount).toBe(0);
     await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_operations_case_checklist'))).rejects.toThrow('permission denied');
-    await service.update(p,id,{recordVersion:1,status:'in_progress',currentStage:'payment_received'},'checklist-leave-presale');
+    await service.update(p,id,{recordVersion:1,status:'payment_received',currentStage:'payment_monitoring'},'checklist-leave-presale');
+    expect(await service.get(p,id)).toMatchObject({status:'payment_received',currentStage:'payment_monitoring'});
+    await service.update(p,id,{recordVersion:(await service.get(p,id)).recordVersion,status:'awaiting_payment',currentStage:'payment_monitoring'},'checklist-monitor-awaiting');
+    expect(await service.get(p,id)).toMatchObject({status:'awaiting_payment',currentStage:'payment_monitoring'});
+    await expect(transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='open',current_stage='payment_received' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]))).rejects.toThrow('check constraint');
+    await expect(transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='open',current_stage='invoices_created' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]))).rejects.toThrow('check constraint');
     await expect(service.updateChecklist(p,id,{itemKey:initial.items[0].key,completed:true,recordVersion:2},'checklist-wrong-status')).rejects.toThrow('Pre-sale');
   };
   test('password setup migration preserves legacy access and marks all future account inserts',async()=>{
@@ -892,8 +897,8 @@ suite('Case management against disposable PostgreSQL',()=>{
         await Promise.all([reconcileInvoices(),reconcileInvoices()]);expect(await stageEvents()).toHaveLength(1);
         await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='on_hold',current_stage='documents_requested' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
         await reconcileInvoices();expect(await service.get(p,id)).toMatchObject({status:'on_hold',currentStage:'documents_requested'});
-        await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='open',current_stage='payment_received' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
-        await reconcileInvoices();expect((await service.get(p,id)).currentStage).toBe('payment_received');
+        await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='payment_received',current_stage='payment_monitoring' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);
+        await reconcileInvoices();expect((await service.get(p,id)).currentStage).toBe('payment_monitoring');
         // Restore only this disposable fixture's stage for the independent
         // nightly-sync and replacement-document scenarios below.
         await pool.query(`UPDATE sophia_runtime.student_operations_cases SET lifecycle_status='pre_sale',current_stage='checklist_complete' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]);

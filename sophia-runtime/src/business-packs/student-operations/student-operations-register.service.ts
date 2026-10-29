@@ -13,7 +13,7 @@ const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).default(""),
-  status: z.enum(["pre_sale", "on_hold", "in_progress", "payment_overdue", "collections", "payment_done", "closed", "cancelled", "not_started"]).optional(),
+  status: z.enum(["pre_sale", "on_hold", "in_progress", "awaiting_payment", "payment_received", "payment_overdue", "collections", "payment_done", "closed", "cancelled", "not_started"]).optional(),
   advisorId: z.string().uuid().optional(),
   collegeId: z.string().uuid().optional(),
   advisorName: z.string().trim().min(1).max(200).optional(),
