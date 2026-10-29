@@ -969,24 +969,31 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(root).toBeTruthy();
     await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[tenant,root.company_id,root.student_reference]);
     await pool.query(`INSERT INTO public.bm_xero_student_sync_candidates VALUES($1,$2,$3,ARRAY[$4::uuid])`,[tenant,connection,root.student_reference,root.xero_contact_id]);
-    await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET xero_invoice_number='INV-'||(10576+sequence)::text WHERE customer_id=$1 AND case_id=$2`,[tenant,root.case_id]);
+    await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET xero_invoice_number='INV-'||(10586+sequence)::text WHERE customer_id=$1 AND case_id=$2`,[tenant,root.case_id]);
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,total,amount_paid,amount_due)
       SELECT customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,$3,xero_invoice_number,'ACCREC','DELETED',100,0,0 FROM sophia_runtime.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2
       ON CONFLICT(customer_id,xero_connection_id,xero_invoice_id) DO UPDATE SET invoice_status='DELETED',amount_paid=0,invoice_number=excluded.invoice_number`,[tenant,root.case_id,root.student_reference]);
     await pool.query(`UPDATE sophia_runtime.student_operations_xero_contacts SET contact_status='ARCHIVED' WHERE customer_id=$1 AND xero_contact_id=$2`,[tenant,root.xero_contact_id]);
     const counters=(await pool.query('SELECT * FROM public.bm_student_id_counter')).rows;
     const auditBefore=Number((await pool.query(`SELECT count(*) n FROM sophia_runtime.student_operations_case_activity WHERE customer_id=$1 AND case_id=$2`,[tenant,root.case_id])).rows[0].n);
-    let script=await readFile(new URL('../../../scripts/sql/cleanup_test_student_std_1070.sql',import.meta.url),'utf8');
+    let script=await readFile(new URL('../../../scripts/sql/cleanup_test_student_std_1071.sql',import.meta.url),'utf8');
+    expect(script).toContain('false AS apply_cleanup');
+    expect(script.trimEnd()).toMatch(/ROLLBACK;$/);
+    expect(script).toContain('10586+sequence');
+    expect(script).not.toMatch(/STD-1070|CASE-1069|test@gmail\.com/);
     for(const [from,to] of Object.entries({'33ed40a6-7f2b-407c-aab2-de76b1cb45a8':tenant,'80d5e42f-2de1-4792-86b5-54c7cdeb2660':root.company_id,
-      'a2708c2c-d644-47d2-844f-714d5523e72a':root.student_id,'ca8aa431-535b-4149-a24e-b0f268df41d8':root.user_id,'23f7dbc0-6143-462f-907a-78725d931f30':root.case_id,
-      'a10fef7f-8451-42aa-94b9-6238d1929470':root.xero_connection_id,'c8713604-6936-4c4c-8b1b-7bf07f1859bb':root.xero_contact_id,
-      'STD-1070':root.student_reference,'CASE-1069':root.case_reference,'TEST - Student and document workflow':root.legal_name,'test@gmail.com':root.email}))script=script.replaceAll(from,to);
+      '7af793a7-87e9-4241-b0c1-d0bd0bee6687':root.student_id,'cb56429a-f3cd-4242-bb27-825efbabd043':root.user_id,'971f2c76-1d45-4abc-bfff-52bb371f6ba4':root.case_id,
+      'a10fef7f-8451-42aa-94b9-6238d1929470':root.xero_connection_id,'10e416b4-f822-451f-9255-9be7ac9810a8':root.xero_contact_id,
+      'STD-1071':root.student_reference,'CASE-1070':root.case_reference,'TEST2 - Student':root.legal_name,'test2@student.com':root.email}))script=script.replaceAll(from,to);
     const execute=async(sql:string)=>{const client=await pool.connect();try{return await client.query(sql);}finally{await client.query('ROLLBACK');client.release();}};
     await execute(script);expect((await pool.query('SELECT id FROM public.users WHERE id=$1',[root.user_id])).rowCount).toBe(1);
     const apply=script.replace('false AS apply_cleanup','true AS apply_cleanup');
     await execute(apply); // Even apply=true cannot persist with the final ROLLBACK.
     expect(Number((await pool.query(`SELECT count(*) n FROM sophia_runtime.student_operations_case_activity WHERE customer_id=$1 AND case_id=$2`,[tenant,root.case_id])).rows[0].n)).toBe(auditBefore);
     await expect(execute(script.replace(`${root.user_id}'::uuid AS user_id`,`${randomUUID()}'::uuid AS user_id`))).rejects.toThrow('Target identity/case changed');
+    await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET xero_invoice_number='INV-OTHER' WHERE customer_id=$1 AND case_id=$2 AND sequence=1`,[tenant,root.case_id]);
+    await expect(execute(apply)).rejects.toThrow('Expected exactly INV-10587 through INV-10594');
+    await pool.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET xero_invoice_number='INV-10587' WHERE customer_id=$1 AND case_id=$2 AND sequence=1`,[tenant,root.case_id]);
     await pool.query(`UPDATE sophia_runtime.student_operations_xero_invoices SET amount_paid=1 WHERE customer_id=$1 AND student_id=$2`,[tenant,root.student_reference]);
     await expect(execute(apply)).rejects.toThrow('Sync must first confirm');
     await pool.query(`UPDATE sophia_runtime.student_operations_xero_invoices SET amount_paid=0 WHERE customer_id=$1 AND student_id=$2`,[tenant,root.student_reference]);
