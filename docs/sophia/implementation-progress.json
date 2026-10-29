@@ -1,4 +1,11 @@
 {
+  "test3StudentAdministratorCleanup": {
+    "updatedOn": "2026-10-29",
+    "artifact": "scripts/sql/cleanup_test_student_std_1072.sql",
+    "scope": "Prepared the same one-off administrator cleanup for TEST3 - Student / STD-1072 / CASE-1071. Exact tenant/company/profile/user/case/connection/contact identifiers were verified in a read-only tenant-scoped sophia_runtime_app transaction. Guards bind eight receipts INV-10597 through INV-10604 with their actual mapping: sequence 2 is INV-10599 and sequence 3 is INV-10598. Prior STD-1070 and STD-1071 scripts are unchanged. Default apply_cleanup=false and final ROLLBACK preserve preview-first execution; backup, confirmed provider deletion/archive, paused writers, scoped FK checks, exclusive locks and audit-trigger restoration remain required. Shared configuration/counters and unlinked terminal provider mirrors remain; no external attachment deletion is performed.",
+    "productionObservation": "At inspection all eight cached invoice statuses were still DRAFT with zero paid and the cached contact was ACTIVE. The script refuses until normal sync confirms DELETED/VOIDED unpaid invoices and ARCHIVED contact. No production cleanup, write, live provider request, sync execution or deployment was performed.",
+    "verification": "PASS: npm test -- src/database/student-case-management.spec.ts with both test database variables pointing exclusively at a fresh disposable localhost PostgreSQL database (33 tests). Executed the actual STD-1072 script with synthetic fixture identities, covering preview, apply plus ROLLBACK, wrong identity/number/sequence mapping, paid invoice, active contact, unplanned cascading FK, narrow COMMIT, preserved unrelated user/counters/provider history/audit guards and new student creation with the same email. Progress JSON parsing and git diff --check passed. Disposable PostgreSQL stopped after verification."
+  },
   "test2StudentAdministratorCleanup": {
     "updatedOn": "2026-10-29",
     "artifact": "scripts/sql/cleanup_test_student_std_1071.sql",
