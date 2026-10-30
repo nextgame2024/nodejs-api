@@ -367,6 +367,43 @@ export class XeroConnectorService {
     });
   }
 
+  async replaceAttachment(tenantId:string,connectionId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string) {
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.attachments']).length)
+      throw new ConflictException({errorCode:'xero_attachment_write_scope_missing',message:'An integration administrator must authorize Xero attachment updates from company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.replaceAttachment(accessToken,connection.xero_tenant_id,source,sourceId,fileName,mimeType,buffer,key));
+  }
+
+  private async filesAccess(tenantId:string,connectionId:string,write=false) {
+    const connection=await this.loadConnection(tenantId,connectionId);
+    const accepted=write?['files']:['files.read'];
+    if(missingScopes(connection.granted_scopes,accepted).length&&(write||missingScopes(connection.granted_scopes,['files']).length))
+      throw new ConflictException({errorCode:write?'xero_files_write_scope_missing':'xero_files_read_scope_missing',message:'An administrator must reconnect Xero and authorize document files.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());return {connection,accessToken};
+  }
+
+  async uploadFile(tenantId:string,connectionId:string,fileName:string,mimeType:string,buffer:Buffer,key:string) {
+    if(process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED!=='true')throw new ConflictException({errorCode:'xero_files_storage_disabled',message:'An administrator must enable Xero Files document storage.'});
+    const {connection,accessToken}=await this.filesAccess(tenantId,connectionId,true);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.uploadFile(accessToken,connection.xero_tenant_id,fileName,mimeType,buffer,key));
+  }
+
+  async associateFileWithContact(tenantId:string,connectionId:string,fileId:string,contactId:string,key:string) {
+    const {connection,accessToken}=await this.filesAccess(tenantId,connectionId,true);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.associateFileWithContact(accessToken,connection.xero_tenant_id,fileId,contactId,key));
+  }
+
+  async fileContent(tenantId:string,connectionId:string,fileId:string) {
+    const {connection,accessToken}=await this.filesAccess(tenantId,connectionId);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.fileContent(accessToken,connection.xero_tenant_id,fileId));
+  }
+
+  async deleteFile(tenantId:string,connectionId:string,fileId:string) {
+    const {connection,accessToken}=await this.filesAccess(tenantId,connectionId,true);
+    return this.providerRequest(tenantId,connectionId,()=>this.client.deleteFile(accessToken,connection.xero_tenant_id,fileId));
+  }
+
   async contactById(tenantId:string,connectionId:string,contactId:string) {
     const connection=await this.loadConnection(tenantId,connectionId);
     if(missingScopes(connection.granted_scopes,['accounting.contacts']).length&&missingScopes(connection.granted_scopes,['accounting.contacts.read']).length)
@@ -376,7 +413,7 @@ export class XeroConnectorService {
   }
 
   async ensureStudentContact(tenantId:string,connectionId:string,value:{contactNumber:string;name:string;email:string|null},key:string) {
-    if(process.env.XERO_CONTACT_CREATION_ENABLED!=='true' || process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true')
+    if(process.env.XERO_CONTACT_CREATION_ENABLED!=='true' || (process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true'&&process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED!=='true'))
       throw new ConflictException({errorCode:'student_document_setup_required',message:'An administrator must enable student document storage in company integrations.'});
     const config=requiredConfig(),connection=await this.loadConnection(tenantId,connectionId);
     if(missingScopes(connection.granted_scopes,['accounting.contacts','accounting.attachments']).length)

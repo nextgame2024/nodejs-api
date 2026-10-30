@@ -7,9 +7,14 @@ import { parseSalesCatalogue,type XeroSalesCatalogue } from './xero-sales-catalo
 const XERO_CONTACT_PAGE_SIZE = 100;
 export type XeroAttachmentSource = 'Invoices' | 'CreditNotes' | 'Contacts';
 export type XeroAttachment = { attachmentId: string; fileName: string; mimeType: string; sizeBytes: number };
+export type XeroFileReceipt = { fileId:string; fileName:string; mimeType:string; sizeBytes:number };
+const xeroUuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function filePath(fileId?:string,suffix='') {
+  if(fileId&&!xeroUuid.test(fileId))throw new BadGatewayException('Invalid Xero file identity.');
+  return `https://api.xero.com/files.xro/1.0/Files${fileId?`/${fileId}${suffix}`:''}`;
+}
 function attachmentPath(source: XeroAttachmentSource, sourceId: string, attachmentId?: string): string {
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!['Invoices','CreditNotes','Contacts'].includes(source) || !uuid.test(sourceId) || (attachmentId && !uuid.test(attachmentId))) throw new BadGatewayException('Invalid Xero attachment identity.');
+  if (!['Invoices','CreditNotes','Contacts'].includes(source) || !xeroUuid.test(sourceId) || (attachmentId && !xeroUuid.test(attachmentId))) throw new BadGatewayException('Invalid Xero attachment identity.');
   return `https://api.xero.com/api.xro/2.0/${source}/${sourceId}/Attachments${attachmentId ? '/' + attachmentId : ''}`;
 }
 
@@ -247,6 +252,24 @@ export class XeroClient {
     if(item.HasValidationErrors===true || item.FileName!==fileName || Number(item.ContentLength)!==buffer.length) throw new BadGatewayException('Xero upload confirmation does not match the file. Retry the same file.');
     return {attachmentId,fileName,mimeType,sizeBytes:buffer.length};
   }
+  async replaceAttachment(accessToken:string,tenantId:string,source:XeroAttachmentSource,sourceId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroAttachment> {
+    const path=attachmentPath(source,sourceId);
+    if(!fileName||fileName.length>255||/[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)||!/^[a-f0-9]{64}$/.test(key)
+      ||!['application/pdf','image/png','image/jpeg'].includes(mimeType)||!buffer.length||buffer.length>10*1024*1024)
+      throw new BadGatewayException('Invalid Xero attachment replacement.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(`${path}/${encodeURIComponent(fileName)}`,{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,
+      'Content-Type':mimeType,'Content-Length':String(buffer.length),Accept:'application/json','Idempotency-Key':key},body:new Uint8Array(buffer),redirect:'error',signal:AbortSignal.timeout(30_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Attachments)||payload.Attachments.length!==1)throw new BadGatewayException('Xero replacement confirmation is invalid. Retry the same file.');
+    const item=record(payload.Attachments[0]),attachmentId=requiredString(item.AttachmentID,'attachment id');attachmentPath(source,sourceId,attachmentId);
+    if(item.HasValidationErrors===true||item.FileName!==fileName||Number(item.ContentLength)!==buffer.length)
+      throw new BadGatewayException('Xero replacement confirmation does not match the file. Retry the same file.');
+    return {attachmentId,fileName,mimeType,sizeBytes:buffer.length};
+  }
   async attachments(accessToken: string, tenantId: string, source: XeroAttachmentSource, sourceId: string): Promise<XeroAttachment[]> {
     const payload = record(await this.json(attachmentPath(source, sourceId), accessToken, tenantId));
     if (!Array.isArray(payload.Attachments)) throw new BadGatewayException('Xero returned an invalid attachment list.');
@@ -286,6 +309,51 @@ export class XeroClient {
       }
     } finally { await reader.cancel(); }
     return Buffer.concat(chunks);
+  }
+
+  async uploadFile(accessToken:string,tenantId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroFileReceipt> {
+    if(!fileName||fileName.length>255||/[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)||!['application/pdf','image/png','image/jpeg'].includes(mimeType)
+      ||!buffer.length||buffer.length>10*1024*1024||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))throw new BadGatewayException('Invalid Xero file upload.');
+    const body=new FormData();body.set('body',new Blob([new Uint8Array(buffer)],{type:mimeType}),fileName);body.set('name',fileName);body.set('filename',fileName);body.set('mimeType',mimeType);
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(filePath(),{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,Accept:'application/json','Idempotency-Key':key},body,redirect:'error',signal:AbortSignal.timeout(30_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(response.status!==201){await response.body?.cancel();throw providerError(response);}
+    const item=record(await parseJson(response)),fileId=requiredString(item.Id,'file id');filePath(fileId);
+    const size=Number(item.Size),name=requiredString(item.Name,'file name');
+    if(name!==fileName||size!==buffer.length)throw new BadGatewayException('Xero file confirmation does not match the upload. Retry the same file.');
+    return {fileId,fileName:name,mimeType:(optionalString(item.MimeType)||mimeType).slice(0,200),sizeBytes:size};
+  }
+
+  async associateFileWithContact(accessToken:string,tenantId:string,fileId:string,contactId:string,key:string):Promise<void> {
+    filePath(fileId);if(!xeroUuid.test(contactId)||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))throw new BadGatewayException('Invalid Xero file association.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(filePath(fileId,'/Associations'),{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},body:JSON.stringify({ObjectId:contactId,ObjectGroup:'Contact',ObjectType:'Business'}),redirect:'error',signal:AbortSignal.timeout(20_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(response.status!==201){await response.body?.cancel();throw providerError(response);}
+    const result=record(await parseJson(response));
+    if(result.FileId!==fileId||result.ObjectId!==contactId||result.ObjectGroup!=='Contact')throw new BadGatewayException('Xero file association confirmation is invalid.');
+  }
+
+  async fileContent(accessToken:string,tenantId:string,fileId:string):Promise<Buffer> {
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();const response=await fetch(filePath(fileId,'/Content'),{headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,Accept:'application/octet-stream'},redirect:'error',signal:AbortSignal.timeout(30_000)});
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}if(!response.body)throw new BadGatewayException('Xero returned no file content.');
+    const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
+    try{while(true){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.length;if(size>25*1024*1024)throw new BadGatewayException('File exceeds the download limit.');chunks.push(chunk.value);}}
+    finally{await reader.cancel();}
+    return Buffer.concat(chunks);
+  }
+
+  async deleteFile(accessToken:string,tenantId:string,fileId:string):Promise<void> {
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(filePath(fileId),{method:'DELETE',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId},redirect:'error',signal:AbortSignal.timeout(20_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(response.status===204||response.status===404){await response.body?.cancel();return;}
+    await response.body?.cancel();throw providerError(response);
   }
 
   async exchangeCode(code: string, verifier: string, config: XeroConfig): Promise<XeroTokenSet> {

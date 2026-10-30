@@ -20,12 +20,13 @@ describe("XeroConnectorService", () => {
     } finally {if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;}
   });
   it('requests attachment write permission only when uploads are explicitly enabled',()=>{
-    const old=process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;
+    const old=process.env.XERO_ATTACHMENT_UPLOAD_ENABLED,oldFiles=process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;
     try {
-      delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;expect(xeroRequestedScopes()).toEqual(XERO_READ_ONLY_SCOPES);
+      delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;expect(xeroRequestedScopes()).toEqual(XERO_READ_ONLY_SCOPES);
       process.env.XERO_ATTACHMENT_UPLOAD_ENABLED='true';expect(xeroRequestedScopes()).toContain('accounting.attachments');
       expect(xeroRequestedScopes()).not.toContain('accounting.invoices');expect(xeroRequestedScopes()).not.toContain('accounting.contacts');
-    } finally {if(old===undefined)delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;else process.env.XERO_ATTACHMENT_UPLOAD_ENABLED=old;}
+      delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED='true';expect(xeroRequestedScopes()).toEqual(expect.arrayContaining(['files','accounting.attachments']));expect(xeroRequestedScopes()).not.toContain('accounting.attachments.read');
+    } finally {if(old===undefined)delete process.env.XERO_ATTACHMENT_UPLOAD_ENABLED;else process.env.XERO_ATTACHMENT_UPLOAD_ENABLED=old;if(oldFiles===undefined)delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;else process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED=oldFiles;}
   });
   it('requests granular invoice write permission only when invoice creation is explicitly enabled',()=>{
     const old=process.env.XERO_INVOICE_CREATION_ENABLED;

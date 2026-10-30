@@ -10,8 +10,8 @@ const labels={signed_engagement_letter:'Signed engagement letter',document_compl
 
 export async function isLatestTypedDocument(db:PoolClient,tenant:string,id:string,documentId:string){
   return Boolean((await db.query(`SELECT d.document_id FROM ${caseSchema()}.student_operations_case_documents d
-    WHERE d.customer_id=$1 AND d.case_id=$2 AND d.document_type_id=(SELECT document_type_id FROM ${caseSchema()}.student_operations_case_documents
-      WHERE customer_id=$1 AND case_id=$2 AND document_id=$3)
+    WHERE d.customer_id=$1 AND d.case_id=$2 AND d.deleted_at IS NULL AND d.document_type_id=(SELECT document_type_id FROM ${caseSchema()}.student_operations_case_documents
+      WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL)
     ORDER BY d.discovered_at DESC,d.document_id DESC LIMIT 1`,[tenant,id,documentId])).rows[0]?.document_id===documentId);
 }
 
@@ -24,13 +24,13 @@ export async function documentChecklistEvidence(db:PoolClient,tenant:string,id:s
       o.is_current AS offer_current,s.legal_name,
       EXISTS(SELECT 1 FROM ${s}.student_operations_case_documents old JOIN ${s}.student_document_reviews rejected
         ON rejected.customer_id=old.customer_id AND rejected.case_id=old.case_id AND rejected.document_id=old.document_id
-        WHERE old.customer_id=c.customer_id AND old.case_id=c.case_id AND old.document_type_id=q.document_type_id AND rejected.decision='rejected') AS previously_rejected
+        WHERE old.customer_id=c.customer_id AND old.case_id=c.case_id AND old.document_type_id=q.document_type_id AND old.deleted_at IS NULL AND rejected.decision='rejected') AS previously_rejected
     FROM ${s}.student_operations_cases c
     JOIN ${s}.student_operations_students s ON s.customer_id=c.customer_id AND s.student_id=c.student_id
     JOIN ${s}.student_operations_status_document_requirements q ON q.customer_id=c.customer_id AND q.case_status='pre_sale' AND q.status='active'
     JOIN ${s}.student_operations_document_types t ON t.customer_id=q.customer_id AND t.document_type_id=q.document_type_id
     LEFT JOIN LATERAL (SELECT * FROM ${s}.student_operations_case_documents d
-      WHERE d.customer_id=c.customer_id AND d.case_id=c.case_id AND d.document_type_id=q.document_type_id
+      WHERE d.customer_id=c.customer_id AND d.case_id=c.case_id AND d.document_type_id=q.document_type_id AND d.deleted_at IS NULL
       ORDER BY d.discovered_at DESC,d.document_id DESC LIMIT 1) d ON true
     LEFT JOIN LATERAL (SELECT * FROM ${s}.student_document_analysis_jobs j
       WHERE j.customer_id=d.customer_id AND j.case_id=d.case_id AND j.document_id=d.document_id
@@ -68,9 +68,9 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
   // Replacement makes previous financial approval historical, without erasing it.
   await db.query(`UPDATE ${s}.student_case_offers o SET is_current=false,status='superseded',record_version=record_version+1
     FROM ${s}.student_operations_case_documents old
-    WHERE o.customer_id=$1 AND o.case_id=$2 AND o.is_current AND old.customer_id=o.customer_id AND old.case_id=o.case_id AND old.document_id=o.document_id
+    WHERE o.customer_id=$1 AND o.case_id=$2 AND o.is_current AND old.customer_id=o.customer_id AND old.case_id=o.case_id AND old.document_id=o.document_id AND old.deleted_at IS NULL
       AND EXISTS(SELECT 1 FROM ${s}.student_operations_case_documents newer WHERE newer.customer_id=old.customer_id AND newer.case_id=old.case_id
-        AND newer.document_type_id=old.document_type_id AND (newer.discovered_at,newer.document_id)>(old.discovered_at,old.document_id))`,[tenant,id]);
+        AND newer.document_type_id=old.document_type_id AND newer.deleted_at IS NULL AND (newer.discovered_at,newer.document_id)>(old.discovered_at,old.document_id))`,[tenant,id]);
   const {evidence,completed}=await documentChecklistEvidence(db,tenant,id,today);
   const before=(await db.query(`SELECT item_key,completed FROM ${s}.student_operations_case_checklist WHERE customer_id=$1 AND case_id=$2 AND checklist_status='pre_sale'`,[tenant,id])).rows;
   const previous=(await db.query(`SELECT evidence FROM ${s}.student_document_checklist_evaluations WHERE customer_id=$1 AND case_id=$2`,[tenant,id])).rows[0];

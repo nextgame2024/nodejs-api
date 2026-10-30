@@ -17,7 +17,7 @@ export async function documentRequirements(db:PoolClient,tenantId:string,status:
       WHERE d.case_status=ANY($2::text[]) AND NOT EXISTS(SELECT 1 FROM ${s}.student_operations_status_document_requirements r
         WHERE r.customer_id=$1 AND r.case_status=d.case_status AND r.requirement_key=d.requirement_key)
   ) SELECT r.requirement_key AS "requirementKey",r.document_type_id AS "documentTypeId",r.name,r.required,r.available,
-    EXISTS(SELECT 1 FROM ${s}.student_operations_case_documents d WHERE d.customer_id=$1 AND d.case_id=$3 AND d.document_type_id=r.document_type_id) AS uploaded
+    EXISTS(SELECT 1 FROM ${s}.student_operations_case_documents d WHERE d.customer_id=$1 AND d.case_id=$3 AND d.document_type_id=r.document_type_id AND d.deleted_at IS NULL) AS uploaded
     FROM (SELECT DISTINCT ON(requirement_key) * FROM requirements ORDER BY requirement_key,priority) r
     ORDER BY r.sort_order,lower(r.name),r.requirement_key`,[tenantId,statuses,caseId]);
   return result.rows;

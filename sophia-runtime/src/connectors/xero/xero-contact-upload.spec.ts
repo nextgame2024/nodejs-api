@@ -2,7 +2,7 @@ import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { XeroConnectorService } from './xero-connector.service.js';
 import { XeroClient } from './xero.client.js';
 
-const names=['XERO_CLIENT_ID','XERO_CLIENT_SECRET','XERO_REDIRECT_URI','XERO_RETURN_URL','XERO_OAUTH_STATE_SECRET','XERO_TOKEN_ENCRYPTION_KEY','XERO_ATTACHMENT_UPLOAD_ENABLED','XERO_CONTACT_CREATION_ENABLED','XERO_SHARED_BACKOFF_ENABLED','SOPHIA_RUNTIME_DATABASE_URL'] as const;
+const names=['XERO_CLIENT_ID','XERO_CLIENT_SECRET','XERO_REDIRECT_URI','XERO_RETURN_URL','XERO_OAUTH_STATE_SECRET','XERO_TOKEN_ENCRYPTION_KEY','XERO_ATTACHMENT_UPLOAD_ENABLED','XERO_FILES_DOCUMENT_STORAGE_ENABLED','XERO_CONTACT_CREATION_ENABLED','XERO_SHARED_BACKOFF_ENABLED','SOPHIA_RUNTIME_DATABASE_URL'] as const;
 const original=Object.fromEntries(names.map(name=>[name,process.env[name]]));
 afterEach(()=>{jest.restoreAllMocks();for(const name of names){if(original[name]===undefined)delete process.env[name];else process.env[name]=original[name];}});
 function setup(scopes:string[]) {

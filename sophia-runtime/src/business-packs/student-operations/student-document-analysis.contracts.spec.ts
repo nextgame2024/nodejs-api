@@ -31,12 +31,14 @@ describe('Document extraction and deterministic validation contracts', () => {
   });
   test('offers preserve literal due terms and conditional fee amounts for review', () => {
     const offer = { ...base, kind: 'letter_of_offer', collegeName: 'Example College', abn: null, cricosProviderCode: null,
+      studentSigned:true,studentSignerName:'Example Student',studentSignedOn:'2026-09-16',collegeSigned:true,
       currency: 'AUD', statedTotalMinor: 904000, courses: [{ name: 'General English', code: null, startsOn: null, endsOn: null, duration: '60 weeks' }],
       fees: [{ label: 'Transfer fee', amountMinor: 2500, conditional: true, condition: 'International payments' }],
       instalments: [{ sequence: 1, dueTerm: 'Immediately', dueOn: null, totalMinor: 99500, includedConditionalFeeMinor: 2500 }] };
     expect(validateDocument(offer, 'Example Student', '2026-10-25')).toEqual({ status: 'needs_review', reasons: ['payment_date_needs_review', 'offer_confirmation_required'] });
     expect(offer.instalments[0].dueOn).toBeNull();
     expect(offer.statedTotalMinor).toBe(904000);
+    expect(validateDocument({...offer,studentSigned:false},'Example Student','2026-10-25').reasons).toContain('offer_signature_needs_review');
   });
   test('explicit fee decision includes or excludes exactly once', () => {
     expect(paymentWithConditionalFee(99500, 2500, 2500, true)).toBe(99500);

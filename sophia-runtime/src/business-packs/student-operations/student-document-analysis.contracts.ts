@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const DOCUMENT_ANALYSIS_VERSION = '1';
-export const OFFER_ANALYSIS_VERSION='4';
+export const OFFER_ANALYSIS_VERSION='5';
 export const documentKind = z.enum(['engagement_letter', 'passport', 'letter_of_offer']);
 const text = z.string().trim().min(1).max(500);
 const date = z.iso.date();
@@ -22,6 +22,7 @@ export const passportExtraction = z.object({
 export const offerExtraction = z.object({
   kind: z.literal('letter_of_offer'), ...common,
   collegeName: text.nullable(), campusAddress: text.nullable().optional(), abn: text.nullable(), cricosProviderCode: text.nullable(),
+  studentSigned:z.boolean().optional(),studentSignerName:text.nullable().optional(),studentSignedOn:date.nullable().optional(),collegeSigned:z.boolean().nullable().optional(),
   currency: z.string().regex(/^[A-Z]{3}$/), statedTotalMinor: money.nullable(),
   courses: z.array(z.object({ name: text, code: text.nullable(),
     startsOn: date.nullable(), endsOn: date.nullable(), duration: text.nullable() }).strict()).max(30),
@@ -33,8 +34,8 @@ export const offerExtraction = z.object({
     components:paymentComponents.optional(),
   }).strict()).max(200),
 }).strict();
-// Provider output is strict/all-required; stored v1 offers remain readable.
-export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),instalments:z.array(offerExtraction.shape.instalments.element.extend({components:paymentComponents})).max(200)});
+// Provider output is strict/all-required; stored and earlier provider offers remain readable.
+export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),studentSigned:z.boolean(),studentSignerName:text.nullable(),studentSignedOn:date.nullable(),collegeSigned:z.boolean().nullable(),instalments:z.array(offerExtraction.shape.instalments.element.extend({components:paymentComponents})).max(200)});
 export const documentExtraction = z.discriminatedUnion('kind', [engagementExtraction, passportExtraction, offerExtraction]);
 export type DocumentExtraction = z.infer<typeof documentExtraction>;
 export type DocumentKind = z.infer<typeof documentKind>;
@@ -110,6 +111,7 @@ export function validateDocument(input: unknown, expectedName: string, today: st
   }
   reasons.push(...value.issues);
   if (!value.studentName || normalizedName(value.studentName) !== normalizedName(expectedName)) reasons.push('student_identity_needs_review');
+  if(value.studentSigned!==true||!value.studentSignerName||!value.studentName||nameSimilarity(value.studentSignerName,value.studentName)<=0.8)reasons.push('offer_signature_needs_review');
   if (!value.collegeName || !value.courses.length || !value.instalments.length) reasons.push('offer_incomplete');
   const sequences = new Set<number>();
   for (const item of value.instalments) {

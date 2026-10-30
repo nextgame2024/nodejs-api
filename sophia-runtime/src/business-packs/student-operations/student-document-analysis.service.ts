@@ -18,11 +18,19 @@ const reviewSchema=documentReview.extend({collegeId:z.uuid().nullable().optional
 export const analysisEnabled = () => process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED === 'true';
 export async function eligibleAnalysisUploads(db:PoolClient,tenant:string,id:string,documents:string[]) {
   if(!analysisEnabled()||!documents.length)return [];
-  return (await db.query(`SELECT u.document_id,u.document_type_id,u.content_sha256 FROM ${caseSchema()}.student_operations_document_uploads u
-    JOIN ${caseSchema()}.student_operations_case_documents d ON d.customer_id=u.customer_id AND d.case_id=u.case_id AND d.document_id=u.document_id AND d.document_type_id=u.document_type_id
+  return (await db.query(`WITH candidates AS (
+      SELECT customer_id,case_id,document_id,document_type_id,content_sha256,updated_at FROM ${caseSchema()}.student_operations_document_uploads
+        WHERE customer_id=$1 AND case_id=$2 AND status='completed' AND deleted_at IS NULL
+      UNION ALL
+      SELECT r.customer_id,r.case_id,r.document_id,d.document_type_id,r.content_sha256,r.updated_at FROM ${caseSchema()}.student_operations_document_replacements r
+        JOIN ${caseSchema()}.student_operations_case_documents d ON d.customer_id=r.customer_id AND d.case_id=r.case_id AND d.document_id=r.document_id AND d.deleted_at IS NULL
+        WHERE r.customer_id=$1 AND r.case_id=$2 AND r.status IN ('committed','completed')
+    ), latest AS (SELECT DISTINCT ON(document_id) * FROM candidates ORDER BY document_id,updated_at DESC)
+    SELECT u.document_id,u.document_type_id,u.content_sha256 FROM latest u
+    JOIN ${caseSchema()}.student_operations_case_documents d ON d.customer_id=u.customer_id AND d.case_id=u.case_id AND d.document_id=u.document_id AND d.document_type_id=u.document_type_id AND d.deleted_at IS NULL
     JOIN ${caseSchema()}.student_operations_document_types t ON t.customer_id=d.customer_id AND t.document_type_id=d.document_type_id AND t.status='active'
     JOIN ${caseSchema()}.student_operations_status_document_requirements r ON r.customer_id=t.customer_id AND r.document_type_id=t.document_type_id AND r.status='active'
-    WHERE u.customer_id=$1 AND u.case_id=$2 AND u.document_id=ANY($3::uuid[]) AND u.status='completed'
+    WHERE u.document_id=ANY($3::uuid[])
       AND (r.requirement_key IN ('passport','engagement_letter') OR ($4 AND r.requirement_key='letter_of_offer'))
     GROUP BY u.document_id,u.document_type_id,u.content_sha256 HAVING count(DISTINCT r.requirement_key)=1`,[tenant,id,documents,process.env.STUDENT_OFFER_ANALYSIS_ENABLED==='true'])).rows;
 }
@@ -48,7 +56,7 @@ export class StudentDocumentAnalysisService {
       LEFT JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=j.customer_id AND r.job_id=j.job_id
       LEFT JOIN LATERAL (SELECT * FROM ${caseSchema()}.student_document_reviews v WHERE v.customer_id=d.customer_id
         AND v.case_id=d.case_id AND v.document_id=d.document_id ORDER BY review_version DESC LIMIT 1) v ON true
-      WHERE d.customer_id=$1 AND d.case_id=$2 AND d.document_id=$3`,[p.tenantId,id,documentId]);
+      WHERE d.customer_id=$1 AND d.case_id=$2 AND d.document_id=$3 AND d.deleted_at IS NULL`,[p.tenantId,id,documentId]);
     if(!row.rows[0])throw new NotFoundException('Document not found.');
     return row.rows[0];
   }

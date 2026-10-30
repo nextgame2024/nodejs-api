@@ -25,7 +25,7 @@ export class StudentOperationsCaseDocumentsService {
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       await this.cases.authorizedCase(db,p,id);
       const connection=await new StudentPrimaryXeroContact(this.database,this.cases,this.xero).connection(db,p.tenantId);
-      return {enabled:process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true',available:connection!==null};
+      return {enabled:process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true'||process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED==='true',available:connection!==null};
     });
   }
 
@@ -56,7 +56,7 @@ export class StudentOperationsCaseDocumentsService {
         WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3`,[p.tenantId,p.identityUserId,key]);
       if(saved.rows[0] && saved.rows[0].request_fingerprint!==fingerprint) throw new ConflictException('The upload request changed. Select the file again.');
       if(!saved.rows[0] && parsed.data.contactId) throw new BadRequestException('Reload the page before uploading a document.');
-      if(!saved.rows[0] || !['completed','uploaded'].includes(saved.rows[0].status)) {
+      if(!saved.rows[0] || !['completed','uploaded','associated'].includes(saved.rows[0].status)) {
         const type=await db.query(`SELECT 1 FROM ${s}.student_operations_document_types WHERE customer_id=$1 AND document_type_id=$2 AND status='active'`,[p.tenantId,parsed.data.documentTypeId]);
         if(!type.rowCount) throw new BadRequestException('Choose an active document type.');
       }
@@ -69,20 +69,39 @@ export class StudentOperationsCaseDocumentsService {
       const uploadId=randomUUID();
       const extension=name.slice(name.lastIndexOf('.'));
       const remoteName=`${uploadId}-${name.slice(0,-extension.length).slice(0,180)}${extension}`;
-      await db.query(`INSERT INTO ${s}.student_operations_document_uploads(upload_id,customer_id,actor_identity_user_id,idempotency_key,request_fingerprint,case_id,document_type_id,xero_connection_id,source_kind,source_id,file_name,mime_type,size_bytes,content_sha256)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(customer_id,actor_identity_user_id,idempotency_key) DO NOTHING`,[uploadId,p.tenantId,p.identityUserId,key,fingerprint,id,parsed.data.documentTypeId,target.xero_connection_id,'Contacts',target.source_id,remoteName,mime,bytes.length,hash]);
+      const storageProvider=process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED==='true'?'xero_files':'accounting_attachment';
+      await db.query(`INSERT INTO ${s}.student_operations_document_uploads(upload_id,customer_id,actor_identity_user_id,idempotency_key,request_fingerprint,case_id,document_type_id,xero_connection_id,source_kind,source_id,file_name,mime_type,size_bytes,content_sha256,storage_provider)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(customer_id,actor_identity_user_id,idempotency_key) DO NOTHING`,[uploadId,p.tenantId,p.identityUserId,key,fingerprint,id,parsed.data.documentTypeId,target.xero_connection_id,'Contacts',target.source_id,remoteName,mime,bytes.length,hash,storageProvider]);
       const saved=await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key]);
       const row=saved.rows[0];
       if(row.request_fingerprint!==fingerprint) throw new ConflictException('The upload request changed. Select the file again.');
-      if(row.status==='completed' || row.status==='uploaded') return row;
+      if(row.status==='completed' || (row.storage_provider==='accounting_attachment'&&row.status==='uploaded')) return row;
       if(row.leased) throw new ConflictException('This upload is still processing. Retry the same file in two minutes.');
       const type=await db.query(`SELECT 1 FROM ${s}.student_operations_document_types WHERE customer_id=$1 AND document_type_id=$2 AND status='active' FOR SHARE`,[p.tenantId,parsed.data.documentTypeId]);
       if(!type.rowCount) throw new BadRequestException('Choose an active document type.');
-      await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='uploading',lease_token=$2,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE upload_id=$1`,[row.upload_id,lease]);
-      return row;
+      const acquired=await db.query(`UPDATE ${s}.student_operations_document_uploads SET status=CASE WHEN status='ready' THEN 'uploading' ELSE status END,lease_token=$2,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE upload_id=$1 RETURNING *`,[row.upload_id,lease]);
+      return acquired.rows[0];
     });
     if(job.status==='completed') return {documentId:String(job.document_id)};
-    if(job.status!=='uploaded') {
+    if(job.storage_provider==='xero_files') {
+      let providerFileId=job.provider_file_id?String(job.provider_file_id):null;
+      const providerKey=createHash('sha256').update(`${p.tenantId}:${p.identityUserId}:${job.upload_id}:file`).digest('hex');
+      if(!providerFileId) {
+        const uploaded=await this.xero.uploadFile(p.tenantId,job.xero_connection_id,job.file_name,mime,bytes,providerKey);providerFileId=uploaded.fileId;
+        await this.database.tenantTransaction(p.tenantId,async db=>{
+          const receipt=await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='uploaded',provider_file_id=$3,updated_at=now() WHERE customer_id=$1 AND upload_id=$2 AND lease_token=$4 AND lease_expires_at>now() RETURNING upload_id`,[p.tenantId,job.upload_id,providerFileId,lease]);
+          if(!receipt.rowCount)throw new ConflictException('Upload confirmation is pending. Retry the same file.');
+        });
+      }
+      if(!job.provider_associated_at) {
+        const associationKey=createHash('sha256').update(`${p.tenantId}:${p.identityUserId}:${job.upload_id}:contact`).digest('hex');
+        await this.xero.associateFileWithContact(p.tenantId,job.xero_connection_id,providerFileId,job.source_id,associationKey);
+        await this.database.tenantTransaction(p.tenantId,async db=>{
+          const receipt=await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='associated',provider_associated_at=now(),updated_at=now() WHERE customer_id=$1 AND upload_id=$2 AND lease_token=$3 AND lease_expires_at>now() RETURNING upload_id`,[p.tenantId,job.upload_id,lease]);
+          if(!receipt.rowCount)throw new ConflictException('File association confirmation is pending. Retry the same file.');
+        });
+      }
+    } else if(job.status!=='uploaded') {
       // Stable filename + provider idempotency key survive timeouts/restarts;
       // never blindly retry a write with a new identity or overwrite user files.
       const providerKey=createHash('sha256').update(`${p.tenantId}:${p.identityUserId}:${job.upload_id}`).digest('hex');
@@ -112,17 +131,108 @@ export class StudentOperationsCaseDocumentsService {
       const saved=await db.query(`SELECT * FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND upload_id=$2 FOR UPDATE`,[p.tenantId,job.upload_id]);
       const row=saved.rows[0];
       if(row.status==='completed') return {documentId:String(row.document_id)};
-      if(row.status!=='uploaded') throw new ConflictException('Upload confirmation is pending. Retry the same file.');
-      const result=await db.query(`INSERT INTO ${s}.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes,document_type_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      if(row.status!==(row.storage_provider==='xero_files'?'associated':'uploaded')) throw new ConflictException('Upload confirmation is pending. Retry the same file.');
+      const providerId=row.storage_provider==='xero_files'?row.provider_file_id:row.provider_attachment_id;
+      const result=await db.query(`INSERT INTO ${s}.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes,document_type_id,storage_provider,xero_file_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         ON CONFLICT(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id) DO UPDATE SET document_type_id=excluded.document_type_id,last_seen_at=now()
-        RETURNING document_id`,[p.tenantId,id,row.xero_connection_id,row.source_kind,row.source_id,row.provider_attachment_id,row.file_name,row.mime_type,row.size_bytes,row.document_type_id]);
+        RETURNING document_id`,[p.tenantId,id,row.xero_connection_id,row.source_kind,row.source_id,providerId,row.file_name,row.mime_type,row.size_bytes,row.document_type_id,row.storage_provider,row.storage_provider==='xero_files'?providerId:null]);
       await this.cases.activity(db,p,id,'case.document_uploaded','Document uploaded to Xero');
       await enqueueUploadedAnalysis(db,p.tenantId,id,String(result.rows[0].document_id),row.document_type_id,row.content_sha256);
-      await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='completed',document_id=$3,updated_at=now() WHERE customer_id=$1 AND upload_id=$2`,[p.tenantId,job.upload_id,result.rows[0].document_id]);
+      await db.query(`UPDATE ${s}.student_operations_document_uploads SET status='completed',document_id=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND upload_id=$2`,[p.tenantId,job.upload_id,result.rows[0].document_id]);
       await reconcileDocumentChecklist(db,p.tenantId,id);
       return {documentId:String(result.rows[0].document_id)};
     });
+  }
+
+  async replace(p:Principal,id:string,documentId:string,file:{buffer:Buffer;originalname:string;mimetype:string}|undefined,key?:string) {
+    if(!hasStudentOperationsPermission(p.role,'cases.manage'))throw new ForbiddenException();caseId(id);caseId(documentId);
+    if(!file||!Buffer.isBuffer(file.buffer)||!file.buffer.length||file.buffer.length>10*1024*1024||!key||!/^[A-Za-z0-9._:-]{8,160}$/.test(key))
+      throw new BadRequestException('Choose a PDF, JPEG or PNG file up to 10 MB.');
+    const selectedName=file.originalname.replace(/[\x00-\x1f\x7f<>:"\\/|?*+]/g,'_').trim(),bytes=file.buffer;
+    const mime=bytes.subarray(0,5).toString()==='%PDF-'&&bytes.subarray(-1024).includes(Buffer.from('%%EOF'))?'application/pdf'
+      :bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&bytes.subarray(-8,-4).toString()==='IEND'?'image/png'
+      :bytes[0]===255&&bytes[1]===216&&bytes[2]===255&&bytes[bytes.length-2]===255&&bytes[bytes.length-1]===217?'image/jpeg':null;
+    const extension=mime==='application/pdf'?/\.pdf$/i:mime==='image/png'?/\.png$/i:/\.jpe?g$/i;
+    if(!mime||!extension.test(selectedName)||selectedName.length>255||!['application/octet-stream',mime].includes(file.mimetype))
+      throw new BadRequestException('The file content, extension and format must match PDF, JPEG or PNG.');
+    const contentHash=createHash('sha256').update(bytes).digest('hex'),fingerprint=createHash('sha256')
+      .update(JSON.stringify({caseId:id,documentId,name:selectedName,mime,contentHash})).digest('hex');
+    const lease=randomUUID(),replacementId=randomUUID(),s=caseSchema();
+    const job=await this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id,true);
+      const document=(await db.query(`SELECT * FROM ${s}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL FOR UPDATE`,[p.tenantId,id,documentId])).rows[0];
+      if(!document)throw new NotFoundException('Document not found.');
+      const existing=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key])).rows[0];
+      if(existing&&existing.request_fingerprint!==fingerprint)throw new ConflictException('The replacement request changed. Select the file again.');
+      if(!existing){
+        const deleting=await db.query(`SELECT 1 FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND document_id=$2 AND status<>'completed'`,[p.tenantId,documentId]);
+        if(deleting.rowCount)throw new ConflictException('This document is being deleted and cannot be replaced.');
+        const active=await db.query(`SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND document_id=$2 AND status<>'completed'`,[p.tenantId,documentId]);
+        if(active.rowCount)throw new ConflictException('This document is already being replaced. Retry shortly.');
+        const remoteName=document.storage_provider==='xero_files'?`${replacementId}-${selectedName}`:String(document.file_name);
+        await db.query(`INSERT INTO ${s}.student_operations_document_replacements(customer_id,replacement_id,case_id,document_id,actor_identity_user_id,idempotency_key,request_fingerprint,storage_provider,old_provider_file_id,file_name,mime_type,size_bytes,content_sha256)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[p.tenantId,replacementId,id,documentId,p.identityUserId,key,fingerprint,document.storage_provider,document.xero_file_id,remoteName,mime,bytes.length,contentHash]);
+      }
+      const row=(await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key])).rows[0];
+      if(row.status==='completed'||row.status==='committed')return {...row,document};
+      if(row.leased)throw new ConflictException('This replacement is still processing. Retry the same file in two minutes.');
+      const acquired=(await db.query(`UPDATE ${s}.student_operations_document_replacements SET status=CASE WHEN status='ready' THEN 'processing' ELSE status END,lease_token=$3,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE customer_id=$1 AND replacement_id=$2 RETURNING *`,[p.tenantId,row.replacement_id,lease])).rows[0];
+      return {...acquired,document};
+    });
+    if(job.status==='completed')return {documentId,replaced:true,cleanupPending:false};
+    if(job.status!=='committed'){
+      if(job.storage_provider==='xero_files'){
+        let newFileId=job.new_provider_file_id?String(job.new_provider_file_id):null;
+        if(!newFileId){
+          const receipt=await this.xero.uploadFile(p.tenantId,job.document.xero_connection_id,job.file_name,mime,bytes,
+            createHash('sha256').update(`${p.tenantId}:${job.replacement_id}:replacement`).digest('hex'));
+          newFileId=receipt.fileId;
+          await this.database.tenantTransaction(p.tenantId,async db=>{
+            const saved=await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='uploaded',new_provider_file_id=$3,updated_at=now() WHERE customer_id=$1 AND replacement_id=$2 AND lease_token=$4 AND lease_expires_at>now() RETURNING replacement_id`,[p.tenantId,job.replacement_id,newFileId,lease]);
+            if(!saved.rowCount)throw new ConflictException('Replacement upload confirmation is pending. Retry the same file.');
+          });
+        }
+        if(!job.provider_associated_at){
+          await this.xero.associateFileWithContact(p.tenantId,job.document.xero_connection_id,newFileId,job.document.source_id,
+            createHash('sha256').update(`${p.tenantId}:${job.replacement_id}:association`).digest('hex'));
+          await this.database.tenantTransaction(p.tenantId,async db=>{
+            const saved=await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='associated',provider_associated_at=now(),updated_at=now() WHERE customer_id=$1 AND replacement_id=$2 AND lease_token=$3 AND lease_expires_at>now() RETURNING replacement_id`,[p.tenantId,job.replacement_id,lease]);
+            if(!saved.rowCount)throw new ConflictException('Replacement association confirmation is pending. Retry the same file.');
+          });
+        }
+      }else{
+        const receipt=await this.xero.replaceAttachment(p.tenantId,job.document.xero_connection_id,job.document.source_kind as XeroAttachmentSource,job.document.source_id,
+          job.document.file_name,mime,bytes,createHash('sha256').update(`${p.tenantId}:${job.replacement_id}:attachment`).digest('hex'));
+        await this.database.tenantTransaction(p.tenantId,async db=>{
+          const saved=await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='uploaded',provider_attachment_id=$3,updated_at=now() WHERE customer_id=$1 AND replacement_id=$2 AND lease_token=$4 AND lease_expires_at>now() RETURNING replacement_id`,[p.tenantId,job.replacement_id,receipt.attachmentId,lease]);
+          if(!saved.rowCount)throw new ConflictException('Replacement confirmation is pending. Retry the same file.');
+        });
+      }
+      await this.database.tenantTransaction(p.tenantId,async db=>{
+        await this.cases.authorizedCase(db,p,id,true);
+        const replacement=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND replacement_id=$2 FOR UPDATE`,[p.tenantId,job.replacement_id])).rows[0];
+        const providerId=replacement.storage_provider==='xero_files'?replacement.new_provider_file_id:replacement.provider_attachment_id;
+        if(!providerId||replacement.storage_provider==='xero_files'&&!replacement.provider_associated_at)throw new ConflictException('Replacement confirmation is pending. Retry the same file.');
+        const displayName=replacement.storage_provider==='xero_files'?replacement.file_name:job.document.file_name;
+        const replaced=await db.query(`UPDATE ${s}.student_operations_case_documents SET attachment_id=$4,xero_file_id=CASE WHEN storage_provider='xero_files' THEN $4 ELSE NULL END,file_name=$5,mime_type=$6,size_bytes=$7,last_seen_at=now(),discovered_at=now() WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL RETURNING document_id`,[p.tenantId,id,documentId,providerId,displayName,mime,bytes.length]);
+        if(!replaced.rowCount)throw new ConflictException('The document is no longer available to replace.');
+        await db.query(`UPDATE ${s}.student_case_offers SET is_current=false,status='superseded',record_version=record_version+1 WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND is_current`,[p.tenantId,id,documentId]);
+        await enqueueUploadedAnalysis(db,p.tenantId,id,documentId,job.document.document_type_id,contentHash);
+        await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='committed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND replacement_id=$2`,[p.tenantId,job.replacement_id]);
+        await this.cases.activity(db,p,id,'case.document_replaced','Document replaced in Xero');await reconcileDocumentChecklist(db,p.tenantId,id);
+      });
+    }
+    let cleanupPending=false;
+    if(job.storage_provider==='xero_files'&&job.old_provider_file_id){
+      try{await this.xero.deleteFile(p.tenantId,job.document.xero_connection_id,job.old_provider_file_id);}
+      catch{cleanupPending=true;}
+    }
+    if(cleanupPending)throw new ConflictException({errorCode:'xero_replacement_cleanup_pending',message:'The document was replaced, but Xero is still removing the previous file. Retry the same replacement.'});
+    if(!cleanupPending)await this.database.tenantTransaction(p.tenantId,async db=>{
+      await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='completed',updated_at=now() WHERE customer_id=$1 AND replacement_id=$2`,[p.tenantId,job.replacement_id]);
+    });
+    return {documentId,replaced:true,cleanupPending};
   }
 
   async list(p:Principal,id:string,input:unknown={}) {
@@ -132,15 +242,17 @@ export class StudentOperationsCaseDocumentsService {
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       const row=await this.cases.authorizedCase(db,p,id);
       if(!hasStudentOperationsPermission(p.role,'documents.metadata.read_all') && !hasStudentOperationsPermission(p.role,'documents.metadata.read_assigned')) throw new ForbiddenException();
-      const count=await db.query(`SELECT count(*)::int total FROM ${caseSchema()}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
-      const documents=await db.query(`SELECT d.document_id AS "documentId",d.file_name AS "fileName",d.mime_type AS "mimeType",d.size_bytes::float8 AS "sizeBytes",d.source_kind AS "sourceKind",d.last_seen_at AS "lastSeenAt",t.document_type_id AS "documentTypeId",t.name AS "documentTypeName",t.required AS "documentTypeRequired"
+      const count=await db.query(`SELECT count(*)::int total FROM ${caseSchema()}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND deleted_at IS NULL`,[p.tenantId,id]);
+      const documents=await db.query(`SELECT d.document_id AS "documentId",d.file_name AS "fileName",d.mime_type AS "mimeType",d.size_bytes::float8 AS "sizeBytes",d.source_kind AS "sourceKind",d.last_seen_at AS "lastSeenAt",t.document_type_id AS "documentTypeId",t.name AS "documentTypeName",t.required AS "documentTypeRequired",
+        true AS "canReplaceFile",(d.storage_provider='xero_files' AND d.xero_file_id IS NOT NULL) AS "canDelete"
         FROM ${caseSchema()}.student_operations_case_documents d LEFT JOIN ${caseSchema()}.student_operations_document_types t ON t.customer_id=d.customer_id AND t.document_type_id=d.document_type_id
-        WHERE d.customer_id=$1 AND d.case_id=$2 ORDER BY d.file_name,d.document_id LIMIT $3 OFFSET $4`,[p.tenantId,id,limit,(page-1)*limit]);
+        WHERE d.customer_id=$1 AND d.case_id=$2 AND d.deleted_at IS NULL ORDER BY d.file_name,d.document_id LIMIT $3 OFFSET $4`,[p.tenantId,id,limit,(page-1)*limit]);
       const jobs=await db.query(`SELECT status,error_code AS "errorCode",count(*)::int count FROM ${caseSchema()}.student_operations_document_jobs WHERE customer_id=$1 AND case_id=$2 GROUP BY status,error_code`,[p.tenantId,id]);
       const requirements=await documentRequirements(db,p.tenantId,publicCaseStatus(row.lifecycle_status),id);
       const analyses=await db.query(`SELECT j.document_id,j.status,r.result_id,r.extraction,v.result_id AS review_result_id,v.corrections,v.decision,v.review_context,
         s.legal_name FROM (SELECT DISTINCT ON(document_id) * FROM ${caseSchema()}.student_document_analysis_jobs
         WHERE customer_id=$1 AND case_id=$2 ORDER BY document_id,created_at DESC,job_id DESC) j
+        JOIN ${caseSchema()}.student_operations_case_documents d ON d.customer_id=j.customer_id AND d.case_id=j.case_id AND d.document_id=j.document_id AND d.deleted_at IS NULL
         JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=j.customer_id AND c.case_id=j.case_id
         JOIN ${caseSchema()}.student_operations_students s ON s.customer_id=c.customer_id AND s.student_id=c.student_id
         LEFT JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=j.customer_id AND r.job_id=j.job_id
@@ -148,7 +260,7 @@ export class StudentOperationsCaseDocumentsService {
           AND v.case_id=j.case_id AND v.document_id=j.document_id ORDER BY review_version DESC LIMIT 1) v ON true`,[p.tenantId,id]);
       const eligible=hasStudentOperationsPermission(p.role,'cases.manage')?await eligibleAnalysisUploads(db,p.tenantId,id,documents.rows.map(d=>d.documentId)):[];
       const latest=await db.query(`SELECT DISTINCT ON(document_type_id) document_id FROM ${caseSchema()}.student_operations_case_documents
-        WHERE customer_id=$1 AND case_id=$2 AND document_type_id IS NOT NULL ORDER BY document_type_id,discovered_at DESC,document_id DESC`,[p.tenantId,id]);
+        WHERE customer_id=$1 AND case_id=$2 AND document_type_id IS NOT NULL AND deleted_at IS NULL ORDER BY document_type_id,discovered_at DESC,document_id DESC`,[p.tenantId,id]);
       return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,
         canReplace:Boolean(a&&a.decision==='rejected'&&a.review_result_id===a.result_id&&latest.rows.some(r=>r.document_id===d.documentId)),
         analysisStatus:a?analysisVerdict(a,a.legal_name??'').status:eligible.some(u=>u.document_id===d.documentId)?'not_checked':null};}),
@@ -181,18 +293,61 @@ export class StudentOperationsCaseDocumentsService {
     if(!hasStudentOperationsPermission(p.role,'documents.content.read_all') && !hasStudentOperationsPermission(p.role,'documents.content.read_assigned')) throw new ForbiddenException();
     const document=await this.database.tenantTransaction(p.tenantId,async db=>{
       await this.cases.authorizedCase(db,p,id);
-      const result=await db.query(`SELECT * FROM ${caseSchema()}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND document_id=$3`,[p.tenantId,id,documentId]);
+      const result=await db.query(`SELECT * FROM ${caseSchema()}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL`,[p.tenantId,id,documentId]);
       if(!result.rows[0]) throw new NotFoundException('Document not found.');
       await this.cases.activity(db,p,id,'case.document_access_requested','Document download requested');
       return result.rows[0];
     });
-    const buffer=await this.xero.attachmentContent(p.tenantId,document.xero_connection_id,document.source_kind,document.source_id,document.attachment_id);
+    const buffer=document.storage_provider==='xero_files'
+      ?await this.xero.fileContent(p.tenantId,document.xero_connection_id,document.xero_file_id)
+      :await this.xero.attachmentContent(p.tenantId,document.xero_connection_id,document.source_kind,document.source_id,document.attachment_id);
     // Recheck after the network call: an advisor may have been reassigned.
     await this.database.tenantTransaction(p.tenantId,async db=>{
       await this.cases.authorizedCase(db,p,id);
       await this.cases.activity(db,p,id,'case.document_downloaded','Document downloaded');
     });
     return {buffer,fileName:String(document.file_name).replace(/[\r\n"\\/\x00-\x1f]/g,'_')};
+  }
+
+  async remove(p:Principal,id:string,documentId:string,key?:string) {
+    if(!hasStudentOperationsPermission(p.role,'cases.manage'))throw new ForbiddenException();caseId(documentId);
+    if(!key||!/^[A-Za-z0-9._:-]{8,160}$/.test(key))throw new BadRequestException('A valid deletion request is required.');
+    const token=randomUUID(),fingerprint=createHash('sha256').update(JSON.stringify({caseId:id,documentId})).digest('hex'),s=caseSchema();
+    const deletion=await this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id,true);
+      const document=(await db.query(`SELECT * FROM ${s}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 FOR UPDATE`,[p.tenantId,id,documentId])).rows[0];
+      if(!document)throw new NotFoundException('Document not found.');
+      if(document.storage_provider!=='xero_files'||!document.xero_file_id)throw new ConflictException('Only documents uploaded through the new Xero Files workflow can be deleted.');
+      const replacing=await db.query(`SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND document_id=$2 AND status<>'completed'`,[p.tenantId,documentId]);
+      if(replacing.rowCount)throw new ConflictException('This document is being replaced and cannot be deleted.');
+      await db.query(`INSERT INTO ${s}.student_operations_document_deletions(customer_id,case_id,document_id,actor_identity_user_id,idempotency_key,request_fingerprint)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(customer_id,document_id) DO NOTHING`,[p.tenantId,id,documentId,p.identityUserId,key,fingerprint]);
+      const row=(await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND document_id=$2 FOR UPDATE`,[p.tenantId,documentId])).rows[0];
+      if(row.request_fingerprint!==fingerprint)throw new ConflictException('The deletion request does not match this document.');
+      if(row.status==='completed'||document.deleted_at)return {...row,status:'completed',xero_file_id:document.xero_file_id,xero_connection_id:document.xero_connection_id};
+      if(row.actor_identity_user_id!==p.identityUserId||row.idempotency_key!==key)throw new ConflictException('This document deletion is already in progress.');
+      if(row.status==='provider_deleted')return {...row,xero_file_id:document.xero_file_id,xero_connection_id:document.xero_connection_id};
+      if(row.leased)throw new ConflictException('This document deletion is still processing. Retry shortly.');
+      const acquired=await db.query(`UPDATE ${s}.student_operations_document_deletions SET status='deleting',lease_token=$3,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE customer_id=$1 AND document_id=$2 RETURNING *`,[p.tenantId,documentId,token]);
+      return {...acquired.rows[0],xero_file_id:document.xero_file_id,xero_connection_id:document.xero_connection_id};
+    });
+    if(deletion.status==='completed')return {deleted:true};
+    if(deletion.status!=='provider_deleted'){
+      await this.xero.deleteFile(p.tenantId,deletion.xero_connection_id,deletion.xero_file_id);
+      await this.database.tenantTransaction(p.tenantId,async db=>{
+        const saved=await db.query(`UPDATE ${s}.student_operations_document_deletions SET status='provider_deleted',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND document_id=$2 AND lease_token=$3 RETURNING document_id`,[p.tenantId,documentId,token]);
+        if(!saved.rowCount)throw new ConflictException('Deletion confirmation is pending. Retry shortly.');
+      });
+    }
+    return this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id,true);
+      await db.query(`UPDATE ${s}.student_operations_case_documents SET deleted_at=COALESCE(deleted_at,now()),deleted_by_identity_user_id=$4 WHERE customer_id=$1 AND case_id=$2 AND document_id=$3`,[p.tenantId,id,documentId,p.identityUserId]);
+      await db.query(`UPDATE ${s}.student_operations_document_uploads SET deleted_at=COALESCE(deleted_at,now()),updated_at=now() WHERE customer_id=$1 AND document_id=$2`,[p.tenantId,documentId]);
+      await db.query(`UPDATE ${s}.student_case_offers SET is_current=false,status='superseded',record_version=record_version+1 WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND is_current`,[p.tenantId,id,documentId]);
+      await db.query(`UPDATE ${s}.student_operations_document_deletions SET status='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND document_id=$2`,[p.tenantId,documentId]);
+      await this.cases.activity(db,p,id,'case.document_deleted','Document deleted from Sophia and Xero');
+      await reconcileDocumentChecklist(db,p.tenantId,id);return {deleted:true};
+    });
   }
 
   // Called by the dedicated worker, never by a read endpoint. Tenant scope is

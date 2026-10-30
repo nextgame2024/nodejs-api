@@ -104,7 +104,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -354,7 +354,7 @@ suite('Case management against disposable PostgreSQL',()=>{
   });
   test('Contact-only Xero upload is idempotent, typed and auditable; archived labels and content remain readable',async()=>{
     const file={buffer:Buffer.from('%PDF-1.7\nExample\n%%EOF'),originalname:'passport.pdf',mimetype:'application/pdf'};
-    const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>({attachmentId:college})),attachmentContent:jest.fn(async()=>file.buffer)};
+    const xero={documentContactAttachments:jest.fn(async()=>[]),uploadAttachment:jest.fn(async()=>({attachmentId:college})),replaceAttachment:jest.fn(async()=>({attachmentId:user})),attachmentContent:jest.fn(async()=>file.buffer)};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
     const created=await service.create(p,{userId:user},'uploaded-document-case');
     const id=String(created.caseId),type=(await types.list(p)).types.find(t=>t.name==='TRAVEL DOCUMENT')!;
@@ -366,15 +366,36 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(xero.uploadAttachment.mock.calls[0]).toEqual([tenant,connection,'Contacts',invoice,expect.stringMatching(/^[a-f0-9-]+-passport\.pdf$/),'application/pdf',file.buffer,expect.stringMatching(/^[a-f0-9]{64}$/),expect.any(Function)]);
     const listed=await docs.list(p,id,{});
     expect(listed.documents).toHaveLength(1);
-    expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'TRAVEL DOCUMENT',documentTypeRequired:true,sourceKind:'Contacts'});
+    expect(listed.documents[0]).toMatchObject({documentId:result.documentId,documentTypeName:'TRAVEL DOCUMENT',documentTypeRequired:true,sourceKind:'Contacts',canReplaceFile:true,canDelete:false});
     expect(listed.documents[0]).not.toHaveProperty('private_object_key');
     await types.update(p,type.documentTypeId,{status:'archived',recordVersion:type.recordVersion},'archive-upload-type');
     expect((await docs.list(p,id,{})).documents[0].documentTypeName).toBe('TRAVEL DOCUMENT');
     expect((await docs.content(p,id,String(result.documentId))).buffer.equals(file.buffer)).toBe(true);
     expect(xero.attachmentContent).toHaveBeenCalledWith(tenant,connection,'Contacts',invoice,college);
+    const replacement={buffer:Buffer.from('%PDF-1.7\nReplacement\n%%EOF'),originalname:'new-name.pdf',mimetype:'application/pdf'};
+    expect(await docs.replace(p,id,String(result.documentId),replacement,'replace-legacy-document')).toMatchObject({documentId:result.documentId,replaced:true,cleanupPending:false});
+    await docs.replace(p,id,String(result.documentId),replacement,'replace-legacy-document');expect(xero.replaceAttachment).toHaveBeenCalledTimes(1);
+    expect(xero.replaceAttachment).toHaveBeenCalledWith(tenant,connection,'Contacts',invoice,expect.stringMatching(/passport\.pdf$/),'application/pdf',replacement.buffer,expect.stringMatching(/^[a-f0-9]{64}$/));
+    await expect(docs.remove(p,id,String(result.documentId),'delete-legacy-document')).rejects.toThrow('new Xero Files');
     await expect(docs.upload(p,id,input,file,'upload-archived')).rejects.toThrow('active');
     const activities=await service.activities(p,id,{});
     expect(activities.activity.filter(a=>a.eventType==='case.document_uploaded')).toHaveLength(1);
+  });
+  test('Files uploads can be replaced and deleted idempotently while legacy records remain replacement-only',async()=>{
+    const old=process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED='true';
+    try{
+      const bytes=Buffer.from('%PDF-1.7\nOriginal\n%%EOF'),replacement=Buffer.from('%PDF-1.7\nReplacement\n%%EOF');
+      let uploads=0;const xero={uploadFile:jest.fn(async()=>({fileId:++uploads===1?college:user})),associateFileWithContact:jest.fn(async()=>{}),fileContent:jest.fn(async()=>replacement),deleteFile:jest.fn(async()=>{})};
+      const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
+      const id=String((await service.create(p,{userId:user},'files-document-case')).caseId),type=(await types.list(p)).types.find(t=>t.status==='active')!;
+      const uploaded=await docs.upload(p,id,{documentTypeId:type.documentTypeId},{buffer:bytes,originalname:'offer.pdf',mimetype:'application/pdf'},'files-upload-document');
+      expect((await docs.list(p,id,{})).documents[0]).toMatchObject({documentId:uploaded.documentId,canReplaceFile:true,canDelete:true});
+      await docs.replace(p,id,String(uploaded.documentId),{buffer:replacement,originalname:'replacement.pdf',mimetype:'application/pdf'},'files-replace-document');
+      expect(xero.associateFileWithContact).toHaveBeenCalledTimes(2);expect(xero.deleteFile).toHaveBeenCalledWith(tenant,connection,college);
+      expect((await docs.content(p,id,String(uploaded.documentId))).buffer.equals(replacement)).toBe(true);expect(xero.fileContent).toHaveBeenCalledWith(tenant,connection,user);
+      expect(await docs.remove(p,id,String(uploaded.documentId),'files-delete-document')).toEqual({deleted:true});expect(await docs.remove(p,id,String(uploaded.documentId),'files-delete-document')).toEqual({deleted:true});
+      expect(xero.deleteFile).toHaveBeenCalledTimes(2);expect(xero.deleteFile).toHaveBeenLastCalledWith(tenant,connection,user);expect((await docs.list(p,id,{})).documents).toHaveLength(0);
+    }finally{if(old===undefined)delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;else process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED=old;}
   });
   test('upload validates permissions, tenant, file bytes, type and Contact identity before any provider request',async()=>{
     const xero={uploadAttachment:jest.fn()};
@@ -693,6 +714,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       const engagement:DocumentExtraction={...identity,kind:'engagement_letter',status:'signed',signerName:'Automation Student',signedAt:'2026-01-01T01:00:00Z',completed:true,documentIdMatches:true};
       const passport:DocumentExtraction={...identity,kind:'passport',expiresOn:'2030-01-01',mrzExpiryMatches:true};
       const offer:DocumentExtraction={...identity,kind:'letter_of_offer',collegeName:'York Business',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:904000,
+        studentSigned:true,studentSignerName:'Automation Student',studentSignedOn:'2026-09-16',collegeSigned:true,
         courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'60 weeks'}],fees:[{label:'Total',amountMinor:904000,conditional:false,condition:null}],
         instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:906500,includedConditionalFeeMinor:2500,components:[]}]};
       const first=await add('engagement_letter');await finish(first,engagement);
@@ -793,6 +815,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       await review(replacement,'confirmed');expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'documents_requested'});
       const passport=await add({...identity,kind:'passport',expiresOn:'2035-01-01',mrzExpiryMatches:true});await review(passport,'confirmed');
       const offer=await add({...identity,kind:'letter_of_offer',collegeName:'York Business',abn:null,cricosProviderCode:null,currency:'AUD',statedTotalMinor:80000,
+        studentSigned:true,studentSignerName:'Workflow Fixture',studentSignedOn:'2026-09-16',collegeSigned:true,
         courses:[{name:'English',code:null,startsOn:null,endsOn:null,duration:'8 weeks'}],fees:[{label:'Tuition',amountMinor:80000,conditional:false,condition:null}],
         instalments:Array.from({length:8},(_,i)=>({sequence:i+1,dueOn:null,dueTerm:'Immediately',totalMinor:i===0?12500:10000,includedConditionalFeeMinor:i===0?2500:0,components:[{label:'Tuition',amountMinor:10000}]}))});
       await review(offer,'confirmed');expect(await service.get(p,id)).toMatchObject({status:'pre_sale',currentStage:'checklist_complete'});
@@ -1034,6 +1057,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       expect(await analysis.start(p,student.caseId,documentId,{},'offer-start-saved')).toEqual({queued:true});
       expect(mock.xero.uploadAttachment).toHaveBeenCalledTimes(1);
       const extraction={kind:'letter_of_offer' as const,studentName:'Offer Workflow',collegeName:'East Coast College',abn:'11627536823',cricosProviderCode:'03829G',currency:'AUD',statedTotalMinor:904000,evidence:[{page:2,quote:'Grand total AUD 9040.00'}],issues:[],
+        studentSigned:true,studentSignerName:'Offer Workflow',studentSignedOn:'2026-09-16',collegeSigned:true,
         courses:[{name:'General English',code:'116682E',startsOn:'2027-01-25',endsOn:'2028-03-19',duration:'60 weeks'}],
         fees:[{label:'Tuition and material',amountMinor:904000,conditional:false,condition:null},{label:'International transfer',amountMinor:2500,conditional:true,condition:'International payments only'}],
         instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:99500,includedConditionalFeeMinor:2500,components:[{label:'Material',amountMinor:5000},{label:'Tuition',amountMinor:72000}]},{sequence:2,dueTerm:null,dueOn:'2028-01-31',totalMinor:807000,includedConditionalFeeMinor:0,components:[]}]};

@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { caseSchema } from './student-operations-cases.service.js';
-import { offerExtraction } from './student-document-analysis.contracts.js';
+import { nameSimilarity,offerExtraction } from './student-document-analysis.contracts.js';
 import { isLatestTypedDocument } from './student-document-checklist.js';
 
 export type OfferExtraction=z.infer<typeof offerExtraction>;
@@ -26,6 +26,8 @@ export async function offerCollegeDirectory(db:PoolClient,tenant:string):Promise
 export function offerConfirmationProblems(value:OfferExtraction) {
   const problems:string[]=[];
   if(!value.studentName||!value.collegeName||!value.courses.length||!value.fees.length||!value.instalments.length||value.statedTotalMinor===null)problems.push('Complete the student, college, courses, fees, total and instalments.');
+  if(value.studentSigned!==true)problems.push('Confirm that the student signed the Letter of Offer.');
+  if(!value.studentSignerName||!value.studentName||nameSimilarity(value.studentSignerName,value.studentName)<=0.8)problems.push('Confirm the Letter of Offer signer matches the student.');
   const sequences=new Set<number>();
   for(const item of value.instalments){
     if(sequences.has(item.sequence))problems.push('Each instalment needs a unique number.');sequences.add(item.sequence);

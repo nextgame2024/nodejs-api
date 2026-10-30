@@ -1,4 +1,4 @@
-import { Body,Controller,Get,Header,Headers,Param,Patch,Post,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
+import { Body,Controller,Delete,Get,Header,Headers,Param,Patch,Post,Put,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentDocumentTypesService } from './student-document-types.service.js';
 import { StudentCaseInvoiceDraftsService } from './student-case-invoice-drafts.js';
@@ -56,6 +56,9 @@ export class StudentOperationsCasesController {
   @Patch(':caseId/checklist') updateChecklist(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.updateChecklist(r.studentOperationsPrincipal,id,body,key);}
   @Get(':caseId/documents') listDocuments(@Req() r:Request,@Param('caseId') id:string,@Query() query:unknown){return this.documents.list(r.studentOperationsPrincipal,id,query);}
   @Post(':caseId/documents/discovery') discover(@Req() r:Request,@Param('caseId') id:string){return this.documents.enqueue(r.studentOperationsPrincipal,id);}
+  @Put(':caseId/documents/:documentId/content')
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:10*1024*1024,files:1,fields:0,parts:1}}))
+  replaceDocument(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') documentId:string,@UploadedFile() file:{buffer:Buffer;originalname:string;mimetype:string}|undefined,@Headers('idempotency-key') key?:string){return this.documents.replace(r.studentOperationsPrincipal,id,documentId,file,key);}
   @Get(':caseId/documents/:documentId/content')
   @Header('Cache-Control','private, no-store')
   @Header('X-Content-Type-Options','nosniff')
@@ -63,4 +66,6 @@ export class StudentOperationsCasesController {
     const file=await this.documents.content(r.studentOperationsPrincipal,id,documentId);
     return new StreamableFile(file.buffer,{type:'application/octet-stream',disposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,length:file.buffer.length});
   }
+  @Delete(':caseId/documents/:documentId')
+  removeDocument(@Req() r:Request,@Param('caseId') id:string,@Param('documentId') documentId:string,@Headers('idempotency-key') key?:string){return this.documents.remove(r.studentOperationsPrincipal,id,documentId,key);}
 }

@@ -107,6 +107,24 @@ describe("XeroClient", () => {
     await expect(client.uploadAttachment('secret','tenant','Invoices',id,'passport.pdf','application/pdf',bytes,key)).rejects.toThrow('Contact');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it('replaces legacy attachment bytes by filename with POST and provider idempotency',async()=>{
+    const source='11111111-1111-4111-8111-111111111111',attachment='22222222-2222-4222-8222-222222222222',bytes=Buffer.from('%PDF-1.7\n%%EOF'),key='d'.repeat(64);
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Attachments:[{AttachmentID:attachment,FileName:'offer.pdf',ContentLength:bytes.length}]})));
+    await expect(new XeroClient().replaceAttachment('token','tenant','Contacts',source,'offer.pdf','application/pdf',bytes,key)).resolves.toEqual({attachmentId:attachment,fileName:'offer.pdf',mimeType:'application/pdf',sizeBytes:bytes.length});
+    expect(fetchMock.mock.calls[0]).toEqual([`https://api.xero.com/api.xro/2.0/Contacts/${source}/Attachments/offer.pdf`,expect.objectContaining({method:'POST',redirect:'error',headers:expect.objectContaining({'Idempotency-Key':key,'Content-Type':'application/pdf'})})]);
+  });
+  it('uploads, associates, reads and idempotently deletes a Xero Files document',async()=>{
+    const fileId='11111111-1111-4111-8111-111111111111',contactId='22222222-2222-4222-8222-222222222222',bytes=Buffer.from('%PDF-1.7\n%%EOF'),key='e'.repeat(64);
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({Id:fileId,Name:'offer.pdf',MimeType:'application/pdf',Size:bytes.length}),{status:201}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({FileId:fileId,ObjectId:contactId,ObjectGroup:'Contact',ObjectType:'Business'}),{status:201}))
+      .mockResolvedValueOnce(new Response(bytes,{status:200})).mockResolvedValueOnce(new Response(null,{status:204})).mockResolvedValueOnce(new Response(null,{status:404}));
+    const client=new XeroClient();await expect(client.uploadFile('token','tenant','offer.pdf','application/pdf',bytes,key)).resolves.toMatchObject({fileId,fileName:'offer.pdf'});
+    await expect(client.associateFileWithContact('token','tenant',fileId,contactId,key)).resolves.toBeUndefined();
+    expect((await client.fileContent('token','tenant',fileId)).equals(bytes)).toBe(true);await expect(client.deleteFile('token','tenant',fileId)).resolves.toBeUndefined();await expect(client.deleteFile('token','tenant',fileId)).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map(call=>[call[0],call[1]?.method])).toEqual([
+      ['https://api.xero.com/files.xro/1.0/Files','POST'],[`https://api.xero.com/files.xro/1.0/Files/${fileId}/Associations`,'POST'],[`https://api.xero.com/files.xro/1.0/Files/${fileId}/Content`,undefined],[`https://api.xero.com/files.xro/1.0/Files/${fileId}`,'DELETE'],[`https://api.xero.com/files.xro/1.0/Files/${fileId}`,'DELETE'],
+    ]);
+  });
   it('never retries a failed upstream mutation and does not expose raw provider errors',async()=>{
     const id='11111111-1111-4111-8111-111111111111';
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private provider body',{status:429,headers:{'retry-after':'60'}}));
