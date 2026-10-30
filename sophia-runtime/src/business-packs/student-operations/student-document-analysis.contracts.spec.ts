@@ -1,13 +1,16 @@
-import { documentExtraction, documentReview, paymentWithConditionalFee, validateDocument } from './student-document-analysis.contracts.js';
+import { documentExtraction, documentReview, nameSimilarity, paymentWithConditionalFee, validateDocument } from './student-document-analysis.contracts.js';
 
 const base = { studentName: 'Example Student', evidence: [{ page: 1, quote: 'Relevant source evidence' }], issues: [] };
 const passport = { ...base, kind: 'passport', expiresOn: '2035-08-06', mrzExpiryMatches: true };
 const engagement = { ...base, kind: 'engagement_letter', status: 'signed', signerName: 'Example Student',
   signedAt: '2026-09-15T02:59:31Z', completed: true, documentIdMatches: true };
 describe('Document extraction and deterministic validation contracts', () => {
-  test('expiry changes with current date without another extraction and includes expiry day', () => {
-    expect(validateDocument(passport, 'Example Student', '2035-08-06').status).toBe('passed');
-    expect(validateDocument(passport, 'Example Student', '2035-08-07')).toEqual({ status: 'invalid', reasons: ['passport_expired'] });
+  test('passports pass only beyond six calendar months and otherwise remain pending review', () => {
+    expect(validateDocument({ ...passport, expiresOn: '2027-04-30' }, 'Example Student', '2026-10-30')).toEqual({status:'needs_review',reasons:['passport_expiring_soon']});
+    expect(validateDocument({ ...passport, expiresOn: '2027-05-01' }, 'Example Student', '2026-10-30')).toEqual({status:'passed',reasons:[]});
+    expect(validateDocument({ ...passport, expiresOn: '2026-10-29' }, 'Example Student', '2026-10-30')).toEqual({status:'needs_review',reasons:['passport_expired']});
+    expect(validateDocument({ ...passport, expiresOn: '2027-08-28' }, 'Example Student', '2026-08-31').status).toBe('passed');
+    expect(validateDocument({ ...passport, expiresOn: '2027-02-28' }, 'Example Student', '2026-08-31').status).toBe('needs_review');
   });
   test.each([{ expiresOn: null }, { mrzExpiryMatches: false }, { studentName: 'Other Person' }, { evidence: [] }])('ambiguous passports require review: %j', change => {
     expect(validateDocument({ ...passport, ...change }, 'Example Student', '2026-10-25').status).toBe('needs_review');
@@ -16,8 +19,12 @@ describe('Document extraction and deterministic validation contracts', () => {
     expect(() => documentExtraction.parse({ ...passport, expiresOn: '2026-02-30' })).toThrow();
     expect(() => documentExtraction.parse({ ...passport, passportNumber: 'not-retained' })).toThrow();
   });
-  test('signature evidence needs completion, document correlation and matching signer', () => {
+  test('signed engagement letters accept names above 80% similarity', () => {
     expect(validateDocument(engagement, 'Example Student', '2026-10-25').status).toBe('passed');
+    const nearMatch={...engagement,studentName:'Andres Arley Mazo Su',signerName:'Andres Arley Mazo Suarez',issues:['No course or itemized fees stated.']};
+    expect(nameSimilarity(nearMatch.studentName,nearMatch.signerName)).toBeGreaterThan(0.8);
+    expect(validateDocument(nearMatch,'Andres Arley Mazo Suarez','2026-10-25')).toEqual({status:'passed',reasons:[]});
+    expect(nameSimilarity('abcd','abcde')).toBe(0.8);
     for (const change of [{ status: 'viewed' }, { completed: false }, { signerName: 'Other Person' }, { documentIdMatches: null }, { signedAt: null }]) {
       expect(validateDocument({ ...engagement, ...change }, 'Example Student', '2026-10-25').status).toBe('needs_review');
     }

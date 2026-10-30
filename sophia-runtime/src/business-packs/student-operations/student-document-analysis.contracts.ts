@@ -57,27 +57,59 @@ export const documentReview = z.object({
 }).strict();
 
 function normalizedName(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
+  return value.normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
+}
+
+function editDistance(left:string,right:string):number {
+  const prior=Array.from({length:right.length+1},(_,index)=>index);
+  for(let i=1;i<=left.length;i++){
+    let diagonal=prior[0];prior[0]=i;
+    for(let j=1;j<=right.length;j++){
+      const above=prior[j],cost=left[i-1]===right[j-1]?0:1;
+      prior[j]=Math.min(prior[j]+1,prior[j-1]+1,diagonal+cost);diagonal=above;
+    }
+  }
+  return prior[right.length];
+}
+
+/** Deterministic name similarity; token sorting tolerates passport-style surname-first order. */
+export function nameSimilarity(left:string,right:string):number {
+  const a=normalizedName(left),b=normalizedName(right);if(!a||!b)return 0;
+  const score=(x:string,y:string)=>1-editDistance(x,y)/Math.max(x.length,y.length);
+  return Math.max(score(a,b),score(a.split(' ').sort().join(' '),b.split(' ').sort().join(' ')));
+}
+
+function sixMonthThreshold(today:string):string {
+  const [year,month,day]=today.split('-').map(Number),monthIndex=month-1+6,targetYear=year+Math.floor(monthIndex/12),targetMonth=monthIndex%12;
+  const targetDay=Math.min(day,new Date(Date.UTC(targetYear,targetMonth+1,0)).getUTCDate());
+  return `${targetYear}-${String(targetMonth+1).padStart(2,'0')}-${String(targetDay).padStart(2,'0')}`;
 }
 
 /** Dates are supplied by the company-local clock, never inferred by the model. */
 export function validateDocument(input: unknown, expectedName: string, today: string): AnalysisVerdict {
   const value = documentExtraction.parse(input);
   date.parse(today);
-  const reasons: string[] = [...value.issues];
+  const reasons: string[] = [];
   if (!value.evidence.length) reasons.push('missing_evidence');
-  if (!value.studentName || normalizedName(value.studentName) !== normalizedName(expectedName)) reasons.push('student_identity_needs_review');
   if (value.kind === 'passport') {
+    if (!value.studentName || normalizedName(value.studentName) !== normalizedName(expectedName)) reasons.push('student_identity_needs_review');
     if (!value.expiresOn) reasons.push('expiry_unreadable');
     if (value.mrzExpiryMatches === false) reasons.push('expiry_conflict');
-    if (reasons.length) return { status: 'needs_review', reasons };
-    return value.expiresOn! < today ? { status: 'invalid', reasons: ['passport_expired'] } : { status: 'passed', reasons: [] };
+    if(value.expiresOn){
+      if(value.expiresOn<today)reasons.push('passport_expired');
+      else if(value.expiresOn<=sixMonthThreshold(today))reasons.push('passport_expiring_soon');
+    }
+    return reasons.length ? { status: 'needs_review', reasons:[...new Set(reasons)] } : { status: 'passed', reasons: [] };
   }
   if (value.kind === 'engagement_letter') {
+    if (!value.studentName || nameSimilarity(value.studentName,expectedName)<=0.8) reasons.push('student_identity_needs_review');
     if (value.status !== 'signed' || !value.completed || !value.signedAt || value.documentIdMatches !== true
-      || !value.signerName || normalizedName(value.signerName) !== normalizedName(expectedName)) reasons.push('signature_evidence_needs_review');
+      || !value.signerName || !value.studentName || nameSimilarity(value.signerName,expectedName)<=0.8
+      || nameSimilarity(value.signerName,value.studentName)<=0.8) reasons.push('signature_evidence_needs_review');
     return { status: reasons.length ? 'needs_review' : 'passed', reasons };
   }
+  reasons.push(...value.issues);
+  if (!value.studentName || normalizedName(value.studentName) !== normalizedName(expectedName)) reasons.push('student_identity_needs_review');
   if (!value.collegeName || !value.courses.length || !value.instalments.length) reasons.push('offer_incomplete');
   const sequences = new Set<number>();
   for (const item of value.instalments) {

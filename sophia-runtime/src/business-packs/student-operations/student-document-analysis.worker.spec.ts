@@ -70,9 +70,10 @@ describe('Document analysis execution',()=>{
     expect(analysisVerdict({status:'succeeded',extraction:{...extraction,expiresOn:'2020-01-01'},result_id:'r',review_result_id:'r',decision:'confirmed'},'Example Student').status).toBe('invalid');
     expect(analysisVerdict({status:'succeeded',extraction,result_id:'new',review_result_id:'old',decision:'rejected'},'Example Student').status).toBe('passed');
     expect(analysisVerdict({status:'succeeded',extraction:{...extraction,expiresOn:'2020-01-01',issues:['Unclear name']},result_id:'r',review_result_id:'r',decision:'confirmed'},'Example Student').status).toBe('invalid');
-    const row={status:'succeeded',extraction:{...extraction,expiresOn:'2030-01-01'},result_id:'r'};
+    const row={status:'succeeded',extraction:{...extraction,expiresOn:'2030-07-02'},result_id:'r'};
     expect(analysisVerdict(row,'Example Student','2030-01-01').status).toBe('passed');
-    expect(analysisVerdict(row,'Example Student','2030-01-02').status).toBe('invalid');
+    expect(analysisVerdict(row,'Example Student','2030-01-02').status).toBe('needs_review');
+    expect(analysisVerdict({...row,extraction:{...row.extraction,expiresOn:'2029-12-31'}},'Example Student','2030-01-02').status).toBe('needs_review');
   });
   test('manual identity acceptance is scoped to the student name at review time',()=>{
     const row={status:'succeeded',extraction:{...extraction,studentName:'Example S'},result_id:'r',review_result_id:'r',decision:'confirmed',review_context:{studentNameAtReview:'Example Student'}};

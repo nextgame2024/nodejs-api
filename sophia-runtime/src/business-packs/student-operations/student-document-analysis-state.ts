@@ -11,15 +11,13 @@ export function analysisVerdict(row:Record<string,any>,name:string,today=analysi
   const parsed=documentExtraction.safeParse(extraction);
   let verdict=parsed.success?validateDocument(parsed.data,name,today):null;
   const reviewed=row.review_result_id===row.result_id?row.decision:null;
-  // Human acceptance cannot make a known expired passport valid.
+  // An expired passport remains pending until reviewed and cannot be made valid by confirmation.
   const expired=parsed.success&&parsed.data.kind==='passport'&&parsed.data.expiresOn!==null&&parsed.data.expiresOn<today;
-  if(expired&&verdict)verdict={status:'invalid',reasons:[...new Set([...verdict.reasons,'passport_expired'])]};
+  if(expired&&reviewed==='confirmed'&&verdict)verdict={status:'invalid',reasons:[...new Set([...verdict.reasons,'passport_expired'])]};
   const normalize=(s:string)=>s.normalize('NFKC').trim().replace(/\s+/g,' ').toLocaleLowerCase('en');
   const identityChanged=verdict?.reasons.includes('student_identity_needs_review')&&
     normalize(row.review_context?.studentNameAtReview??'')!==normalize(name);
   let status=row.status==='queued'||row.status==='processing'?'checking':row.status==='failed'?'check_failed':
-    reviewed==='rejected'||expired?'invalid':parsed.success?(reviewed==='confirmed'&&!identityChanged&&verdict?.status==='needs_review'?'passed':verdict?.status):'not_checked';
-  // Initial rollout requires human approval; no model confidence threshold is implied.
-  if(documentWorkflowEnabled()&&status==='passed'&&reviewed!=='confirmed')status='needs_review';
+    reviewed==='rejected'||(expired&&reviewed==='confirmed')?'invalid':parsed.success?(reviewed==='confirmed'&&!identityChanged&&verdict?.status==='needs_review'?'passed':verdict?.status):'not_checked';
   return {status,parsed,verdict,reviewed};
 }

@@ -79,13 +79,13 @@ describe('Sophia-only invoice draft contract',()=>{
     expect(xeroPreflightFailure(new Error('provider detail'))).toEqual({});
   });
 });
-describe('Initial document workflow manual-review gate',()=>{
+describe('Deterministic document workflow validation',()=>{
   const previous=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;
   afterEach(()=>{if(previous===undefined)delete process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;else process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED=previous;});
-  it('never replaces manual approval with an invented signature confidence score',()=>{
+  it('automatically accepts a valid passport while preserving explicit rejection',()=>{
     process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
     const row={status:'succeeded',result_id:'result',extraction:{kind:'passport',studentName:'Fixture Student',evidence:[{page:1,quote:'Synthetic expiry'}],issues:[],expiresOn:'2035-01-01',mrzExpiryMatches:true}};
-    expect(analysisVerdict(row,'Fixture Student','2026-10-26').status).toBe('needs_review');
+    expect(analysisVerdict(row,'Fixture Student','2026-10-26').status).toBe('passed');
     expect(analysisVerdict({...row,review_result_id:'result',decision:'confirmed'},'Fixture Student','2026-10-26').status).toBe('passed');
     expect(analysisVerdict({...row,review_result_id:'result',decision:'rejected'},'Fixture Student','2026-10-26').status).toBe('invalid');
   });

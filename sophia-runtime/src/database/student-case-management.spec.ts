@@ -784,7 +784,7 @@ suite('Case management against disposable PostgreSQL',()=>{
         const state=await analysis.get(p,id,document);
         return analysis.review(p,id,document,{resultId:state.resultId,expectedReviewVersion:state.reviewVersion,decision,reason:'Synthetic manual review',corrections:null,...(state.offer?{collegeId:college,expectedCaseVersion:state.offer.caseRecordVersion}:{})},randomUUID());
       };
-      const first=await add(engagement);expect((await analysis.get(p,id,first)).status).toBe('needs_review');
+      const first=await add(engagement);expect((await analysis.get(p,id,first)).status).toBe('passed');
       await review(first,'rejected');expect(await service.get(p,id)).toMatchObject({status:'on_hold',currentStage:'documents_requested'});
       expect((await types.requirements(p,{status:'on_hold'})).requirements.map(r=>r.requirementKey)).toEqual(expect.arrayContaining(['engagement_letter','passport','letter_of_offer']));
       const docs=new StudentOperationsCaseDocumentsService(database,service,{} as XeroConnectorService);
