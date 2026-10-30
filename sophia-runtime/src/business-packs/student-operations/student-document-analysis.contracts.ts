@@ -52,7 +52,7 @@ export interface StudentDocumentExtractionProvider {
 // Review endpoints accept corrections, never client-supplied actor/company authority.
 export const documentReview = z.object({
   resultId: z.uuid(), expectedReviewVersion: z.number().int().min(0),
-  decision: z.enum(['confirmed', 'rejected']), reason: text,
+  decision: z.enum(['confirmed', 'rejected']), reason: z.string().trim().max(500).transform(value=>value||null).nullable().default(null),
   corrections: documentExtraction.nullable(),
 }).strict();
 

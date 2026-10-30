@@ -43,4 +43,11 @@ describe('Document extraction and deterministic validation contracts', () => {
     expect(() => documentReview.parse({ resultId: '11111111-1111-4111-8111-111111111111', decision: 'confirmed', reason: 'Reviewed', corrections: null })).toThrow();
     expect(() => documentReview.parse({ resultId: '11111111-1111-4111-8111-111111111111', expectedReviewVersion: 0, decision: 'confirmed', reason: 'Reviewed', corrections: null, actor: 'SophiaAi' })).toThrow();
   });
+  test('review note is optional and normalizes an omitted note to null', () => {
+    const review = { resultId: '11111111-1111-4111-8111-111111111111', expectedReviewVersion: 0, decision: 'confirmed' as const, corrections: null };
+    expect(documentReview.parse(review).reason).toBeNull();
+    expect(documentReview.parse({ ...review, reason: null }).reason).toBeNull();
+    expect(documentReview.parse({ ...review, reason: 'Useful context' }).reason).toBe('Useful context');
+    expect(documentReview.parse({ ...review, reason: '   ' }).reason).toBeNull();
+  });
 });
