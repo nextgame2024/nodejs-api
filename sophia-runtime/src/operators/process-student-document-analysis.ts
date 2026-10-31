@@ -11,7 +11,7 @@ import { StudentDocumentAnalysisWorker } from '../business-packs/student-operati
 import { runtimeConfig } from '../config/runtime-config.js';
 
 // Explicit tenant allowlist: no elevated cross-tenant table reads. One job per
-// tenant per pass provides fairness; one sequential provider call per worker.
+// tenant per pass provides fairness; at most two leased jobs run per tenant.
 const tenants=z.array(z.uuid()).min(1).max(100).parse((process.env.STUDENT_DOCUMENT_ANALYSIS_TENANT_IDS??'').split(',').map(v=>v.trim()).filter(Boolean));
 if(process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED!=='true'||!process.env.STUDENT_DOCUMENT_ANALYSIS_MODEL?.trim()||!runtimeConfig().openAi.apiKey)throw new Error('Document analysis worker is not configured.');
 if(process.env.XERO_SHARED_QUOTA_ENABLED!=='true'||process.env.XERO_SHARED_BACKOFF_ENABLED!=='true')throw new Error('Document analysis requires shared Xero quota and backoff.');
@@ -23,7 +23,7 @@ try{
   do{
     for(const tenant of [...new Set(tenants)]){
       if(stopping)break;
-      try{await worker.processOne(tenant);}catch{console.error(JSON.stringify({event:'document_analysis_tick_failed'}));}
+      try{await worker.processBatch(tenant);}catch{console.error(JSON.stringify({event:'document_analysis_tick_failed'}));}
     }
     if(process.argv.includes('--once'))break;
     if(!stopping)await delay(5000);

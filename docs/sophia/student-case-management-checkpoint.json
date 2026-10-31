@@ -1,4 +1,10 @@
 {
+  "validationPerformance20261031": {
+    "status": "locally_verified_not_deployed",
+    "details": "student-document-validation-performance.md",
+    "verification": "43 focused backend tests; 6 PostgreSQL tests selected by 'analysis queue|analysis concurrency|Files'; 78 manager-case-view ChromeHeadless tests; backend and frontend TypeScript checks passed.",
+    "rollout": "Deploy API, both worker entrypoints and frontend. Optional S3 cache requires dedicated private unversioned bucket, one-day prefix lifecycle and documented IAM/env configuration. No migration or live cloud changes performed."
+  },
   "replacementFix20261031": {
     "status": "locally_verified_not_deployed",
     "cause": "Real PostgreSQL reproduced inconsistent types deduced for parameter $4 in the replacement commit UPDATE; the failed transaction retained its lease and subsequent retries returned 409.",

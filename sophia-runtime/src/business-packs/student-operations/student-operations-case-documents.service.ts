@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { createHash,randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service.js';
@@ -14,11 +14,29 @@ import { documentRequirements } from './student-document-requirements.js';
 import { publicCaseStatus } from './student-operations-case-workflow.js';
 import { enqueueUploadedAnalysis,analysisVerdict,eligibleAnalysisUploads } from './student-document-analysis.service.js';
 import { reconcileDocumentChecklist } from './student-document-checklist.js';
+import { studentDocumentTempStorage } from './student-document-temp-storage.js';
 
 @Injectable()
 export class StudentOperationsCaseDocumentsService {
+  private readonly logger=new Logger(StudentOperationsCaseDocumentsService.name);
+  private cacheWarningAt=0;
   constructor(@Inject(DatabaseService) private readonly database:DatabaseService,
     private readonly cases:StudentOperationsCasesService,private readonly xero:XeroConnectorService) {}
+
+  private async cacheAnalysisSource(tenant:string,id:string,typeId:string,operationId:string,hash:string,bytes:Buffer,mime:string){
+    if(!studentDocumentTempStorage.enabled||process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED!=='true')return;
+    try{
+      const kinds=await this.database.tenantReadTransaction(tenant,db=>db.query(`SELECT DISTINCT requirement_key
+        FROM ${caseSchema()}.student_operations_status_document_requirements WHERE customer_id=$1 AND document_type_id=$2
+        AND status='active' AND (requirement_key IN ('passport','engagement_letter') OR ($3 AND requirement_key='letter_of_offer'))`,
+        [tenant,typeId,process.env.STUDENT_OFFER_ANALYSIS_ENABLED==='true']));
+      if(kinds.rows.length===1)await studentDocumentTempStorage.put(studentDocumentTempStorage.key(tenant,id,operationId,hash),bytes,mime);
+    }catch{
+      // Safe, bounded operational signal; never log file names, bytes or credentials.
+      if(Date.now()-this.cacheWarningAt>60_000){this.cacheWarningAt=Date.now();this.logger.warn('document_analysis_temp_cache_unavailable');}
+      // Optional cache: validation can recover from the durable original.
+    }
+  }
 
   async uploadOptions(p:Principal,id:string) {
     if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException();
@@ -126,6 +144,7 @@ export class StudentOperationsCaseDocumentsService {
         if(!receipt.rowCount) throw new ConflictException('Upload confirmation is pending. Retry the same file.');
       });
     }
+    await this.cacheAnalysisSource(p.tenantId,id,job.document_type_id,job.upload_id,hash,bytes,mime);
     return this.database.tenantTransaction(p.tenantId,async db=>{
       await this.cases.authorizedCase(db,p,id,true);
       const saved=await db.query(`SELECT * FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND upload_id=$2 FOR UPDATE`,[p.tenantId,job.upload_id]);
@@ -218,6 +237,7 @@ export class StudentOperationsCaseDocumentsService {
           if(!saved.rowCount)throw new ConflictException('Replacement confirmation is pending. Retry the same file.');
         });
       }
+      await this.cacheAnalysisSource(p.tenantId,id,job.document.document_type_id,job.replacement_id,contentHash,bytes,mime);
       try{await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,id,true);
         const replacement=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND replacement_id=$2 FOR UPDATE`,[p.tenantId,job.replacement_id])).rows[0];

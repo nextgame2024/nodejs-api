@@ -113,7 +113,7 @@ export function createSharedStudentSyncRuntime() {
     },
     documentPolicy:()=>({fetchBudgetMinutes:studentDocumentFetchBudgetMinutes()}),
     reportHealth:(customerId:string)=>health.report(customerId),
-    processDocumentAnalysis:(customerId:string)=>analysis.processOne(customerId),
+    processDocumentAnalysis:(customerId:string)=>analysis.processBatch(customerId),
     async processDocumentChecklist(customerId:string){
       const recovered=await invoiceRecovery.processBatch(customerId);
       return await checklist.processBatch(customerId)||recovered;

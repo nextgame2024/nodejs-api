@@ -11,7 +11,7 @@ const processAnalysis=jest.fn(async(_customer:string)=>true);
 const processChecklist=jest.fn(async(_customer:string)=>true);
 jest.unstable_mockModule('../business-packs/student-operations/student-invoice-projection-recovery.js',()=>({StudentInvoiceProjectionRecovery:class {processBatch=async()=>false;}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-checklist.js',()=>({StudentDocumentChecklistReconciler:class {processBatch=processChecklist;}}));
-jest.unstable_mockModule('../business-packs/student-operations/student-document-analysis.worker.js',()=>({StudentDocumentAnalysisWorker:class {processOne=processAnalysis;}}));
+jest.unstable_mockModule('../business-packs/student-operations/student-document-analysis.worker.js',()=>({StudentDocumentAnalysisWorker:class {processBatch=processAnalysis;}}));
 jest.unstable_mockModule('../business-packs/student-operations/openai-document-extraction.provider.js',()=>({OpenAIDocumentExtractionProvider:class {}}));
 jest.unstable_mockModule('../business-packs/student-operations/student-document-rechecks.js',()=>({StudentDocumentRechecks:class {schedule=scheduleRechecks;}}));
 jest.unstable_mockModule('../database/database.service.js',()=>({DatabaseService:class {

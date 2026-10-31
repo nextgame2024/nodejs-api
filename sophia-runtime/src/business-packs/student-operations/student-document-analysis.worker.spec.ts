@@ -4,6 +4,7 @@ import { StudentDocumentAnalysisWorker } from './student-document-analysis.worke
 import { StudentDocumentAnalysisQueue } from './student-document-analysis.queue.js';
 import { OpenAIDocumentExtractionProvider,DocumentExtractionError } from './openai-document-extraction.provider.js';
 import { analysisVerdict } from './student-document-analysis.service.js';
+import { studentDocumentTempStorage } from './student-document-temp-storage.js';
 import type { DatabaseService } from '../../database/database.service.js';
 import type { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 const extraction={kind:'passport',studentName:'Example Student',evidence:[{page:1,quote:'Expiry date'}],issues:[],expiresOn:'2035-08-06',mrzExpiryMatches:true};
@@ -14,7 +15,7 @@ describe('Document analysis execution',()=>{
   beforeEach(()=>{process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='true';process.env.STUDENT_DOCUMENT_ANALYSIS_MODEL='fixture-model';process.env.OPENAI_API_KEY='fixture-key';process.env.SOPHIA_RUNTIME_DATABASE_URL='postgres://example';});
   afterEach(()=>{jest.restoreAllMocks();process.env={...env};});
   function worker(){
-    const db={tenantReadTransaction:jest.fn(async(_tenant:unknown,work:any)=>work({query:async()=>({rows:[{mime_type:'application/pdf',size_bytes:bytes.length,xero_connection_id:'connection',source_kind:'Contacts',source_id:'contact',attachment_id:'attachment'}]})}))};
+    const db={tenantReadTransaction:jest.fn(async(_tenant:unknown,work:any)=>work({query:async()=>({rows:[{operation_id:'operation',content_sha256:lease.contentSha256,mime_type:'application/pdf',size_bytes:bytes.length,xero_connection_id:'connection',source_kind:'Contacts',source_id:'contact',attachment_id:'attachment'}]})}))};
     const xero={attachmentContent:jest.fn(async()=>bytes)};
     const provider={extract:jest.fn(async()=>({extraction,provider:'fixture',model:'fixture',inputTokens:1,outputTokens:1}))};
     const claim=jest.spyOn(StudentDocumentAnalysisQueue.prototype,'claim').mockResolvedValue(lease);
@@ -24,6 +25,38 @@ describe('Document analysis execution',()=>{
   }
   test('disabled analysis never claims or calls providers',async()=>{
     const w=worker();process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED='false';expect(await w.run.processOne('tenant')).toBe(false);expect(w.claim).not.toHaveBeenCalled();
+  });
+  function cache(){
+    jest.spyOn(studentDocumentTempStorage,'enabled','get').mockReturnValue(true);
+    jest.spyOn(studentDocumentTempStorage,'key').mockReturnValue('scoped-key');
+    return {read:jest.spyOn(studentDocumentTempStorage,'read').mockResolvedValue(bytes),
+      remove:jest.spyOn(studentDocumentTempStorage,'remove').mockResolvedValue(undefined)};
+  }
+  test('uses cached upload bytes without a provider download and removes them after completion',async()=>{
+    const c=cache(),w=worker();await w.run.processOne('tenant');
+    expect(w.xero.attachmentContent).not.toHaveBeenCalled();expect(w.provider.extract).toHaveBeenCalledTimes(1);
+    expect(c.remove).toHaveBeenCalledWith('scoped-key');
+  });
+  test('retains cached bytes for retryable failures and falls back when the cache expires',async()=>{
+    const c=cache(),w=worker();w.provider.extract.mockRejectedValueOnce(new DocumentExtractionError('rate_limited',true));
+    await w.run.processOne('tenant');expect(c.remove).not.toHaveBeenCalled();
+    c.read.mockRejectedValueOnce(new Error('expired'));await w.run.processOne('tenant');
+    expect(w.xero.attachmentContent).toHaveBeenCalledTimes(1);expect(c.remove).toHaveBeenCalledTimes(1);
+  });
+  test('rejects corrupted cached content before extraction',async()=>{
+    const c=cache(),w=worker();c.read.mockResolvedValue(Buffer.from('changed'));
+    await w.run.processOne('tenant');expect(w.provider.extract).not.toHaveBeenCalled();
+    expect(w.fail).toHaveBeenCalledWith('tenant','job','token','source_changed',false);
+    expect(c.remove).toHaveBeenCalledTimes(1);
+  });
+  test('runs two jobs concurrently and waits for both even when one fails',async()=>{
+    const w=worker();let finish!:()=>void;
+    const process=jest.spyOn(w.run,'processOne').mockRejectedValueOnce(new Error('claim failed'))
+      .mockImplementationOnce(()=>new Promise<boolean>(resolve=>{finish=()=>resolve(true);}));
+    let settled=false;
+    const batch=w.run.processBatch('tenant').catch(error=>{settled=true;return error;});
+    await Promise.resolve();await Promise.resolve();expect(process).toHaveBeenCalledTimes(2);expect(settled).toBe(false);
+    finish();expect(await batch).toEqual(new Error('claim failed'));
   });
   test('uses authorized stored location, verifies hash, publishes once',async()=>{
     const w=worker();expect(await w.run.processOne('tenant')).toBe(true);

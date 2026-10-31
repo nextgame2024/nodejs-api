@@ -814,6 +814,22 @@ suite('Case management against disposable PostgreSQL',()=>{
     }
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
+  test('analysis concurrency is capped at two across independent queue instances',async()=>{
+    const id=String((await service.create(p,{userId:user},'analysis-concurrency-case')).caseId);
+    for(let i=0;i<3;i++)await transaction(tenant,async db=>{
+      const documentId=(await db.query(`INSERT INTO sophia_runtime.student_operations_case_documents
+        (customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes)
+        VALUES($1,$2,$3,'Contacts',$4,$5,'test.pdf','application/pdf',100) RETURNING document_id`,[tenant,id,connection,invoice,randomUUID()])).rows[0].document_id;
+      await enqueueDocumentAnalysis(db,tenant,{caseId:id,documentId,contentSha256:'b'.repeat(64),kind:'passport'});
+    });
+    const makeQueue=()=>new StudentDocumentAnalysisQueue({tenantTransaction:transaction} as DatabaseService);
+    const claimed=(await Promise.all(Array.from({length:4},()=>makeQueue().claim(tenant)))).filter(v=>v!==null);
+    expect(claimed).toHaveLength(2);expect(new Set(claimed.map(v=>v.jobId)).size).toBe(2);
+    expect(await makeQueue().claim(tenant)).toBeNull();
+    await makeQueue().fail(tenant,claimed[0].jobId,claimed[0].leaseToken,'invalid_output',false);
+    const third=(await makeQueue().claim(tenant))!;expect(third).not.toBeNull();
+    for(const job of [claimed[1],third])await makeQueue().fail(tenant,job.jobId,job.leaseToken,'invalid_output',false);
+  });
   test('manual review controls document holds and prepares eight immutable tenant-scoped Sophia drafts without Xero writes',async()=>{
     const keys=['STUDENT_DOCUMENT_WORKFLOW_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);keys.forEach(k=>process.env[k]='true');
     try{

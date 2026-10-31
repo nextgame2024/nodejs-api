@@ -20,6 +20,7 @@ export interface AnalysisLease {
   jobId: string; caseId: string; documentId: string; contentSha256: string;
   kind: z.infer<typeof documentKind>; schemaVersion: string; leaseToken: string; attempts: number;
 }
+export const DOCUMENT_ANALYSIS_CONCURRENCY=2;
 
 /** Called inside the upload finalization transaction. */
 export async function enqueueDocumentAnalysis(db: PoolClient, tenantId: string, input: unknown): Promise<string> {
@@ -42,6 +43,12 @@ export class StudentDocumentAnalysisQueue {
   async claim(tenantId: string): Promise<AnalysisLease | null> {
     return this.database.tenantTransaction(tenantId, async db => {
       const s = caseSchema();
+      // Serialize only admission, across all worker processes for this tenant.
+      // Never hold the lock during document downloads or model calls.
+      await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`student-document-analysis:${tenantId}`]);
+      const active=await db.query(`SELECT count(*)::int AS total FROM ${s}.student_document_analysis_jobs
+        WHERE customer_id=$1 AND status='processing' AND lease_expires_at>now()`,[tenantId]);
+      if(active.rows[0].total>=DOCUMENT_ANALYSIS_CONCURRENCY)return null;
       // A worker that dies on its final attempt must still reach a terminal state.
       await db.query(`UPDATE ${s}.student_document_analysis_jobs SET status='failed',lease_token=NULL,
         lease_expires_at=NULL,error_code=coalesce(error_code,'provider_unavailable'),updated_at=now()
