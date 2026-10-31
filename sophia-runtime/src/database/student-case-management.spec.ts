@@ -400,6 +400,39 @@ suite('Case management against disposable PostgreSQL',()=>{
       expect(xero.deleteFile).toHaveBeenCalledTimes(3);expect(xero.deleteFile).toHaveBeenLastCalledWith(tenant,connection,user);expect((await docs.list(p,id,{})).documents).toHaveLength(0);
     }finally{if(old===undefined)delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;else process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED=old;}
   });
+  test('Files replacement rolls back a failed commit and retries immediately without repeating provider writes',async()=>{
+    const old=process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED='true';
+    try{
+      const oldFile=randomUUID(),newFile=randomUUID();
+      const xero={uploadFile:jest.fn().mockResolvedValueOnce({fileId:oldFile}).mockResolvedValueOnce({fileId:newFile}),
+        associateFileWithContact:jest.fn().mockResolvedValue(undefined),deleteFile:jest.fn().mockResolvedValue(undefined)};
+      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+      const docs=new StudentOperationsCaseDocumentsService(database,service,xero as unknown as XeroConnectorService);
+      const id=String((await service.create(p,{userId:user},'files-replace-rollback-case')).caseId);
+      const type=(await types.list(p)).types.find(t=>t.status==='active')!;
+      const original={buffer:Buffer.from('%PDF-1.7\nOriginal\n%%EOF'),originalname:'original.pdf',mimetype:'application/pdf'};
+      const uploaded=await docs.upload(p,id,{documentTypeId:type.documentTypeId},original,'files-replace-rollback-upload');
+      const replacement={...original,buffer:Buffer.from('%PDF-1.7\nChanged\n%%EOF'),originalname:'changed.pdf'};
+      const failure=new Error('simulated local commit failure');
+      const failingCases={authorizedCase:service.authorizedCase.bind(service),activity:jest.fn().mockRejectedValue(failure)};
+      const failingDocs=new StudentOperationsCaseDocumentsService(database,failingCases as unknown as StudentOperationsCasesService,xero as unknown as XeroConnectorService);
+      await expect(failingDocs.replace(p,id,String(uploaded.documentId),replacement,'files-replace-rollback-first')).rejects.toThrow(failure);
+      const state=(await transaction(tenant,db=>db.query(`SELECT r.status,r.lease_token,r.lease_expires_at,r.new_provider_file_id,d.xero_file_id
+        FROM sophia_runtime.student_operations_document_replacements r
+        JOIN sophia_runtime.student_operations_case_documents d USING(customer_id,case_id,document_id)
+        WHERE r.customer_id=$1 AND r.document_id=$2`,[tenant,uploaded.documentId]))).rows[0];
+      expect(state).toMatchObject({status:'associated',lease_token:null,lease_expires_at:null,new_provider_file_id:newFile,xero_file_id:oldFile});
+      expect(xero.deleteFile).not.toHaveBeenCalled();
+      await expect(docs.replace(p,id,String(uploaded.documentId),replacement,'files-replace-rollback-new-key'))
+        .resolves.toEqual({documentId:uploaded.documentId,replaced:true,cleanupPending:false});
+      expect(xero.uploadFile).toHaveBeenCalledTimes(2);
+      expect(xero.associateFileWithContact).toHaveBeenCalledTimes(2);
+      expect(xero.deleteFile).toHaveBeenCalledTimes(1);
+      expect(xero.deleteFile).toHaveBeenCalledWith(tenant,connection,oldFile);
+      expect((await transaction(tenant,db=>db.query('SELECT xero_file_id,attachment_id FROM sophia_runtime.student_operations_case_documents WHERE customer_id=$1 AND document_id=$2',[tenant,uploaded.documentId]))).rows[0])
+        .toEqual({xero_file_id:newFile,attachment_id:newFile});
+    }finally{if(old===undefined)delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;else process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED=old;}
+  });
   test('upload validates permissions, tenant, file bytes, type and Contact identity before any provider request',async()=>{
     const xero={uploadAttachment:jest.fn()};
     const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);

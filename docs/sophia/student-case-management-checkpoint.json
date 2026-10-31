@@ -1,4 +1,12 @@
 {
+  "replacementFix20261031": {
+    "status": "locally_verified_not_deployed",
+    "cause": "Real PostgreSQL reproduced inconsistent types deduced for parameter $4 in the replacement commit UPDATE; the failed transaction retained its lease and subsequent retries returned 409.",
+    "change": "Explicit UUID casts for both file ID assignments; verify lease ownership before commit and conditionally release the owned lease after local commit failure, preserving provider receipts.",
+    "verification": "On isolated PostgreSQL using sophia_runtime_app: LOCAL_CASE_MANAGEMENT_TEST_DATABASE_URL=<disposable localhost database> npm test -- --runTestsByPath src/database/student-case-management.spec.ts --testNamePattern='Files|document types|Contact-only' (6 passed). npm run typecheck passed.",
+    "coverage": "Legacy and Files replacement; forced commit rollback preserves the old file, releases the lease, and retries under a new browser key without repeating Files upload or association.",
+    "limitations": "No production data or live Xero mutation performed. An initial broader test selection also exposed an unrelated expiry/checklist assertion failure; that behavior was not changed. Backend deployment required; no migration."
+  },
   "date": "2026-10-16",
   "status": "case_backfill_applied;_document_worker_and_reconnect_warning_local_not_deployed_or_activated",
   "scope": "Student Operations backend cases, repeatable initial migration and Xero document discovery/download foundation",

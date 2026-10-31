@@ -218,19 +218,29 @@ export class StudentOperationsCaseDocumentsService {
           if(!saved.rowCount)throw new ConflictException('Replacement confirmation is pending. Retry the same file.');
         });
       }
-      await this.database.tenantTransaction(p.tenantId,async db=>{
+      try{await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,id,true);
         const replacement=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND replacement_id=$2 FOR UPDATE`,[p.tenantId,job.replacement_id])).rows[0];
+        if(replacement.lease_token!==lease)throw new ConflictException('This replacement is being finalized by another request. Retry shortly.');
         const providerId=replacement.storage_provider==='xero_files'?replacement.new_provider_file_id:replacement.provider_attachment_id;
         if(!providerId||replacement.storage_provider==='xero_files'&&!replacement.provider_associated_at)throw new ConflictException('Replacement confirmation is pending. Retry the same file.');
         const displayName=replacement.storage_provider==='xero_files'?replacement.file_name:job.document.file_name;
-        const replaced=await db.query(`UPDATE ${s}.student_operations_case_documents SET attachment_id=$4,xero_file_id=CASE WHEN storage_provider='xero_files' THEN $4 ELSE NULL END,file_name=$5,mime_type=$6,size_bytes=$7,last_seen_at=now(),discovered_at=now() WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL RETURNING document_id`,[p.tenantId,id,documentId,providerId,displayName,mime,bytes.length]);
+        const replaced=await db.query(`UPDATE ${s}.student_operations_case_documents SET attachment_id=$4::uuid,xero_file_id=CASE WHEN storage_provider='xero_files' THEN $4::uuid ELSE NULL END,file_name=$5,mime_type=$6,size_bytes=$7,last_seen_at=now(),discovered_at=now() WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL RETURNING document_id`,[p.tenantId,id,documentId,providerId,displayName,mime,bytes.length]);
         if(!replaced.rowCount)throw new ConflictException('The document is no longer available to replace.');
         await db.query(`UPDATE ${s}.student_case_offers SET is_current=false,status='superseded',record_version=record_version+1 WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND is_current`,[p.tenantId,id,documentId]);
         await enqueueUploadedAnalysis(db,p.tenantId,id,documentId,job.document.document_type_id,contentHash);
         await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='committed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND replacement_id=$2`,[p.tenantId,job.replacement_id]);
         await this.cases.activity(db,p,id,'case.document_replaced','Document replaced in Xero');await reconcileDocumentChecklist(db,p.tenantId,id);
-      });
+      });}catch(error){
+        // Provider writes have finished and their receipts are persisted. Once
+        // the local transaction ends, release only this request's lease so a
+        // retry can resume immediately without repeating the Files upload.
+        try{await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_operations_document_replacements
+          SET lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE customer_id=$1 AND replacement_id=$2 AND lease_token=$3`,[p.tenantId,job.replacement_id,lease]));}
+        catch{/* Preserve the original error; the bounded lease will expire. */}
+        throw error;
+      }
     }
     // The new provider file and Sophia document row are already committed at
     // this point. Old-file cleanup is a separate idempotent phase: a provider
