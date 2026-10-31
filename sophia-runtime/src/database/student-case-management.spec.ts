@@ -385,16 +385,19 @@ suite('Case management against disposable PostgreSQL',()=>{
     const old=process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED='true';
     try{
       const bytes=Buffer.from('%PDF-1.7\nOriginal\n%%EOF'),replacement=Buffer.from('%PDF-1.7\nReplacement\n%%EOF');
-      let uploads=0;const xero={uploadFile:jest.fn(async()=>({fileId:++uploads===1?college:user})),associateFileWithContact:jest.fn(async()=>{}),fileContent:jest.fn(async()=>replacement),deleteFile:jest.fn(async()=>{})};
+      let uploads=0;const xero={uploadFile:jest.fn(async()=>({fileId:++uploads===1?college:user})),associateFileWithContact:jest.fn(async()=>{}),fileContent:jest.fn(async()=>replacement),deleteFile:jest.fn().mockRejectedValueOnce(new Error('temporary cleanup failure')).mockResolvedValue(undefined)};
       const docs=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,xero as unknown as XeroConnectorService);
       const id=String((await service.create(p,{userId:user},'files-document-case')).caseId),type=(await types.list(p)).types.find(t=>t.status==='active')!;
       const uploaded=await docs.upload(p,id,{documentTypeId:type.documentTypeId},{buffer:bytes,originalname:'offer.pdf',mimetype:'application/pdf'},'files-upload-document');
       expect((await docs.list(p,id,{})).documents[0]).toMatchObject({documentId:uploaded.documentId,canReplaceFile:true,canDelete:true});
-      await docs.replace(p,id,String(uploaded.documentId),{buffer:replacement,originalname:'replacement.pdf',mimetype:'application/pdf'},'files-replace-document');
+      const replacementFile={buffer:replacement,originalname:'replacement.pdf',mimetype:'application/pdf'};
+      await expect(docs.replace(p,id,String(uploaded.documentId),replacementFile,'files-replace-document')).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_replacement_cleanup_pending'})});
+      await expect(docs.replace(p,id,String(uploaded.documentId),replacementFile,'files-replace-document-after-reload')).resolves.toMatchObject({documentId:uploaded.documentId,replaced:true,cleanupPending:false});
       expect(xero.associateFileWithContact).toHaveBeenCalledTimes(2);expect(xero.deleteFile).toHaveBeenCalledWith(tenant,connection,college);
+      expect(xero.uploadFile).toHaveBeenCalledTimes(2);
       expect((await docs.content(p,id,String(uploaded.documentId))).buffer.equals(replacement)).toBe(true);expect(xero.fileContent).toHaveBeenCalledWith(tenant,connection,user);
       expect(await docs.remove(p,id,String(uploaded.documentId),'files-delete-document')).toEqual({deleted:true});expect(await docs.remove(p,id,String(uploaded.documentId),'files-delete-document')).toEqual({deleted:true});
-      expect(xero.deleteFile).toHaveBeenCalledTimes(2);expect(xero.deleteFile).toHaveBeenLastCalledWith(tenant,connection,user);expect((await docs.list(p,id,{})).documents).toHaveLength(0);
+      expect(xero.deleteFile).toHaveBeenCalledTimes(3);expect(xero.deleteFile).toHaveBeenLastCalledWith(tenant,connection,user);expect((await docs.list(p,id,{})).documents).toHaveLength(0);
     }finally{if(old===undefined)delete process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED;else process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED=old;}
   });
   test('upload validates permissions, tenant, file bytes, type and Contact identity before any provider request',async()=>{

@@ -163,18 +163,27 @@ export class StudentOperationsCaseDocumentsService {
       await this.cases.authorizedCase(db,p,id,true);
       const document=(await db.query(`SELECT * FROM ${s}.student_operations_case_documents WHERE customer_id=$1 AND case_id=$2 AND document_id=$3 AND deleted_at IS NULL FOR UPDATE`,[p.tenantId,id,documentId])).rows[0];
       if(!document)throw new NotFoundException('Document not found.');
-      const existing=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key])).rows[0];
+      let existing=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key])).rows[0];
       if(existing&&existing.request_fingerprint!==fingerprint)throw new ConflictException('The replacement request changed. Select the file again.');
       if(!existing){
         const deleting=await db.query(`SELECT 1 FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND document_id=$2 AND status<>'completed'`,[p.tenantId,documentId]);
         if(deleting.rowCount)throw new ConflictException('This document is being deleted and cannot be replaced.');
-        const active=await db.query(`SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND document_id=$2 AND status<>'completed'`,[p.tenantId,documentId]);
-        if(active.rowCount)throw new ConflictException('This document is already being replaced. Retry shortly.');
-        const remoteName=document.storage_provider==='xero_files'?`${replacementId}-${selectedName}`:String(document.file_name);
-        await db.query(`INSERT INTO ${s}.student_operations_document_replacements(customer_id,replacement_id,case_id,document_id,actor_identity_user_id,idempotency_key,request_fingerprint,storage_provider,old_provider_file_id,file_name,mime_type,size_bytes,content_sha256)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[p.tenantId,replacementId,id,documentId,p.identityUserId,key,fingerprint,document.storage_provider,document.xero_file_id,remoteName,mime,bytes.length,contentHash]);
+        const active=(await db.query(`SELECT * FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND document_id=$2 AND status<>'completed' FOR UPDATE`,[p.tenantId,documentId])).rows[0];
+        if(active){
+          if(active.actor_identity_user_id!==p.identityUserId||active.request_fingerprint!==fingerprint)
+            throw new ConflictException('This document is already being replaced. Retry shortly.');
+          // A modal/page reload creates a new browser idempotency key. Resume
+          // only the exact same actor + file fingerprint; retain the original
+          // durable key so an older client retry remains safe as well.
+          existing=active;
+        }else{
+          const remoteName=document.storage_provider==='xero_files'?`${replacementId}-${selectedName}`:String(document.file_name);
+          await db.query(`INSERT INTO ${s}.student_operations_document_replacements(customer_id,replacement_id,case_id,document_id,actor_identity_user_id,idempotency_key,request_fingerprint,storage_provider,old_provider_file_id,file_name,mime_type,size_bytes,content_sha256)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[p.tenantId,replacementId,id,documentId,p.identityUserId,key,fingerprint,document.storage_provider,document.xero_file_id,remoteName,mime,bytes.length,contentHash]);
+        }
       }
-      const row=(await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3 FOR UPDATE`,[p.tenantId,p.identityUserId,key])).rows[0];
+      const durableReplacementId=existing?.replacement_id??replacementId;
+      const row=(await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND replacement_id=$2 FOR UPDATE`,[p.tenantId,durableReplacementId])).rows[0];
       if(row.status==='completed'||row.status==='committed')return {...row,document};
       if(row.leased)throw new ConflictException('This replacement is still processing. Retry the same file in two minutes.');
       const acquired=(await db.query(`UPDATE ${s}.student_operations_document_replacements SET status=CASE WHEN status='ready' THEN 'processing' ELSE status END,lease_token=$3,lease_expires_at=now()+interval '2 minutes',updated_at=now() WHERE customer_id=$1 AND replacement_id=$2 RETURNING *`,[p.tenantId,row.replacement_id,lease])).rows[0];
