@@ -103,6 +103,7 @@ export type XeroInvoiceRecord = {
   total: number;
   amountPaid: number;
   amountDue: number;
+  amountCredited?: number;
   updatedAt: string | null;
 };
 
@@ -151,6 +152,22 @@ export class XeroClient {
 
   withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
     return this.requestPolicy.run(policy, request);
+  }
+
+  async removeInvoice(accessToken:string,tenantId:string,invoiceId:string,status:'DELETED'|'VOIDED',key:string):Promise<XeroInvoiceRecord>{
+    if(!xeroUuid.test(invoiceId)||!['DELETED','VOIDED'].includes(status)||!/^[a-f0-9]{64}$/.test(key))throw new BadGatewayException('Invalid invoice request.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}`,{method:'POST',
+      headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},
+      body:JSON.stringify({Invoices:[{InvoiceID:invoiceId,Status:status}]}),redirect:'error',signal:AbortSignal.timeout(30_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Invoice change could not be confirmed. Retry the same action.');
+    const invoice=xeroInvoiceRecord(record(payload.Invoices[0]));
+    if(invoice.invoiceId!==invoiceId||invoice.status!==status)throw new BadGatewayException('Invoice change could not be confirmed. Retry the same action.');
+    return invoice;
   }
 
   async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<XeroInvoiceReceipt> {
@@ -1049,7 +1066,7 @@ function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
     collegeName:invoiceReference,paymentTrack:trackingOption(lineItems,['payment track']),sentToContact:value.SentToContact===true,lineItems:lineItems.map(invoiceLineItem),
     type:requiredString(value.Type,'invoice type'),status:requiredString(value.Status,'invoice status'),invoiceDate:optionalDate(value.DateString)??optionalXeroDate(value.Date),
     dueDate:optionalDate(value.DueDateString)??optionalXeroDate(value.DueDate),currencyCode:optionalString(value.CurrencyCode),total,amountPaid,
-    amountDue:optionalNumber(value.AmountDue)??Math.max(0,total-amountPaid),updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
+    amountDue:optionalNumber(value.AmountDue)??Math.max(0,total-amountPaid),amountCredited:optionalNumber(value.AmountCredited)??0,updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
 function optionalDate(value: unknown): string | null {

@@ -1,4 +1,10 @@
 {
+  "invoiceRemovals20261031": {
+    "status": "locally_verified_not_deployed",
+    "details": "student-case-invoice-removals.md",
+    "verification": "45 focused backend tests; PostgreSQL student-case-management.spec.ts selected by 'invoice removal'; 80 manager-case-view ChromeHeadless tests; backend/frontend TypeScript checks passed.",
+    "rollout": "Apply migration 109 before API deployment, then deploy frontend. No live invoice deletion, voiding or production migration performed."
+  },
   "validationPerformance20261031": {
     "status": "locally_verified_not_deployed",
     "details": "student-document-validation-performance.md",

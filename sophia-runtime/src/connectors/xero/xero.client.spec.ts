@@ -17,6 +17,19 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it.each(['DELETED','VOIDED'] as const)('confirms an exact %s status update with a stable key',async status=>{
+    const id='11111111-1111-4111-8111-111111111111',contact='22222222-2222-4222-8222-222222222222';
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,Contact:{ContactID:contact},Type:'ACCREC',Status:status,Total:100,AmountPaid:0,AmountDue:0}]})));
+    expect(await new XeroClient().removeInvoice('token','tenant',id,status,'a'.repeat(64))).toMatchObject({invoiceId:id,status});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({Invoices:[{InvoiceID:id,Status:status}]});
+    expect(fetch.mock.calls[0][1]?.headers).toMatchObject({'Idempotency-Key':'a'.repeat(64)});
+  });
+  it('does not report an unconfirmed deletion as successful',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,Contact:{ContactID:id},Type:'ACCREC',Status:'DRAFT',Total:100}]})));
+    await expect(new XeroClient().removeInvoice('token','tenant',id,'DELETED','a'.repeat(64))).rejects.toThrow('could not be confirmed');
+  });
   it('reads only active tracking options and sends exact option names with their IDs',async()=>{
     const category='22222222-2222-4222-8222-222222222222',option='33333333-3333-4333-8333-333333333333',id='11111111-1111-4111-8111-111111111111';
     const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({TrackingCategories:[{TrackingCategoryID:category,Name:'Payment Track',Status:'ACTIVE',Options:[{TrackingOptionID:option,Name:'Pending',Status:'ACTIVE'},{TrackingOptionID:id,Name:'Old pending',Status:'ARCHIVED'}]}]})))

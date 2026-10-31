@@ -7,6 +7,7 @@ import { StudentOperationsCasesService } from '../business-packs/student-operati
 import type { StudentOperationsWorkspacePrincipal } from '../business-packs/student-operations/student-operations-workspace.service.js';
 import { runCaseMigration } from '../../scripts/migrate-student-cases.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
+import { StudentCaseInvoiceRemovalsService } from '../business-packs/student-operations/student-case-invoice-removals.service.js';
 import { XeroConnectorService } from '../connectors/xero/xero-connector.service.js';
 import { StudentPrimaryXeroContact } from '../business-packs/student-operations/student-primary-xero-contact.js';
 import {StudentInvoiceProjectionRecovery} from '../business-packs/student-operations/student-invoice-projection-recovery.js';
@@ -104,7 +105,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -812,6 +813,50 @@ suite('Case management against disposable PostgreSQL',()=>{
       keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='archived' WHERE document_type_id=$1`,[passportType]));
     }
+  });
+  test('invoice removal checks live status, preserves tenant boundaries and recovers a provider success after local rollback',async()=>{
+    const id=String((await service.createStudent(p,{studentName:'Invoice Removal Student',studentEmail:'removal@example.test'},'invoice-removal-student')).caseId);
+    const invoiceId=randomUUID();
+    const reference=(await transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1) AS reference',[id]))).rows[0].reference;
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices
+      (customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,total,amount_paid,amount_due,currency_code)
+      VALUES($1,$2,$3,$4,$5,'INV-REMOVE','ACCREC','DRAFT',100,0,100,'AUD')`,[tenant,connection,invoiceId,invoice,reference]));
+    await service.linkInvoice(p,id,{connectionId:connection,invoiceId},'invoice-removal-link');
+    let status='PAID';
+    const record=()=>({invoiceId,contactId:invoice,status,type:'ACCREC',amountPaid:status==='PAID'?100:0,amountDue:status==='DRAFT'?100:0,total:100,updatedAt:new Date().toISOString()});
+    const xero={invoiceById:jest.fn(async()=>record()),removeInvoice:jest.fn(async(_tenant:unknown,_connection:unknown,_invoice:unknown,target:string)=>{status=target;return record();})};
+    const db={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+    const removals=new StudentCaseInvoiceRemovalsService(db,service,xero as unknown as XeroConnectorService);
+    expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===invoiceId)?.removalAction).toBe('delete');
+    await expect(removals.remove({...p,role:'advisor'},id,connection,invoiceId,{action:'delete'},'invoice-removal-advisor')).rejects.toThrow();
+    await expect(removals.remove({...p,tenantId:randomUUID()},id,connection,invoiceId,{action:'delete'},'invoice-removal-tenant')).rejects.toThrow();
+    expect(xero.invoiceById).not.toHaveBeenCalled();
+    await expect(removals.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-live-paid')).rejects.toThrow('can no longer');
+    expect(xero.removeInvoice).not.toHaveBeenCalled();
+    status='DRAFT';
+    const failingCases={authorizedCase:service.authorizedCase.bind(service),activity:async()=>{throw new Error('local commit failed');}};
+    const failing=new StudentCaseInvoiceRemovalsService(db,failingCases as unknown as StudentOperationsCasesService,xero as unknown as XeroConnectorService);
+    await expect(failing.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-retry')).rejects.toThrow('local commit failed');
+    expect(status).toBe('DELETED');expect(xero.removeInvoice).toHaveBeenCalledTimes(1);
+    await expect(removals.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-retry-after-reload')).resolves.toEqual({invoiceId,status:'DELETED'});
+    await expect(removals.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-retry-after-reload')).resolves.toEqual({invoiceId,status:'DELETED'});
+    expect(xero.removeInvoice).toHaveBeenCalledTimes(1);
+    expect((await service.invoices(p,id,{})).invoices.some(i=>i.invoiceId===invoiceId)).toBe(false);
+    expect((await service.activities(p,id,{})).activity.filter(a=>a.eventType==='case.invoice_deleted')).toHaveLength(1);
+    const approvedId=randomUUID();
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices
+      (customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status,total,amount_paid,amount_due)
+      VALUES($1,$2,$3,$4,$5,'ACCREC','AUTHORISED',100,0,100)`,[tenant,connection,approvedId,invoice,reference]));
+    await service.linkInvoice(p,id,{connectionId:connection,invoiceId:approvedId},'invoice-removal-approved-link');
+    expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===approvedId)?.removalAction).toBe('void');
+    const approved={...record(),invoiceId:approvedId,status:'AUTHORISED',amountPaid:0,amountDue:100,amountCredited:0};
+    xero.invoiceById.mockResolvedValueOnce({...approved,amountDue:70,amountCredited:30} as ReturnType<typeof record>);
+    await expect(removals.remove(p,id,connection,approvedId,{action:'void'},'invoice-removal-credited')).rejects.toThrow('can no longer');
+    xero.invoiceById.mockResolvedValueOnce(approved);
+    xero.removeInvoice.mockResolvedValueOnce({...approved,status:'VOIDED',amountDue:0});
+    await expect(removals.remove(p,id,connection,approvedId,{action:'void'},'invoice-removal-approved')).resolves.toEqual({invoiceId:approvedId,status:'VOIDED'});
+    expect((await service.invoices(p,id,{})).total).toBe(0);
+    await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_removals'))).rejects.toThrow('permission denied');
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
   test('analysis concurrency is capped at two across independent queue instances',async()=>{

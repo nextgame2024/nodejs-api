@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { StudentCaseInvoiceRemovalsService } from './student-case-invoice-removals.service.js';
 import { StudentCaseInvoiceDraftsService } from './student-case-invoice-drafts.js';
 import { StudentDocumentTypesService } from './student-document-types.service.js';
 import { StudentDocumentAnalysisService } from './student-document-analysis.service.js';
@@ -28,6 +29,7 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
     XeroWebhookController,
   ],
   providers: [
+    StudentCaseInvoiceRemovalsService,
     StudentCaseInvoiceDraftsService,
     StudentDocumentAnalysisService,
     StudentDocumentTypesService,

@@ -9,10 +9,12 @@ import type { StudentOperationsWorkspacePrincipal as Principal } from './student
 import { DOCUMENT_CHECKLIST_KEYS,documentChecklistEnabled,documentChecklistEvidence,reconcileDocumentChecklist } from './student-document-checklist.js';
 import {INVOICE_CHECKLIST_KEYS,readInvoiceChecklist} from './student-invoice-checklist.js';
 import { documentWorkflowEnabled } from './student-document-analysis-state.js';
+import { invoiceRemovalAction } from './student-invoice-removal-policy.js';
 
 function caseInvoiceSource(s:string){return {
-  ids:`SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
-    UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'`,
+  ids:`SELECT linked.* FROM (SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
+    UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') linked
+    WHERE NOT EXISTS(SELECT 1 FROM ${s}.student_case_invoice_removals r WHERE r.customer_id=$1 AND r.xero_connection_id=linked.xero_connection_id AND r.xero_invoice_id=linked.xero_invoice_id AND r.completed)`,
   joins:`FROM invoice_ids ids
     LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
     LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
@@ -266,7 +268,8 @@ export class StudentOperationsCasesService {
         ${joins}
         ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       const count=await db.query(`SELECT count(*)::int total FROM (${invoiceIds}) invoices`,[p.tenantId,id]);
-      return {invoices:rows.rows,total:count.rows[0].total,page:q.page,limit:q.limit};
+      const canRemove=financial&&hasStudentOperationsPermission(p.role,'cases.manage')&&hasStudentOperationsPermission(p.role,'payments.prepare');
+      return {invoices:rows.rows.map(row=>({...row,removalAction:canRemove?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
     });
   }
 

@@ -487,6 +487,14 @@ export class XeroConnectorService {
     };
   }
 
+  async removeInvoice(tenantId:string,connectionId:string,invoiceId:string,status:'DELETED'|'VOIDED',key:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.invoices']).length&&missingScopes(connection.granted_scopes,['accounting.transactions']).length)
+      throw new ConflictException({errorCode:'xero_invoice_write_scope_missing',message:'An administrator must authorize invoice updates in company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key));
+  }
+
   async invoiceById(tenantId:string,connectionId:string,invoiceId:string){
     const connection=await this.loadConnection(tenantId,connectionId);
     if(missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length)
