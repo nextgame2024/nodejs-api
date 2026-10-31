@@ -391,7 +391,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       const uploaded=await docs.upload(p,id,{documentTypeId:type.documentTypeId},{buffer:bytes,originalname:'offer.pdf',mimetype:'application/pdf'},'files-upload-document');
       expect((await docs.list(p,id,{})).documents[0]).toMatchObject({documentId:uploaded.documentId,canReplaceFile:true,canDelete:true});
       const replacementFile={buffer:replacement,originalname:'replacement.pdf',mimetype:'application/pdf'};
-      await expect(docs.replace(p,id,String(uploaded.documentId),replacementFile,'files-replace-document')).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_replacement_cleanup_pending'})});
+      await expect(docs.replace(p,id,String(uploaded.documentId),replacementFile,'files-replace-document')).resolves.toMatchObject({documentId:uploaded.documentId,replaced:true,cleanupPending:true});
       await expect(docs.replace(p,id,String(uploaded.documentId),replacementFile,'files-replace-document-after-reload')).resolves.toMatchObject({documentId:uploaded.documentId,replaced:true,cleanupPending:false});
       expect(xero.associateFileWithContact).toHaveBeenCalledTimes(2);expect(xero.deleteFile).toHaveBeenCalledWith(tenant,connection,college);
       expect(xero.uploadFile).toHaveBeenCalledTimes(2);

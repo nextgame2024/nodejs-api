@@ -232,15 +232,26 @@ export class StudentOperationsCaseDocumentsService {
         await this.cases.activity(db,p,id,'case.document_replaced','Document replaced in Xero');await reconcileDocumentChecklist(db,p.tenantId,id);
       });
     }
+    // The new provider file and Sophia document row are already committed at
+    // this point. Old-file cleanup is a separate idempotent phase: a provider
+    // or bookkeeping failure must not tell the user that replacement failed
+    // after the new document became active.
     let cleanupPending=false;
     if(job.storage_provider==='xero_files'&&job.old_provider_file_id){
       try{await this.xero.deleteFile(p.tenantId,job.document.xero_connection_id,job.old_provider_file_id);}
       catch{cleanupPending=true;}
     }
-    if(cleanupPending)throw new ConflictException({errorCode:'xero_replacement_cleanup_pending',message:'The document was replaced, but Xero is still removing the previous file. Retry the same replacement.'});
-    if(!cleanupPending)await this.database.tenantTransaction(p.tenantId,async db=>{
-      await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='completed',updated_at=now() WHERE customer_id=$1 AND replacement_id=$2`,[p.tenantId,job.replacement_id]);
-    });
+    if(!cleanupPending){
+      try{
+        await this.database.tenantTransaction(p.tenantId,async db=>{
+          await db.query(`UPDATE ${s}.student_operations_document_replacements SET status='completed',updated_at=now() WHERE customer_id=$1 AND replacement_id=$2`,[p.tenantId,job.replacement_id]);
+        });
+      }catch{
+        // Keep the durable row in `committed`. Retrying the same file resumes
+        // cleanup/finalization without uploading or associating another file.
+        cleanupPending=true;
+      }
+    }
     return {documentId,replaced:true,cleanupPending};
   }
 
