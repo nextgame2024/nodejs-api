@@ -9,18 +9,38 @@ describe('request-scoped Xero invoice session',()=>{
   beforeEach(()=>{Object.assign(process.env,settings);});
   afterEach(()=>{jest.restoreAllMocks();for(const [key,old] of Object.entries(previous)){if(old===undefined)delete process.env[key];else process.env[key]=old;}});
   function fixture(){
-    let scopes=['accounting.invoices','accounting.settings.read'];
+    let scopes=['accounting.invoices','accounting.invoices.read','accounting.settings.read'];
     const query=jest.fn(async(sql:string,params:unknown[])=>({rows:sql.includes('token_ciphertext')
       ?[{token_ciphertext:params[0],token_expires_at:new Date(Date.now()+1800_000),status:'active'}]
       :[{xero_authorization_id:'authorization',xero_tenant_id:`provider-${params[0]}`,status:'active',granted_scopes:scopes}]}));
     const transact=jest.fn(async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query}));
-    const client={createInvoice:jest.fn(async()=>({invoiceId:'created'})),invoiceById:jest.fn(async()=>({invoiceId:'created'})),brandingThemes:jest.fn(async()=>[{brandingThemeId:'11111111-1111-4111-8111-111111111111',name:'Trust Open for Australia acc'}]),
+    const client={removeInvoice:jest.fn(async()=>({invoiceId:'created',status:'DELETED'})),createInvoice:jest.fn(async()=>({invoiceId:'created'})),invoiceById:jest.fn(async()=>({invoiceId:'created'})),brandingThemes:jest.fn(async()=>[{brandingThemeId:'11111111-1111-4111-8111-111111111111',name:'Trust Open for Australia acc'}]),
       trackingCategories:jest.fn(async()=>[{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Payment Track',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Pending'}]}]),
       withRequestPolicy:jest.fn(async(_policy:unknown,work:()=>Promise<unknown>)=>work())};
     const crypto={open:(cipher:string)=>JSON.stringify({accessToken:`token-${cipher}`,refreshToken:'refresh'})};
     const service=new XeroConnectorService({tenantTransaction:transact,tenantReadTransaction:transact} as never,client as never,crypto as never);
     return {service,client,query,revoke:()=>{scopes=[];},revokeSettings:()=>{scopes=['accounting.invoices'];}};
   }
+  it('reuses recently loaded form branding for creation but rechecks authorization',async()=>{
+    const f=fixture();await f.service.invoiceBrandingThemes('tenant-a','connection-a');
+    await (await f.service.invoiceCreationSession('tenant-a','connection-a')).createInvoice(value,'one');
+    expect(f.client.brandingThemes).toHaveBeenCalledTimes(1);
+    f.revokeSettings();await expect(f.service.invoiceBrandingThemes('tenant-a','connection-a')).rejects.toThrow('settings access');
+  });
+  it('shares removal credentials while keeping the live read and write under quota controls',async()=>{
+    const f=fixture(),session=await f.service.invoiceRemovalSession('tenant-a','connection-a');
+    await session.invoiceById('created');await session.removeInvoice('created','DELETED','key');
+    expect(f.query).toHaveBeenCalledTimes(2);expect(f.client.withRequestPolicy).toHaveBeenCalledTimes(2);
+    expect(f.client.removeInvoice).toHaveBeenCalledWith('token-tenant-a','provider-tenant-a','created','DELETED','key');
+    f.revoke();await expect(f.service.invoiceRemovalSession('tenant-a','connection-a')).rejects.toThrow('authorize invoice');
+  });
+  it('expires cached branding and does not retain failures',async()=>{
+    const f=fixture(),clock=jest.spyOn(Date,'now'),started=Date.now();
+    await f.service.invoiceBrandingThemes('tenant-a','connection-a');clock.mockReturnValue(started+301_000);
+    f.client.brandingThemes.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(f.service.invoiceBrandingThemes('tenant-a','connection-a')).rejects.toThrow();
+    await f.service.invoiceBrandingThemes('tenant-a','connection-a');expect(f.client.brandingThemes).toHaveBeenCalledTimes(3);
+  });
   it('shares connection/token work within a batch while every call keeps its own rate-limit policy',async()=>{
     const f=fixture(),session=await f.service.invoiceCreationSession('tenant-a','connection-a');
     await Promise.all([session.createInvoice(value,'key-1'),session.createInvoice(value,'key-2'),session.invoiceById('created')]);

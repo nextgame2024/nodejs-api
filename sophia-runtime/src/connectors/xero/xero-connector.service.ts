@@ -66,6 +66,18 @@ type AuthorizationRow = {
 
 @Injectable()
 export class XeroConnectorService {
+  private readonly invoiceThemeCache=new Map<string,{expires:number;value:Promise<Awaited<ReturnType<XeroClient['brandingThemes']>>>}>();
+  private cachedInvoiceThemes(tenantId:string,connectionId:string,connection:ConnectionRow,accessToken:string){
+    const key=JSON.stringify([tenantId,connectionId,connection.xero_authorization_id,connection.xero_tenant_id]);
+    const cached=this.invoiceThemeCache.get(key);
+    if(cached&&cached.expires>Date.now())return cached.value;
+    for(const [id,entry] of this.invoiceThemeCache)if(entry.expires<=Date.now())this.invoiceThemeCache.delete(id);
+    if(this.invoiceThemeCache.size>=100)this.invoiceThemeCache.delete(this.invoiceThemeCache.keys().next().value!);
+    const value=this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));
+    const entry={expires:Date.now()+300_000,value};this.invoiceThemeCache.set(key,entry);
+    void value.catch(()=>{if(this.invoiceThemeCache.get(key)===entry)this.invoiceThemeCache.delete(key);});
+    return value;
+  }
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(XeroClient) private readonly client: XeroClient,
@@ -243,7 +255,11 @@ export class XeroConnectorService {
     if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
       throw new ConflictException({errorCode:'xero_authorization_rejected',message:'Sales catalogue access requires read-only settings permission.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    return this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery');
+    const [catalogue,brandingThemes]=await Promise.all([
+      this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery'),
+      this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id),'discovery'),
+    ]);
+    return {...catalogue,brandingThemes};
   }
 
   async syncInvoicePage(
@@ -451,7 +467,7 @@ export class XeroConnectorService {
       if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
         throw new ConflictException({errorCode:'xero_branding_theme_scope_missing',message:'Invoice branding could not be checked. An administrator must authorize Xero settings access.'});
       let themes:Awaited<ReturnType<XeroClient['brandingThemes']>>;
-      try{themes=await this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));}
+      try{themes=await this.cachedInvoiceThemes(tenantId,connectionId,connection,accessToken);}
       catch{throw new ConflictException({errorCode:'xero_branding_theme_unavailable',message:'Invoice branding could not be verified. No invoice was sent; retry when Xero settings are available.'});}
       return themes;
     })());
@@ -495,7 +511,21 @@ export class XeroConnectorService {
     if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
       throw new ConflictException({errorCode:'xero_branding_theme_scope_missing',message:'An administrator must authorize invoice settings access.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    return this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));
+    return this.cachedInvoiceThemes(tenantId,connectionId,connection,accessToken);
+  }
+
+  async invoiceRemovalSession(tenantId:string,connectionId:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if((missingScopes(connection.granted_scopes,['accounting.invoices']).length&&missingScopes(connection.granted_scopes,['accounting.transactions']).length)||
+      (missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length))
+      throw new ConflictException('An administrator must authorize invoice read and update access.');
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig()),expires=Date.now()+60_000;
+    return {
+      invoiceById:(invoiceId:string)=>this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId)),
+      removeInvoice:(invoiceId:string,status:'DELETED'|'VOIDED',key:string)=>Date.now()>=expires
+        ?this.removeInvoice(tenantId,connectionId,invoiceId,status,key)
+        :this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key)),
+    };
   }
 
   async removeInvoice(tenantId:string,connectionId:string,invoiceId:string,status:'DELETED'|'VOIDED',key:string){

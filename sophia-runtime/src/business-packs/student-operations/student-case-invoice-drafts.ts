@@ -114,17 +114,20 @@ export class StudentCaseInvoiceDraftsService {
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
   async manualOptions(p:Principal,id:string){
+    const startedAt=Date.now();
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
     const options=await this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
       if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
-      const colleges=(await db.query(`SELECT college_id AS "collegeId",college_name AS name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId])).rows;
+      const colleges=(await db.query(`SELECT d.college_id AS "collegeId",d.college_name AS name,EXISTS(SELECT 1 FROM ${s}.student_operations_case_colleges c WHERE c.customer_id=d.customer_id AND c.college_id=d.college_id AND c.case_id=$2 AND c.is_primary) AS "isPrimary" FROM ${s}.student_operations_college_directory d WHERE d.customer_id=$1 ORDER BY lower(d.college_name),d.college_id`,[p.tenantId,id])).rows;
       return {caseVersion:c.record_version,advisors,student,colleges,catalogue:await readSalesCatalogue(db,p.tenantId)};
     });
-    // Explicit create-form settings read, outside the database transaction.
-    const brandingThemes=options.catalogue?await this.xero.invoiceBrandingThemes(p.tenantId,options.catalogue.connectionId):[];
+    const localMs=Date.now()-startedAt;
+    // Prefer the durable catalogue; old snapshots use a bounded settings cache.
+    const brandingThemes=options.catalogue?.brandingThemes??(options.catalogue?await this.xero.invoiceBrandingThemes(p.tenantId,options.catalogue.connectionId):[]);
+    this.logger.log({event:'manual_invoice_options_loaded',durationMs:Date.now()-startedAt,localMs,localBranding:!!options.catalogue?.brandingThemes});
     return {...options,brandingThemes};
   }
   async prepareManual(p:Principal,id:string,input:unknown,key?:string){

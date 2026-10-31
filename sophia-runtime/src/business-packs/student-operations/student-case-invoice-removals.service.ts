@@ -1,4 +1,4 @@
-import { BadRequestException,ConflictException,ForbiddenException,Inject,Injectable,NotFoundException } from '@nestjs/common';
+import { BadRequestException,ConflictException,ForbiddenException,Inject,Injectable,Logger,NotFoundException } from '@nestjs/common';
 import { createHash,randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
@@ -10,8 +10,10 @@ import { reconcileDocumentChecklist } from './student-document-checklist.js';
 
 @Injectable()
 export class StudentCaseInvoiceRemovalsService {
+  private readonly logger=new Logger(StudentCaseInvoiceRemovalsService.name);
   constructor(@Inject(DatabaseService) private readonly database:DatabaseService,private readonly cases:StudentOperationsCasesService,private readonly xero:XeroConnectorService){}
   async remove(p:Principal,id:string,connectionId:string,invoiceId:string,input:unknown,key?:string){
+    const startedAt=Date.now();
     if(!hasStudentOperationsPermission(p.role,'cases.manage')||!hasStudentOperationsPermission(p.role,'payments.prepare')||!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException();
     [id,connectionId,invoiceId].forEach(caseId);
     const action=(input as {action?:unknown}|null)?.action;
@@ -47,8 +49,10 @@ export class StudentCaseInvoiceRemovalsService {
       return {...row,contactId:linked.contact_id};
     });
     if(job.completed)return {invoiceId,status:target};
+    const claimMs=Date.now()-startedAt;
     try{
-      let invoice=await this.xero.invoiceById(p.tenantId,connectionId,invoiceId);
+      const session=await this.xero.invoiceRemovalSession(p.tenantId,connectionId);
+      let invoice=await session.invoiceById(invoiceId);
       if(invoice.invoiceId!==invoiceId||invoice.contactId!==job.contactId)throw new ConflictException('The invoice no longer matches this case. Reload the list.');
       // A retry after an uncertain write confirms the known final status first.
       if(invoice.status!==target){
@@ -64,9 +68,10 @@ export class StudentCaseInvoiceRemovalsService {
           });
           throw new ConflictException('This invoice can no longer be deleted or voided. Refresh the invoice list.');
         }
-        invoice=await this.xero.removeInvoice(p.tenantId,connectionId,invoiceId,target,createHash('sha256').update(`${p.tenantId}:${connectionId}:${invoiceId}:${target}`).digest('hex'));
+        invoice=await session.removeInvoice(invoiceId,target,createHash('sha256').update(`${p.tenantId}:${connectionId}:${invoiceId}:${target}`).digest('hex'));
       }
       if(invoice.invoiceId!==invoiceId||invoice.contactId!==job.contactId||invoice.status!==target)throw new ConflictException('The invoice change could not be confirmed. Retry the same action.');
+      const providerMs=Date.now()-startedAt-claimMs;
       await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,id,true);
         const owned=await db.query(`SELECT 1 FROM ${s}.student_case_invoice_removals WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND lease_token=$4 FOR UPDATE`,[p.tenantId,connectionId,invoiceId,lease]);
@@ -80,6 +85,7 @@ export class StudentCaseInvoiceRemovalsService {
         await this.cases.activity(db,p,id,action==='delete'?'case.invoice_deleted':'case.invoice_voided',action==='delete'?'Invoice deleted':'Invoice voided');
         await reconcileDocumentChecklist(db,p.tenantId,id);
       });
+      this.logger.log({event:'case_invoice_removed',durationMs:Date.now()-startedAt,claimMs,providerMs,finalizeMs:Date.now()-startedAt-claimMs-providerMs});
       return {invoiceId,status:target};
     }catch(error){
       try{await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_invoice_removals SET lease_token=NULL,lease_expires_at=NULL

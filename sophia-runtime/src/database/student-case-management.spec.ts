@@ -826,7 +826,8 @@ suite('Case management against disposable PostgreSQL',()=>{
     const record=()=>({invoiceId,contactId:invoice,status,type:'ACCREC',amountPaid:status==='PAID'?100:0,amountDue:status==='DRAFT'?100:0,total:100,updatedAt:new Date().toISOString()});
     const xero={invoiceById:jest.fn(async()=>record()),removeInvoice:jest.fn(async(_tenant:unknown,_connection:unknown,_invoice:unknown,target:string)=>{status=target;return record();})};
     const db={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
-    const removals=new StudentCaseInvoiceRemovalsService(db,service,xero as unknown as XeroConnectorService);
+    const connector={...xero,invoiceRemovalSession:async()=>({invoiceById:xero.invoiceById,removeInvoice:(invoice:string,target:string)=>xero.removeInvoice(tenant,connection,invoice,target)})} as unknown as XeroConnectorService;
+    const removals=new StudentCaseInvoiceRemovalsService(db,service,connector);
     expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===invoiceId)?.removalAction).toBe('delete');
     await expect(removals.remove({...p,role:'advisor'},id,connection,invoiceId,{action:'delete'},'invoice-removal-advisor')).rejects.toThrow();
     await expect(removals.remove({...p,tenantId:randomUUID()},id,connection,invoiceId,{action:'delete'},'invoice-removal-tenant')).rejects.toThrow();
@@ -835,7 +836,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(xero.removeInvoice).not.toHaveBeenCalled();
     status='DRAFT';
     const failingCases={authorizedCase:service.authorizedCase.bind(service),activity:async()=>{throw new Error('local commit failed');}};
-    const failing=new StudentCaseInvoiceRemovalsService(db,failingCases as unknown as StudentOperationsCasesService,xero as unknown as XeroConnectorService);
+    const failing=new StudentCaseInvoiceRemovalsService(db,failingCases as unknown as StudentOperationsCasesService,connector);
     await expect(failing.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-retry')).rejects.toThrow('local commit failed');
     expect(status).toBe('DELETED');expect(xero.removeInvoice).toHaveBeenCalledTimes(1);
     await expect(removals.remove(p,id,connection,invoiceId,{action:'delete'},'invoice-removal-retry-after-reload')).resolves.toEqual({invoiceId,status:'DELETED'});

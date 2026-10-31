@@ -22,7 +22,7 @@ export function parseSalesCatalogue(rawItems:unknown,rawAccounts:unknown,rawTaxR
     taxRates:parsedTaxes.filter(t=>(!t.Status||t.Status==='ACTIVE')&&t.CanApplyToRevenue!==false).map(t=>({taxType:t.TaxType,name:t.Name,rate:decimal(t.EffectiveRate)})),
   };
 }
-export type XeroSalesCatalogue=ReturnType<typeof parseSalesCatalogue>;
+export type XeroSalesCatalogue=ReturnType<typeof parseSalesCatalogue>&{brandingThemes?:Array<{brandingThemeId:string;name:string}>};
 export function scaled4(value:string):bigint{const [whole,fraction='']=decimal4.parse(value).split('.');return BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));}
 export function pricedLineMinor(quantity:string,price:string){return Number((scaled4(quantity)*scaled4(price)+500000n)/1000000n);}
 export function lineTaxMinor(net:number,rate:string){return Number((BigInt(net)*scaled4(rate)+500000n)/1000000n);}
