@@ -175,6 +175,13 @@ describe("XeroClient", () => {
     expect(String(init?.body)).toContain("code_verifier=verifier");
   });
 
+  it("classifies a Xero token transport timeout instead of returning a generic server error", async () => {
+    jest.spyOn(globalThis,"fetch").mockRejectedValueOnce(new DOMException("timed out","TimeoutError"));
+    await expect(new XeroClient().refresh("refresh-token",config)).rejects.toMatchObject({
+      status:502,response:expect.objectContaining({errorCode:"xero_unavailable",retryAfterSeconds:300}),
+    });
+  });
+
   it("passes the explicit Xero tenant and returns only bank accounts", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       Accounts: [

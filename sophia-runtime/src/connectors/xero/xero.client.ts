@@ -818,16 +818,23 @@ export class XeroClient {
   }
 
   private async tokenRequest(body: URLSearchParams, config: XeroConfig): Promise<XeroTokenSet> {
-    const response = await fetch("https://identity.xero.com/connect/token", {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body,
-      signal: AbortSignal.timeout(15_000),
-    });
+    let response: Response;
+    try {
+      response = await fetch("https://identity.xero.com/connect/token", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      // Fetch timeouts and transport failures must not escape as generic 500s.
+      // A refresh token may rotate, so leave retry control to the durable caller.
+      throw xeroUnavailableError();
+    }
     const payload = record(await parseJson(response));
     if (!response.ok) throw new BadGatewayException("Xero authorization could not be completed.");
     const accessToken = requiredString(payload.access_token, "access token");
