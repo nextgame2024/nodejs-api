@@ -105,7 +105,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -857,6 +857,35 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(removals.remove(p,id,connection,approvedId,{action:'void'},'invoice-removal-approved')).resolves.toEqual({invoiceId:approvedId,status:'VOIDED'});
     expect((await service.invoices(p,id,{})).total).toBe(0);
     await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_removals'))).rejects.toThrow('permission denied');
+  });
+  test('manual invoice drafts create independently of an offer and reuse safe export and list refresh',async()=>{
+    const old=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';
+    try{
+      const id=String((await service.createStudent(p,{studentName:'Manual Invoice Student',studentEmail:'manual-invoice@example.test'},'manual-invoice-case')).caseId);
+      const c=await service.get(p,id),itemId=randomUUID(),invoiceId=randomUUID();
+      const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'MAN1','Manual Advisor','MAN1 Manual Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+      const catalogue={items:[{itemId,code:'EXTRA',name:'Additional service',description:'Service',unitPrice:'100.0000',accountCode:'812',taxType:'BASEXCLUDED'}],accounts:[{code:'812',name:'Fees',taxType:'BASEXCLUDED'}],taxRates:[{taxType:'BASEXCLUDED',name:'BAS Excluded',rate:'0'}]};
+      await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_xero_sales_catalogues(customer_id,xero_connection_id,snapshot,revision,last_synced_at) VALUES($1,$2,$3,1,now())
+        ON CONFLICT(customer_id,xero_connection_id) DO UPDATE SET snapshot=excluded.snapshot,revision=student_xero_sales_catalogues.revision+1,last_synced_at=now()`,[tenant,connection,JSON.stringify(catalogue)]));
+      await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at)
+        VALUES($1,$2,$3,$4,$5,'Manual Invoice Student','external_reference',now())`,[tenant,c.studentId,connection,invoice,`sophia:${c.studentId}`]));
+      const createInvoice=jest.fn(async()=>({invoiceId,invoiceNumber:'INV-MANUAL',status:'DRAFT',total:100}));
+      const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+      const drafts=new StudentCaseInvoiceDraftsService(database,service,{invoiceCreationSession:async()=>({createInvoice,invoiceById:async()=>{throw new Error('Minimal provider fixture');}})} as unknown as XeroConnectorService);
+      const options=await drafts.manualOptions(p,id);
+      expect(options.student.name).toBe('Manual Invoice Student');
+      const payload={caseVersion:options.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:options.catalogue!.revision,reference:'Additional service',currency:'AUD',reviewNote:'',
+        invoices:[{sequence:1,issueDate:'2026-10-31',dueDate:'2026-11-15',conditionalFeeApplies:false,conditionalFeeMinor:0,
+          lines:[{kind:'other',description:'Additional service',itemId,itemCode:'EXTRA',quantity:'1',unitPrice:'100.00',amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};
+      await expect(drafts.prepareManual({...p,role:'advisor'},id,payload,'manual-invoice-denied')).rejects.toThrow();
+      await expect(drafts.prepareManual(p,id,{...payload,catalogueRevision:999},'manual-invoice-stale')).rejects.toThrow('catalogue changed');
+      const saved=await drafts.prepareManual(p,id,payload,'manual-invoice-save');
+      expect(await drafts.prepareManual(p,id,payload,'manual-invoice-save')).toEqual(saved);
+      expect((await drafts.list(p,id)).batches.find(b=>b.batchId===saved.batchId)?.offerId).toBeNull();
+      expect(await drafts.createXero(p,id,String(saved.batchId),{sequences:[1],confirmed:true})).toMatchObject({created:1});
+      expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===invoiceId)).toMatchObject({invoiceNumber:'INV-MANUAL',status:'DRAFT',reference:'Additional service'});
+      await drafts.createXero(p,id,String(saved.batchId),{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(1);
+    }finally{if(old===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=old;}
   });
   test('analysis queue deduplicates, fences expired leases, retries and retains immutable scoped evidence',analysisQueueTest);
   test('analysis concurrency is capped at two across independent queue instances',async()=>{

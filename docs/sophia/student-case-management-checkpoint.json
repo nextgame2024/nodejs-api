@@ -1,4 +1,10 @@
 {
+  "manualInvoiceCreation20261031": {
+    "status": "locally_verified_not_deployed",
+    "details": "student-manual-invoice-creation.md",
+    "verification": "19 backend draft/creation tests; PostgreSQL student-case-management.spec.ts selected by 'manual invoice'; 116 combined invoice-editor/case-page browser tests; backend/frontend TypeScript checks.",
+    "rollout": "Apply migration 110 before backend deployment, then deploy frontend. Reuses existing invoice creation flag, permissions, catalogue and export pipeline. No live provider creation performed."
+  },
   "invoiceRemovals20261031": {
     "status": "locally_verified_not_deployed",
     "details": "student-case-invoice-removals.md",

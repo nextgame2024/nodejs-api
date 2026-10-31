@@ -36,6 +36,11 @@ export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.numbe
     conditionalFeeApplies:z.boolean(),conditionalFeeMinor:money,lines:z.array(line).min(1).max(30)}).strict()).min(1).max(200),
 }).strict().refine(value=>(value.draftBatchId===undefined)===(value.draftRevision===undefined),{message:'Draft identity and revision must be provided together.'});
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
+const manualInvoiceRequest=z.object({caseVersion:z.number().int().positive(),advisorId:z.uuid(),
+  catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),reference:text,currency:z.string().regex(/^[A-Z]{3}$/),
+  draftBatchId:z.uuid().optional(),draftRevision:z.number().int().positive().optional(),reviewNote:z.string().trim().max(500),
+  invoices:invoiceDraftRequest.shape.invoices.refine(v=>v.length===1&&v[0].sequence===1),
+}).strict().refine(v=>(v.draftBatchId===undefined)===(v.draftRevision===undefined));
 const exportRequest=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 const reconcileRequest=z.object({sequence:z.number().int().positive()}).strict();
 
@@ -107,6 +112,57 @@ export class StudentCaseInvoiceDraftsService {
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
+  async manualOptions(p:Principal,id:string){
+    this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
+      if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');
+      const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
+      const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
+      return {caseVersion:c.record_version,advisors,student,catalogue:await readSalesCatalogue(db,p.tenantId)};
+    });
+  }
+  async prepareManual(p:Principal,id:string,input:unknown,key?:string){
+    this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
+    const parsed=manualInvoiceRequest.safeParse(input);if(!parsed.success)throw new BadRequestException('Complete the invoice fields.');
+    const v=parsed.data;
+    return this.cases.write(p,'case.invoice_manual.prepare',{caseId:id,...v},key,async db=>{
+      const c=await this.cases.authorizedCase(db,p,id,true),s=caseSchema();
+      if(c.lifecycle_status==='closed'||c.record_version!==v.caseVersion)throw new ConflictException('The case changed. Reopen the invoice form.');
+      const advisor=(await db.query(`SELECT code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND advisor_id=$2 AND status='active'`,[p.tenantId,v.advisorId])).rows[0];
+      const catalogue=await readSalesCatalogue(db,p.tenantId,true);
+      if(!advisor)throw new BadRequestException('Select an active advisor.');
+      if(!catalogue||catalogue.connectionId!==v.catalogueConnectionId||catalogue.revision!==v.catalogueRevision)throw new ConflictException('The item catalogue changed. Reopen the invoice form.');
+      const invoice=v.invoices[0];
+      if(invoice.dueDate<invoice.issueDate)throw new BadRequestException('Due date must not precede issue date.');
+      const lines=invoice.lines.map(l=>{
+        const item=catalogue.items.find(i=>i.itemId===l.itemId),account=catalogue.accounts.find(a=>a.code===item?.accountCode),tax=catalogue.taxRates.find(t=>t.taxType===item?.taxType);
+        if(!item||item.code!==l.itemCode||!account||account.code!==l.accountCode||!tax||tax.taxType!==l.taxType||tax.rate===null)throw new BadRequestException('Select an item with valid sales account and tax defaults.');
+        if(Number(l.quantity)<=0||l.amountMinor<=0||(l.unitPrice!==undefined?pricedLineMinor(l.quantity,l.unitPrice):lineTotal(l.quantity,l.unitAmountMinor!))!==l.amountMinor)throw new BadRequestException('Check quantities, prices and amounts.');
+        return {...l,unitAmountMinor:l.unitPrice!==undefined?Math.round(Number(l.unitPrice)*100):l.unitAmountMinor!,taxAmountMinor:lineTaxMinor(l.amountMinor,tax.rate)};
+      });
+      const fee=invoice.conditionalFeeApplies?invoice.conditionalFeeMinor:0;
+      if(invoice.conditionalFeeApplies?fee===0:invoice.conditionalFeeMinor!==0)throw new BadRequestException('Confirm the conditional fee.');
+      const subtotal=lines.reduce((n,l)=>n+l.amountMinor,0),tax=lines.reduce((n,l)=>n+l.taxAmountMinor,0),total=subtotal+tax+fee;
+      if(total<=0||total>1_000_000_000)throw new BadRequestException('Check the invoice total.');
+      const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
+      const advisorLabel=`${advisor.code} ${advisor.name}`;
+      const snapshot={studentName:student.legal_name,advisorLabel,currency:v.currency,collegeName:v.reference,reviewNote:v.reviewNote,
+        catalogueConnectionId:v.catalogueConnectionId,catalogueRevision:v.catalogueRevision,manual:true,
+        invoices:[{...invoice,lines,subtotalMinor:subtotal,taxMinor:tax,totalMinor:total,invoiceNumber:'INV-1',status:'DRAFT',paymentTrack:'PENDING',expectedTotalMinor:total,differenceMinor:0,sourceTotalMinor:0,sourceDueDate:null,sourceDueTerm:null,sourceIncludedConditionalFeeMinor:0}]};
+      if(v.draftBatchId){
+        const existing=(await db.query(`SELECT revision FROM ${s}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 AND offer_id IS NULL FOR UPDATE`,[p.tenantId,id,v.draftBatchId])).rows[0];
+        if(!existing||existing.revision!==v.draftRevision)throw new ConflictException('The invoice draft changed. Reopen the form.');
+        const sent=await db.query(`SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted'`,[p.tenantId,v.draftBatchId]);
+        if(sent.rowCount)throw new ConflictException('Invoice creation has already started. Check its status before retrying.');
+        const updated=(await db.query(`UPDATE ${s}.student_case_invoice_draft_batches SET snapshot=$4,advisor_id=$5,advisor_label=$6,revision=revision+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 RETURNING revision`,[p.tenantId,id,v.draftBatchId,JSON.stringify(snapshot),v.advisorId,advisorLabel])).rows[0];
+        return {batchId:v.draftBatchId,revision:updated.revision,count:1};
+      }
+      const batch=(await db.query(`INSERT INTO ${s}.student_case_invoice_draft_batches(customer_id,case_id,offer_id,advisor_id,advisor_label,snapshot,actor_identity_user_id) VALUES($1,$2,NULL,$3,$4,$5,$6) RETURNING batch_id,revision`,[p.tenantId,id,v.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
+      await this.cases.activity(db,p,id,'case.invoice_drafts_prepared','Invoice draft prepared');
+      return {batchId:batch.batch_id,revision:batch.revision,count:1};
+    });
+  }
   private async offer(db:PoolClient,p:Principal,id:string){
     const row=(await db.query(`SELECT o.*,v.corrections,r.extraction FROM ${caseSchema()}.student_case_offers o
       JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=o.customer_id AND r.result_id=o.result_id
@@ -121,7 +177,7 @@ export class StudentCaseInvoiceDraftsService {
       const batches=(await db.query(`SELECT b.batch_id AS "batchId",b.offer_id AS "offerId",b.advisor_id AS "advisorId",b.revision,b.snapshot,b.created_at AS "createdAt",b.updated_at AS "updatedAt",o.is_current AS "currentOffer",
         COALESCE((SELECT jsonb_object_agg(e.sequence,jsonb_build_object('status',e.status,'invoiceId',e.xero_invoice_id,'invoiceNumber',e.xero_invoice_number))
           FROM ${s}.student_case_xero_invoice_exports e WHERE e.customer_id=b.customer_id AND e.batch_id=b.batch_id),'{}'::jsonb) AS exports
-        FROM ${s}.student_case_invoice_draft_batches b JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
+        FROM ${s}.student_case_invoice_draft_batches b LEFT JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
         WHERE b.customer_id=$1 AND b.case_id=$2 ORDER BY b.created_at DESC,b.batch_id LIMIT 20`,[p.tenantId,id])).rows;
       const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete';
       if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
@@ -241,10 +297,11 @@ export class StudentCaseInvoiceDraftsService {
     const claimInvoices=()=>this.database.tenantTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id,true);
       const batch=(await db.query(`SELECT b.snapshot,b.offer_id,o.is_current FROM ${s}.student_case_invoice_draft_batches b
-        JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
+        LEFT JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
         WHERE b.customer_id=$1 AND b.case_id=$2 AND b.batch_id=$3 FOR UPDATE OF b`,[p.tenantId,id,batchId])).rows[0];
       if(!batch)throw new NotFoundException('Invoice proposal batch not found.');
-      if(!batch.is_current)throw new ConflictException('The source offer was replaced. Create invoices only from the current offer.');
+      if(batch.offer_id===null){if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');}
+      else if(!batch.is_current)throw new ConflictException('The source offer was replaced. Create invoices only from the current offer.');
       const snapshot=invoiceSnapshot.parse(batch.snapshot),invoices=snapshot.invoices,targets=invoices.filter(invoice=>selected.includes(invoice.sequence));
       if(targets.length!==selected.length)throw new BadRequestException('One or more selected invoices do not exist.');
       const connectionId=snapshot.catalogueConnectionId;

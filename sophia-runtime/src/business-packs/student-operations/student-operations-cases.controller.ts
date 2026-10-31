@@ -13,6 +13,11 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
   constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService,private readonly removals:StudentCaseInvoiceRemovalsService) {}
+  @Get(':caseId/manual-invoice-options')
+  @Header('Cache-Control','private, no-store')
+  manualInvoiceOptions(@Req() r:Request,@Param('caseId') id:string){return this.drafts.manualOptions(r.studentOperationsPrincipal,id);}
+  @Post(':caseId/manual-invoice-drafts')
+  prepareManualInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.drafts.prepareManual(r.studentOperationsPrincipal,id,body,key);}
   @Post(':caseId/invoices/:connectionId/:invoiceId/remove')
   removeInvoice(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.removals.remove(r.studentOperationsPrincipal,id,connectionId,invoiceId,body,key);}
   @Get(':caseId/invoice-drafts')
