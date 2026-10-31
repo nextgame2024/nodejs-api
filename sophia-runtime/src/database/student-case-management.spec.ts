@@ -871,18 +871,25 @@ suite('Case management against disposable PostgreSQL',()=>{
         VALUES($1,$2,$3,$4,$5,'Manual Invoice Student','external_reference',now())`,[tenant,c.studentId,connection,invoice,`sophia:${c.studentId}`]));
       const createInvoice=jest.fn(async()=>({invoiceId,invoiceNumber:'INV-MANUAL',status:'DRAFT',total:100}));
       const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
-      const drafts=new StudentCaseInvoiceDraftsService(database,service,{invoiceCreationSession:async()=>({createInvoice,invoiceById:async()=>{throw new Error('Minimal provider fixture');}})} as unknown as XeroConnectorService);
+      const themeId=randomUUID();
+      const drafts=new StudentCaseInvoiceDraftsService(database,service,{invoiceBrandingThemes:async()=>[{brandingThemeId:themeId,name:'Manual Theme'}],invoiceCreationSession:async()=>({createInvoice,invoiceById:async()=>{throw new Error('Minimal provider fixture');}})} as unknown as XeroConnectorService);
       const options=await drafts.manualOptions(p,id);
       expect(options.student.name).toBe('Manual Invoice Student');
-      const payload={caseVersion:options.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:options.catalogue!.revision,reference:'Additional service',currency:'AUD',reviewNote:'',
+      expect(options.brandingThemes).toEqual([{brandingThemeId:themeId,name:'Manual Theme'}]);
+      const payload={caseVersion:options.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:options.catalogue!.revision,reference:'Additional service',brandingThemeId:themeId,currency:'AUD',reviewNote:'',
         invoices:[{sequence:1,issueDate:'2026-10-31',dueDate:'2026-11-15',conditionalFeeApplies:false,conditionalFeeMinor:0,
           lines:[{kind:'other',description:'Additional service',itemId,itemCode:'EXTRA',quantity:'1',unitPrice:'100.00',amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};
       await expect(drafts.prepareManual({...p,role:'advisor'},id,payload,'manual-invoice-denied')).rejects.toThrow();
       await expect(drafts.prepareManual(p,id,{...payload,catalogueRevision:999},'manual-invoice-stale')).rejects.toThrow('catalogue changed');
       const saved=await drafts.prepareManual(p,id,payload,'manual-invoice-save');
+      const collegeSaved=await drafts.prepareManual(p,id,{...payload,referenceMode:'college',collegeId:college,reference:''},'manual-invoice-college');
+      const collegeBatch=(await drafts.list(p,id)).batches.find(b=>b.batchId===collegeSaved.batchId);
+      expect(collegeBatch?.snapshot.collegeName).toBe('York Business');
+      await expect(drafts.prepareManual(p,id,{...payload,referenceMode:'college',collegeId:randomUUID()},'manual-invoice-college-invalid')).rejects.toThrow('available college');
       expect(await drafts.prepareManual(p,id,payload,'manual-invoice-save')).toEqual(saved);
       expect((await drafts.list(p,id)).batches.find(b=>b.batchId===saved.batchId)?.offerId).toBeNull();
       expect(await drafts.createXero(p,id,String(saved.batchId),{sequences:[1],confirmed:true})).toMatchObject({created:1});
+      expect(createInvoice).toHaveBeenCalledWith(expect.objectContaining({brandingThemeId:themeId,reference:'Additional service'}),expect.any(String));
       expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===invoiceId)).toMatchObject({invoiceNumber:'INV-MANUAL',status:'DRAFT',reference:'Additional service'});
       await drafts.createXero(p,id,String(saved.batchId),{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(1);
     }finally{if(old===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=old;}

@@ -444,18 +444,21 @@ export class XeroConnectorService {
       return refresh;
     };
     const themeName=process.env.XERO_INVOICE_BRANDING_THEME_NAME?.trim()||'Trust Open for Australia acc';
-    let brandingTheme:Promise<string>|undefined;
-    const resolveBrandingTheme=()=>brandingTheme??= (async()=>{
+    let brandingThemes:Promise<Awaited<ReturnType<XeroClient['brandingThemes']>>>|undefined;
+    const resolveBrandingTheme=async(selected?:string)=>{
+      const themes=await (brandingThemes??= (async()=>{
       const {connection,accessToken}=await credentials();
       if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
         throw new ConflictException({errorCode:'xero_branding_theme_scope_missing',message:'Invoice branding could not be checked. An administrator must authorize Xero settings access.'});
       let themes:Awaited<ReturnType<XeroClient['brandingThemes']>>;
       try{themes=await this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));}
       catch{throw new ConflictException({errorCode:'xero_branding_theme_unavailable',message:'Invoice branding could not be verified. No invoice was sent; retry when Xero settings are available.'});}
-      const matches=themes.filter(theme=>theme.name.trim().toLowerCase()===themeName.toLowerCase());
-      if(matches.length!==1)throw new ConflictException({errorCode:'xero_branding_theme_missing',message:`Configure one Xero invoice branding theme named "${themeName}" before creating invoices.`});
+      return themes;
+    })());
+      const matches=themes.filter(theme=>selected?theme.brandingThemeId===selected:theme.name.trim().toLowerCase()===themeName.toLowerCase());
+      if(matches.length!==1)throw new ConflictException({errorCode:'xero_branding_theme_missing',message:'Select an available invoice branding theme before creating the invoice.'});
       return matches[0].brandingThemeId;
-    })();
+    };
     let pendingTracking:Promise<{name:string;option:string;trackingCategoryId:string;trackingOptionId:string}>|undefined;
     const resolvePendingTracking=()=>pendingTracking??= (async()=>{
       const {connection,accessToken}=await credentials();
@@ -472,7 +475,7 @@ export class XeroConnectorService {
     return {
       createInvoice:async(value:import('./xero.client.js').XeroInvoiceCreate,key:string)=>{
         if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
-        const [brandingThemeId,pending]=await Promise.all([resolveBrandingTheme(),resolvePendingTracking()]);
+        const [brandingThemeId,pending]=await Promise.all([resolveBrandingTheme(value.brandingThemeId),resolvePendingTracking()]);
         const {connection,accessToken}=await credentials();
         if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
         const lines=value.lines.map(line=>({...line,tracking:line.tracking.map(item=>item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'?pending:item)}));
@@ -485,6 +488,14 @@ export class XeroConnectorService {
         return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId));
       },
     };
+  }
+
+  async invoiceBrandingThemes(tenantId:string,connectionId:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
+      throw new ConflictException({errorCode:'xero_branding_theme_scope_missing',message:'An administrator must authorize invoice settings access.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id));
   }
 
   async removeInvoice(tenantId:string,connectionId:string,invoiceId:string,status:'DELETED'|'VOIDED',key:string){

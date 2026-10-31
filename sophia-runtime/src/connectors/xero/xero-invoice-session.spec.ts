@@ -29,6 +29,15 @@ describe('request-scoped Xero invoice session',()=>{
     const other=await f.service.invoiceCreationSession('tenant-b','connection-b');await other.createInvoice(value,'key-3');
     expect(f.query).toHaveBeenCalledTimes(4);expect(f.client.createInvoice).toHaveBeenLastCalledWith('token-tenant-b','provider-tenant-b',{...value,brandingThemeId:'11111111-1111-4111-8111-111111111111'},'key-3');expect(f.client.brandingThemes).toHaveBeenCalledTimes(2);
   });
+  it('honours a selected theme only after verifying it belongs to the connected organisation',async()=>{
+    const f=fixture(),selected='44444444-4444-4444-8444-444444444444';
+    f.client.brandingThemes.mockResolvedValue([{brandingThemeId:selected,name:'VIKINGO'}]);
+    const session=await f.service.invoiceCreationSession('tenant-a','connection-a');
+    await session.createInvoice({...value,brandingThemeId:selected},'key-selected');
+    expect(f.client.createInvoice).toHaveBeenCalledWith(expect.anything(),expect.anything(),expect.objectContaining({brandingThemeId:selected}),'key-selected');
+    await expect(session.createInvoice({...value,brandingThemeId:'55555555-5555-4555-8555-555555555555'},'key-foreign')).rejects.toThrow('available invoice branding');
+    expect(f.client.createInvoice).toHaveBeenCalledTimes(1);
+  });
   it('refreshes the batch context once after a minute and respects revoked authorization',async()=>{
     const f=fixture(),clock=jest.spyOn(Date,'now'),started=Date.now(),session=await f.service.invoiceCreationSession('tenant-a','connection-a');
     clock.mockReturnValue(started+61_000);

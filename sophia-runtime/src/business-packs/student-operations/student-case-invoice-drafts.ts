@@ -37,7 +37,8 @@ export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.numbe
 }).strict().refine(value=>(value.draftBatchId===undefined)===(value.draftRevision===undefined),{message:'Draft identity and revision must be provided together.'});
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
 const manualInvoiceRequest=z.object({caseVersion:z.number().int().positive(),advisorId:z.uuid(),
-  catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),reference:text,currency:z.string().regex(/^[A-Z]{3}$/),
+  catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),reference:z.string().trim().max(500).default(''),currency:z.string().regex(/^[A-Z]{3}$/),
+  referenceMode:z.enum(['reference','college']).default('reference'),collegeId:z.uuid().optional(),brandingThemeId:z.uuid().optional(),
   draftBatchId:z.uuid().optional(),draftRevision:z.number().int().positive().optional(),reviewNote:z.string().trim().max(500),
   invoices:invoiceDraftRequest.shape.invoices.refine(v=>v.length===1&&v[0].sequence===1),
 }).strict().refine(v=>(v.draftBatchId===undefined)===(v.draftRevision===undefined));
@@ -114,13 +115,17 @@ export class StudentCaseInvoiceDraftsService {
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
   async manualOptions(p:Principal,id:string){
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
-    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+    const options=await this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
       if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
-      return {caseVersion:c.record_version,advisors,student,catalogue:await readSalesCatalogue(db,p.tenantId)};
+      const colleges=(await db.query(`SELECT college_id AS "collegeId",college_name AS name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId])).rows;
+      return {caseVersion:c.record_version,advisors,student,colleges,catalogue:await readSalesCatalogue(db,p.tenantId)};
     });
+    // Explicit create-form settings read, outside the database transaction.
+    const brandingThemes=options.catalogue?await this.xero.invoiceBrandingThemes(p.tenantId,options.catalogue.connectionId):[];
+    return {...options,brandingThemes};
   }
   async prepareManual(p:Principal,id:string,input:unknown,key?:string){
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
@@ -133,6 +138,12 @@ export class StudentCaseInvoiceDraftsService {
       const catalogue=await readSalesCatalogue(db,p.tenantId,true);
       if(!advisor)throw new BadRequestException('Select an active advisor.');
       if(!catalogue||catalogue.connectionId!==v.catalogueConnectionId||catalogue.revision!==v.catalogueRevision)throw new ConflictException('The item catalogue changed. Reopen the invoice form.');
+      let reference=v.reference;
+      if(v.referenceMode==='college'){
+        const college=(await db.query(`SELECT college_name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,v.collegeId??null])).rows[0];
+        if(!college)throw new BadRequestException('Select an available college.');
+        reference=college.college_name;
+      }else if(!reference)throw new BadRequestException('Enter an invoice reference.');
       const invoice=v.invoices[0];
       if(invoice.dueDate<invoice.issueDate)throw new BadRequestException('Due date must not precede issue date.');
       const lines=invoice.lines.map(l=>{
@@ -147,7 +158,8 @@ export class StudentCaseInvoiceDraftsService {
       if(total<=0||total>1_000_000_000)throw new BadRequestException('Check the invoice total.');
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const advisorLabel=`${advisor.code} ${advisor.name}`;
-      const snapshot={studentName:student.legal_name,advisorLabel,currency:v.currency,collegeName:v.reference,reviewNote:v.reviewNote,
+      const snapshot={studentName:student.legal_name,advisorLabel,currency:v.currency,collegeName:reference,reviewNote:v.reviewNote,
+        referenceMode:v.referenceMode,...(v.collegeId?{collegeId:v.collegeId}:{}),...(v.brandingThemeId?{brandingThemeId:v.brandingThemeId}:{}),
         catalogueConnectionId:v.catalogueConnectionId,catalogueRevision:v.catalogueRevision,manual:true,
         invoices:[{...invoice,lines,subtotalMinor:subtotal,taxMinor:tax,totalMinor:total,invoiceNumber:'INV-1',status:'DRAFT',paymentTrack:'PENDING',expectedTotalMinor:total,differenceMinor:0,sourceTotalMinor:0,sourceDueDate:null,sourceDueTerm:null,sourceIncludedConditionalFeeMinor:0}]};
       if(v.draftBatchId){

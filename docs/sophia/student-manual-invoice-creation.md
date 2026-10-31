@@ -2,13 +2,19 @@
 
 The Linked invoices header now offers **+Create** for users with invoice-creation permission when invoice creation is enabled and the case is not closed. It opens the existing invoice editor in manual mode, with one blank line, blank issue/due dates, advisor and reference. The student is fixed to the case, currency defaults to AUD, Payment Track stays PENDING, and the conditional fee defaults to not applied.
 
-Options are fetched only when opening the form, from the existing tenant-scoped advisor directory and local sales catalogue; opening never saves a draft or contacts a provider. The manual reference and currency are editable. There is no requirement for an approved offer or an unresolved offer instalment. The existing offer preparation action remains available separately.
+Options are fetched only when opening the form, from the existing tenant-scoped advisor/college directories and local sales catalogue. Branding themes are fetched from the selected organisation during this explicit create-form request, outside the database transaction; opening never saves a draft or creates an invoice. Normal page/list refreshes do not fetch branding themes. There is no requirement for an approved offer or an unresolved offer instalment. The existing offer preparation action remains available separately.
+
+Student, Advisor, Reference/College, and Branding theme share one desktop row, with two-column and single-column layouts at narrower widths. The reference radio choice accepts free text; the college choice requires a directory selection and the backend resolves its canonical name under tenant scope. Currency remains editable on a separate line. A selected branding theme is stored in the draft, revalidated against the connected organisation at creation, sent as BrandingThemeID, and checked during exact invoice reconciliation. Existing clients without an explicit theme retain the configured default.
+
+Manual item selection fills account/tax defaults and a description if empty, but preserves the operator-entered price. Catalogue prices such as the Materials fee default are not mandatory provider rules. See [Xero invoice line items](https://developer.xero.com/documentation/api/accounting/invoices): explicit UnitAmount and AccountCode override the item's UnitPrice.
+
+Submission recalculates fee validation so choosing Do not apply clears a previous zero-fee error. Due date must be on or after issue date. Validation messages identify missing advisor, reference/college, branding, dates, quantities, prices, item defaults or applicable fees rather than only displaying a generic error.
 
 After field validation and explicit review confirmation, the API saves a manual draft with an idempotency key and creates its invoice using the existing export pipeline. Provider claims, item/account/tax validation, contact resolution, stable provider keys, ambiguous-outcome reconciliation, register projection, and linked-invoice refresh are reused. The modal closes after successful creation. The approved offer's schedule and drafts are not modified.
 
 Endpoints:
 
-- `GET /cases/:caseId/manual-invoice-options`: case version, student, advisors and current catalogue; no provider requests.
+- `GET /cases/:caseId/manual-invoice-options`: case version, student, advisors, colleges, current catalogue and organisation branding themes.
 - `POST /cases/:caseId/manual-invoice-drafts`: one reviewed invoice, reference, currency, advisor and catalogue identity/version, plus Idempotency-Key.
 - The existing `POST /cases/:caseId/invoice-drafts/:batchId/xero` creates the saved manual invoice.
 
@@ -17,3 +23,5 @@ Manual batches have `offer_id=NULL` and an explicit case foreign key. Offer batc
 Apply **110_student_manual_invoice_drafts.sql** through the normal owner migration runner before deploying the backend, then deploy the frontend. This is additive to migration 109. No production migration, deployment, or live invoice creation was performed locally.
 
 Verification: 19 existing backend draft/export tests; a real PostgreSQL test covering manual preparation without an offer, invalid permission/catalogue rejection, idempotent saving and creation, list projection and duplicate-send prevention; 116 combined invoice-editor/case-page ChromeHeadless tests; backend/frontend TypeScript checks.
+
+1 November follow-up verification: 59 backend connector/draft/export tests; a real PostgreSQL test confirms branding reaches the export request, resolves a selected college name and rejects unknown college IDs. Browser regressions cover fee-choice recovery, date correction, reference/college switching and preservation of manual prices. No additional migration is required beyond the existing manual-invoice migration 110; deploy updated API and frontend together.

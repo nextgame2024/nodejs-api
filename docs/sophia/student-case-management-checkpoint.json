@@ -1,4 +1,11 @@
 {
+  "manualInvoiceEditor20261101": {
+    "status": "locally_verified_not_deployed",
+    "details": "student-manual-invoice-creation.md",
+    "changes": "Organisation-verified branding theme selection, four-field desktop header, reference/college radio controls with tenant-scoped college resolution, explicit manual pricing, hidden-fee error reset and specific validation messages including date ordering.",
+    "verification": "59 backend connector/draft/export tests, real PostgreSQL manual-invoice integration regression, invoice-editor/case-page browser tests and backend/frontend TypeScript checks. Provider calls mocked; no live invoice mutation.",
+    "rollout": "Deploy API and frontend. No new migration beyond existing migration 110. Branding settings-read access is required as in the existing creation pipeline."
+  },
   "manualInvoiceCreation20261031": {
     "status": "locally_verified_not_deployed",
     "details": "student-manual-invoice-creation.md",

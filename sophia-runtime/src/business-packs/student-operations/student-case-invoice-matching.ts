@@ -11,7 +11,8 @@ const trackingKey=(items:Array<{name:string;option:string}>)=>items
 const normalizedDescription=(value:string|null)=>value?.replace(/\r\n?/g,'\n').trim()??'';
 export function matchesXeroInvoiceHeader(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
   return candidate.type==='ACCREC'&&!['DELETED','VOIDED'].includes(candidate.status)&&candidate.contactId===expected.contactId&&candidate.invoiceDate===expected.date&&candidate.dueDate===expected.dueDate&&
-    candidate.currencyCode===expected.currencyCode&&(candidate.invoiceReference??null)===(expected.reference??null)&&Math.round(candidate.total*100)===totalMinor;
+    candidate.currencyCode===expected.currencyCode&&(candidate.invoiceReference??null)===(expected.reference??null)&&Math.round(candidate.total*100)===totalMinor&&
+    (!expected.brandingThemeId||candidate.brandingThemeId===expected.brandingThemeId);
 }
 export function matchesXeroInvoice(candidate:XeroInvoiceRecord,expected:XeroInvoiceCreate,totalMinor:number){
   if(!matchesXeroInvoiceHeader(candidate,expected,totalMinor)||candidate.lineItems.length!==expected.lines.length)return false;
@@ -31,5 +32,6 @@ export function invoiceDraftXeroValue(snapshot:InvoiceSnapshot,invoice:InvoiceSn
   const lines:XeroInvoiceCreate['lines']=invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
     accountCode:line.accountCode,taxType:line.taxType,tracking}));
   if(invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(invoice.conditionalFeeMinor/100).toFixed(2),accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});
-  return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:snapshot.collegeName||null,currencyCode:snapshot.currency,lines};
+  return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:snapshot.collegeName||null,currencyCode:snapshot.currency,lines,
+    ...(typeof snapshot.brandingThemeId==='string'?{brandingThemeId:snapshot.brandingThemeId}:{})};
 }

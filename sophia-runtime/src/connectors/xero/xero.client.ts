@@ -85,6 +85,7 @@ export type XeroContactRecord = {
 };
 
 export type XeroInvoiceRecord = {
+  brandingThemeId?:string|null;
   invoiceId: string;
   contactId: string;
   invoiceNumber: string | null;
@@ -1062,7 +1063,7 @@ function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
   const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];
   const total=optionalNumber(value.Total)??0,amountPaid=optionalNumber(value.AmountPaid)??0,invoiceReference=optionalString(value.Reference);
   return {invoiceId:requiredString(value.InvoiceID,'invoice id'),contactId:requiredString(contact.ContactID,'contact id'),invoiceNumber:optionalString(value.InvoiceNumber),
-    invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
+    brandingThemeId:optionalString(value.BrandingThemeID),invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
     collegeName:invoiceReference,paymentTrack:trackingOption(lineItems,['payment track']),sentToContact:value.SentToContact===true,lineItems:lineItems.map(invoiceLineItem),
     type:requiredString(value.Type,'invoice type'),status:requiredString(value.Status,'invoice status'),invoiceDate:optionalDate(value.DateString)??optionalXeroDate(value.Date),
     dueDate:optionalDate(value.DueDateString)??optionalXeroDate(value.DueDate),currencyCode:optionalString(value.CurrencyCode),total,amountPaid,
