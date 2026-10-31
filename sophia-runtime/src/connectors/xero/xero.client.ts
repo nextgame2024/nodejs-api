@@ -314,7 +314,12 @@ export class XeroClient {
   async uploadFile(accessToken:string,tenantId:string,fileName:string,mimeType:string,buffer:Buffer,key:string):Promise<XeroFileReceipt> {
     if(!fileName||fileName.length>255||/[<>:"\\/|?*\x00-\x1f\x7f+]/.test(fileName)||!['application/pdf','image/png','image/jpeg'].includes(mimeType)
       ||!buffer.length||buffer.length>10*1024*1024||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))throw new BadGatewayException('Invalid Xero file upload.');
-    const body=new FormData();body.set('body',new Blob([new Uint8Array(buffer)],{type:mimeType}),fileName);body.set('name',fileName);body.set('filename',fileName);body.set('mimeType',mimeType);
+    const body=new FormData();
+    // Xero's Files client sends the binary part under the value of `name`
+    // (the remote filename), not under the OpenAPI model's `body` property.
+    // Keep these fields aligned with Xero's generated SDK wire format.
+    body.set(fileName,new Blob([new Uint8Array(buffer)],{type:mimeType}),fileName);
+    body.set('name',fileName);body.set('filename',fileName);body.set('mimeType',mimeType);
     const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
     try{response=await fetch(filePath(),{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,Accept:'application/json','Idempotency-Key':key},body,redirect:'error',signal:AbortSignal.timeout(30_000)});}
     catch{throw xeroUnavailableError();}

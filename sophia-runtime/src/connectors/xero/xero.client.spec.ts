@@ -119,6 +119,12 @@ describe("XeroClient", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({FileId:fileId,ObjectId:contactId,ObjectGroup:'Contact',ObjectType:'Business'}),{status:201}))
       .mockResolvedValueOnce(new Response(bytes,{status:200})).mockResolvedValueOnce(new Response(null,{status:204})).mockResolvedValueOnce(new Response(null,{status:404}));
     const client=new XeroClient();await expect(client.uploadFile('token','tenant','offer.pdf','application/pdf',bytes,key)).resolves.toMatchObject({fileId,fileName:'offer.pdf'});
+    const uploadBody=fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(uploadBody).toBeInstanceOf(FormData);
+    expect(uploadBody.get('body')).toBeNull();
+    expect(uploadBody.get('name')).toBe('offer.pdf');expect(uploadBody.get('filename')).toBe('offer.pdf');expect(uploadBody.get('mimeType')).toBe('application/pdf');
+    const uploadedPart=uploadBody.get('offer.pdf');expect(uploadedPart).toBeInstanceOf(Blob);
+    expect(Buffer.from(await (uploadedPart as Blob).arrayBuffer()).equals(bytes)).toBe(true);
     await expect(client.associateFileWithContact('token','tenant',fileId,contactId,key)).resolves.toBeUndefined();
     expect((await client.fileContent('token','tenant',fileId)).equals(bytes)).toBe(true);await expect(client.deleteFile('token','tenant',fileId)).resolves.toBeUndefined();await expect(client.deleteFile('token','tenant',fileId)).resolves.toBeUndefined();
     expect(fetchMock.mock.calls.map(call=>[call[0],call[1]?.method])).toEqual([
