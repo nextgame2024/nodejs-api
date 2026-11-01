@@ -1,4 +1,15 @@
 {
+  "studentArchiveIdleCaseFix": {
+    "updatedOn": "2026-11-01",
+    "status": "locally_verified_not_deployed",
+    "changes": "Archive ignores abandoned/expired document and invoice retry receipts, blocks live leases and recent creating sends, and rechecks/renews each queued invoice under the case lock before sending. Historical receipts remain intact.",
+    "verification": [
+      "9 mocked invoice creation tests passed",
+      "Focused disposable PostgreSQL archive/restore regression passed (39 unrelated tests skipped)",
+      "Runtime typecheck and git diff --check passed"
+    ],
+    "deployment": "Deploy Runtime API; no additional migration or data cleanup. No production or live provider changes."
+  },
   "test3StudentAdministratorCleanup": {
     "updatedOn": "2026-10-29",
     "artifact": "scripts/sql/cleanup_test_student_std_1072.sql",

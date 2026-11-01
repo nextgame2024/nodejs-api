@@ -75,7 +75,7 @@
   "migrationRules": {
     "caseNumber": "CASE-<database sequence number>",
     "stage": "imported_pending_review",
-    "stageLabel": "Imported \u2014 Pending Review",
+    "stageLabel": "Imported — Pending Review",
     "status": "in_progress (stored as open)",
     "courseName": null,
     "advisor": "First nonempty advisor label ordered by invoice date, then invoice UUID; only a unique eligible account match is assigned. Raw label remains on case.",
@@ -189,5 +189,16 @@
       "Cascading cleanup fixture failure"
     ],
     "deployment": "Apply migration 112 before API/frontend. No production changes or provider calls performed."
+  },
+  "archiveIdleCaseFix20261101": {
+    "updatedOn": "2026-11-01",
+    "status": "locally_verified_not_deployed",
+    "changes": "Archive ignores abandoned/expired document and invoice retry receipts, blocks live leases and recent creating sends, and rechecks/renews each queued invoice under the case lock before sending. Historical receipts remain intact.",
+    "verification": [
+      "9 mocked invoice creation tests passed",
+      "Focused disposable PostgreSQL archive/restore regression passed (39 unrelated tests skipped)",
+      "Runtime typecheck and git diff --check passed"
+    ],
+    "deployment": "Deploy Runtime API; no additional migration or data cleanup. No production or live provider changes."
   }
 }

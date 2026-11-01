@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,jest} from '@jest/globals';
-import {BadGatewayException,BadRequestException,Logger} from '@nestjs/common';
+import {BadGatewayException,BadRequestException,ConflictException,Logger} from '@nestjs/common';
 import {StudentCaseInvoiceDraftsService} from './student-case-invoice-drafts.js';
 import type {XeroInvoiceCreate,XeroInvoiceRecord} from '../../connectors/xero/xero.client.js';
 
@@ -45,7 +45,7 @@ function fixture(count=7){
   const cases={authorizedCase:jest.fn(async()=>({student_id:'student-uuid',student_reference:'STD-FIXTURE'})),activity:jest.fn(async()=>{})};
   const service=new StudentCaseInvoiceDraftsService({tenantTransaction:transaction} as never,cases as never,{invoiceCreationSession} as never);
   const run=()=>service.createXero(principal as never,'fixture-case',batch,{sequences:snapshot.invoices.map(invoice=>invoice.sequence),confirmed:true});
-  return {service,run,snapshot,query,exports,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
+  return {service,run,snapshot,query,cases,exports,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
 }
 describe('bounded Xero invoice creation',()=>{
   const previous={enabled:process.env.XERO_INVOICE_CREATION_ENABLED,url:process.env.SOPHIA_RUNTIME_DATABASE_URL};
@@ -60,6 +60,26 @@ describe('bounded Xero invoice creation',()=>{
     expect(f.invoiceCreationSession).toHaveBeenCalledTimes(1);expect(f.invoiceCreationSession).toHaveBeenCalledWith(tenant,connection);expect(f.invoiceById).not.toHaveBeenCalled();
     const keys=f.createInvoice.mock.calls.map(call=>call[1]);expect(new Set(keys).size).toBe(7);expect(keys.every(key=>/^[a-f0-9]{64}$/.test(key))).toBe(true);
     expect(await f.run()).toMatchObject({created:0,skipped:7});expect(f.createInvoice).toHaveBeenCalledTimes(7);
+  });
+  it('renews each queued send under the case lock before calling the provider',async()=>{
+    const f=fixture(4);await f.run();
+    const renewals=f.query.mock.calls.filter(([sql])=>sql.includes('SET requested_at=now()'));
+    expect(renewals.map(([,params])=>params?.[2])).toEqual([1,2,3,4]);
+    expect(f.cases.authorizedCase.mock.calls.length).toBeGreaterThanOrEqual(5);
+    for(const call of renewals){
+      const queryIndex=f.query.mock.calls.indexOf(call);
+      const providerIndex=f.createInvoice.mock.calls.findIndex(([,key])=>key===call[1]?.[3]);
+      expect(f.query.mock.invocationCallOrder[queryIndex]).toBeLessThan(f.createInvoice.mock.invocationCallOrder[providerIndex]);
+    }
+  });
+  it('does not send queued invoices when the case is archived before execution',async()=>{
+    const f=fixture(4);
+    f.invoiceCreationSession.mockImplementationOnce(async()=>{
+      f.cases.authorizedCase.mockRejectedValue(new ConflictException('This case is read-only.'));
+      return {createInvoice:f.createInvoice,invoiceById:f.invoiceById};
+    });
+    expect(await f.run()).toMatchObject({created:0,skipped:4,results:Array.from({length:4},()=>({status:'not_attempted'}))});
+    expect(f.createInvoice).not.toHaveBeenCalled();
   });
   it('reads the exact invoice by ID when create details are incomplete or do not match',async()=>{
     const f=fixture(1);f.createInvoice.mockImplementationOnce(async(value)=>{const invoice=record(value,1);return {invoiceId:invoice.invoiceId,invoiceNumber:invoice.invoiceNumber,status:invoice.status,total:100,invoice:{...invoice,total:101}};});
@@ -98,7 +118,7 @@ describe('bounded Xero invoice creation',()=>{
   it('drains in-flight invoices and stops scheduling new sends after a fatal receipt-storage failure',async()=>{
     jest.useFakeTimers();const f=fixture(),query=f.query.getMockImplementation()!;
     f.query.mockImplementation(async(sql,params=[])=>{
-      if(sql.includes('UPDATE')&&sql.includes('student_case_xero_invoice_exports')&&params[2]===1)throw new Error('Synthetic storage failure');
+      if(sql.includes('UPDATE')&&sql.includes('student_case_xero_invoice_exports')&&!sql.includes('SET requested_at=now()')&&params[2]===1)throw new Error('Synthetic storage failure');
       return query(sql,params);
     });
     f.createInvoice.mockImplementation(async(value,_key)=>{const sequence=f.createInvoice.mock.calls.length;

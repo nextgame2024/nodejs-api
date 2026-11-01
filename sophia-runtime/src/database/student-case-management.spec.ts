@@ -826,9 +826,29 @@ suite('Case management against disposable PostgreSQL',()=>{
     await expect(service.archive(p,id,{recordVersion:999},'archive-stale')).rejects.toThrow('changed');
     await expect(service.update(p,id,{recordVersion:before.recordVersion,currentStage:'terminated',status:'closed'},'archive-stage-bypass')).rejects.toThrow('Use Archive');
     const pendingInvoice=randomUUID();
-    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_invoice_edits(customer_id,case_id,xero_connection_id,xero_invoice_id,actor_identity_user_id,idempotency_key,request_hash,expected_fingerprint,desired) VALUES($1,$2,$3,$4,$5,'archive-pending-edit','pending','pending','{}')`,[tenant,id,connection,pendingInvoice,p.identityUserId]));
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_invoice_edits(customer_id,case_id,xero_connection_id,xero_invoice_id,actor_identity_user_id,idempotency_key,request_hash,expected_fingerprint,desired,lease_token,lease_expires_at) VALUES($1,$2,$3,$4,$5,'archive-pending-edit','pending','pending','{}',gen_random_uuid(),now()+interval '2 minutes')`,[tenant,id,connection,pendingInvoice,p.identityUserId]));
     await expect(service.archive(p,id,body,'archive-inflight')).rejects.toThrow('Finish pending');
-    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_case_invoice_edits SET failed=true WHERE customer_id=$1 AND case_id=$2`,[tenant,id]));
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_case_invoice_edits SET lease_expires_at=now()-interval '1 minute' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]));
+    // An expired upload and an unfinished edit remain retryable history, not
+    // ongoing changes. Neither needs to be destroyed to archive the case.
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_document_uploads
+      (customer_id,actor_identity_user_id,idempotency_key,request_fingerprint,case_id,document_type_id,xero_connection_id,
+       source_kind,source_id,file_name,mime_type,size_bytes,content_sha256,status,lease_token,lease_expires_at)
+      SELECT $1,$3,'archive-expired-upload','expired',$2,document_type_id,$4,'Contacts',$5,'old.pdf','application/pdf',20,$6,'uploading',gen_random_uuid(),now()-interval '1 minute'
+      FROM sophia_runtime.student_operations_document_types WHERE customer_id=$1 LIMIT 1`,[tenant,id,p.identityUserId,connection,invoice,'a'.repeat(64)]));
+    const exportAdvisor=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label)
+      VALUES($1,'ARC1','Archive Advisor','ARC1 Archive Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    const exportBatch=randomUUID();
+    await transaction(tenant,async db=>{
+      await db.query(`INSERT INTO sophia_runtime.student_case_invoice_draft_batches
+        (customer_id,case_id,batch_id,advisor_id,advisor_label,snapshot,actor_identity_user_id)
+        VALUES($1,$2,$3,$5,'Fixture Advisor','{}',$4)`,[tenant,id,exportBatch,p.identityUserId,exportAdvisor]);
+      for(const sequence of [1,2])await db.query(`INSERT INTO sophia_runtime.student_case_xero_invoice_exports
+        (customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,requested_by_identity_user_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[tenant,id,exportBatch,sequence,connection,invoice,String(sequence).repeat(64),sequence===1?'creating':'review_required',p.identityUserId]);
+    });
+    await expect(service.archive(p,id,body,'archive-active-send')).rejects.toThrow('Finish pending');
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_case_xero_invoice_exports SET requested_at=now()-interval '3 minutes' WHERE customer_id=$1 AND case_id=$2`,[tenant,id]));
     const receipt=await service.archive(p,id,body,'archive-confirmed');
     expect(await service.archive(p,id,body,'archive-confirmed')).toEqual(receipt);
     const archived=await service.get(p,id);

@@ -386,6 +386,15 @@ export class StudentCaseInvoiceDraftsService {
       let providerReturned=false;
       try{
         const connection=await (session??=this.xero.invoiceCreationSession(p.tenantId,claim.connectionId));
+        // A batch may wait behind earlier waves. Recheck the case and renew the
+        // active-send window immediately before each provider mutation.
+        await this.database.tenantTransaction(p.tenantId,async db=>{
+          await this.cases.authorizedCase(db,p,id,true);
+          const active=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET requested_at=now()
+            WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating' AND provider_key=$4 RETURNING sequence`,
+            [p.tenantId,batchId,item.invoice.sequence,item.provider_key]);
+          if(!active.rowCount)throw new ConflictException('This invoice creation is no longer active. Reload the case.');
+        });
         const receipt=await connection.createInvoice(value,item.provider_key);
         providerReturned=true;
         let verified=receipt.invoice&&matchesXeroInvoice(receipt.invoice,value,item.invoice.totalMinor)?receipt.invoice:undefined;

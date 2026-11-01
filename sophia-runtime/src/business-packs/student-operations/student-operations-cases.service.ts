@@ -149,12 +149,14 @@ export class StudentOperationsCasesService {
           archived_at=NULL,archive_previous_workflow=NULL,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id,previous.stage,previous.status,previous.closedOn]);
       }else{
         if(row.archived_at)throw new ConflictException('This case is already archived.');
+        // Durable retry receipts outlive their workers. Only live leases/sends
+        // block archive; retained failed or uncertain attempts are not user edits.
         const pending=(await db.query(`SELECT
-          EXISTS(SELECT 1 FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND case_id=$2 AND status<>'completed') OR
-          EXISTS(SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND case_id=$2 AND status<>'completed') OR
-          EXISTS(SELECT 1 FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND case_id=$2 AND status<>'completed') OR
-          EXISTS(SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status IN ('creating','review_required')) OR
-          EXISTS(SELECT 1 FROM ${s}.student_case_invoice_edits WHERE customer_id=$1 AND case_id=$2 AND NOT completed AND NOT failed) OR
+          EXISTS(SELECT 1 FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND case_id=$2 AND status<>'completed' AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
+          EXISTS(SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND case_id=$2 AND status<>'completed' AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
+          EXISTS(SELECT 1 FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND case_id=$2 AND status<>'completed' AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
+          EXISTS(SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='creating' AND requested_at>now()-interval '2 minutes') OR
+          EXISTS(SELECT 1 FROM ${s}.student_case_invoice_edits WHERE customer_id=$1 AND case_id=$2 AND NOT completed AND NOT failed AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_case_invoice_removals WHERE customer_id=$1 AND case_id=$2 AND NOT completed AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_operations_primary_xero_contacts WHERE customer_id=$1 AND student_id=$3 AND lease_expires_at>now()) AS pending`,[p.tenantId,id,row.student_id])).rows[0]?.pending;
         if(pending)throw new ConflictException('Finish pending document or invoice changes before archiving this case.');
