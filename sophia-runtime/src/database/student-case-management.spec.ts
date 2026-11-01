@@ -109,7 +109,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql','113_student_case_deletion.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql','113_student_case_deletion.sql','114_delete_last_case_student.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -877,7 +877,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     const activity=(await service.activities(p,id,{})).activity;
     expect(activity.filter(a=>a.eventType==='case.archived')).toHaveLength(1);expect(activity.filter(a=>a.eventType==='case.restored')).toHaveLength(1);
   });
-  test('permanent case deletion preserves other cases, archives contacts only without active cases and retries lost provider replies',async()=>{
+  test('permanent case deletion preserves remaining cases and retries a lost last-case contact reply',async()=>{
     const first=String((await service.createStudent(p,{studentName:'Delete Student',studentEmail:'case-delete@example.test'},'case-delete-student')).caseId);
     const detail=await service.get(p,first),student=detail.studentId,contactId=randomUUID(),invoiceId=randomUUID();
     const second=String((await service.create(p,{userId:detail.userId},'case-delete-other')).caseId);
@@ -940,11 +940,14 @@ suite('Case management against disposable PostgreSQL',()=>{
     release();await expect(concurrent).rejects.toThrow('Paid, credited');
     await expect(deletions.remove(p,second,finalConfirm,'case-delete-paid')).rejects.toThrow('Paid, credited');
     expect(provider.removeInvoice).not.toHaveBeenCalled();expect((await service.get(p,second)).deleting).toBe(false);
-    invoiceStatus='DRAFT';await expect(deletions.remove(p,second,finalConfirm,'case-delete-final')).rejects.toThrow('Synthetic lost');
-    expect((await service.get(p,second)).deleting).toBe(true);
-    await expect(service.update(p,second,{recordVersion:final.recordVersion,courseName:'Cannot edit'},'case-delete-readonly')).rejects.toThrow('read-only');
+    invoiceStatus='DRAFT';await deletions.remove(p,second,finalConfirm,'case-delete-final');
+    expect(provider.archiveContact).not.toHaveBeenCalled();
+    const last=await service.get(p,archivedSibling);
+    await expect(deletions.remove(p,archivedSibling,{recordVersion:last.recordVersion,confirmed:true},'case-delete-last')).rejects.toThrow('Synthetic lost');
+    expect((await service.get(p,archivedSibling)).deleting).toBe(true);
+    await expect(service.update(p,archivedSibling,{recordVersion:last.recordVersion,courseName:'Cannot edit'},'case-delete-readonly')).rejects.toThrow('read-only');
     await expect(service.create(p,{userId:detail.userId},'case-delete-new-blocked')).rejects.toThrow('being deleted');
-    expect((await deletions.remove(p,second,finalConfirm,'case-delete-final')).deleted).toBe(true);
+    expect((await service.list(p,{userId:detail.userId})).cases.map(c=>c.caseId)).toEqual([archivedSibling]);
     expect(provider.removeInvoice).toHaveBeenCalledTimes(1);expect(provider.archiveContact).toHaveBeenCalledTimes(1);
     expect((await service.list(p,{userId:detail.userId})).cases.map(c=>c.caseId)).toEqual([archivedSibling]);
     expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(1);
@@ -952,6 +955,85 @@ suite('Case management against disposable PostgreSQL',()=>{
       expect((await transaction(tenant,db=>db.query(`SELECT 1 FROM sophia_runtime.${table} WHERE customer_id=$1 AND case_id=$2`,[tenant,second]))).rowCount).toBe(0);
     const receipt=(await transaction(tenant,db=>db.query('SELECT * FROM sophia_runtime.student_case_deletions WHERE customer_id=$1 AND case_id=$2',[tenant,second]))).rows[0];
     expect(receipt.status).toBe('completed');expect(receipt.targets).toEqual({});
+    await deletions.remove(p,archivedSibling,{recordVersion:last.recordVersion,confirmed:true},'case-delete-last');
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(0);
+    expect((await transaction(tenant,db=>db.query('SELECT 1 FROM sophia_runtime.student_operations_students WHERE customer_id=$1 AND student_id=$2',[tenant,student]))).rowCount).toBe(0);
+    expect((await transaction(tenant,db=>db.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE customer_id=$1 AND xero_invoice_id=$2',[tenant,invoiceId]))).rows[0].student_id).toBeNull();
+    expect((await deletions.remove(p,archivedSibling,{recordVersion:last.recordVersion,confirmed:true},'case-delete-last')).deleted).toBe(true);
+    const replacement=await service.createStudent(p,{studentName:'New Student',studentEmail:'case-delete@example.test'},'case-delete-reuse-email');
+    expect(replacement.caseId).not.toBe(archivedSibling);
+
+  });
+  test('three archived cases delete individually, retain the active student/contact until the last case and recheck old retry plans',async()=>{
+    const first=String((await service.createStudent(p,{studentName:'Three Archived Cases',studentEmail:'three-archived@example.test'},'three-archived-student')).caseId);
+    const student=await service.get(p,first),ids=[first],contactId=randomUUID();
+    for(const key of ['second','third'])ids.push(String((await service.create(p,{userId:student.userId},`three-archived-${key}`)).caseId));
+    const invoiceIds=ids.map(()=>randomUUID()),statuses=new Map(invoiceIds.map(id=>[id,'DRAFT']));
+    const record=(id:string)=>({invoiceId:id,contactId,type:'ACCREC',status:statuses.get(id)!,amountPaid:0,amountDue:statuses.get(id)==='DRAFT'?100:0,total:100});
+    const provider={
+      assertCaseDeletionAccess:jest.fn(async()=>{}),
+      invoiceById:jest.fn(async(_tenant:string,_connection:string,id:string)=>record(id)),
+      removeInvoice:jest.fn(async(_tenant:string,_connection:string,id:string)=>{statuses.set(id,'DELETED');return record(id);}),
+      contactById:jest.fn(async()=>({contactId,status:'ACTIVE'})),
+      archiveContact:jest.fn(async()=>({contactId,status:'ARCHIVED'})),
+    };
+    await transaction(tenant,async db=>{
+      await db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1)',[first]);
+      await db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts(customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at)
+        VALUES($1,$2,$3,$4,$5,'Three Cases','linked_contact',now())`,[tenant,student.studentId,connection,contactId,`sophia:${student.studentId}`]);
+      for(const invoiceId of invoiceIds)await db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status,total,amount_paid,amount_due,currency_code)
+        VALUES($1,$2,$3,$4,$5,'ACCREC','DRAFT',100,0,100,'AUD')`,[tenant,connection,invoiceId,contactId,student.studentReference]);
+    });
+    for(let index=0;index<ids.length;index++){
+      await service.linkInvoice(p,ids[index],{connectionId:connection,invoiceId:invoiceIds[index]},`three-archived-link-${index}`);
+      const c=await service.get(p,ids[index]);await service.archive(p,ids[index],{recordVersion:c.recordVersion},`three-archived-archive-${index}`);
+    }
+    // A pre-fix interrupted deletion chose a shared contact while siblings were
+    // archived. The retry must discard that obsolete contact mutation target.
+    const initial=await service.get(p,first);
+    await transaction(tenant,async db=>{
+      await db.query(`INSERT INTO sophia_runtime.student_case_deletions(customer_id,case_id,student_id,actor_identity_user_id,idempotency_key,record_version,targets)
+        VALUES($1,$2,$3,$4,'three-archived-old-plan',$5,$6)`,[tenant,first,student.studentId,p.identityUserId,initial.recordVersion,JSON.stringify({mutating:true,invoices:[{connectionId:connection,invoiceId:invoiceIds[0],contactId}],contacts:[{connectionId:connection,contactId}]})]);
+      await db.query('UPDATE sophia_runtime.student_operations_cases SET deleting_at=now() WHERE customer_id=$1 AND case_id=$2',[tenant,first]);
+    });
+    const deletions=new StudentCaseDeletionsService({tenantTransaction:transaction} as DatabaseService,service,provider as never);
+    for(let index=0;index<ids.length;index++){
+      const target=await service.get(p,ids[index]);
+      await deletions.remove(p,ids[index],{recordVersion:target.recordVersion,confirmed:true},`three-archived-delete-${index}`);
+      expect(provider.removeInvoice).toHaveBeenCalledTimes(index+1);
+      expect(provider.removeInvoice.mock.calls[index][2]).toBe(invoiceIds[index]);
+      expect((await service.list(p,{userId:student.userId})).total).toBe(2-index);
+      const account=await pool.query('SELECT status FROM public.users WHERE id=$1',[student.userId]);
+      if(index<2){expect(account.rows[0].status).toBe('active');expect(provider.archiveContact).not.toHaveBeenCalled();expect(provider.contactById).not.toHaveBeenCalled();}
+      else{expect(account.rowCount).toBe(0);expect(provider.archiveContact).toHaveBeenCalledTimes(1);}
+    }
+  });
+  test('last-case migration repairs only completed deletion orphans and refuses unrelated cascade children',async()=>{
+    const orphan=String((await service.createStudent(p,{studentName:'Deletion Orphan',studentEmail:'orphan-delete@example.test'},'orphan-delete-create')).caseId);
+    const detail=await service.get(p,orphan),token=randomUUID();
+    const normal=await service.createStudent(p,{studentName:'Never Deleted',studentEmail:'not-deleted@example.test'},'orphan-never-delete');
+    const db=await pool.connect();
+    try{
+      await db.query('BEGIN');await db.query("SELECT set_config('sophia.tenant_id',$1,true)",[tenant]);
+      await db.query(`INSERT INTO sophia_runtime.student_case_deletions(customer_id,case_id,student_id,actor_identity_user_id,idempotency_key,record_version,status,lease_token,lease_expires_at)
+        VALUES($1,$2,$3,$4,'orphan-completed',1,'provider_done',$5,now()+interval '5 minutes')`,[tenant,orphan,detail.studentId,p.identityUserId,token]);
+      await db.query('UPDATE sophia_runtime.student_operations_cases SET deleting_at=now() WHERE case_id=$1',[orphan]);
+      await db.query('SELECT sophia_runtime.purge_deleted_student_case_records($1,$2)',[orphan,token]);
+      await db.query('COMMIT');
+    }finally{db.release();}
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(1);
+    await expect(transaction(randomUUID(),db=>db.query('SELECT sophia_runtime.purge_orphaned_case_student($1)',[orphan]))).rejects.toThrow('Completed case deletion required');
+    await pool.query('CREATE TABLE public.unrelated_student_project(id uuid PRIMARY KEY,user_id uuid REFERENCES public.users(id) ON DELETE CASCADE)');
+    await pool.query('INSERT INTO public.unrelated_student_project VALUES($1,$2)',[randomUUID(),detail.userId]);
+    await expect(transaction(tenant,db=>db.query('SELECT sophia_runtime.purge_orphaned_case_student($1)',[orphan]))).rejects.toThrow('outside the deleted case');
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(1);
+    await pool.query('DROP TABLE public.unrelated_student_project');
+    const migration=await readFile(new URL('./migrations/114_delete_last_case_student.sql',import.meta.url),'utf8');
+    await pool.query(migration.slice(migration.indexOf('-- Repair only')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(0);
+    expect((await service.get(p,String(normal.caseId))).studentName).toBe('Never Deleted');
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[user])).rowCount).toBe(1); // Ordinary no-case student, no deletion receipt.
+    expect((await transaction(tenant,db=>db.query('SELECT sophia_runtime.purge_orphaned_case_student($1) AS deleted',[orphan]))).rows[0].deleted).toBe(true);
   });
   test('invoice removal checks live status, preserves tenant boundaries and recovers a provider success after local rollback',async()=>{
     const id=String((await service.createStudent(p,{studentName:'Invoice Removal Student',studentEmail:'removal@example.test'},'invoice-removal-student')).caseId);

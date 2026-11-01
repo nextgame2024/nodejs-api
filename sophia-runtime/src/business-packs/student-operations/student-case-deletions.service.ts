@@ -24,7 +24,7 @@ export class StudentCaseDeletionsService{
     const version=parsed.data.recordVersion,lease=randomUUID(),s=caseSchema();
     const job=await this.database.tenantTransaction(p.tenantId,async db=>{
       const receipt=(await db.query(`SELECT completed_at FROM ${s}.student_case_deletions WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id])).rows[0];
-      if(receipt?.completed_at)return {completed:true,targets:{} as Targets};
+      if(receipt?.completed_at){await db.query(`SELECT ${s}.purge_orphaned_case_student($1)`,[id]);return {completed:true,targets:{} as Targets};}
       const c=await this.cases.authorizedCase(db,p,id,true,true);
       // Re-read after the case lock: a concurrent first request may just have
       // inserted its lease. Never steal a live claim from a stale pre-lock read.
@@ -49,7 +49,13 @@ export class StudentCaseDeletionsService{
       // uncertain provider creation. Resolve its existing receipt first.
       const uncertain=await db.query(`SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status IN ('creating','review_required')`,[p.tenantId,id]);
       if(uncertain.rowCount)throw new ConflictException('An earlier invoice creation needs confirmation before this case can be permanently deleted.');
+      // Archived cases still own this student's contact. Permanent deletion
+      // must be explicit for every case before the contact can be archived.
+      const hasOtherCase=!!(await db.query(`SELECT 1 FROM ${s}.student_operations_cases WHERE customer_id=$1 AND student_id=$2 AND case_id<>$3`,[p.tenantId,c.student_id,id])).rowCount;
       let targets=prior?.targets as Targets|undefined;
+      // Old interrupted jobs may contain contacts selected by the former
+      // archived-siblings rule. Reapply the current policy on every retry.
+      if(targets?.mutating&&hasOtherCase)targets={...targets,contacts:[]};
       if(!targets?.mutating){
         const invoices=(await db.query(`WITH ids AS (
           SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
@@ -65,9 +71,8 @@ export class StudentCaseDeletionsService{
           ON a.customer_id=b.customer_id AND a.xero_connection_id=b.xero_connection_id AND a.xero_invoice_id=b.xero_invoice_id
           WHERE a.customer_id=$1 AND a.case_id=$2 AND b.case_id<>$2`,[p.tenantId,id]);
         if(shared.rowCount)throw new ConflictException('An invoice is shared with another case. Resolve its case links before deletion.');
-        const hasActiveCase=(await db.query(`SELECT 1 FROM ${s}.student_operations_cases WHERE customer_id=$1 AND student_id=$2 AND case_id<>$3 AND archived_at IS NULL`,[p.tenantId,c.student_id,id])).rowCount;
         let contacts:Contact[]=[];
-        if(!hasActiveCase){
+        if(!hasOtherCase){
           contacts=(await db.query(`SELECT xero_connection_id AS "connectionId",xero_contact_id AS "contactId" FROM ${s}.student_operations_primary_xero_contacts WHERE customer_id=$1 AND student_id=$2 AND xero_contact_id IS NOT NULL
             UNION SELECT xero_connection_id,xero_contact_id FROM ${s}.student_operations_document_contacts WHERE customer_id=$1 AND student_id=$2 AND xero_contact_id IS NOT NULL
             UNION SELECT xero_connection_id,xero_contact_id FROM ${s}.student_operations_xero_invoices WHERE customer_id=$1 AND student_id=$3 AND xero_contact_id IS NOT NULL
@@ -92,6 +97,9 @@ export class StudentCaseDeletionsService{
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '5 minutes') ON CONFLICT(customer_id,case_id) DO UPDATE SET targets=excluded.targets,lease_token=excluded.lease_token,lease_expires_at=excluded.lease_expires_at`,[p.tenantId,id,c.student_id,p.identityUserId,key,version,JSON.stringify(targets),lease]);
       await db.query(`UPDATE ${s}.student_operations_cases SET deleting_at=coalesce(deleting_at,now()) WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
       return {completed:false,targets:targets!};
+    }).catch(error=>{
+      if((error as {code?:string}).code==='23503')throw new ConflictException('The student still has related records that must be resolved before deletion can finish.');
+      throw error;
     });
     if(job.completed)return {caseId:id,deleted:true};
     let mutating=!!job.targets.mutating;
@@ -139,6 +147,7 @@ export class StudentCaseDeletionsService{
         if(!mutating)await db.query(`UPDATE ${s}.student_operations_cases SET deleting_at=NULL WHERE customer_id=$1 AND case_id=$2 AND EXISTS(SELECT 1 FROM ${s}.student_case_deletions WHERE customer_id=$1 AND case_id=$2 AND lease_token=$3)`,[p.tenantId,id,lease]);
         await db.query(`UPDATE ${s}.student_case_deletions SET lease_token=NULL,lease_expires_at=NULL WHERE customer_id=$1 AND case_id=$2 AND lease_token=$3`,[p.tenantId,id,lease]);
       }).catch(()=>{}); // A database outage leaves a bounded lease for recovery.
+      if((error as {code?:string}).code==='23503')throw new ConflictException('The student still has related records that must be resolved before deletion can finish.');
       throw error;
     }
   }

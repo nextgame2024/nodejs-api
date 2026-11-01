@@ -215,5 +215,30 @@
       "Runtime typecheck, production frontend build and both diff checks passed"
     ],
     "deployment": "Apply owner migration 113 before Runtime API/frontend. No production or live provider changes."
+  },
+  "lastCaseStudentRemoval20261101": {
+    "updatedOn": "2026-11-01",
+    "status": "locally_verified_not_deployed",
+    "migration": "114_delete_last_case_student.sql",
+    "details": "student-case-deletion.md",
+    "changes": "Deleting the last case removes its student login/profile and owned links; any remaining case preserves the account. Owner migration repairs zero-case students tied to completed permanent-deletion receipts, including pre-fix leftovers. Completed retries clean up without new external writes. Confirmation now describes last-case account removal.",
+    "verification": [
+      "3 focused disposable PostgreSQL regressions passed (39 unrelated tests skipped)",
+      "91 case-page ChromeHeadless tests passed",
+      "Runtime typecheck and both repository diff checks passed"
+    ],
+    "deployment": "Apply migration 114 after 113, before updated Runtime API/frontend. Includes scoped repair for completed deletion orphans. No production or external mutations performed."
+  },
+  "lastCaseContactRule20261101": {
+    "updatedOn": "2026-11-01",
+    "status": "locally_verified_not_deployed",
+    "details": "student-case-deletion.md",
+    "changes": "Contact archiving now waits until the last case is permanently deleted. Archived sibling cases preserve the active student/contact and must be deleted individually. Retries discard contact targets created by the old archived-siblings policy. Last-case student cleanup and completed orphan repair continue through migration 114.",
+    "verification": [
+      "3 focused disposable PostgreSQL tests passed (40 unrelated tests skipped), including three archived cases deleted one by one with isolated invoice mutations, active retained account/contact, last-case purge and obsolete saved-plan correction",
+      "91 case-page ChromeHeadless tests passed",
+      "Runtime typecheck and both repository diff checks passed"
+    ],
+    "deployment": "Deploy updated API/frontend with migration 114 from the preceding fix. No additional migration for the contact-rule correction. Production T-TEST4 was not accessed or changed; migration 114 repairs eligible completed deletion leftovers."
   }
 }
