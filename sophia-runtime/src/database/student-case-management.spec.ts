@@ -109,7 +109,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql','113_student_case_deletion.sql','114_delete_last_case_student.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql','113_student_case_deletion.sql','114_delete_last_case_student.sql','115_synced_student_case_bootstrap.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -817,6 +817,53 @@ suite('Case management against disposable PostgreSQL',()=>{
       keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='archived' WHERE document_type_id=$1`,[passportType]));
     }
+  });
+  test('recurring student sync creates a missing profile and case from verified future draft invoices exactly once',async()=>{
+    const userId=randomUUID(),invoiceId=randomUUID(),contactId=randomUUID(),collegeId=randomUUID();
+    await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,type,status,username,password) VALUES($1,$2,'STD-9001','Synced Missing Case','missing-sync@example.test','student','active','missing-sync','unchanged')`,[userId,company]);
+    await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,'STD-9001')`,[tenant,company]);
+    await pool.query(`INSERT INTO public.bm_colleges(college_id,company_id,college_name,status) VALUES($1,$2,'NEST ACADEMY','active')`,[collegeId,company]);
+    const directory=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'S15','Advisor One','S15 Advisor One') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,invoice_date,due_date,advisor_name,invoice_reference,total,amount_paid,amount_due,currency_code)
+      VALUES($1,$2,$3,$4,'STD-9001','INV-SYNC','ACCREC','DRAFT','2027-05-07','2027-05-07','S15 Advisor One','NEST ACADEMY',1500,0,1500,'AUD')`,[tenant,connection,invoiceId,contactId]));
+    await expect(transaction(randomUUID(),db=>db.query('SELECT sophia_runtime.ensure_synced_student_case($1,$2)',['STD-9001','system:test']))).rejects.toThrow('not eligible');
+    const run=()=>transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_synced_student_case($1,$2) AS id',['STD-9001','system:test']));
+    const results=await Promise.all([run(),run()]);const created=results.map(r=>r.rows[0].id).find(Boolean);
+    const detail=await service.get(p,created);
+    expect(detail).toMatchObject({userId,studentReference:'STD-9001',currentStage:'imported_pending_review',status:'in_progress',advisorId:directory});
+    expect(detail.colleges).toEqual([expect.objectContaining({collegeId,isPrimary:true})]);
+    expect((await service.invoices(p,created,{})).invoices).toEqual([expect.objectContaining({invoiceId,invoiceNumber:'INV-SYNC'})]);
+    expect((await service.list(p,{userId})).total).toBe(1);expect((await run()).rows[0].id).toBeNull();
+    expect((await service.activities(p,created,{})).activity.filter(a=>a.eventType==='case.imported')).toHaveLength(1);
+    expect((await transaction(tenant,db=>db.query('SELECT 1 FROM sophia_runtime.student_operations_document_jobs WHERE customer_id=$1 AND case_id=$2',[tenant,created]))).rowCount).toBe(2);
+    expect((await pool.query('SELECT password FROM public.users WHERE id=$1',[userId])).rows[0].password).toBe('unchanged');
+    const extra=randomUUID();await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status) VALUES($1,$2,$3,$4,'STD-9001','ACCREC','DRAFT')`,[tenant,connection,extra,contactId]));
+    await run();expect((await service.invoices(p,created,{})).total).toBe(1); // Do not guess attribution once a case exists.
+  });
+  test('recurring student case bootstrap skips deleted/voided-only invoices and intentionally removed or archived cases',async()=>{
+    const userId=randomUUID(),invoiceId=randomUUID();
+    await pool.query(`INSERT INTO public.users(id,company_id,student_id,name,email,type,status) VALUES($1,$2,'STD-9002','No Case Evidence','no-case-evidence@example.test','student','active')`,[userId,company]);
+    await pool.query(`INSERT INTO public.bm_xero_student_identities VALUES($1,$2,'STD-9002')`,[tenant,company]);
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_type,invoice_status) VALUES($1,$2,$3,$3,'STD-9002','ACCREC','DELETED')`,[tenant,connection,invoiceId]));
+    const run=()=>transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_synced_student_case($1,$2) AS id',['STD-9002','system:test']));
+    expect((await run()).rows[0].id).toBeNull();
+    expect((await transaction(tenant,db=>db.query("SELECT 1 FROM sophia_runtime.student_operations_student_user_links WHERE customer_id=$1 AND user_id=$2",[tenant,userId]))).rowCount).toBe(0);
+    const existing=String((await service.create(p,{userId},'sync-case-existing')).caseId),c=await service.get(p,existing);
+    await service.archive(p,existing,{recordVersion:c.recordVersion},'sync-case-archive');
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_xero_invoices SET invoice_status='DRAFT' WHERE customer_id=$1 AND xero_invoice_id=$2`,[tenant,invoiceId]));
+    expect((await run()).rows[0].id).toBeNull();expect((await service.get(p,existing)).archived).toBe(true);
+    const token=randomUUID(),owner=await pool.connect();
+    try{
+      await owner.query('BEGIN');await owner.query("SELECT set_config('sophia.tenant_id',$1,true)",[tenant]);
+      const archived=await service.get(p,existing);
+      await owner.query(`INSERT INTO sophia_runtime.student_case_deletions(customer_id,case_id,student_id,actor_identity_user_id,idempotency_key,record_version,status,lease_token,lease_expires_at)
+        VALUES($1,$2,$3,$4,'sync-case-old-delete',$5,'provider_done',$6,now()+interval '5 minutes')`,[tenant,existing,archived.studentId,p.identityUserId,archived.recordVersion,token]);
+      await owner.query('UPDATE sophia_runtime.student_operations_cases SET deleting_at=now() WHERE customer_id=$1 AND case_id=$2',[tenant,existing]);
+      await owner.query('SELECT sophia_runtime.purge_deleted_student_case_records($1,$2)',[existing,token]);await owner.query('COMMIT');
+    }finally{owner.release();}
+    expect((await run()).rows[0].id).toBeNull(); // Do not resurrect an explicitly deleted case.
+    expect((await service.list(p,{userId})).total).toBe(0);
+
   });
   test('archiving keeps a case read-only, reserves Terminated for archives and restores its exact previous workflow',async()=>{
     const id=String((await service.createStudent(p,{studentName:'Archived Student',studentEmail:'archived@example.test',currentStage:'awaiting_payment',status:'on_hold'},'archive-student')).caseId);

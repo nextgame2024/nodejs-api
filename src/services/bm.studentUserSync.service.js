@@ -274,6 +274,15 @@ async function linkStudent(db, scope, row, studentId) {
     WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=ANY($3::uuid[]) AND student_id IS NULL`,
     [scope.customer_id, row.connection_id, row.contact_ids, studentId],
   );
+  // Keep invoice attribution, profile and first case in the same candidate
+  // transaction. Never commit a new login while its case bootstrap failed.
+  try {
+    await db.query('SELECT sophia_runtime.ensure_synced_student_case($1,$2)',[studentId,'system:student-user-sync']);
+  } catch(error) {
+    if(error.code==='42883')throw fail('Student case sync is not installed. Apply Runtime migration 115 before retrying.',503);
+    if(['23514','23505','P0001'].includes(error.code))throw fail('Student profile or case needs review before this import can finish.');
+    throw error;
+  }
   await db.query(
     `UPDATE bm_xero_student_sync_candidates SET student_id=$3,status='linked',reason=NULL WHERE customer_id=$1 AND id=$2`,
     [scope.customer_id, row.id, studentId],

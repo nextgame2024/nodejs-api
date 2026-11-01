@@ -24,6 +24,8 @@ const actor = "33333333-3333-4333-8333-333333333333",
   connection = "44444444-4444-4444-8444-444444444444";
 const source = "55555555-5555-4555-8555-555555555555";
 const suite = url ? describe : describe.skip;
+const bootstrapFixture=`CREATE OR REPLACE FUNCTION sophia_runtime.ensure_synced_student_case(reference text,actor text) RETURNS uuid LANGUAGE plpgsql AS $$ BEGIN
+  INSERT INTO sophia_runtime.case_bootstrap_calls(student_reference,actor) VALUES(reference,actor) ON CONFLICT(student_reference) DO UPDATE SET actor=excluded.actor; RETURN NULL; END $$`;
 const oldPipeline=process.env.STUDENT_SYNC_PIPELINE_ENABLED;
 suite("Student user sync — isolated PostgreSQL", () => {
   beforeAll(async () => {
@@ -100,6 +102,8 @@ suite("Student user sync — isolated PostgreSQL", () => {
     ])
       await addContact(name, email);
     await pool.query(await readFile(new URL('../sophia-runtime/src/database/migrations/088_user_password_setup_state.sql', import.meta.url), 'utf8'));
+    await pool.query('CREATE TABLE sophia_runtime.case_bootstrap_calls(student_reference text PRIMARY KEY,actor text)');
+    await pool.query(bootstrapFixture);
   });
   afterAll(async () => {
     if(oldPipeline===undefined) delete process.env.STUDENT_SYNC_PIPELINE_ENABLED;
@@ -172,6 +176,7 @@ suite("Student user sync — isolated PostgreSQL", () => {
     expect((await pool.query('SELECT must_change_password FROM users WHERE id=$1', [actor])).rows[0].must_change_password).toBe(false);
     expect(users[0].password).not.toBe(users[1].password);
     expect(users.every((u) => /^STD-\d+$/.test(u.student_id))).toBe(true);
+    expect((await pool.query('SELECT student_reference FROM sophia_runtime.case_bootstrap_calls ORDER BY student_reference')).rows.map(r=>r.student_reference)).toEqual(users.map(u=>u.student_id).sort());
     expect(
       (
         await pool.query(
@@ -506,4 +511,19 @@ suite("Student user sync — isolated PostgreSQL", () => {
     expect((await pool.query('SELECT 1 FROM bm_xero_student_sync_candidates WHERE $1::uuid=ANY(contact_ids)',[contact])).rowCount).toBe(0);
     expect((await pool.query("SELECT count(*)::int n FROM users WHERE type='student'")).rows[0].n).toBe(before);
   });
+  test('a missing case bootstrap migration cannot commit a newly imported login or invoice mapping',async()=>{
+    const contact=await addContact('S15 Case Bootstrap Failure','bootstrap-failure@example.test');
+    await pool.query('DROP FUNCTION sophia_runtime.ensure_synced_student_case(text,text)');
+    try{
+      await enqueueSync(actor,'apply');await drain();
+      expect((await pool.query("SELECT 1 FROM users WHERE email='bootstrap-failure@example.test'")).rowCount).toBe(0);
+      expect((await pool.query('SELECT student_id FROM sophia_runtime.student_operations_xero_invoices WHERE xero_contact_id=$1',[contact])).rows[0].student_id).toBeNull();
+      const candidate=(await pool.query('SELECT status,reason FROM bm_xero_student_sync_candidates WHERE $1::uuid=ANY(contact_ids)',[contact])).rows[0];
+      expect(candidate.status).toBe('pending');expect(candidate.reason).toContain('migration 115');
+    }finally{await pool.query(bootstrapFixture);}
+    await enqueueSync(actor,'apply');await drain();
+    const linked=(await pool.query("SELECT student_id FROM users WHERE email='bootstrap-failure@example.test'")).rows[0];
+    expect(linked).toBeDefined();expect((await pool.query('SELECT 1 FROM sophia_runtime.case_bootstrap_calls WHERE student_reference=$1',[linked.student_id])).rowCount).toBe(1);
+  });
+
 });

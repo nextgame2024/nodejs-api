@@ -240,5 +240,30 @@
       "Runtime typecheck and both repository diff checks passed"
     ],
     "deployment": "Deploy updated API/frontend with migration 114 from the preceding fix. No additional migration for the contact-rule correction. Production T-TEST4 was not accessed or changed; migration 114 repairs eligible completed deletion leftovers."
+  },
+  "studentSyncCaseBootstrap20261101": {
+    "updatedOn": "2026-11-01",
+    "status": "production_record_repaired_permanent_sync_fix_locally_verified_pending_deployment",
+    "details": "student-sync-case-bootstrap.md",
+    "migration": "115_synced_student_case_bootstrap.sql",
+    "cause": "Recurring identity sync created login and invoice mapping but omitted operational profile and first case for students arriving after the one-off migration. Invoice sync itself succeeded.",
+    "audit": "1070 accounts inspected: before repair only active STD-1073 (one draft invoice) and archived STD-1069 (no cached invoices) lacked cases. After repair zero active students lack a case; archived STD-1069 unchanged.",
+    "productionRepair": {
+      "studentReference": "STD-1073",
+      "caseNumber": "CASE-1073",
+      "caseId": "37a2aa59-d8c3-4005-8d6f-47ba539458ce",
+      "invoiceNumber": "INV-10596",
+      "advisor": "Paulina Aguillon",
+      "college": "NEST ACADEMY invoice reference retained; absent active directory match left unconfirmed",
+      "scope": "Exact tenant/user/invoice fingerprint-guarded case/profile/link repair under Runtime app role, audited; no Xero or credential changes."
+    },
+    "verification": [
+      "20 isolated identity-worker SQL tests passed",
+      "2 focused Runtime SQL tests passed (43 unrelated tests skipped)",
+      "4 synthetic repair operator checks passed",
+      "Runtime TypeScript, JS syntax and diff checks passed",
+      "Post-commit production profile/case/invoice verification and complete no-case audit"
+    ],
+    "deployment": "Data repair is complete. Apply migration 115 then redeploy identity sync worker/legacy backend for prevention. No production DDL, Xero calls or worker deployment performed."
   }
 }
