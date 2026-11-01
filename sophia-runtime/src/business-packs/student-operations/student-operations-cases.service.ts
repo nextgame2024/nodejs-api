@@ -67,7 +67,8 @@ export function caseId(value: string): string { return parse(z.string().uuid(), 
 function assertManage(p: Principal) {
   if (!hasStudentOperationsPermission(p.role, 'cases.manage')) throw new ForbiddenException('Case management permission required.');
 }
-export function assertCaseWritable(row:{archived_at?:unknown}){
+export function assertCaseWritable(row:{archived_at?:unknown;deleting_at?:unknown}){
+  if(row.deleting_at)throw new ConflictException('This case is being deleted and is read-only. Retry Delete case to finish.');
   if(row.archived_at)throw new ConflictException('This case is archived and read-only. Restore it before making changes.');
 }
 
@@ -99,9 +100,9 @@ export class StudentOperationsCasesService {
         AND ($3::boolean OR EXISTS (SELECT 1 FROM ${s}.student_operations_case_advisors a WHERE a.customer_id=c.customer_id AND a.case_id=c.case_id AND a.is_primary AND a.advisor_user_id::text=$4))`;
       const params = [p.tenantId, q.userId ?? null, hasStudentOperationsPermission(p.role, 'cases.read_all'), p.identityUserId];
       const count = await db.query(`SELECT count(*)::int total FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id WHERE ${where}`, params);
-      const rows = await db.query(`SELECT c.case_id AS "caseId",c.case_reference AS "caseNumber",l.user_id AS "userId", l.student_reference AS "studentReference", c.title, c.course_name AS "courseName",c.current_stage AS "currentStage",c.archived_at IS NOT NULL AS archived,CASE WHEN c.lifecycle_status='open' THEN 'in_progress' WHEN c.lifecycle_status='completed' THEN 'closed' ELSE c.lifecycle_status END AS status,c.record_version AS "recordVersion"
+      const rows = await db.query(`SELECT c.case_id AS "caseId",c.case_reference AS "caseNumber",l.user_id AS "userId", l.student_reference AS "studentReference", c.title, c.course_name AS "courseName",c.current_stage AS "currentStage",c.archived_at IS NOT NULL AS archived,c.deleting_at IS NOT NULL AS deleting,CASE WHEN c.lifecycle_status='open' THEN 'in_progress' WHEN c.lifecycle_status='completed' THEN 'closed' ELSE c.lifecycle_status END AS status,c.record_version AS "recordVersion"
         FROM ${s}.student_operations_cases c JOIN ${s}.student_operations_student_user_links l ON l.customer_id=c.customer_id AND l.student_id=c.student_id
-        WHERE ${where} ORDER BY c.created_at DESC,c.case_id LIMIT $5 OFFSET $6`, [...params, q.limit, (q.page - 1) * q.limit]);
+        WHERE ${where} ORDER BY (c.archived_at IS NOT NULL),c.created_at DESC,c.case_id LIMIT $5 OFFSET $6`, [...params, q.limit, (q.page - 1) * q.limit]);
       return { cases: rows.rows, page: q.page, limit: q.limit, total: count.rows[0].total };
     });
   }
@@ -118,6 +119,12 @@ export class StudentOperationsCasesService {
     return rows.rows[0];
   }
 
+  async assertStudentNotDeleting(db:PoolClient,p:Principal,studentId:string){
+    await db.query(`SELECT student_id FROM ${caseSchema()}.student_operations_students WHERE customer_id=$1 AND student_id=$2 FOR UPDATE`,[p.tenantId,studentId]);
+    const deleting=await db.query(`SELECT 1 FROM ${caseSchema()}.student_operations_cases WHERE customer_id=$1 AND student_id=$2 AND deleting_at IS NOT NULL`,[p.tenantId,studentId]);
+    if(deleting.rowCount)throw new ConflictException('A case for this student is being deleted. Finish that deletion first.');
+  }
+
   async get(p: Principal, id: string) {
     return this.database.tenantReadTransaction(p.tenantId, async db => {
       const row = await this.authorizedCase(db, p, id);
@@ -132,7 +139,7 @@ export class StudentOperationsCasesService {
         WHERE profile.customer_id=$1 AND profile.student_id=$2`, [p.tenantId,row.student_id,id]);
       const advisors = await db.query(`SELECT a.advisor_user_id AS "userId",r.display_name AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_advisors a LEFT JOIN ${s}.student_operations_advisor_roster r ON r.customer_id=a.customer_id AND r.user_id=a.advisor_user_id WHERE a.customer_id=$1 AND a.case_id=$2 ORDER BY a.is_primary DESC,a.assigned_at,a.advisor_user_id`, [p.tenantId,id]);
       const colleges = await db.query(`SELECT a.college_id AS "collegeId",coalesce(d.college_name,c.college_name) AS name,a.is_primary AS "isPrimary" FROM ${s}.student_operations_case_colleges a JOIN ${s}.student_operations_colleges c ON c.customer_id=a.customer_id AND c.college_id=a.college_id LEFT JOIN ${s}.student_operations_college_directory d ON d.customer_id=a.customer_id AND d.college_id=a.college_id WHERE a.customer_id=$1 AND a.case_id=$2`, [p.tenantId,id]);
-      return { archived:!!row.archived_at,archivedAt:row.archived_at??null,caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, studentName: student.rows[0]?.legalName ?? null, studentEmail: student.rows[0]?.email ?? null, studentMobile: student.rows[0]?.studentMobile ?? null, studentPhone: student.rows[0]?.studentPhone ?? null, advisorId: student.rows[0]?.advisorId ?? null, advisorName: student.rows[0]?.businessAdvisorName ?? null, title: row.title, courseName: row.course_name, status: publicCaseStatus(row.lifecycle_status), currentStage: row.current_stage, openedOn: row.opened_on, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
+      return { deleting:!!row.deleting_at,archived:!!row.archived_at,archivedAt:row.archived_at??null,caseId: row.case_id, caseNumber: row.case_reference, userId: row.user_id, studentId: row.student_id, studentReference: row.student_reference, studentName: student.rows[0]?.legalName ?? null, studentEmail: student.rows[0]?.email ?? null, studentMobile: student.rows[0]?.studentMobile ?? null, studentPhone: student.rows[0]?.studentPhone ?? null, advisorId: student.rows[0]?.advisorId ?? null, advisorName: student.rows[0]?.businessAdvisorName ?? null, title: row.title, courseName: row.course_name, status: publicCaseStatus(row.lifecycle_status), currentStage: row.current_stage, openedOn: row.opened_on, recordVersion: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, advisors: advisors.rows, colleges: colleges.rows };
     });
   }
 
@@ -141,6 +148,8 @@ export class StudentOperationsCasesService {
     const value=parse(z.object({recordVersion:z.number().int().positive()}).strict(),input);
     return this.write(p,restore?'case.restore':'case.archive',{caseId:id,...value},key,async db=>{
       const row=await this.authorizedCase(db,p,id,true,true),s=caseSchema();
+      if(row.deleting_at)throw new ConflictException('This case is being deleted. Retry Delete case to finish.');
+      await this.assertStudentNotDeleting(db,p,row.student_id);
       if(row.record_version!==value.recordVersion)throw new ConflictException('This case changed. Reload it before trying again.');
       if(restore){
         if(!row.archived_at||!row.archive_previous_workflow)throw new ConflictException('This case is not archived.');
@@ -204,6 +213,7 @@ export class StudentOperationsCasesService {
       const s = caseSchema();
       await db.query(`SELECT ${s}.initialize_student_document_requirements($1)`,[p.externalCompanyId]);
       const profile = await db.query(`SELECT ${s}.ensure_student_operations_profile($1) AS id`, [value.userId]);
+      await this.assertStudentNotDeleting(db,p,profile.rows[0].id);
       const row = await db.query(`INSERT INTO ${s}.student_operations_cases(customer_id,student_id,case_reference,case_kind,title,course_name,current_stage,lifecycle_status,closed_on)
         VALUES($1,$2,'CASE-' || nextval('${s}.student_operations_case_number_seq')::text,'student_operations',$3,$4,$5,$6,CASE WHEN $6 IN ('closed','completed','cancelled') THEN CURRENT_DATE END) RETURNING case_id`,
       [p.tenantId,profile.rows[0].id,value.title ?? null,value.courseName ?? null,workflow.stage,workflow.status]);
@@ -305,7 +315,7 @@ export class StudentOperationsCasesService {
         ${joins}
         ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       const count=await db.query(`SELECT count(*)::int total FROM (${invoiceIds}) invoices`,[p.tenantId,id]);
-      const canRemove=!c.archived_at&&financial&&hasStudentOperationsPermission(p.role,'cases.manage')&&hasStudentOperationsPermission(p.role,'payments.prepare');
+      const canRemove=financial&&hasStudentOperationsPermission(p.role,'cases.manage')&&hasStudentOperationsPermission(p.role,'payments.prepare');
       const canEdit=canRemove&&hasStudentOperationsPermission(p.role,'payments.approve');
       return {invoices:rows.rows.map(row=>({...row,canEdit:!!canEdit&&invoiceCanEdit(row),removalAction:canRemove?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
     });

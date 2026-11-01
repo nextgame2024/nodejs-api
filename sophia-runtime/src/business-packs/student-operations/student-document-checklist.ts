@@ -64,7 +64,7 @@ export async function reconcileDocumentChecklist(db:PoolClient,tenant:string,id:
   if(!documentChecklistEnabled())return;
   const s=caseSchema();
   const c=(await db.query(`SELECT * FROM ${s}.student_operations_cases WHERE customer_id=$1 AND case_id=$2`,[tenant,id])).rows[0];
-  if(!c||!['pre_sale','on_hold'].includes(c.lifecycle_status))return;
+  if(!c||c.deleting_at||!['pre_sale','on_hold'].includes(c.lifecycle_status))return;
   // Replacement makes previous financial approval historical, without erasing it.
   await db.query(`UPDATE ${s}.student_case_offers o SET is_current=false,status='superseded',record_version=record_version+1
     FROM ${s}.student_operations_case_documents old

@@ -414,7 +414,7 @@ export class StudentOperationsCaseDocumentsService {
     const job=await this.database.tenantTransaction(tenantId,async db=>{
       await db.query(`UPDATE ${s}.student_operations_document_jobs SET status='failed',error_code='lease_attempts_exhausted',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND status='processing' AND lease_expires_at<now() AND attempts>=5`,[tenantId]);
       const result=await db.query(`WITH candidate AS (
-        SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND attempts<5 AND next_attempt_at<=now()
+        SELECT job_id FROM ${s}.student_operations_document_jobs WHERE customer_id=$1 AND EXISTS(SELECT 1 FROM ${s}.student_operations_cases c WHERE c.customer_id=$1 AND c.case_id=student_operations_document_jobs.case_id AND c.deleting_at IS NULL) AND attempts<5 AND next_attempt_at<=now()
           AND (status='queued' OR (status='processing' AND lease_expires_at<now()))
           ${process.env.XERO_SHARED_BACKOFF_ENABLED === 'true' ? `AND NOT EXISTS (
             SELECT 1 FROM ${s}.xero_connection_rate_limits rate

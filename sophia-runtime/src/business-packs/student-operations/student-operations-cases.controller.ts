@@ -1,3 +1,4 @@
+import {StudentCaseDeletionsService} from './student-case-deletions.service.js';
 import { Body,Controller,Delete,Get,Header,Headers,Param,Patch,Post,Put,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentCaseInvoiceRemovalsService } from './student-case-invoice-removals.service.js';
@@ -13,7 +14,7 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @Controller('business-packs/student-operations/v1/workspace/cases')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
-  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService,private readonly removals:StudentCaseInvoiceRemovalsService,private readonly edits:StudentCaseInvoiceEditsService) {}
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService,private readonly removals:StudentCaseInvoiceRemovalsService,private readonly edits:StudentCaseInvoiceEditsService,private readonly deletions:StudentCaseDeletionsService) {}
   @Get(':caseId/invoices/:connectionId/:invoiceId/edit-options')
   @Header('Cache-Control','private, no-store')
   invoiceEditOptions(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string){return this.edits.options(r.studentOperationsPrincipal,id,connectionId,invoiceId);}
@@ -24,6 +25,8 @@ export class StudentOperationsCasesController {
   manualInvoiceOptions(@Req() r:Request,@Param('caseId') id:string){return this.drafts.manualOptions(r.studentOperationsPrincipal,id);}
   @Post(':caseId/manual-invoice-drafts')
   prepareManualInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.drafts.prepareManual(r.studentOperationsPrincipal,id,body,key);}
+  @Post(':caseId/delete')
+  deleteCase(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.deletions.remove(r.studentOperationsPrincipal,id,body,key);}
   @Post(':caseId/archive')
   archiveCase(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.archive(r.studentOperationsPrincipal,id,body,key);}
   @Post(':caseId/restore')

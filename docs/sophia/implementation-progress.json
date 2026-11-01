@@ -1,4 +1,19 @@
 {
+  "studentCaseDeletionAndControls": {
+    "updatedOn": "2026-11-01",
+    "status": "locally_verified_with_baseline_desktop_failures_not_deployed",
+    "details": "student-case-deletion.md",
+    "migration": "113_student_case_deletion.sql",
+    "changes": "Distinct Restore icon, compact accessible case controls, archived-last server pagination, visible disabled invoice controls and confirmed durable provider-first permanent case deletion. Contact archiving occurs only when all remaining student cases are archived. Student account and other cases remain.",
+    "verification": [
+      "137 focused ChromeHeadless tests passed at standard viewport; 91 mobile tests passed",
+      "Wide desktop: 134 passed, 3 baseline layout failures; unchanged committed frontend reproduces same failures (79 passed)",
+      "4 focused disposable PostgreSQL tests passed: complete case graph purge, role/tenant/version isolation, paid/refused invoices, active/archived sibling contact rule, simultaneous claims, lost-reply retries, archive/restore and analysis queues",
+      "63 mocked Runtime/provider tests passed",
+      "Runtime typecheck, production frontend build and both diff checks passed"
+    ],
+    "deployment": "Apply owner migration 113 before Runtime API/frontend. No production or live provider changes."
+  },
   "studentArchiveIdleCaseFix": {
     "updatedOn": "2026-11-01",
     "status": "locally_verified_not_deployed",

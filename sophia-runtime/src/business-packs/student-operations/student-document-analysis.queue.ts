@@ -53,9 +53,9 @@ export class StudentDocumentAnalysisQueue {
       await db.query(`UPDATE ${s}.student_document_analysis_jobs SET status='failed',lease_token=NULL,
         lease_expires_at=NULL,error_code=coalesce(error_code,'provider_unavailable'),updated_at=now()
         WHERE customer_id=$1 AND status='processing' AND lease_expires_at<=now() AND attempts>=5`, [tenantId]);
-      const result = await db.query(`SELECT job_id FROM ${s}.student_document_analysis_jobs WHERE customer_id=$1
-        AND attempts<5 AND ((status='queued' AND next_attempt_at<=now()) OR (status='processing' AND lease_expires_at<=now()))
-        ORDER BY next_attempt_at,created_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1`, [tenantId]);
+      const result = await db.query(`SELECT j.job_id FROM ${s}.student_document_analysis_jobs j JOIN ${s}.student_operations_cases c USING(customer_id,case_id) WHERE j.customer_id=$1 AND c.deleting_at IS NULL
+        AND j.attempts<5 AND ((j.status='queued' AND j.next_attempt_at<=now()) OR (j.status='processing' AND j.lease_expires_at<=now()))
+        ORDER BY j.next_attempt_at,j.created_at,j.job_id FOR UPDATE OF c SKIP LOCKED LIMIT 1`, [tenantId]);
       if (!result.rows[0]) return null;
       const claimed = await db.query(`UPDATE ${s}.student_document_analysis_jobs SET status='processing',attempts=attempts+1,
         lease_token=$3,lease_expires_at=now()+interval '3 minutes',error_code=NULL,updated_at=now()

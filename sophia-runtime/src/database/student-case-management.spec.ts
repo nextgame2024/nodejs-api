@@ -7,6 +7,7 @@ import { StudentOperationsCasesService } from '../business-packs/student-operati
 import type { StudentOperationsWorkspacePrincipal } from '../business-packs/student-operations/student-operations-workspace.service.js';
 import { runCaseMigration } from '../../scripts/migrate-student-cases.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
+import {StudentCaseDeletionsService} from '../business-packs/student-operations/student-case-deletions.service.js';
 import { StudentCaseInvoiceRemovalsService } from '../business-packs/student-operations/student-case-invoice-removals.service.js';
 import { StudentCaseInvoiceEditsService } from '../business-packs/student-operations/student-case-invoice-edits.service.js';
 import { invoiceEditFingerprint } from '../business-packs/student-operations/student-invoice-edit-policy.js';
@@ -108,7 +109,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql','113_student_case_deletion.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -875,6 +876,82 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect((await service.get(p,id)).courseName).toBe('Editable again');
     const activity=(await service.activities(p,id,{})).activity;
     expect(activity.filter(a=>a.eventType==='case.archived')).toHaveLength(1);expect(activity.filter(a=>a.eventType==='case.restored')).toHaveLength(1);
+  });
+  test('permanent case deletion preserves other cases, archives contacts only without active cases and retries lost provider replies',async()=>{
+    const first=String((await service.createStudent(p,{studentName:'Delete Student',studentEmail:'case-delete@example.test'},'case-delete-student')).caseId);
+    const detail=await service.get(p,first),student=detail.studentId,contactId=randomUUID(),invoiceId=randomUUID();
+    const second=String((await service.create(p,{userId:detail.userId},'case-delete-other')).caseId);
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_primary_xero_contacts
+      (customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,selection_method,linked_at)
+      VALUES($1,$2,$3,$4,$5,'Delete Student','linked_contact',now())`,[tenant,student,connection,contactId,`sophia:${student}`]));
+    let invoiceStatus='DRAFT',contactStatus='ACTIVE',loseReply=true;
+    const provider={
+      assertCaseDeletionAccess:jest.fn(async()=>{}),
+      invoiceById:jest.fn(async()=>({invoiceId,contactId,type:'ACCREC',status:invoiceStatus,amountPaid:invoiceStatus==='PAID'?100:0,amountDue:invoiceStatus==='DRAFT'?100:0,total:100})),
+      removeInvoice:jest.fn(async()=>{invoiceStatus='DELETED';return {invoiceId,contactId,status:invoiceStatus};}),
+      contactById:jest.fn(async()=>({contactId,status:contactStatus})),
+      archiveContact:jest.fn(async()=>{contactStatus='ARCHIVED';if(loseReply){loseReply=false;throw new Error('Synthetic lost provider reply');}return {contactId,status:contactStatus};}),
+    };
+    const deletions=new StudentCaseDeletionsService({tenantTransaction:transaction} as DatabaseService,service,provider as never);
+    const confirm={recordVersion:detail.recordVersion,confirmed:true};
+    await expect(deletions.remove({...p,role:'advisor'},first,confirm,'case-delete-no-role')).rejects.toThrow();
+    await expect(deletions.remove({...p,tenantId:randomUUID()},first,confirm,'case-delete-other-tenant')).rejects.toThrow('Case not found');
+    await expect(deletions.remove(p,first,{...confirm,confirmed:false},'case-delete-no-confirm')).rejects.toThrow('Confirm');
+    await expect(deletions.remove(p,first,{...confirm,recordVersion:99},'case-delete-stale')).rejects.toThrow('changed');
+    await expect(transaction(tenant,db=>db.query('SELECT sophia_runtime.purge_deleted_student_case($1,$2)',[first,randomUUID()]))).rejects.toThrow('Confirmed case deletion required');
+    // An active sibling means the shared contact must stay active.
+    await deletions.remove(p,first,confirm,'case-delete-first');
+    expect(provider.archiveContact).not.toHaveBeenCalled();expect(provider.contactById).not.toHaveBeenCalled();
+    expect((await service.list(p,{userId:detail.userId})).cases.map(c=>c.caseId)).toEqual([second]);
+    await expect(service.get(p,first)).rejects.toThrow('Case not found');
+    expect((await deletions.remove(p,first,confirm,'case-delete-first')).deleted).toBe(true);
+    const archivedSibling=String((await service.create(p,{userId:detail.userId},'case-delete-archived-other')).caseId);
+    const sibling=await service.get(p,archivedSibling);
+    await service.archive(p,archivedSibling,{recordVersion:sibling.recordVersion},'case-delete-archive-sibling');
+    const deletionAdvisor=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'DEL1','Delete Advisor','DEL1 Delete Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    // Populate retained documents and a linked invoice on the final case.
+    await transaction(tenant,async db=>{
+      await db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1)',[second]);
+      await db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,total,amount_paid,amount_due,currency_code)
+        VALUES($1,$2,$3,$4,$5,'INV-CASE-DELETE','ACCREC','DRAFT',100,0,100,'AUD')`,[tenant,connection,invoiceId,contactId,detail.studentReference]);
+      const doc=(await db.query(`INSERT INTO sophia_runtime.student_operations_case_documents(customer_id,case_id,xero_connection_id,source_kind,source_id,attachment_id,file_name,mime_type,size_bytes)
+        VALUES($1,$2,$3,'Contacts',$4,$5,'delete.pdf','application/pdf',20) RETURNING document_id`,[tenant,second,connection,contactId,randomUUID()])).rows[0].document_id;
+      const job=(await db.query(`INSERT INTO sophia_runtime.student_document_analysis_jobs(customer_id,case_id,document_id,content_sha256,document_kind,schema_version,status)
+        VALUES($1,$2,$3,$4,'letter_of_offer','delete-fixture','succeeded') RETURNING job_id`,[tenant,second,doc,'d'.repeat(64)])).rows[0].job_id;
+      const result=(await db.query(`INSERT INTO sophia_runtime.student_document_analysis_results(customer_id,case_id,document_id,job_id,extraction,provider,model,input_tokens,output_tokens)
+        VALUES($1,$2,$3,$4,'{}','mock','mock',1,1) RETURNING result_id`,[tenant,second,doc,job])).rows[0].result_id;
+      await db.query(`INSERT INTO sophia_runtime.student_document_reviews(customer_id,case_id,document_id,result_id,review_version,decision,reason,actor_identity_user_id)
+        VALUES($1,$2,$3,$4,1,'confirmed','Fixture review',$5)`,[tenant,second,doc,result,p.identityUserId]);
+      const offer=(await db.query(`INSERT INTO sophia_runtime.student_case_offers(customer_id,case_id,document_id,result_id,currency) VALUES($1,$2,$3,$4,'AUD') RETURNING offer_id`,[tenant,second,doc,result])).rows[0].offer_id;
+      await db.query(`INSERT INTO sophia_runtime.student_case_offer_courses(customer_id,offer_id,sort_order,name) VALUES($1,$2,0,'Course')`,[tenant,offer]);
+      await db.query(`INSERT INTO sophia_runtime.student_case_offer_fees(customer_id,offer_id,label,amount_minor,conditional) VALUES($1,$2,'Tuition',10000,false)`,[tenant,offer]);
+      await db.query(`INSERT INTO sophia_runtime.student_case_offer_instalments(customer_id,offer_id,sequence,total_minor,included_conditional_fee_minor) VALUES($1,$2,1,10000,0)`,[tenant,offer]);
+      await db.query(`INSERT INTO sophia_runtime.student_case_invoice_draft_batches(customer_id,case_id,offer_id,advisor_id,advisor_label,snapshot,actor_identity_user_id) VALUES($1,$2,$3,$4,'Delete Advisor','{}',$5)`,[tenant,second,offer,deletionAdvisor,p.identityUserId]);
+    });
+    await service.linkInvoice(p,second,{connectionId:connection,invoiceId},'case-delete-link');
+    const final=await service.get(p,second),finalConfirm={recordVersion:final.recordVersion,confirmed:true};
+    invoiceStatus='PAID';
+    let release!:()=>void,arrived!:()=>void;
+    const waiting=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{arrived=resolve;});
+    provider.invoiceById.mockImplementationOnce(async()=>{arrived();await waiting;return {invoiceId,contactId,type:'ACCREC',status:'PAID',amountPaid:100,amountDue:0,total:100};});
+    const concurrent=deletions.remove(p,second,finalConfirm,'case-delete-concurrent');
+    await started;
+    await expect(deletions.remove(p,second,finalConfirm,'case-delete-concurrent-other')).rejects.toThrow('still processing');
+    release();await expect(concurrent).rejects.toThrow('Paid, credited');
+    await expect(deletions.remove(p,second,finalConfirm,'case-delete-paid')).rejects.toThrow('Paid, credited');
+    expect(provider.removeInvoice).not.toHaveBeenCalled();expect((await service.get(p,second)).deleting).toBe(false);
+    invoiceStatus='DRAFT';await expect(deletions.remove(p,second,finalConfirm,'case-delete-final')).rejects.toThrow('Synthetic lost');
+    expect((await service.get(p,second)).deleting).toBe(true);
+    await expect(service.update(p,second,{recordVersion:final.recordVersion,courseName:'Cannot edit'},'case-delete-readonly')).rejects.toThrow('read-only');
+    await expect(service.create(p,{userId:detail.userId},'case-delete-new-blocked')).rejects.toThrow('being deleted');
+    expect((await deletions.remove(p,second,finalConfirm,'case-delete-final')).deleted).toBe(true);
+    expect(provider.removeInvoice).toHaveBeenCalledTimes(1);expect(provider.archiveContact).toHaveBeenCalledTimes(1);
+    expect((await service.list(p,{userId:detail.userId})).cases.map(c=>c.caseId)).toEqual([archivedSibling]);
+    expect((await pool.query('SELECT 1 FROM public.users WHERE id=$1',[detail.userId])).rowCount).toBe(1);
+    for(const table of ['student_operations_case_documents','student_operations_case_activity','student_operations_case_invoice_links','student_operations_case_checklist','student_case_offers','student_case_invoice_draft_batches','student_document_reviews','student_document_analysis_results','student_document_analysis_jobs'])
+      expect((await transaction(tenant,db=>db.query(`SELECT 1 FROM sophia_runtime.${table} WHERE customer_id=$1 AND case_id=$2`,[tenant,second]))).rowCount).toBe(0);
+    const receipt=(await transaction(tenant,db=>db.query('SELECT * FROM sophia_runtime.student_case_deletions WHERE customer_id=$1 AND case_id=$2',[tenant,second]))).rows[0];
+    expect(receipt.status).toBe('completed');expect(receipt.targets).toEqual({});
   });
   test('invoice removal checks live status, preserves tenant boundaries and recovers a provider success after local rollback',async()=>{
     const id=String((await service.createStudent(p,{studentName:'Invoice Removal Student',studentEmail:'removal@example.test'},'invoice-removal-student')).caseId);

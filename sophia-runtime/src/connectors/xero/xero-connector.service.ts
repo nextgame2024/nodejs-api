@@ -428,6 +428,23 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.contactById(accessToken,connection.xero_tenant_id,contactId));
   }
 
+  async assertCaseDeletionAccess(tenantId:string,connectionId:string,invoices:boolean,contacts:boolean){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(invoices&&missingScopes(connection.granted_scopes,['accounting.invoices']).length&&missingScopes(connection.granted_scopes,['accounting.transactions']).length)
+      throw new ConflictException('Invoice write access is required before deleting this case.');
+    if(contacts&&missingScopes(connection.granted_scopes,['accounting.contacts']).length)
+      throw new ConflictException('Contact write access is required before deleting this case.');
+    await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+  }
+
+  async archiveContact(tenantId:string,connectionId:string,contactId:string,key:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    if(missingScopes(connection.granted_scopes,['accounting.contacts']).length)
+      throw new ConflictException({errorCode:'xero_contact_write_scope_missing',message:'Contact archiving requires contact write access in company integrations.'});
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenantId,connectionId,()=>this.client.archiveContact(accessToken,connection.xero_tenant_id,contactId,key));
+  }
+
   async ensureStudentContact(tenantId:string,connectionId:string,value:{contactNumber:string;name:string;email:string|null},key:string) {
     if(process.env.XERO_CONTACT_CREATION_ENABLED!=='true' || (process.env.XERO_ATTACHMENT_UPLOAD_ENABLED!=='true'&&process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED!=='true'))
       throw new ConflictException({errorCode:'student_document_setup_required',message:'An administrator must enable student document storage in company integrations.'});

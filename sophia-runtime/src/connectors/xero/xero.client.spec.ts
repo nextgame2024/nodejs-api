@@ -17,6 +17,22 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('archives only the identified contact and confirms the returned status',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Contacts:[{ContactID:id,ContactStatus:'ARCHIVED',Name:'Student'}]})));
+    expect(await new XeroClient().archiveContact('token','tenant',id,'a'.repeat(64))).toMatchObject({contactId:id,status:'ARCHIVED'});
+    expect(fetch.mock.calls[0][0]).toBe(`https://api.xero.com/api.xro/2.0/Contacts/${id}`);
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({Contacts:[{ContactID:id,ContactStatus:'ARCHIVED'}]});
+    expect(fetch.mock.calls[0][1]?.headers).toMatchObject({'Idempotency-Key':'a'.repeat(64)});
+  });
+  it('rejects an unconfirmed contact archive and classifies rejected upstream responses safely',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({Contacts:[{ContactID:id,ContactStatus:'ACTIVE',Name:'Student'}]})))
+      .mockResolvedValueOnce(new Response('private details',{status:400}));
+    await expect(new XeroClient().archiveContact('token','tenant',id,'a'.repeat(64))).rejects.toThrow('could not be confirmed');
+    await expect(new XeroClient().archiveContact('token','tenant',id,'a'.repeat(64))).rejects.toThrow('could not complete');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('classifies a rejected invoice edit as a correctable validation failure without exposing the response body',async()=>{
     jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private provider details',{status:400}));
     const id='11111111-1111-4111-8111-111111111111';

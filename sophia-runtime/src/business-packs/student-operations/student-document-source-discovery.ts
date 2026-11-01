@@ -61,7 +61,7 @@ export class StudentDocumentSourceDiscovery {
       // Source locks, not case locks, serialize discovery across replicas.
       const candidates=await db.query<Job>(`SELECT j.*,j.refresh_requested_at::text AS refresh_stamp FROM ${s}.student_operations_document_jobs j
         LEFT JOIN ${s}.student_operations_document_sources cached USING(customer_id,xero_connection_id,source_kind,source_id)
-        WHERE j.customer_id=$1 AND j.next_attempt_at<=now()
+        WHERE j.customer_id=$1 AND j.next_attempt_at<=now() AND EXISTS(SELECT 1 FROM ${s}.student_operations_cases c WHERE c.customer_id=j.customer_id AND c.case_id=j.case_id AND c.deleting_at IS NULL)
           AND (j.status='queued' OR (j.status='processing' AND j.lease_expires_at<now())
             OR (j.status='succeeded' AND cached.status='succeeded' AND j.updated_at<cached.checked_at))
           AND ${s}.student_operations_document_window() AND ${ready(s)} AND ${linked(s)}
@@ -200,7 +200,7 @@ export class StudentDocumentSourceDiscovery {
     // At most 25 case jobs per local pass. The remaining jobs reuse the durable
     // result on later passes, including across deployments and empty results.
     const targets=await db.query<{job_id:string;case_id:string}>(`SELECT j.job_id,j.case_id
-      FROM ${s}.student_operations_document_jobs j WHERE ${key('j')}
+      FROM ${s}.student_operations_document_jobs j WHERE ${key('j')} AND EXISTS(SELECT 1 FROM ${s}.student_operations_cases c WHERE c.customer_id=j.customer_id AND c.case_id=j.case_id AND c.deleting_at IS NULL)
         AND (j.status='queued' OR (j.status='processing' AND (j.lease_token=$6 OR j.lease_expires_at<now()))
           OR (j.status='succeeded' AND j.updated_at<$5))
         AND (j.refresh_requested_at IS NULL OR j.refresh_requested_at<=$5)
