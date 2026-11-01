@@ -25,7 +25,7 @@ export class StudentPrimaryXeroContact {
   async ensure(p:Principal,caseId:string) {
     const s=caseSchema(),lease=randomUUID();
     const row=await this.database.tenantTransaction(p.tenantId,async db=>{
-      const current=await this.cases.authorizedCase(db,p,caseId);
+      const current=await this.cases.authorizedCase(db,p,caseId,true);
       const profile=await db.query(`SELECT legal_name,email FROM ${s}.student_operations_students
         WHERE customer_id=$1 AND student_id=$2 FOR UPDATE`,[p.tenantId,current.student_id]);
       const connectionId=await this.connection(db,p.tenantId);

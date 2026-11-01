@@ -169,5 +169,25 @@
       "backend/frontend TypeScript and git diff --check"
     ],
     "limitations": "No live Xero writes or production deployment. Full editor supports standard tax-exclusive lines; discounted, inclusive-tax and adjusted formats are refused. External Xero edits after the final read can race provider POST."
+  },
+  "caseArchiving20261101": {
+    "status": "locally_verified_with_baseline_failures_not_deployed",
+    "details": "student-case-archiving.md",
+    "migration": "112_student_case_archiving.sql",
+    "changes": "Reversible archive/restore with confirmation, readonly case guard, Closed/Terminated stage 6 reserved for archives, preserved previous workflow, safe pending-write rejection, related-row refresh, and + Create spacing.",
+    "verification": [
+      "132 browser tests passed",
+      "5 workflow unit tests passed",
+      "New archive PostgreSQL regression passed; full case suite: 36 passed, 4 failed",
+      "Unchanged committed HEAD comparison: 35 passed and the same 4 failures",
+      "Backend/frontend compilation and git diff --check"
+    ],
+    "baselineFailures": [
+      "Document expiry expectations",
+      "Primary Xero contact fixture collision",
+      "Automatic engagement-review hold expectations",
+      "Cascading cleanup fixture failure"
+    ],
+    "deployment": "Apply migration 112 before API/frontend. No production changes or provider calls performed."
   }
 }

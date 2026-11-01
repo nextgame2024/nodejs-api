@@ -68,7 +68,7 @@ export class StudentDocumentAnalysisService {
       const row=await this.snapshot(db,p,id,documentId);
       // Full extraction is limited to case managers; advisors receive only a safe status below.
       const manager=hasStudentOperationsPermission(p.role,'cases.manage');
-      const canStart=manager&&!row.job_id&&(await eligibleAnalysisUploads(db,p.tenantId,id,[documentId])).length===1;
+      const canStart=manager&&!caseRow.archived_at&&!row.job_id&&(await eligibleAnalysisUploads(db,p.tenantId,id,[documentId])).length===1;
       const profile=await db.query(`SELECT legal_name FROM ${caseSchema()}.student_operations_students s
         JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=s.customer_id AND c.student_id=s.student_id WHERE c.customer_id=$1 AND c.case_id=$2`,[p.tenantId,id]);
       const {parsed,verdict,status,reviewed}=analysisVerdict(row,profile.rows[0]?.legal_name??'');

@@ -27,7 +27,7 @@ describe('Student case workflow', () => {
 
   it('validates every stage/status combination', () => {
     expect(Object.keys(ALLOWED_STAGE_STATUSES)).toEqual([...CASE_STAGES]);
-    for (const stage of CASE_STAGES) {
+    for (const stage of CASE_STAGES.filter(stage=>stage!=='terminated')) {
       for (const status of ALLOWED_STAGE_STATUSES[stage]) {
         expect(resolveCaseWorkflow(stage, status === 'in_progress' ? 'open' : status, stage, status)).toEqual({
           stage, status: status === 'in_progress' ? 'open' : status,
@@ -41,5 +41,10 @@ describe('Student case workflow', () => {
     expect(resolveCaseWorkflow('invoices_created', 'open', 'payment_monitoring', 'collections')).toEqual({
       stage: 'payment_monitoring', status: 'collections',
     });
+  });
+  it('reserves Terminated for the archive workflow',()=>{
+    expect(ALLOWED_STAGE_STATUSES.terminated).toEqual(['closed']);
+    expect(()=>resolveCaseWorkflow(null,null,'terminated','closed')).toThrow('Use Archive');
+    expect(()=>resolveCaseWorkflow('awaiting_payment','pre_sale','terminated','closed')).toThrow('Use Archive');
   });
 });

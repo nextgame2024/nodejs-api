@@ -108,7 +108,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql','112_student_case_archiving.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -816,6 +816,45 @@ suite('Case management against disposable PostgreSQL',()=>{
       keys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});
       await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_document_types SET status='archived' WHERE document_type_id=$1`,[passportType]));
     }
+  });
+  test('archiving keeps a case read-only, reserves Terminated for archives and restores its exact previous workflow',async()=>{
+    const id=String((await service.createStudent(p,{studentName:'Archived Student',studentEmail:'archived@example.test',currentStage:'awaiting_payment',status:'on_hold'},'archive-student')).caseId);
+    const before=await service.get(p,id),body={recordVersion:before.recordVersion};
+    await expect(service.archive({...p,role:'advisor'},id,body,'archive-no-permission')).rejects.toThrow();
+    const foreignTenant=randomUUID();await pool.query(`INSERT INTO sophia_runtime.customers(customer_id,external_company_id,status) VALUES($1,$2,'active')`,[foreignTenant,randomUUID()]);
+    await expect(service.archive({...p,tenantId:foreignTenant},id,body,'archive-other-tenant')).rejects.toThrow('Case not found');
+    await expect(service.archive(p,id,{recordVersion:999},'archive-stale')).rejects.toThrow('changed');
+    await expect(service.update(p,id,{recordVersion:before.recordVersion,currentStage:'terminated',status:'closed'},'archive-stage-bypass')).rejects.toThrow('Use Archive');
+    const pendingInvoice=randomUUID();
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_case_invoice_edits(customer_id,case_id,xero_connection_id,xero_invoice_id,actor_identity_user_id,idempotency_key,request_hash,expected_fingerprint,desired) VALUES($1,$2,$3,$4,$5,'archive-pending-edit','pending','pending','{}')`,[tenant,id,connection,pendingInvoice,p.identityUserId]));
+    await expect(service.archive(p,id,body,'archive-inflight')).rejects.toThrow('Finish pending');
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_case_invoice_edits SET failed=true WHERE customer_id=$1 AND case_id=$2`,[tenant,id]));
+    const receipt=await service.archive(p,id,body,'archive-confirmed');
+    expect(await service.archive(p,id,body,'archive-confirmed')).toEqual(receipt);
+    const archived=await service.get(p,id);
+    expect(archived).toMatchObject({caseId:id,archived:true,currentStage:'terminated',status:'closed',recordVersion:before.recordVersion+1});
+    expect((await service.list(p,{userId:before.userId})).cases.find(c=>c.caseId===id)?.archived).toBe(true);
+    expect(service.options().stages).not.toContain('terminated');
+    await expect(service.update(p,id,{recordVersion:archived.recordVersion,courseName:'Forbidden edit'},'archive-edit-denied')).rejects.toThrow('read-only');
+    await expect(service.linkInvoice(p,id,{connectionId:connection,invoiceId:invoice},'archive-link-denied')).rejects.toThrow('read-only');
+    await expect(service.updateChecklist(p,id,{itemKey:'signed_engagement_letter',completed:true,recordVersion:0},'archive-checklist-denied')).rejects.toThrow('read-only');
+    const documents=new StudentOperationsCaseDocumentsService({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,{} as XeroConnectorService);
+    await expect(documents.enqueue(p,id)).rejects.toThrow('read-only');
+    await expect(documents.upload(p,id,{documentTypeId:randomUUID()},{buffer:Buffer.from('%PDF-1.7\n%%EOF'),originalname:'archive.pdf',mimetype:'application/pdf'},'archive-upload-denied')).rejects.toThrow('read-only');
+    await expect(documents.replace(p,id,randomUUID(),{buffer:Buffer.from('%PDF-1.7\n%%EOF'),originalname:'archive.pdf',mimetype:'application/pdf'},'archive-replace-denied')).rejects.toThrow('read-only');
+    await expect(documents.remove(p,id,randomUUID(),'archive-delete-denied')).rejects.toThrow('read-only');
+    const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+    await expect(new StudentCaseInvoiceRemovalsService(database,service,{} as XeroConnectorService).remove(p,id,connection,randomUUID(),{action:'delete'},'archive-invoice-delete')).rejects.toThrow('read-only');
+    expect((await documents.list(p,id,{})).total).toBe(0);
+    await transaction(tenant,db=>reconcileDocumentChecklist(db,tenant,id));
+    expect((await service.get(p,id)).currentStage).toBe('terminated');
+    const restored=await service.archive(p,id,{recordVersion:archived.recordVersion},'archive-restored',true);
+    expect(await service.archive(p,id,{recordVersion:archived.recordVersion},'archive-restored',true)).toEqual(restored);
+    const after=await service.get(p,id);expect(after).toMatchObject({archived:false,currentStage:before.currentStage,status:before.status,recordVersion:before.recordVersion+2});
+    await service.update(p,id,{recordVersion:after.recordVersion,courseName:'Editable again'},'archive-edit-restored');
+    expect((await service.get(p,id)).courseName).toBe('Editable again');
+    const activity=(await service.activities(p,id,{})).activity;
+    expect(activity.filter(a=>a.eventType==='case.archived')).toHaveLength(1);expect(activity.filter(a=>a.eventType==='case.restored')).toHaveLength(1);
   });
   test('invoice removal checks live status, preserves tenant boundaries and recovers a provider success after local rollback',async()=>{
     const id=String((await service.createStudent(p,{studentName:'Invoice Removal Student',studentEmail:'removal@example.test'},'invoice-removal-student')).caseId);

@@ -3,9 +3,9 @@ import { BadRequestException } from '@nestjs/common';
 export const CASE_STAGES = [
   'imported_pending_review', 'documents_requested', 'checklist_complete',
   'awaiting_payment',
-  'payment_monitoring', 'payments_complete',
+  'payment_monitoring', 'payments_complete', 'terminated',
 ] as const;
-export const NEW_CASE_STAGES = CASE_STAGES.slice(1);
+export const NEW_CASE_STAGES = CASE_STAGES.filter(stage=>!['imported_pending_review','terminated'].includes(stage));
 export const CASE_STATUSES = [
   'pre_sale', 'on_hold', 'in_progress', 'awaiting_payment', 'payment_received', 'payment_overdue',
   'collections', 'payment_done', 'closed',
@@ -20,6 +20,7 @@ export const ALLOWED_STAGE_STATUSES: Record<CaseStage, readonly CaseStatus[]> = 
   awaiting_payment: ['pre_sale', 'on_hold'],
   payment_monitoring: ['awaiting_payment', 'payment_received', 'payment_overdue', 'collections', 'payment_done'],
   payments_complete: ['closed'],
+  terminated: ['closed'],
 };
 
 export const CASE_STAGE_LABELS: Record<CaseStage, string> = {
@@ -29,6 +30,7 @@ export const CASE_STAGE_LABELS: Record<CaseStage, string> = {
   awaiting_payment: 'Awaiting Payment',
   payment_monitoring: 'Payment Monitoring',
   payments_complete: 'Payments Complete',
+  terminated: 'Terminated',
 };
 
 export const CASE_STATUS_LABELS: Record<CaseStatus, string> = {
@@ -59,6 +61,7 @@ export function resolveCaseWorkflow(
   requestedStage?: CaseStage,
   requestedStatus?: CaseStatus,
 ): { stage: string; status: string } {
+  if(requestedStage==='terminated')throw new BadRequestException('Use Archive case to select the Terminated stage.');
   if (currentStage === null) {
     const stage = requestedStage ?? 'documents_requested';
     if (stage === 'imported_pending_review') {

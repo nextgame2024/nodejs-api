@@ -24,6 +24,10 @@ export class StudentOperationsCasesController {
   manualInvoiceOptions(@Req() r:Request,@Param('caseId') id:string){return this.drafts.manualOptions(r.studentOperationsPrincipal,id);}
   @Post(':caseId/manual-invoice-drafts')
   prepareManualInvoice(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.drafts.prepareManual(r.studentOperationsPrincipal,id,body,key);}
+  @Post(':caseId/archive')
+  archiveCase(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.archive(r.studentOperationsPrincipal,id,body,key);}
+  @Post(':caseId/restore')
+  restoreCase(@Req() r:Request,@Param('caseId') id:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.cases.archive(r.studentOperationsPrincipal,id,body,key,true);}
   @Post(':caseId/invoices/:connectionId/:invoiceId/remove')
   removeInvoice(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.removals.remove(r.studentOperationsPrincipal,id,connectionId,invoiceId,body,key);}
   @Get(':caseId/invoice-drafts')

@@ -4,7 +4,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroAttachmentSource } from '../../connectors/xero/xero.client.js';
-import { StudentOperationsCasesService,caseSchema,caseId } from './student-operations-cases.service.js';
+import { StudentOperationsCasesService,caseSchema,caseId,assertCaseWritable } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
 import { StudentDocumentSourceDiscovery } from './student-document-source-discovery.js';
@@ -69,7 +69,7 @@ export class StudentOperationsCaseDocumentsService {
     // Validate case/type/idempotency BEFORE provisioning external storage. A
     // persisted upload keeps its original target even if integration setup changes.
     const prior=await this.database.tenantReadTransaction(p.tenantId,async db=>{
-      await this.cases.authorizedCase(db,p,id);
+      assertCaseWritable(await this.cases.authorizedCase(db,p,id));
       const saved=await db.query(`SELECT * FROM ${s}.student_operations_document_uploads
         WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3`,[p.tenantId,p.identityUserId,key]);
       if(saved.rows[0] && saved.rows[0].request_fingerprint!==fingerprint) throw new ConflictException('The upload request changed. Select the file again.');
@@ -83,7 +83,7 @@ export class StudentOperationsCaseDocumentsService {
     const target=prior?{xero_connection_id:prior.xero_connection_id,source_id:prior.source_id}
       :await new StudentPrimaryXeroContact(this.database,this.cases,this.xero).ensure(p,id);
     const job=await this.database.tenantTransaction(p.tenantId,async db=>{
-      await this.cases.authorizedCase(db,p,id);
+      await this.cases.authorizedCase(db,p,id,true);
       const uploadId=randomUUID();
       const extension=name.slice(name.lastIndexOf('.'));
       const remoteName=`${uploadId}-${name.slice(0,-extension.length).slice(0,180)}${extension}`;
@@ -311,8 +311,8 @@ export class StudentOperationsCaseDocumentsService {
       const eligible=hasStudentOperationsPermission(p.role,'cases.manage')?await eligibleAnalysisUploads(db,p.tenantId,id,documents.rows.map(d=>d.documentId)):[];
       const latest=await db.query(`SELECT DISTINCT ON(document_type_id) document_id FROM ${caseSchema()}.student_operations_case_documents
         WHERE customer_id=$1 AND case_id=$2 AND document_type_id IS NOT NULL AND deleted_at IS NULL ORDER BY document_type_id,discovered_at DESC,document_id DESC`,[p.tenantId,id]);
-      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,
-        canReplace:Boolean(a&&a.decision==='rejected'&&a.review_result_id===a.result_id&&latest.rows.some(r=>r.document_id===d.documentId)),
+      return {documents:documents.rows.map(d=>{const a=analyses.rows.find(j=>j.document_id===d.documentId);return {...d,canReplaceFile:!row.archived_at&&d.canReplaceFile,canDelete:!row.archived_at&&d.canDelete,
+        canReplace:Boolean(!row.archived_at&&a&&a.decision==='rejected'&&a.review_result_id===a.result_id&&latest.rows.some(r=>r.document_id===d.documentId)),
         analysisStatus:a?analysisVerdict(a,a.legal_name??'').status:eligible.some(u=>u.document_id===d.documentId)?'not_checked':null};}),
         analysisPending:analyses.rows.some(j=>j.status==='queued'||j.status==='processing'),requirements,discovery:jobs.rows,discoveryRequested:jobs.rows.length>0,page,limit,total:count.rows[0].total};
     });
@@ -321,7 +321,7 @@ export class StudentOperationsCaseDocumentsService {
   async enqueue(p:Principal,id:string) {
     if(!hasStudentOperationsPermission(p.role,'cases.manage')) throw new ForbiddenException();
     return this.database.tenantTransaction(p.tenantId,async db=>{
-      await this.cases.authorizedCase(db,p,id);
+      await this.cases.authorizedCase(db,p,id,true);
       const result=await db.query(`INSERT INTO ${caseSchema()}.student_operations_document_jobs(customer_id,case_id,xero_connection_id,source_kind,source_id)
         SELECT DISTINCT $1::uuid,$2::uuid,i.xero_connection_id,s.kind,s.id FROM ${caseSchema()}.student_operations_case_invoice_links l
         JOIN ${caseSchema()}.student_operations_xero_invoices i ON i.customer_id=l.customer_id AND i.xero_connection_id=l.xero_connection_id AND i.xero_invoice_id=l.xero_invoice_id

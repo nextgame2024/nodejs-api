@@ -195,9 +195,9 @@ export class StudentCaseInvoiceDraftsService {
         FROM ${s}.student_case_invoice_draft_batches b LEFT JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
         WHERE b.customer_id=$1 AND b.case_id=$2 ORDER BY b.created_at DESC,b.batch_id LIMIT 20`,[p.tenantId,id])).rows;
       const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete';
-      if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)&&!c.archived_at};
       const evidence=await documentChecklistEvidence(db,p.tenantId,id),offer=await this.offer(db,p,id);
-      if(!offer||!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!offer||!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness)return {batches,preparation:null,canCreateXero:this.canCreate(p)&&!c.archived_at};
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const catalogue=await readSalesCatalogue(db,p.tenantId);
@@ -205,9 +205,9 @@ export class StudentCaseInvoiceDraftsService {
       const hasUnresolvedInvoice=!savedBatch||savedBatch.snapshot.invoices.some((invoice:{sequence:number})=>{
         const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status!=='created';
       });
-      if(!hasUnresolvedInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!hasUnresolvedInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)&&!c.archived_at};
       return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,
-        savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)};
+        savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)&&!c.archived_at};
     });
   }
   async prepare(p:Principal,id:string,input:unknown,key?:string){
