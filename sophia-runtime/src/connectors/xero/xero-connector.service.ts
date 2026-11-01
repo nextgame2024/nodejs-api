@@ -522,6 +522,14 @@ export class XeroConnectorService {
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig()),expires=Date.now()+60_000;
     return {
       invoiceById:(invoiceId:string)=>this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId)),
+      organisation:()=>{
+        if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)throw new ConflictException('An administrator must authorize invoice settings access.');
+        return this.providerRequest(tenantId,connectionId,()=>this.client.organisation(accessToken,connection.xero_tenant_id));
+      },
+      updateInvoice:async(invoiceId:string,value:import('./xero.client.js').XeroInvoiceUpdate,key:string):Promise<import('./xero.client.js').XeroInvoiceRecord>=>{
+        if(Date.now()>=expires)return (await this.invoiceRemovalSession(tenantId,connectionId)).updateInvoice(invoiceId,value,key);
+        return this.providerRequest(tenantId,connectionId,()=>this.client.updateInvoice(accessToken,connection.xero_tenant_id,invoiceId,value,key));
+      },
       removeInvoice:(invoiceId:string,status:'DELETED'|'VOIDED',key:string)=>Date.now()>=expires
         ?this.removeInvoice(tenantId,connectionId,invoiceId,status,key)
         :this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key)),

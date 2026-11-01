@@ -8,6 +8,9 @@ import type { StudentOperationsWorkspacePrincipal } from '../business-packs/stud
 import { runCaseMigration } from '../../scripts/migrate-student-cases.js';
 import { StudentOperationsCaseDocumentsService } from '../business-packs/student-operations/student-operations-case-documents.service.js';
 import { StudentCaseInvoiceRemovalsService } from '../business-packs/student-operations/student-case-invoice-removals.service.js';
+import { StudentCaseInvoiceEditsService } from '../business-packs/student-operations/student-case-invoice-edits.service.js';
+import { invoiceEditFingerprint } from '../business-packs/student-operations/student-invoice-edit-policy.js';
+import type { XeroInvoiceRecord,XeroInvoiceUpdate } from '../connectors/xero/xero.client.js';
 import { XeroConnectorService } from '../connectors/xero/xero-connector.service.js';
 import { StudentPrimaryXeroContact } from '../business-packs/student-operations/student-primary-xero-contact.js';
 import {StudentInvoiceProjectionRecovery} from '../business-packs/student-operations/student-invoice-projection-recovery.js';
@@ -105,7 +108,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/101_student_editable_invoice_drafts.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/102_xero_immediate_invoice_projection.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('GRANT INSERT, UPDATE ON sophia_runtime.student_operations_xero_contacts TO sophia_runtime_app');
-    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['104_student_invoice_projection_identity.sql','105_event_driven_invoice_checklist.sql','106_payment_monitoring_case_statuses.sql','107_optional_student_document_review_reason.sql','108_student_xero_files_documents.sql','109_student_case_invoice_removals.sql','110_student_manual_invoice_drafts.sql','111_student_case_invoice_edits.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -859,6 +862,63 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect((await service.invoices(p,id,{})).total).toBe(0);
     await expect(transaction(tenant,db=>db.query('DELETE FROM sophia_runtime.student_case_invoice_removals'))).rejects.toThrow('permission denied');
   });
+  test('linked invoice edits preserve status and line IDs, reject stale and settled invoices, and recover a successful provider write after rollback',async()=>{
+    const id=String((await service.createStudent(p,{studentName:'Invoice Edit Student',studentEmail:'edit@example.test'},'invoice-edit-student')).caseId);
+    const invoiceId=randomUUID(),lineId=randomUUID(),itemId=randomUUID();
+    const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'EDIT1','Edit Advisor','EDIT1 Edit Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    const catalogue={items:[{itemId,code:'EDIT',name:'Edit tuition',description:'Tuition',unitPrice:'100',accountCode:'812',taxType:'BASEXCLUDED'}],accounts:[{code:'812',name:'Fees',taxType:'BASEXCLUDED'}],taxRates:[{taxType:'BASEXCLUDED',name:'BAS Excluded',rate:'0'}]};
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_xero_sales_catalogues(customer_id,xero_connection_id,snapshot,revision,last_synced_at) VALUES($1,$2,$3,1,now()) ON CONFLICT(customer_id,xero_connection_id) DO UPDATE SET snapshot=excluded.snapshot,last_synced_at=now()`,[tenant,connection,JSON.stringify(catalogue)]));
+    const studentReference=(await transaction(tenant,db=>db.query('SELECT sophia_runtime.ensure_case_xero_student_identity($1) AS reference',[id]))).rows[0].reference;
+    await transaction(tenant,db=>db.query(`INSERT INTO sophia_runtime.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,student_id,invoice_number,invoice_type,invoice_status,total,amount_paid,amount_due,currency_code) VALUES($1,$2,$3,$4,$5,'INV-EDIT','ACCREC','SUBMITTED',100,0,100,'AUD')`,[tenant,connection,invoiceId,invoice,studentReference]));
+    await service.linkInvoice(p,id,{connectionId:connection,invoiceId},'invoice-edit-link');
+    let live:XeroInvoiceRecord={invoiceId,contactId:invoice,invoiceNumber:'INV-EDIT',invoiceReference:'Original',concept:null,advisorName:'EDIT1 Edit Advisor',collegeName:'Original',paymentTrack:'Pending',sentToContact:false,type:'ACCREC',status:'SUBMITTED',invoiceDate:'2026-11-01',dueDate:'2026-11-02',currencyCode:'AUD',lineAmountTypes:'Exclusive',total:100,amountPaid:0,amountDue:100,amountCredited:0,updatedAt:'2026-11-01T00:00:00.000Z',lineItems:[{lineItemId:lineId,itemCode:'EDIT',description:'Original tuition',quantity:1,unitAmount:100,discountRate:null,accountCode:'812',taxType:'BASEXCLUDED',taxAmount:0,lineAmount:100,tracking:[{name:'Payment Track',option:'Pending'},{name:'Sales Representative',option:'EDIT1 Edit Advisor'}]}]};
+    let lockDate:string|null=null;
+    const updateInvoice=jest.fn(async(_id:string,value:XeroInvoiceUpdate)=>{
+      const total=value.lines.reduce((n,l)=>n+Number(l.quantity)*Number(l.unitAmount),0);
+      live={...live,status:value.status,invoiceReference:value.reference,collegeName:value.reference,invoiceDate:value.date,dueDate:value.dueDate,total,amountDue:total,updatedAt:new Date(Date.parse(live.updatedAt!)+1000).toISOString(),
+        lineItems:value.lines.map(line=>({lineItemId:line.lineItemId??randomUUID(),itemCode:line.itemCode??null,description:line.description,quantity:Number(line.quantity),unitAmount:Number(line.unitAmount),discountRate:null,accountCode:line.accountCode,taxType:line.taxType,taxAmount:0,lineAmount:Number(line.quantity)*Number(line.unitAmount),tracking:line.tracking}))};
+      return JSON.parse(JSON.stringify(live));
+    });
+    const read=jest.fn(async()=>JSON.parse(JSON.stringify(live))),connector={invoiceRemovalSession:async()=>({invoiceById:read,organisation:async()=>({periodLockDate:lockDate,endOfYearLockDate:null}),updateInvoice})} as unknown as XeroConnectorService;
+    const database={tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService;
+    const drafts={manualOptions:async()=>({caseVersion:1,student:{name:'Student'},advisors:[],colleges:[],catalogue:{...catalogue,connectionId:connection}})} as unknown as StudentCaseInvoiceDraftsService;
+    const edits=new StudentCaseInvoiceEditsService(database,service,drafts,connector);
+    const options=await edits.options(p,id,connection,invoiceId);
+    expect(options.expectedFingerprint).toBe(invoiceEditFingerprint(live));expect((await service.invoices(p,id,{})).invoices.find(i=>i.invoiceId===invoiceId)?.canEdit).toBe(true);
+    const payload={expectedFingerprint:options.expectedFingerprint,confirmed:true,advisorId,referenceMode:'reference',reference:'Changed reference',currency:'AUD',reviewNote:'',issueDate:'2026-11-01',dueDate:'2026-11-03',conditionalFeeMinor:0,
+      lines:[{lineItemId:lineId,itemCode:'EDIT',description:'Updated tuition',quantity:'2',unitPrice:'75.00',accountCode:'812',taxType:'BASEXCLUDED'}]};
+    await expect(edits.update({...p,role:'advisor'},id,connection,invoiceId,payload,'edit-denied')).rejects.toThrow();
+    await expect(edits.update({...p,tenantId:randomUUID()},id,connection,invoiceId,payload,'edit-tenant')).rejects.toThrow();
+    await expect(edits.update(p,id,connection,randomUUID(),payload,'edit-unlinked')).rejects.toThrow('Linked invoice');
+    await expect(edits.update(p,id,connection,invoiceId,{...payload,expectedFingerprint:'a'.repeat(64)},'edit-stale')).rejects.toThrow('changed since');
+    live.amountPaid=10;live.amountDue=90;
+    await expect(edits.update(p,id,connection,invoiceId,payload,'edit-settled')).rejects.toThrow('no longer');live.amountPaid=0;live.amountDue=100;
+    lockDate='2026-11-01';await expect(edits.options(p,id,connection,invoiceId)).rejects.toThrow('locked');lockDate=null;
+    expect(updateInvoice).not.toHaveBeenCalled();
+    await expect(edits.update(p,id,connection,invoiceId,payload,'edit-success')).resolves.toEqual({invoiceId,status:'updated'});
+    expect(updateInvoice).toHaveBeenCalledTimes(1);expect(live.status).toBe('SUBMITTED');expect(live.lineItems[0].lineItemId).toBe(lineId);expect(live.total).toBe(150);
+    expect(Number((await service.invoiceDetail(p,id,connection,invoiceId)).total)).toBe(150);
+    await edits.update(p,id,connection,invoiceId,payload,'edit-success');expect(updateInvoice).toHaveBeenCalledTimes(1);
+    const second={...payload,expectedFingerprint:invoiceEditFingerprint(live),reference:'Second change'};
+    const failingCases={authorizedCase:service.authorizedCase.bind(service),activity:async()=>{throw new Error('local commit failed');}} as unknown as StudentOperationsCasesService;
+    const failing=new StudentCaseInvoiceEditsService(database,failingCases,drafts,connector);
+    await expect(failing.update(p,id,connection,invoiceId,second,'edit-rollback')).rejects.toThrow('local commit failed');
+    expect(updateInvoice).toHaveBeenCalledTimes(2);
+    await expect(edits.update(p,id,connection,invoiceId,{...second,reference:'Different'},'edit-interloper')).rejects.toThrow('previous invoice update');
+    const removals=new StudentCaseInvoiceRemovalsService(database,service,connector);
+    await expect(removals.remove(p,id,connection,invoiceId,{action:'delete'},'edit-removal-blocked')).rejects.toThrow('update needs confirmation');
+    expect((await edits.options(p,id,connection,invoiceId)).pending).toBeNull();
+    await expect(edits.update(p,id,connection,invoiceId,second,'edit-rollback')).resolves.toEqual({invoiceId,status:'updated'});
+    expect(updateInvoice).toHaveBeenCalledTimes(2);expect((await service.invoiceDetail(p,id,connection,invoiceId)).reference).toBe('Second change');
+    expect((await service.activities(p,id,{})).activity.filter(a=>a.eventType==='case.invoice_updated')).toHaveLength(2);
+    const third={...second,expectedFingerprint:invoiceEditFingerprint(live),reference:'Retry after reopening'};
+    updateInvoice.mockRejectedValueOnce(new Error('Provider unavailable before write'));
+    await expect(edits.update(p,id,connection,invoiceId,third,'edit-timeout')).rejects.toThrow('Provider unavailable');
+    const reopened=await edits.options(p,id,connection,invoiceId);
+    expect(reopened.pending?.key).toBe('edit-timeout');expect(reopened.pending?.input.reference).toBe('Retry after reopening');
+    await edits.update(p,id,connection,invoiceId,reopened.pending!.input,reopened.pending!.key);
+    expect(updateInvoice).toHaveBeenCalledTimes(4);expect(live.invoiceReference).toBe('Retry after reopening');
+  });
   test('manual invoice drafts create independently of an offer and reuse safe export and list refresh',async()=>{
     const old=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';
     try{
@@ -877,6 +937,10 @@ suite('Case management against disposable PostgreSQL',()=>{
       const options=await drafts.manualOptions(p,id);
       expect(options.student.name).toBe('Manual Invoice Student');
       expect(options.brandingThemes).toEqual([{brandingThemeId:themeId,name:'Manual Theme'}]);
+      process.env.XERO_INVOICE_CREATION_ENABLED='false';
+      await expect(drafts.manualOptions(p,id)).rejects.toThrow();
+      await expect(drafts.manualOptions(p,id,true)).resolves.toMatchObject({caseVersion:options.caseVersion});
+      process.env.XERO_INVOICE_CREATION_ENABLED='true';
       const payload={caseVersion:options.caseVersion,advisorId,catalogueConnectionId:connection,catalogueRevision:options.catalogue!.revision,reference:'Additional service',brandingThemeId:themeId,currency:'AUD',reviewNote:'',
         invoices:[{sequence:1,issueDate:'2026-10-31',dueDate:'2026-11-15',conditionalFeeApplies:false,conditionalFeeMinor:0,
           lines:[{kind:'other',description:'Additional service',itemId,itemCode:'EXTRA',quantity:'1',unitPrice:'100.00',amountMinor:10000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};

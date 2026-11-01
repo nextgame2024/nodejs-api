@@ -113,9 +113,9 @@ export class StudentCaseInvoiceDraftsService {
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
-  async manualOptions(p:Principal,id:string){
+  async manualOptions(p:Principal,id:string,forEdit=false){
     const startedAt=Date.now();
-    this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!this.canCreate(p))throw new ForbiddenException();
+    this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!hasStudentOperationsPermission(p.role,'payments.approve')||!forEdit&&!this.canCreate(p))throw new ForbiddenException();
     const options=await this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
       if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');

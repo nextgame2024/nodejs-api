@@ -17,6 +17,20 @@ afterEach(() => {
 });
 
 describe("XeroClient", () => {
+  it('classifies a rejected invoice edit as a correctable validation failure without exposing the response body',async()=>{
+    jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response('private provider details',{status:400}));
+    const id='11111111-1111-4111-8111-111111111111';
+    await expect(new XeroClient().updateInvoice('token','tenant',id,{contactId:id,date:'2026-11-01',dueDate:'2026-11-02',reference:'Ref',currencyCode:'AUD',status:'DRAFT',lines:[]},'a'.repeat(64))).rejects.toThrow('invoice changes were rejected');
+  });
+  it.each(['DRAFT','SUBMITTED','AUTHORISED'])('updates an existing %s invoice by ID and retains existing line identities',async status=>{
+    const id='11111111-1111-4111-8111-111111111111',lineId='22222222-2222-4222-8222-222222222222';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-1',Contact:{ContactID:id},Type:'ACCREC',Status:status,Total:100,AmountPaid:0,AmountDue:100,LineItems:[]}]}),{status:200}));
+    const value={status,contactId:id,date:'2026-11-01',dueDate:'2026-11-02',reference:'Updated',currencyCode:'AUD',lines:[{lineItemId:lineId,description:'Tuition',quantity:'1',unitAmount:'100',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'Pending'}]}]};
+    expect(await new XeroClient().updateInvoice('token','tenant',id,value,'a'.repeat(64))).toMatchObject({invoiceId:id,status});
+    const [url,init]=fetchMock.mock.calls[0];expect(url).toBe(`https://api.xero.com/api.xro/2.0/Invoices/${id}?unitdp=4`);expect(init?.method).toBe('POST');
+    const sent=JSON.parse(String(init?.body)).Invoices[0];expect(sent.Status).toBe(status);expect(sent.InvoiceID).toBe(id);expect(sent.LineItems[0].LineItemID).toBe(lineId);
+    expect(sent.SentToContact).toBeUndefined();expect(sent.InvoiceNumber).toBeUndefined();
+  });
   it.each(['DELETED','VOIDED'] as const)('confirms an exact %s status update with a stable key',async status=>{
     const id='11111111-1111-4111-8111-111111111111',contact='22222222-2222-4222-8222-222222222222';
     const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,Contact:{ContactID:contact},Type:'ACCREC',Status:status,Total:100,AmountPaid:0,AmountDue:0}]})));

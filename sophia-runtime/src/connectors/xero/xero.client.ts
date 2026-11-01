@@ -41,6 +41,8 @@ export type XeroOrganisation = {
   baseCurrency: string | null;
   countryCode: string | null;
   isDemoCompany: boolean;
+  periodLockDate?:string|null;
+  endOfYearLockDate?:string|null;
 };
 
 export type XeroBankAccount = {
@@ -85,6 +87,7 @@ export type XeroContactRecord = {
 };
 
 export type XeroInvoiceRecord = {
+  lineAmountTypes?:string|null;
   brandingThemeId?:string|null;
   invoiceId: string;
   contactId: string;
@@ -127,6 +130,7 @@ export type XeroInvoiceCreate = {
   lines:Array<{description:string;quantity:string;unitAmount:string;itemCode?:string;accountCode:string;taxType:string;
     tracking:Array<{name:string;option:string;trackingCategoryId?:string;trackingOptionId?:string}>}>;
 };
+export type XeroInvoiceUpdate=Omit<XeroInvoiceCreate,'lines'>&{status:string;lines:Array<XeroInvoiceCreate['lines'][number]&{lineItemId?:string}>};
 
 export type XeroInvoiceReceipt = {
   invoiceId:string;invoiceNumber:string|null;status:string;total:number;
@@ -153,6 +157,26 @@ export class XeroClient {
 
   withRequestPolicy<T>(policy: XeroRequestPolicy, request: () => Promise<T>): Promise<T> {
     return this.requestPolicy.run(policy, request);
+  }
+
+  async updateInvoice(accessToken:string,tenantId:string,invoiceId:string,value:XeroInvoiceUpdate,key:string):Promise<XeroInvoiceRecord>{
+    if(!xeroUuid.test(invoiceId)||!['DRAFT','SUBMITTED','AUTHORISED'].includes(value.status)||!/^[a-f0-9]{64}$/.test(key))throw new BadGatewayException('Invalid invoice update.');
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    const invoice={InvoiceID:invoiceId,Contact:{ContactID:value.contactId},Date:value.date,DueDate:value.dueDate,Status:value.status,
+      Reference:value.reference??'',CurrencyCode:value.currencyCode,...(value.brandingThemeId?{BrandingThemeID:value.brandingThemeId}:{}),LineAmountTypes:'Exclusive',
+      LineItems:value.lines.map(line=>({... (line.lineItemId?{LineItemID:line.lineItemId}:{}),Description:line.description,Quantity:line.quantity,UnitAmount:line.unitAmount,
+        ...(line.itemCode?{ItemCode:line.itemCode}:{}),AccountCode:line.accountCode,TaxType:line.taxType,Tracking:line.tracking.map(t=>({Name:t.name,Option:t.option}))}))};
+    try{response=await fetch(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}?unitdp=4`,{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},body:JSON.stringify({Invoices:[invoice]}),redirect:'error',signal:AbortSignal.timeout(30_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();if(response.status===400)throw new BadRequestException('The invoice changes were rejected. Check the dates, accounting period and line items.');throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Invoice update could not be confirmed. Retry the same changes.');
+    const raw=record(payload.Invoices[0]);
+    if(raw.HasErrors||raw.HasValidationErrors||(Array.isArray(raw.ValidationErrors)&&raw.ValidationErrors.length))throw new BadRequestException('The invoice changes were rejected. Check the dates, accounting period and line items.');
+    const updated=xeroInvoiceRecord(raw);
+    if(updated.invoiceId!==invoiceId)throw new BadGatewayException('Invoice update could not be confirmed. Retry the same changes.');
+    return updated;
   }
 
   async removeInvoice(accessToken:string,tenantId:string,invoiceId:string,status:'DELETED'|'VOIDED',key:string):Promise<XeroInvoiceRecord>{
@@ -429,6 +453,8 @@ export class XeroClient {
       baseCurrency: optionalString(value.BaseCurrency),
       countryCode: optionalString(value.CountryCode),
       isDemoCompany: value.IsDemoCompany === true,
+      periodLockDate:optionalDate(value.PeriodLockDate)??optionalXeroDate(value.PeriodLockDate),
+      endOfYearLockDate:optionalDate(value.EndOfYearLockDate)??optionalXeroDate(value.EndOfYearLockDate),
     };
   }
 
@@ -1063,7 +1089,7 @@ function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
   const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];
   const total=optionalNumber(value.Total)??0,amountPaid=optionalNumber(value.AmountPaid)??0,invoiceReference=optionalString(value.Reference);
   return {invoiceId:requiredString(value.InvoiceID,'invoice id'),contactId:requiredString(contact.ContactID,'contact id'),invoiceNumber:optionalString(value.InvoiceNumber),
-    brandingThemeId:optionalString(value.BrandingThemeID),invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
+    lineAmountTypes:optionalString(value.LineAmountTypes),brandingThemeId:optionalString(value.BrandingThemeID),invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
     collegeName:invoiceReference,paymentTrack:trackingOption(lineItems,['payment track']),sentToContact:value.SentToContact===true,lineItems:lineItems.map(invoiceLineItem),
     type:requiredString(value.Type,'invoice type'),status:requiredString(value.Status,'invoice status'),invoiceDate:optionalDate(value.DateString)??optionalXeroDate(value.Date),
     dueDate:optionalDate(value.DueDateString)??optionalXeroDate(value.DueDate),currencyCode:optionalString(value.CurrencyCode),total,amountPaid,

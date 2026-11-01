@@ -156,5 +156,18 @@
       "2 real PostgreSQL integration tests: manual creation and invoice deletion including rollback recovery (36 unrelated tests unselected)"
     ],
     "limitations": "No live provider timing or deployment measurement. Durable branding available after normal catalogue sync; old snapshots fall back to cached provider lookup. No new migration."
+  },
+  "linkedInvoiceEditing20261101": {
+    "status": "locally_verified_not_deployed",
+    "details": "student-case-invoice-editing.md",
+    "changes": "Scoped full-edit action for unpaid DRAFT/SUBMITTED/AUTHORISED sales invoices; existing modal prefills provider values; durable idempotent update with fingerprint, locked-period checks, line ID/tracking preservation, atomic local projection and reopening recovery.",
+    "migration": "111_student_case_invoice_edits.sql",
+    "verification": [
+      "128 ChromeHeadless invoice editor/case page tests",
+      "79 backend provider/creation/edit-policy tests",
+      "3 PostgreSQL integration tests for edit, removal and manual create; 36 unrelated tests not selected",
+      "backend/frontend TypeScript and git diff --check"
+    ],
+    "limitations": "No live Xero writes or production deployment. Full editor supports standard tax-exclusive lines; discounted, inclusive-tax and adjusted formats are refused. External Xero edits after the final read can race provider POST."
   }
 }

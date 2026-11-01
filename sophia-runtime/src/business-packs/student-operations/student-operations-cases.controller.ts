@@ -1,6 +1,7 @@
 import { Body,Controller,Delete,Get,Header,Headers,Param,Patch,Post,Put,Query,Req,StreamableFile,UseGuards,UseInterceptors,UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentCaseInvoiceRemovalsService } from './student-case-invoice-removals.service.js';
+import { StudentCaseInvoiceEditsService } from './student-case-invoice-edits.service.js';
 import { StudentDocumentTypesService } from './student-document-types.service.js';
 import { StudentCaseInvoiceDraftsService } from './student-case-invoice-drafts.js';
 import { StudentDocumentAnalysisService } from './student-document-analysis.service.js';
@@ -12,7 +13,12 @@ type Request={studentOperationsPrincipal:StudentOperationsWorkspacePrincipal};
 @Controller('business-packs/student-operations/v1/workspace/cases')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class StudentOperationsCasesController {
-  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService,private readonly removals:StudentCaseInvoiceRemovalsService) {}
+  constructor(private readonly cases:StudentOperationsCasesService,private readonly documents:StudentOperationsCaseDocumentsService,private readonly types:StudentDocumentTypesService,private readonly analysis:StudentDocumentAnalysisService,private readonly drafts:StudentCaseInvoiceDraftsService,private readonly removals:StudentCaseInvoiceRemovalsService,private readonly edits:StudentCaseInvoiceEditsService) {}
+  @Get(':caseId/invoices/:connectionId/:invoiceId/edit-options')
+  @Header('Cache-Control','private, no-store')
+  invoiceEditOptions(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string){return this.edits.options(r.studentOperationsPrincipal,id,connectionId,invoiceId);}
+  @Put(':caseId/invoices/:connectionId/:invoiceId')
+  updateInvoice(@Req() r:Request,@Param('caseId') id:string,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){return this.edits.update(r.studentOperationsPrincipal,id,connectionId,invoiceId,body,key);}
   @Get(':caseId/manual-invoice-options')
   @Header('Cache-Control','private, no-store')
   manualInvoiceOptions(@Req() r:Request,@Param('caseId') id:string){return this.drafts.manualOptions(r.studentOperationsPrincipal,id);}

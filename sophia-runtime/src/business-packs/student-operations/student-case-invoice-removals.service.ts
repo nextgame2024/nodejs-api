@@ -21,6 +21,8 @@ export class StudentCaseInvoiceRemovalsService {
     const target=action==='delete'?'DELETED':'VOIDED',lease=randomUUID(),s=caseSchema();
     const job=await this.database.tenantTransaction(p.tenantId,async db=>{
       await this.cases.authorizedCase(db,p,id,true);
+      const editing=await db.query(`SELECT 1 FROM ${s}.student_case_invoice_edits WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND NOT completed AND NOT failed`,[p.tenantId,connectionId,invoiceId]);
+      if(editing.rowCount)throw new ConflictException('An invoice update needs confirmation before this invoice can be removed.');
       const linked=(await db.query(`SELECT coalesce(i.xero_contact_id,e.xero_contact_id) AS contact_id
         FROM (SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
           UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') l

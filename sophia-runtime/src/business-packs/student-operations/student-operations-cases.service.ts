@@ -10,6 +10,7 @@ import { DOCUMENT_CHECKLIST_KEYS,documentChecklistEnabled,documentChecklistEvide
 import {INVOICE_CHECKLIST_KEYS,readInvoiceChecklist} from './student-invoice-checklist.js';
 import { documentWorkflowEnabled } from './student-document-analysis-state.js';
 import { invoiceRemovalAction } from './student-invoice-removal-policy.js';
+import { invoiceCanEdit } from './student-invoice-edit-policy.js';
 
 function caseInvoiceSource(s:string){return {
   ids:`SELECT linked.* FROM (SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
@@ -269,7 +270,8 @@ export class StudentOperationsCasesService {
         ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       const count=await db.query(`SELECT count(*)::int total FROM (${invoiceIds}) invoices`,[p.tenantId,id]);
       const canRemove=financial&&hasStudentOperationsPermission(p.role,'cases.manage')&&hasStudentOperationsPermission(p.role,'payments.prepare');
-      return {invoices:rows.rows.map(row=>({...row,removalAction:canRemove?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
+      const canEdit=canRemove&&hasStudentOperationsPermission(p.role,'payments.approve');
+      return {invoices:rows.rows.map(row=>({...row,canEdit:!!canEdit&&invoiceCanEdit(row),removalAction:canRemove?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
     });
   }
 
