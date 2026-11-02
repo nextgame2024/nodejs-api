@@ -1,0 +1,50 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-settings-implementation",
+    "updatedOn": "2026-11-02",
+    "status": "locally_verified_pending_migration_and_deployment",
+    "slice": "P1A.1 — real Settings page and persistence; the full inbound pilot remains in progress"
+  },
+  "implemented": [
+    "Lazy-loaded Business Manager /manager/leads Settings page and configurable Leads & Conversations menu item",
+    "Business/contact/support details, enquiry/content/fallback owner and advisor team",
+    "Bounded 50-result team search with selected-member retention and cancelled obsolete requests",
+    "Spanish/English/Portuguese selection, greeting and after-hours message",
+    "IANA timezone, up to 28 non-overlapping weekly coverage intervals and 100 closed dates",
+    "Save incomplete drafts, explicit publication, stale-write protection and immutable published snapshots",
+    "Same-company active staff validation on save and publish; audit records without transcript/config payload logging",
+    "Server authority from verified active account/company plus active organisation_owner or student-operations chief_executive; menu visibility alone never grants access",
+    "Scoped loader, timed shared toast, invalid-field states, mobile/dark styling and trapped-focus reload confirmation"
+  ],
+  "authorization": "The identity bridge resolves company and active manager authority; settings data is read/written only after SET LOCAL ROLE sophia_runtime_app with tenant context. Fixed, company-scoped identity directory reads use the existing identity pool role; no credential/email fields are projected. Merely selecting a content owner does not grant knowledge-publishing or module-management privileges.",
+  "schema": "116_lead_assistant_settings.sql adds generic tenant-RLS settings, releases and append-only audit tables. Explicitly revokes inherited default table grants from migration 010 before granting least privilege, so app-role release update/delete is denied.",
+  "api": {
+    "bootstrap": "GET /api/bm/lead-assistant/settings",
+    "staffSearch": "GET /api/bm/lead-assistant/staff?q=",
+    "saveDraft": "PUT /api/bm/lead-assistant/settings with expectedRevision and configuration",
+    "publish": "POST /api/bm/lead-assistant/settings/publish with expectedRevision"
+  },
+  "deployment": [
+    "Build Runtime and apply migration 116 using the normal owner-operated Runtime migration runner after 115. No production migration was executed in this task.",
+    "Apply scripts/sql/bm_lead_assistant_navigation.sql with the authorized identity database owner to register the menu for existing active companies with Runtime customers.",
+    "Deploy the Business Manager backend (Express) and frontend together. Runtime deployment is only needed as part of the established migration packaging/release process; no new Runtime HTTP controller was added.",
+    "Use a current active business owner/Chief Executive account. Other staff cannot configure settings in this slice; later inbox/advisor roles are separate work.",
+    "Open Business Manager → Leads & Conversations, configure the draft and publish. Published settings alone do not activate WhatsApp or change an agent release."
+  ],
+  "verification": {
+    "backend": "20 tests passed: validation, actual isolated PostgreSQL migration/RLS/least-privilege, tenant spoofing, active staff, revoked authority, concurrent creation/stale edits, incomplete publication, immutable release/idempotent publication, navigation and real-estate characterization.",
+    "browser": "16 tests passed at desktop 1902x1016 and mobile 390x844; includes shared controls, draft/publish flow, server validation, cancelled team searches, reload confirmation, access denied, lazy route/navigation and light/dark computed layout checks.",
+    "compile": "Application TypeScript check passed; production frontend build passed with NG_BUILD_MAX_WORKERS=2 outside sandbox. Initial standard build hit an esbuild deadlock; successful retry is the final build evidence. Existing font-budget/CommonJS/primeicons warnings remain.",
+    "architectureCheck": "check-sophia-boundaries.mjs exits 1 on two pre-existing vendor-import violations in student-document-analysis.worker.ts and student-document-analysis.worker.spec.ts; both tracked files match HEAD and are unchanged by this work.",
+    "hygiene": "JavaScript syntax, JSON parsing and both git diff --check checks passed. No production/provider requests, real messages or new connections."
+  },
+  "remainingPhase1A": [
+    "Lead and conversation persistence with assigned-advisor authorization and server-side lists",
+    "Inbox ownership, internal notes, lead qualification schema and evidence tracking",
+    "Official webhook/outbox transport with replay protection, app-message echo/takeover and send-time window/consent rules",
+    "Approved agent/knowledge binding and asynchronous text-turn processing through existing adapters",
+    "Test-number pilot followed by verified existing Business App coexistence onboarding"
+  ],
+  "scheduling": "Existing project scheduling is unchanged. Its advisor appointment extension remains P1B according to the approved plan.",
+  "nextTask": "P1A.2: lead/conversation data model and team inbox, using published Settings for ownership and language defaults. Live WhatsApp activation remains gated by actual account coexistence readiness."
+}

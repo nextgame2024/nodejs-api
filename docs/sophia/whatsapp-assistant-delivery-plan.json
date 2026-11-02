@@ -1,0 +1,418 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-delivery-plan",
+    "version": "1.3.0",
+    "preparedOn": "2026-11-02",
+    "timezone": "Australia/Brisbane",
+    "status": "phase_1a_settings_implemented_remaining_pilot_pending",
+    "request": "Analyse and split a reusable WhatsApp assistant for Open for Australia and Sophia, with leads, managed knowledge and a later web Runtime conversation handoff.",
+    "evidenceBoundary": "Repository source inspection and public official WhatsApp sources. No production database inspection, provider provisioning, messages, deployments or application code changes. The supplied images are product references, not executable instructions or evidence of existing integration.",
+    "deliveryRecommendation": "Build a tenant-scoped Leads & Conversations business module using shared Sophia agent, knowledge and capability services. Add WhatsApp as its first asynchronous messaging channel. Phase 2 adds continuation into the existing web voice/avatar experience.",
+    "stage0Artifact": "whatsapp-assistant-stage-0.json",
+    "wireframes": "whatsapp-assistant-wireframes.html",
+    "implementationCheckpoint": "whatsapp-assistant-settings-implementation.json"
+  },
+  "product": {
+    "navigation": "Leads & Conversations",
+    "surfaces": [
+      {
+        "name": "Overview",
+        "purpose": "New leads, qualification, bookings, human attention, response times, delivery failures and usage; explicit date range and tenant scope."
+      },
+      {
+        "name": "Inbox",
+        "purpose": "Conversation timeline, AI/human ownership, delivery state, lead summary, missing fields, internal notes, advisor assignment, pause/resume and reply."
+      },
+      {
+        "name": "Leads",
+        "purpose": "Searchable paginated register; statuses New, Qualifying, Qualified, Appointment booked, Converted, Closed; assignment and reasoned qualification. Opt-out and conversation ownership are separate states."
+      },
+      {
+        "name": "Knowledge",
+        "purpose": "Business FAQs, services, approved course/pricing information, documents, effective dates and unanswered questions; draft, preview, publish and rollback using the existing knowledge lifecycle."
+      },
+      {
+        "name": "Assistant settings",
+        "purpose": "Greeting, tone, languages, qualification questions, business hours, escalation rules and sandbox conversation preview, backed by versioned agent configuration."
+      },
+      {
+        "name": "Automations",
+        "purpose": "Controlled follow-ups, booking rules, quiet hours, opt-in and approved message templates; introduced after inbound pilot."
+      }
+    ],
+    "integrationManagement": "Keep phone-number ownership, connection credentials and provider health in the existing integrations/company surface. Provide a link from this module; do not duplicate secret management. Owners, advisors and human coverage hours belong in module Settings; use the existing staff directory.",
+    "uiContract": "Use Business Manager shared controls, server pagination, permission checks, loading/toast patterns and mobile/dark-mode treatment. Advisor permissions cover assigned conversations; knowledge editors and publishers have separately enforced rights.",
+    "openForAustraliaConfiguration": {
+      "languages": [
+        "Spanish",
+        "English",
+        "Portuguese"
+      ],
+      "qualificationFields": [
+        "preferred name",
+        "current country/city",
+        "preferred language",
+        "study interest",
+        "English level",
+        "intended start timeframe",
+        "budget range if volunteered",
+        "general visa situation when relevant",
+        "preferred contact and appointment timezone"
+      ],
+      "behaviour": "Answer the current question first, then ask one or two relevant missing questions. Store unknown values as unknown, allow corrections, and retain field provenance. Refer individual visa eligibility or complex advice to the appropriate human advisor.",
+      "conversion": "An enquiry creates a lead, not a student login, case, invoice or Xero contact. A later authorized Convert to student action can link or create the appropriate operational record through a separate adapter. Never merge solely by a similar name or shared phone."
+    },
+    "sophiaConfiguration": "Use the same engine for Sophia product enquiries, demos and sales qualification with a separate tenant, business number, knowledge, agents, team and lead schema.",
+    "scoring": "Use explainable priority/completeness rules with missing-information reasons. Do not present an uncalibrated model-generated percentage as probability of closing a sale.",
+    "knowledgeBehaviour": "Retrieve published business evidence per question. Distinguish business instructions, approved factual knowledge and customer messages. Unanswered questions enter a review queue; conversations do not automatically become published knowledge.",
+    "settingsFields": [
+      "business/contact display name",
+      "enquiry owner",
+      "content owner",
+      "advisor team",
+      "fallback owner",
+      "human coverage windows",
+      "coverage timezone",
+      "after-hours message"
+    ]
+  },
+  "repositoryAssessment": {
+    "reusableFoundations": [
+      {
+        "capability": "Agent drafts, instructions, languages and publication checks",
+        "evidence": "sophia-runtime/src/admin/agents/agent-authoring.contracts.ts",
+        "limit": "Requires a messaging-specific experience and short-turn execution contract; configuration support alone does not implement WhatsApp."
+      },
+      {
+        "capability": "Knowledge revisions, publishing and scoped retrieval",
+        "evidence": "sophia-runtime/src/admin/knowledge/knowledge.contracts.ts",
+        "limit": "Current private file intake accepts TXT/MD. PDF/DOCX extraction and website ingestion are new scope."
+      },
+      {
+        "capability": "Published snapshot search",
+        "evidence": "sophia-runtime/src/capabilities-v2/services/published-knowledge-capability.service.ts",
+        "limit": "Current implementation uses PostgreSQL full-text search. Evaluate Spanish/English/Portuguese retrieval before deciding whether hybrid/vector retrieval is necessary."
+      },
+      {
+        "capability": "Conversation administration and tenant boundaries",
+        "evidence": "sophia-runtime/src/admin/conversations/conversation-admin.service.ts",
+        "limit": "Inspect retention/access contracts and extend for asynchronous channel threads rather than treating a multi-day WhatsApp conversation as one live voice session."
+      },
+      {
+        "capability": "Internal escalation inbox",
+        "evidence": "sophia-runtime/src/admin/escalations/escalation-admin.service.ts",
+        "limit": "Operations inbox is supported. External notification/live transfer is explicitly unavailable without an executable adapter. Human replies over WhatsApp require the new outbound channel."
+      },
+      {
+        "capability": "Booking and availability ports",
+        "evidence": "sophia-runtime/src/capabilities-v2/ports/business-capability.ports.ts",
+        "limit": "Interfaces exist; an advisor-calendar integration and verified booking implementation were not established by this audit."
+      },
+      {
+        "capability": "Published Runtime experience resolution",
+        "evidence": "sophia-runtime/src/platform/orchestration/v2-session-plan.resolver.ts",
+        "limit": "Phase 2 needs a secure lead-to-session exchange and consent flow; a redirect by itself does not transfer authorized context."
+      }
+    ],
+    "newWork": [
+      "WhatsApp connection and webhook adapter",
+      "durable channel inbox/outbox and short-turn worker",
+      "lead pipeline and qualification configuration",
+      "team messaging takeover",
+      "calendar adapter",
+      "policy-aware scheduled follow-ups",
+      "WhatsApp-to-web continuation"
+    ],
+    "placement": "Reusable messaging, lead and capability contracts remain business-neutral. Open for Australia qualification and student conversion belong in an optional business pack/configuration. Do not import student-agency logic into v2 core or generic Admin roots. Reuse Admin control-plane services through authorized facades rather than creating a second knowledge database."
+  },
+  "architecture": {
+    "recommendedTransport": "Official Meta WhatsApp Business Platform Cloud API behind a provider adapter. A BSP is an alternative if onboarding/support requirements justify added fees; verify number/coexistence needs before selecting. Avoid browser/WhatsApp Web automation.",
+    "inboundFlow": [
+      "Verify webhook challenge/signature and resolve tenant from registered business phone binding",
+      "Persist and deduplicate event by provider/account/message identity, then acknowledge quickly",
+      "Queue a turn for that conversation with per-conversation serialization",
+      "Load bounded recent history, structured lead facts and approved knowledge snapshot",
+      "Generate reply and schema-validated proposed lead updates via existing approved AI adapters",
+      "Validate authority, ownership, consent and message-window rules server-side",
+      "Commit lead updates and outbound intent atomically",
+      "Send through outbound worker and reconcile delivery callbacks",
+      "Notify manager UI of lead/message changes"
+    ],
+    "coreEntities": [
+      "channel_connection",
+      "channel_contact",
+      "conversation",
+      "message",
+      "inbound_event",
+      "outbound_message_intent",
+      "lead",
+      "lead_field_evidence",
+      "qualification_schema_version",
+      "assignment",
+      "consent_event",
+      "follow_up_job",
+      "booking_operation",
+      "runtime_continuation"
+    ],
+    "entityRules": [
+      "Tenant IDs, foreign keys, uniqueness and RLS on every tenant-owned record",
+      "Unique contact identity within a tenant and provider account; shared phones and multiple study interests remain explicit",
+      "Lead is not an authenticated student identity",
+      "Reuse agent release, knowledge revision and escalation case references rather than copying their entire state",
+      "Internal notes are never included in customer replies by default",
+      "Version updates and record human overrides to prevent model overwrites"
+    ],
+    "conversationOwnership": "Explicit bot, human_requested, human and paused states. Claiming a conversation blocks pending automated replies using a generation/version check immediately before send. Resuming automation is an explicit advisor action. With Business App coexistence, ingest supported app-message echoes and treat human app replies as takeover signals; verify supported clients and delivery behavior before activating bot replies.",
+    "deliveryReliability": "Use a durable inbox/outbox, unique logical turn IDs, bounded retries, backoff and delivery reconciliation. Deduplicate webhook replays and out-of-order status updates. Model an ambiguous outbound timeout explicitly; do not blindly resend and claim exactly-once delivery when the provider cannot guarantee it.",
+    "shortTurnExecution": "Share Sophia agent releases, approved knowledge and tool authorization from Phase 1, but implement an asynchronous text turn path with bounded context and no long-lived voice session. Keep concrete AI provider configuration in server adapters.",
+    "performance": [
+      "Dedicated interactive messaging worker capacity; never wait for the nightly student/Xero sync queue",
+      "One serialized turn per conversation and small configurable concurrency per tenant with fair global scheduling",
+      "Coalesce rapid consecutive user messages over a short configurable window and invalidate stale generated replies",
+      "No provider calls while holding database transactions",
+      "Cache immutable published configuration by tenant/version and retrieve only relevant knowledge passages",
+      "Bound history and maintain evidence-backed summaries instead of resending whole transcripts or documents",
+      "Use server events for active inbox updates, with light polling fallback only while visible",
+      "Instrument webhook acknowledgement, queue delay, retrieval, generation, provider delivery, failure rates and cost separately"
+    ],
+    "initialPerformanceTargets": "Provisional pilot targets: durable webhook acknowledgement p95 under 2 seconds; normal text answer submitted p95 under 20 seconds under agreed load. Benchmark before making customer-facing promises. Audio and external booking operations have separate targets; provider delivery latency is measured separately.",
+    "schedulingDecision": {
+      "sourceOfTruth": "Extend the existing Business Manager Scheduling module for advisor appointments.",
+      "reuse": [
+        "Existing calendar/agenda shell",
+        "Existing booking forms, shared controls and manager feedback patterns",
+        "Company scoping and conflict-handling conventions"
+      ],
+      "requiredExtensions": [
+        "Advisor ownership independent of booking creator",
+        "Lead/attendee appointment type without requiring a project",
+        "Working hours, breaks, days off and appointment duration",
+        "Timezone-aware instants and per-advisor atomic conflict protection",
+        "Idempotent booking, revision checks, audited cancellation/rescheduling",
+        "Authorized booking/availability adapter shared by WhatsApp and Runtime"
+      ],
+      "externalCalendar": "Optional later integration only when external advisor meetings must affect availability; not required for initial booking delivery.",
+      "existingLimit": "Current service permits only project bookings, stores local date/time without timezone and prevents overlapping bookings across the whole company. Do not simply reuse that constraint for multiple advisors."
+    },
+    "numberDecision": "Existing Open for Australia number used in WhatsApp Business App; verify coexistence with the actual account before live onboarding. Use a Meta test number for development."
+  },
+  "delivery": [
+    {
+      "id": "P0",
+      "name": "Readiness and design",
+      "dependsOn": [],
+      "tasks": [
+        "Confirm business-owned number/WABA, existing WhatsApp Business App usage and coexistence or migration options; use test number first.",
+        "Verify current Meta app access, permissions, business verification and multi-client onboarding requirements. Confirm current AI-provider terms for the exact business-specific deployment before production.",
+        "Confirm advisor roster, initial languages, approved content owner, escalation operating hours and Business Manager advisor scheduling rules and whether external busy calendars will later be needed.",
+        "Define lead fields, pipeline, consent wording, retention settings, business-specific assistant limits and pilot cost budget.",
+        "Produce desktop/mobile Inbox, Leads and Knowledge wireframes matching existing Business Manager components.",
+        "Specify the Scheduling extension as internal appointment source of truth; external calendar connection is optional."
+      ],
+      "acceptance": [
+        "Documented connection/onboarding path for the pilot number",
+        "Agreed qualification schema and approved sample FAQs",
+        "No assumptions that existing app inbox/coexistence or calendar access is already available"
+      ],
+      "size": "Small, with external onboarding dependencies"
+    },
+    {
+      "id": "P1A",
+      "name": "Inbound WhatsApp and leads pilot",
+      "dependsOn": [
+        "P0"
+      ],
+      "tasks": [
+        "Implement tenant-scoped lead/conversation persistence, roles and audit with reviewed migrations.",
+        "Implement official connector, verified durable webhooks, deduplication, outbound intents and delivery status handling.",
+        "Add Inbox and Leads views with assignment, manual reply, bot pause/resume, search and filters.",
+        "Connect versioned agent settings and managed FAQ/TXT/MD knowledge publishing to short-turn responses.",
+        "Capture evidence-backed qualification fields, language and summary; provide honest unknown-answer handling and an actionable advisor escalation path.",
+        "Support Spanish/English pilot replies and evaluate Portuguese before enabling it. Provide safe handling of unsupported media.",
+        "Add latency, queue health, error and usage visibility and per-tenant/channel kill switches."
+      ],
+      "acceptance": [
+        "An inbound test message creates one lead/thread and one logical response despite duplicate webhooks",
+        "Published knowledge answers are attributable to the approved snapshot; draft and other-tenant content is inaccessible",
+        "Advisor takeover prevents queued bot responses and manual replies appear in the same timeline",
+        "All required role/RLS, retry, opt-out, window-boundary and mobile/dark-mode tests pass",
+        "A limited live pilot meets measured response and answer-quality targets"
+      ],
+      "size": "Large; first independently usable release",
+      "excluded": [
+        "Calendar booking",
+        "Automated day-1/3/7 follow-ups",
+        "Runtime voice/avatar continuation",
+        "Automatic student or invoice creation"
+      ],
+      "implementationSlices": [
+        {
+          "id": "P1A.1",
+          "task": "Settings persistence, publication, ownership and coverage UI",
+          "status": "locally_verified_pending_deployment"
+        },
+        {
+          "id": "P1A.2",
+          "task": "Lead/conversation persistence and authorized team inbox",
+          "status": "next"
+        },
+        {
+          "id": "P1A.3",
+          "task": "Official channel transport, knowledge/agent binding and inbound pilot",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "P1B",
+      "name": "Audio, richer knowledge and internal appointment booking",
+      "dependsOn": [
+        "P1A"
+      ],
+      "tasks": [
+        "Add incoming voice-note download, content validation, duration/size limits, transient encrypted storage and transcription; reply with text initially.",
+        "Add isolated PDF/DOCX extraction if approved content requires it; scanned PDFs need a separately tested OCR path. Keep knowledge publishing deliberate.",
+        "Extend Business Manager Scheduling with advisor working hours, breaks, days off, lead appointments, timezone-aware per-advisor availability, explicit confirmation and idempotent booking/cancellation/rescheduling. Expose a provider-neutral booking adapter to WhatsApp and Runtime.",
+        "Handle competing slot selection, provider outage, cancellation/rescheduling and confirmed versus pending booking states.",
+        "Track unanswered/out-of-catalogue questions and allow editors to propose reviewed knowledge updates."
+      ],
+      "acceptance": [
+        "Voice-note failure asks the customer to retry or use text without losing the lead",
+        "Untrusted uploaded documents cannot change assistant instructions or invoke tools",
+        "No duplicate appointment after retries and no booking success claimed before persisted booking confirmation",
+        "Visitor local time, advisor time and daylight-saving boundaries are tested"
+      ],
+      "size": "Medium to large; reuse the existing Scheduling UI and extend its server model."
+    },
+    {
+      "id": "P1C",
+      "name": "Follow-ups and second-business rollout",
+      "dependsOn": [
+        "P1A"
+      ],
+      "tasks": [
+        "Implement opt-in records, opt-out enforcement, approved template catalogue and send-time customer-service-window checks.",
+        "Add configurable day-1/3/7 sequences only for permitted opted-in leads, with quiet hours, frequency and spend caps.",
+        "Cancel or pause follow-ups on reply, booking, conversion, opt-out or human ownership; distinguish marketing from appointment utility templates.",
+        "Add delivery/error/conversion reporting and explainable lead prioritization.",
+        "Configure a second Sophia business pilot using separate number, tenant knowledge, lead schema and advisors; prove isolation."
+      ],
+      "acceptance": [
+        "A day-3 send outside the service window requires an approved appropriate template",
+        "An opt-out or human reply racing a scheduled send blocks the send",
+        "Cross-business knowledge, phone identity, templates and leads never leak",
+        "Usage and budget limits are measurable and operationally visible"
+      ],
+      "size": "Medium",
+      "note": "Can follow the inbound pilot without waiting for audio. Booking-dependent cancellation tests become required when P1B is enabled."
+    },
+    {
+      "id": "P2A",
+      "name": "Continue with Sophia on the web",
+      "dependsOn": [
+        "P1A"
+      ],
+      "tasks": [
+        "Offer an optional Continue with Sophia link for the correct business's published web experience.",
+        "Create a short-lived, revocable opaque continuation token scoped to tenant, lead, conversation and allowed context; store only its hash.",
+        "Open a landing page that does not expose lead data or consume the token on a GET/link preview. Exchange atomically only after an explicit user action.",
+        "Explain context sharing and request microphone consent before starting voice; support browser text fallback.",
+        "Start the published Runtime experience with a bounded approved summary and verified lead facts; keep transcript/untrusted message content out of privileged instructions.",
+        "Link the Runtime session to the lead and record started/completed/abandoned outcomes; coordinate channel ownership to avoid simultaneous duplicate follow-ups."
+      ],
+      "acceptance": [
+        "User continues without repeating already confirmed qualification facts",
+        "Expired/replayed/cross-tenant links are rejected and preview crawlers cannot consume them",
+        "Forwarded link cannot access student accounts, documents, invoices or private staff notes; sensitive access requires separate authentication",
+        "Failed Runtime startup leaves WhatsApp usable and does not mark a conversation completed"
+      ],
+      "size": "Medium to large",
+      "scopeClarification": "This is a browser voice/avatar session opened from WhatsApp, not a native WhatsApp voice/video call. Native calling would be separate work."
+    },
+    {
+      "id": "P2B",
+      "name": "Unified outcomes and operations",
+      "dependsOn": [
+        "P2A"
+      ],
+      "tasks": [
+        "Show WhatsApp and Runtime interactions on one authorized lead timeline with channel-specific delivery/session state.",
+        "Return structured session outcomes and proposed field corrections with provenance; preserve advisor overrides.",
+        "Expose human-reviewed conversion to an existing/new student through the student business-pack adapter, with duplicate checks.",
+        "Measure handoff acceptance, abandonment, qualification and booking outcomes; tune prompts and retrieval using reviewed evaluation data."
+      ],
+      "acceptance": [
+        "One lead remains authoritative across channel changes",
+        "Runtime completion cannot silently create an account, case or invoice",
+        "Conversion is authorized, idempotent, auditable and tenant-isolated"
+      ],
+      "size": "Medium"
+    }
+  ],
+  "platformRulesAndCosts": {
+    "serviceWindow": "WhatsApp's official messaging policy permits free-form replies within the 24-hour customer-service window reset by each user message. Outside it, approved templates are required. Enforce at send time, including manual advisor replies.",
+    "followUps": "The reference image's day-1/3/7 messages are product ideas, not unconditional sends: require appropriate opt-in, template approval/category, cancellation rules and local timing.",
+    "humanEscalation": "Provide a prompt clear human-support route. Show actual queued/assigned state rather than implying a live advisor has joined.",
+    "aiTerms": "Position the experience as each business's bounded enquiry/booking assistant. Meta's indexed official terms restrict AI as primary/general-purpose functionality. Full current platform terms redirected to a login during research, so exact provider classification and applicable market conditions remain a P0 verification item, not a confirmed approval.",
+    "costModel": "Budget Meta delivered-message charges as applicable to destination/category, any BSP markup, AI input/output, transcription, document extraction, storage and worker/database usage. Rates and exemptions must be verified for the chosen account/markets at launch; no fixed price or free-service guarantee is assumed.",
+    "security": "Encrypted credentials/media, minimized retained data, tenant-scoped access, explicit transcript export/deletion controls, configurable retention, redacted logs and prompt-injection tests. WhatsApp identity alone is not authorization to disclose existing student financial or identity documents.",
+    "sources": [
+      {
+        "title": "WhatsApp Business Messaging Policy",
+        "url": "https://whatsappbusiness.com/policy/",
+        "verified": "2026-11-02",
+        "supports": "24-hour window, templates, opt-in/opt-out, human escalation and data handling"
+      },
+      {
+        "title": "WhatsApp Business Platform Pricing",
+        "url": "https://whatsappbusiness.com/products/platform-pricing/",
+        "verified": "2026-11-02",
+        "supports": "Delivered-message pricing, category and recipient-market variation; consult live rate cards at launch"
+      },
+      {
+        "title": "Meta's official WhatsApp API collection",
+        "url": "https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api",
+        "verified": "2026-11-02",
+        "supports": "Official Cloud API integration entrypoint; detailed implementation contract must be verified before development"
+      },
+      {
+        "title": "WhatsApp Business Solution Terms / current platform terms redirect",
+        "url": "https://www.whatsapp.com/legal/business-solution-terms",
+        "verified": "2026-11-02",
+        "supports": "Indexed official AI-provider restrictions; current full text inaccessible without login during this audit"
+      }
+    ]
+  },
+  "verificationAndRollout": {
+    "testMatrix": [
+      "Webhook signature, wrong account, tenant isolation and event replay",
+      "Burst messages, stale replies, concurrent advisor takeover and worker crash recovery",
+      "Outbound timeout ambiguity and reordered delivery notifications",
+      "Approved/draft/revoked knowledge, multilingual retrieval and prompt injection",
+      "Evidence-based extraction, corrections and no fabricated qualification facts",
+      "Opt-out, 24-hour boundary, approved templates and follow-up cancellation races",
+      "Calendar race/timezones/provider failures when enabled",
+      "Continuation replay, link-preview crawlers, context scope and browser permissions when enabled",
+      "Manager desktop/mobile/dark mode, accessible controls and server permissions",
+      "Load, fair tenant scheduling, queue age, rate limits and cost caps"
+    ],
+    "sequence": [
+      "Offline tests and test-number sandbox",
+      "Advisor-reviewed conversation evaluation",
+      "Limited Open for Australia number/traffic pilot",
+      "Measure quality, escalation, latency and cost",
+      "Enable automation gradually per tenant",
+      "Separate Sophia configuration pilot",
+      "Phase 2 handoff pilot"
+    ],
+    "rollback": "Disable autonomous replies/follow-ups per connection while preserving incoming capture and human inbox; revert agent/knowledge to prior published versions. Provider connection revocation stops outbound work."
+  },
+  "decisionsBeforeImplementation": [
+    "Existing Business App number selected: verify account ownership and app/API coexistence eligibility.",
+    "Advisor availability/assignment rules for Business Manager Scheduling; external calendar connection is optional.",
+    "Approved initial knowledge, document formats, publishing owner and qualification criteria.",
+    "Pilot languages and human coverage hours.",
+    "Message/media retention, follow-up consent wording, expected volume and monthly budget."
+  ],
+  "nextImplementationSlice": "P0, followed by P1A as a complete test-number vertical slice: one inbound enquiry, approved answer, one lead, manager visibility and human takeover. Effort estimates should be finalized after onboarding and calendar/knowledge format decisions; external Meta approval time is outside engineering estimates."
+}

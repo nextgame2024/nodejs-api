@@ -1,4 +1,20 @@
 {
+  "whatsappAssistantPlan": {
+    "updatedOn": "2026-11-02",
+    "status": "phase_1a_settings_locally_verified_pending_deployment",
+    "details": "whatsapp-assistant-settings-implementation.json",
+    "scope": "P1A.1 Settings implemented with draft/publish, team ownership, language, coverage, tenant authorization, RLS and immutable releases. Lead/inbox/transport work remains P1A.2 onward.",
+    "evidence": "Inspected agent, knowledge, escalation, capability ports and Runtime resolver source; researched official WhatsApp messaging policy and pricing. Current complete platform terms require authenticated review.",
+    "verification": [
+      "20 backend tests passed including disposable PostgreSQL migration and production-like default grants",
+      "16 browser/navigation tests passed at both desktop and mobile widths, light/dark included",
+      "TypeScript and production frontend build passed; initial esbuild crash resolved by bounded-worker retry",
+      "Architecture scan has two pre-existing unchanged document-worker import violations",
+      "Both repositories pass git diff --check"
+    ],
+    "productionChanges": "None. Apply Runtime migration 116 and the navigation registration SQL, then deploy Business Manager backend/frontend.",
+    "wireframes": "whatsapp-assistant-wireframes.html"
+  },
   "studentSyncCaseBootstrap": {
     "updatedOn": "2026-11-01",
     "status": "production_record_repaired_permanent_sync_fix_locally_verified_pending_deployment",

@@ -33,6 +33,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Projects",
     "Project types",
     "Scheduling",
+    "Leads & Conversations",
     "Navigation links",
     "Suppliers",
     "Materials",
