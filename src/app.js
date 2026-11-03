@@ -35,6 +35,8 @@ import bmToolkitRoutes from "./routes/bm.toolkit.routes.js";
 import bmRealEstateRoutes from "./routes/bm.realEstate.routes.js";
 import contactRoutes from "./routes/contact.routes.js";
 
+import whatsappWebhooks from "./routes/whatsapp.webhook.routes.js";
+
 const app = express();
 const jsonBodyLimit = process.env.JSON_BODY_LIMIT || "10mb";
 
@@ -45,6 +47,7 @@ const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:4200")
 
 /* 1) Mount Stripe webhook with RAW body BEFORE express.json() */
 app.post(stripeWebhookRoute.path, ...stripeWebhookRoute.handler);
+app.use("/api", whatsappWebhooks);
 
 app.use(
   cors({

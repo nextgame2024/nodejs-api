@@ -1,0 +1,99 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-inbound-implementation",
+    "updatedOn": "2026-11-03",
+    "slice": "P1A.3a \u2014 receive-only channel and inbox ingestion",
+    "status": "locally_verified_pending_migration_configuration_and_deployment"
+  },
+  "priorDeployment": {
+    "migration117": "Applied, reported by user on 2026-11-03. Not independently checked in production.",
+    "applicationDeployment": "No new application deployment verified in this task."
+  },
+  "implemented": [
+    "Official Cloud API raw-byte HMAC-SHA256 webhook verification and GET challenge handling, mounted before JSON parsing and request logging.",
+    "Deployment-owned per-tenant account/phone profiles with secret references; manager-only Company integration controls enable/pause receiving, optimistic revisions and audit.",
+    "Atomic bounded webhook batch insert with durable acknowledgement and unique provider-event keys. No AI or provider network work in webhook requests.",
+    "Separate database-only worker with SKIP LOCKED receipts, same-contact advisory locking, rollback-safe processing, bounded exponential retry and failed-message health.",
+    "Exact channel/sender identity creates or reuses one lead; no merging by name/phone with manual leads or student accounts. Published language and active enquiry owner/fallback defaults.",
+    "Incoming text and Business App echoes appear in the existing inbox. Echoes pause ownership; exact text opt-outs stay opted out. Closed leads remain closed.",
+    "Audio/media events display a review placeholder and retain an opaque media ID, MIME type and voice marker for later processing. No downloads, URLs, bytes or transcription.",
+    "Status/unsupported-event receipts do not create leads. Processed receipt payloads are reduced to safe reconciliation metadata; message text lives in the authorized timeline."
+  ],
+  "voiceRequirement": {
+    "confirmedByUser": "2026-11-03",
+    "input": "Either WhatsApp text or voice message.",
+    "response": "Both text and generated voice replies based on the same grounded answer, in the customer language.",
+    "delivery": "Track text/audio outcomes separately; retry only the failed part and avoid repeating a successfully delivered reply.",
+    "currentBoundary": "Only incoming media references and inbox placeholders are implemented here. Transcription, speech generation and outbound delivery remain future work. Text-only initial pilot must not be described as the finished requirement."
+  },
+  "security": {
+    "scope": "Raw callback profile comes from deployment configuration, never browser or payload tenant claims. Account and phone IDs must match. Runtime operations use SET LOCAL ROLE sophia_runtime_app, verified tenant context and FORCE RLS.",
+    "secrets": "App secret and verification token are server environment secret references. No access token is needed for receive-only processing. Browser sees labels/readiness only; no secrets or provider IDs.",
+    "authority": "Company integration API uses the existing active organisation_owner/chief_executive authority. Cross-company forms do not mount the signed-in company connection card.",
+    "consent": "Inbound customer timestamps and sticky opt-out are separate from conversation ownership. Business App echoes never open an inbound customer reply window. No consent or reply-window permission is inferred merely from a stored phone number.",
+    "sideEffects": "No production data access, migration, provider provisioning, live WhatsApp/AI/speech requests, messages or student/invoice/contact changes performed."
+  },
+  "schema": "118_whatsapp_inbound_channel.sql after 117; generic tenant-RLS channel bindings, receive receipts and channel contacts. Explicit grants override inherited defaults. Existing settings audit vocabulary gains channel_updated.",
+  "api": {
+    "company": "GET/PUT /api/bm/lead-assistant/channel",
+    "webhook": "GET/POST /api/webhooks/whatsapp/:profileId",
+    "worker": "npm run whatsapp:inbound-worker"
+  },
+  "configuration": {
+    "WHATSAPP_INBOUND_PROFILES": [
+      {
+        "id": "ofa_pilot_test",
+        "label": "Open for Australia test number",
+        "customerId": "11111111-1111-4111-8111-111111111111",
+        "phoneNumberId": "123456789",
+        "businessAccountId": "987654321",
+        "appSecretEnv": "WHATSAPP_OFA_APP_SECRET",
+        "verifyTokenEnv": "WHATSAPP_OFA_VERIFY_TOKEN"
+      }
+    ],
+    "instructions": "Example IDs are synthetic; replace with the authorized Runtime customer, actual WABA/phone and deployment secret-variable names. Set those secret values using the deployment secret store. App secret and random verification token must each be at least 16 characters. Every backend/worker instance must share the same profile map. Phone IDs and profile IDs must be unique. Restart worker/backend after changing profiles or secrets.",
+    "WHATSAPP_INBOUND_WORKER_ENABLED": "true only on the dedicated authorized receive worker; absent/false stops the worker. This does not itself enable a channel binding."
+  },
+  "deployment": [
+    "Build/package Runtime migrations and apply migration 118 through the existing owner-operated migration runner after 117. No production migration was run here.",
+    "Deploy the Business Manager backend/frontend. No live receiving occurs with the default empty profile map. Publish valid assistant Settings before enabling receiving.",
+    "Configure a test-number profile and secret references in backend and worker. Use a dedicated test number before onboarding the existing Business App number.",
+    "An authorized manager enables receiving in Company \u2192 WhatsApp. Run the dedicated worker with WHATSAPP_INBOUND_WORKER_ENABLED=true.",
+    "Register the profile callback URL and verification token with the authorized Meta app. Callback routing is profile-specific: deliveries must belong to the configured WABA/phone. Mixed-account/number payloads fail closed; configure number-specific callback routing before sharing an app across profiles. Subscribe to messages and, when supported and verified, smb_message_echoes.",
+    "Test signed inbound text, audio placeholder and Business App echoes. Confirm queue drains, repeated delivery creates no duplicate timeline entries, wrong signatures fail, app replies pause ownership and opt-out remains sticky.",
+    "Verify existing-number Business App coexistence eligibility and actual echo payloads/subscriptions before production onboarding. No embedded signup, provider provisioning or coexistence eligibility check is implemented in this slice.",
+    "Rollback: pause receiving in Company and stop the receive worker. Existing leads remain visible; queued receipts remain durable. Disabled callbacks return 503 so provider retries can resume, subject to provider retention limits. Do not remove queued records or change profile/customer/phone bindings to repurpose an existing profile."
+  ],
+  "operations": {
+    "limits": "256 KB raw callback, at most 100 normalized events, one bulk receipt insert, 4,000 retained text characters with truncation marker, bounded 50-event timeline pages. One receipt/channel/tick per worker process; no unbounded fan-out.",
+    "fairness": "Database-only transaction commits timeline write and processed receipt together. Worker restart resumes queued events. Multiple workers coordinate via SKIP LOCKED and same-sender transaction locks.",
+    "attention": "Company panel shows queued/failed counts and oldest waiting receipt. Monitor worker tick failures (profile ID only), queue age and failed counts. No live throughput or p95 benchmark was performed.",
+    "recovery": "Failed receipts stop after eight attempts; inspect safe failure_code, fix configuration/code, then perform a separately authorized bounded retry under the scoped Runtime role. No automatic infinite retry or destructive cleanup. Queued/failed content requires the tenant retention/access policy before live launch.",
+    "ordering": "Deduplicate by channel/event key. Concurrent receipt append order may differ from provider send order; timeline metadata retains sentAt, while last_inbound_at uses GREATEST so late arrivals do not regress it.",
+    "deliveryReceipts": "Received statuses are durably classified; outgoing message reconciliation, monotonic delivery state and send ambiguity handling are not implemented yet.",
+    "media": "Unsupported media is not fetched. Opaque media references are retained for P1B; test real audio formats and provider media retention before enabling automatic transcription."
+  },
+  "verification": {
+    "backend": "45 tests passed in six focused suites: 18 new webhook/real PostgreSQL channel checks plus 27 existing lead/Settings regressions. Includes raw signature/size/tenant spoofing, batch deduplication, concurrent same-contact processing, pause/resume, closed leads, sticky opt-out, app echoes, retry exhaustion, rollback, RLS and default-grant protection.",
+    "realEstate": "All 38 deterministic tests passed across the eight existing test:p0:real-estate suites.",
+    "browser": "43 tests passed at desktop 1902x1016 and mobile 390x844, including Company integration shared controls, loading, cancellation, optimistic saves, errors, no credential fields, and light/dark layout. Three additional Company checks passed, including a new cross-company visibility guard regression.",
+    "compile": "Application TypeScript passed. Bounded-worker production frontend build passed with existing initial/style-budget, CommonJS and missing primeicons warnings.",
+    "architecture": "Boundary scan still reports only the two unchanged pre-existing student-document-analysis.worker.ts/spec.ts vendor imports. No new violations.",
+    "hygiene": "JavaScript syntax, JSON parsing and both repository diff checks passed."
+  },
+  "nextTask": "P1A.3b: bind the approved agent/knowledge release, asynchronous grounded text generation, durable outbound intents, human reply sending, opt-out/window enforcement, echo cancellation and delivery reconciliation. Then P1B adds safe voice download/transcription and text-plus-voice responses, alongside the existing Scheduling extension.",
+  "sources": [
+    {
+      "url": "https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/webhooks/start/",
+      "use": "Meta-hosted reference confirms GET challenge and raw HMAC-SHA256 signature contract; SDK itself is archived and was not installed."
+    },
+    {
+      "url": "https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/create-webhook-endpoint",
+      "use": "Current official page returned 429 during this task. No claim of live verification."
+    },
+    {
+      "url": "https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users",
+      "use": "Official coexistence reference to verify during actual onboarding; no eligibility or live echo delivery was tested."
+    }
+  ]
+}

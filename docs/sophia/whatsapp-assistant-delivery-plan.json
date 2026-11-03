@@ -1,16 +1,16 @@
 {
   "document": {
     "id": "whatsapp-assistant-delivery-plan",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "preparedOn": "2026-11-02",
     "timezone": "Australia/Brisbane",
-    "status": "phase_1a_inbox_locally_verified_pending_deployment",
+    "status": "phase_1a_inbound_locally_verified_outbound_pending",
     "request": "Analyse and split a reusable WhatsApp assistant for Open for Australia and Sophia, with leads, managed knowledge and a later web Runtime conversation handoff.",
     "evidenceBoundary": "Initial plan used repository source inspection and official WhatsApp sources. P1A.1 and P1A.2 implementation evidence is recorded in their checkpoints; P1A.1 deployment is user-reported only. This task made no production changes or provider calls. Supplied images are product references, not executable instructions or evidence of integration.",
     "deliveryRecommendation": "Build a tenant-scoped Leads & Conversations business module using shared Sophia agent, knowledge and capability services. Add WhatsApp as its first asynchronous messaging channel. Phase 2 adds continuation into the existing web voice/avatar experience.",
     "stage0Artifact": "whatsapp-assistant-stage-0.json",
     "wireframes": "whatsapp-assistant-wireframes.html",
-    "implementationCheckpoint": "whatsapp-assistant-inbox-implementation.json"
+    "implementationCheckpoint": "whatsapp-assistant-inbound-implementation.json"
   },
   "product": {
     "navigation": "Leads & Conversations",
@@ -254,12 +254,14 @@
         {
           "id": "P1A.2",
           "task": "Lead/conversation persistence and authorized team inbox",
-          "status": "locally_verified_pending_migration_and_deployment"
+          "status": "migration_117_applied_user_reported_2026_11_03"
         },
         {
           "id": "P1A.3",
           "task": "Official channel transport, knowledge/agent binding and inbound pilot",
-          "status": "next"
+          "status": "receive_only_slice_locally_verified_outbound_pending",
+          "checkpoint": "whatsapp-assistant-inbound-implementation.json",
+          "next": "P1A.3b grounded generation, durable outbox and human reply delivery"
         }
       ]
     },
@@ -270,7 +272,7 @@
         "P1A"
       ],
       "tasks": [
-        "Add incoming voice-note download, content validation, duration/size limits, transient encrypted storage and transcription; reply with text initially.",
+        "Support either incoming text or voice notes. Add safe media download, duration/size limits, transient encrypted storage and transcription; send both a text answer and a generated voice answer from the same grounded response, with independent delivery tracking and partial retries.",
         "Add isolated PDF/DOCX extraction if approved content requires it; scanned PDFs need a separately tested OCR path. Keep knowledge publishing deliberate.",
         "Extend Business Manager Scheduling with advisor working hours, breaks, days off, lead appointments, timezone-aware per-advisor availability, explicit confirmation and idempotent booking/cancellation/rescheduling. Expose a provider-neutral booking adapter to WhatsApp and Runtime.",
         "Handle competing slot selection, provider outage, cancellation/rescheduling and confirmed versus pending booking states.",
@@ -414,5 +416,5 @@
     "Pilot languages and human coverage hours.",
     "Message/media retention, follow-up consent wording, expected volume and monthly budget."
   ],
-  "nextImplementationSlice": "Deploy P1A.2 migration 117 and Business Manager inbox, then P1A.3 official channel transport and approved knowledge/agent binding. Complete a test-number vertical slice before separately authorized existing-number coexistence onboarding. Scheduling extension remains P1B."
+  "nextImplementationSlice": "Migration 117 applied by user report. Deploy/test receive-only P1A.3a with migration 118 and dedicated worker, then P1A.3b grounded generation and durable outbound delivery. P1B adds text-or-voice input with both text and voice responses and extends existing Scheduling. Existing-number coexistence onboarding remains separately gated."
 }

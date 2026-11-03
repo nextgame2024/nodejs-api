@@ -2,6 +2,10 @@ import { Router } from "express";
 import { authRequired } from "../middlewares/authJwt.js";
 import * as settings from "../services/leads/assistant-settings.service.js";
 import * as leads from "../services/leads/lead-records.service.js";
+import {
+  channelStatus,
+  configureChannel,
+} from "../services/messaging/whatsapp-channel.service.js";
 const router = Router();
 router.use("/bm/lead-assistant", authRequired);
 const handle = (fn) => async (req, res) => {
@@ -99,5 +103,13 @@ router.post(
       req.body,
     ),
   ),
+);
+router.get(
+  "/bm/lead-assistant/channel",
+  handle((req) => channelStatus(req.user.id, req.user.companyId)),
+);
+router.put(
+  "/bm/lead-assistant/channel",
+  handle((req) => configureChannel(req.user.id, req.user.companyId, req.body)),
 );
 export default router;
