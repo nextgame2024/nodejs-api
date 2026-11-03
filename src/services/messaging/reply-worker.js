@@ -21,6 +21,7 @@ import {
   bookingCapabilityContext,
   createAppointmentOffer,
 } from "../scheduling/whatsapp-appointment-booking.service.js";
+import { createAppointmentChangeRequest } from "../scheduling/whatsapp-appointment-changes.service.js";
 async function handoffJob(db, tenant, job, state = "needs_human") {
   await db.query(
     `UPDATE ${s}.assistant_reply_jobs SET state=$3,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
@@ -232,6 +233,10 @@ export async function generateOne(profile, reasoner) {
     result.booking &&
     (result.booking.action === "clarify_date" ||
       (result.booking.action === "availability" &&
+        typeof result.booking.date === "string") ||
+      result.booking.action === "cancel" ||
+      result.booking.action === "clarify_reschedule_date" ||
+      (result.booking.action === "reschedule" &&
         typeof result.booking.date === "string"));
   const valid = factual || booking;
   await scoped(
@@ -289,18 +294,38 @@ export async function generateOne(profile, reasoner) {
         )) &&
         !result.handoff;
       let answer = factual ? result.answer.trim() : null;
+      let appointmentOfferId = null;
+      let appointmentChangeRequestId = null;
       if (accepted && booking) {
-        const offered = await createAppointmentOffer(
-          db,
-          profile,
-          channel,
-          lead,
-          c,
-          job,
-          result.booking,
-        );
+        const change = [
+          "cancel",
+          "reschedule",
+          "clarify_reschedule_date",
+        ].includes(result.booking.action);
+        const offered = change
+          ? await createAppointmentChangeRequest(
+              db,
+              profile,
+              channel,
+              lead,
+              c,
+              job,
+              result.booking,
+            )
+          : await createAppointmentOffer(
+              db,
+              profile,
+              channel,
+              lead,
+              c,
+              job,
+              result.booking,
+            );
         accepted = !!offered;
         answer = offered?.body ?? null;
+        appointmentOfferId = offered?.appointmentOfferId ?? null;
+        appointmentChangeRequestId =
+          offered?.appointmentChangeRequestId ?? null;
       }
       await db.query(
         `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,response_kind=$7,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
@@ -330,7 +355,7 @@ export async function generateOne(profile, reasoner) {
         process.env.WHATSAPP_AUTOMATION_ENABLED === "true"
       ) {
         const queued = await db.query(
-          `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,job_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7) ON CONFLICT DO NOTHING RETURNING message_id`,
+          `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,job_id,appointment_offer_id,appointment_change_request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7,$9,$10) ON CONFLICT DO NOTHING RETURNING message_id`,
           [
             profile.customerId,
             channel.channel_id,
@@ -340,6 +365,8 @@ export async function generateOne(profile, reasoner) {
             answer,
             job.job_id,
             hash({ body: answer }),
+            appointmentOfferId,
+            appointmentChangeRequestId,
           ],
         );
         if (queued.rows[0])
@@ -488,6 +515,39 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
         !!offer &&
         (["confirmed", "expired"].includes(offer.status) ||
           !!(await bookingCapabilityContext(db, profile, channel, lead, c)));
+    }
+    if (permitted && m.appointment_change_request_id) {
+      const request = (
+        await db.query(
+          `SELECT r.status,r.expected_version,a.version AS appointment_version,a.status AS appointment_status,a.starts_at
+           FROM ${s}.lead_appointment_change_requests r
+           JOIN ${s}.lead_appointments a USING(customer_id,appointment_id)
+           WHERE r.customer_id=$1 AND r.request_id=$2 AND r.channel_id=$3 AND r.lead_id=$4 AND r.conversation_id=$5`,
+          [
+            profile.customerId,
+            m.appointment_change_request_id,
+            channel.channel_id,
+            m.lead_id,
+            m.conversation_id,
+          ],
+        )
+      ).rows[0];
+      permitted =
+        !!request &&
+        (["confirmed", "expired"].includes(request.status) ||
+          (request.appointment_status === "confirmed" &&
+            request.appointment_version === request.expected_version &&
+            Date.parse(request.starts_at) > Date.now() &&
+            Number(
+              (
+                await db.query(
+                  `SELECT count(*)::int AS count FROM ${s}.lead_appointments
+                   WHERE customer_id=$1 AND lead_id=$2 AND status='confirmed' AND starts_at>now()`,
+                  [profile.customerId, m.lead_id],
+                )
+              ).rows[0].count,
+            ) === 1 &&
+            !!(await bookingCapabilityContext(db, profile, channel, lead, c))));
     }
     if (
       !permitted ||

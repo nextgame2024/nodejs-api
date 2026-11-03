@@ -88,8 +88,38 @@ describe("Provider-neutral channel answer adapter", () => {
     });
     expect(p.open.mock.calls[0][0].tools).toEqual([]);
     expect(p.open.mock.calls[0][0].instructions).toContain(
-      "Never claim a slot is available or booked",
+      "Never choose or return an appointment ID",
     );
+  });
+  it("classifies cancellation and rescheduling without appointment identifiers or tools", async () => {
+    for (const [delta, expected] of [
+      [
+        '{"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"cancel"}}',
+        { action: "cancel" },
+      ],
+      [
+        '{"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"reschedule","date":"2026-11-12"}}',
+        { action: "reschedule", date: "2026-11-12" },
+      ],
+    ] as const) {
+      const p = provider([
+        { type: "text.delta", delta },
+        { type: "response.completed" },
+      ]);
+      const result = await generateChannelAnswer(
+        {
+          ...input(),
+          bookingContext: {
+            timezone: "Australia/Brisbane",
+            today: "2026-11-04",
+            maxDate: "2026-12-04",
+          },
+        },
+        p.implementation,
+      );
+      expect(result.booking).toEqual(expected);
+      expect(p.open.mock.calls[0][0].tools).toEqual([]);
+    }
   });
   it("rejects incomplete output, tool calls and malformed JSON, always closing the session", async () => {
     for (const events of [

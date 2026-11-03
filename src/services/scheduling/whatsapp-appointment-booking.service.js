@@ -94,10 +94,10 @@ export async function bookingCapabilityContext(
     return null;
   const ready = (
     await db.query(
-      "SELECT to_regclass('sophia_runtime.lead_appointment_offers') IS NOT NULL AS offers,to_regclass('sophia_runtime.lead_appointments') IS NOT NULL AS appointments",
+      "SELECT to_regclass('sophia_runtime.lead_appointment_offers') IS NOT NULL AS offers,to_regclass('sophia_runtime.lead_appointment_change_requests') IS NOT NULL AS changes,to_regclass('sophia_runtime.lead_appointments') IS NOT NULL AS appointments",
     )
   ).rows[0];
-  if (!ready.offers || !ready.appointments) return null;
+  if (!ready.offers || !ready.changes || !ready.appointments) return null;
   const row = (
     await db.query(
       `SELECT c.timezone,c.booking_window_days AS "bookingWindowDays",c.revision
@@ -188,8 +188,19 @@ export async function createAppointmentOffer(
     [profile.customerId, conversation.conversation_id],
   );
   await db.query(
+    `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='newer_message',updated_at=now()
+     WHERE customer_id=$1 AND conversation_id=$2 AND state='queued'
+     AND appointment_change_request_id IN (SELECT request_id FROM ${s}.lead_appointment_change_requests WHERE customer_id=$1 AND conversation_id=$2 AND status IN ('offered','awaiting_confirmation'))`,
+    [profile.customerId, conversation.conversation_id],
+  );
+  await db.query(
+    `UPDATE ${s}.lead_appointment_change_requests SET status='cancelled',updated_at=now()
+     WHERE customer_id=$1 AND conversation_id=$2 AND status IN ('offered','awaiting_confirmation')`,
+    [profile.customerId, conversation.conversation_id],
+  );
+  const saved = await db.query(
     `INSERT INTO ${s}.lead_appointment_offers(customer_id,channel_id,lead_id,conversation_id,source_event_id,reply_job_id,ownership_version,advisor_identity,customer_timezone,calendar_revision,slots,expires_at)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,now()+interval '30 minutes')`,
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,now()+interval '30 minutes') RETURNING offer_id`,
     [
       profile.customerId,
       channel.channel_id,
@@ -205,6 +216,7 @@ export async function createAppointmentOffer(
     ],
   );
   return {
+    appointmentOfferId: saved.rows[0].offer_id,
     body: text.offer(
       slots
         .map(

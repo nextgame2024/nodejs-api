@@ -158,6 +158,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
     for (const name of [
       "121_lead_appointments.sql",
       "122_whatsapp_appointment_confirmation.sql",
+      "123_whatsapp_appointment_changes.sql",
     ])
       await pool.query(
         (
@@ -709,6 +710,322 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].count,
     ).toBe(1);
+
+    const original = (
+      await pool.query(
+        "SELECT starts_at,version,status FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+        [saved.appointment_id],
+      )
+    ).rows[0];
+    const rescheduleDay = new Date(Date.now() + 4 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    await inbound("reschedule-request", {
+      senderId: sender,
+      body: "Please reschedule my appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: {
+        action: "reschedule",
+        date: rescheduleDay,
+        timezone: "Pacific/Auckland",
+      },
+    }));
+    let change = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(change).toMatchObject({
+      action: "reschedule",
+      status: "offered",
+      appointment_id: saved.appointment_id,
+      expected_version: 1,
+    });
+    await inbound("reschedule-selection", { senderId: sender, body: "1" });
+    const rescheduleConfirmation = (
+      await pool.query(
+        "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE appointment_change_request_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",
+        [change.request_id],
+      )
+    ).rows[0].body;
+    const rescheduleCode = /CONFIRM (\d{6})/.exec(rescheduleConfirmation)?.[1];
+    expect(rescheduleCode).toMatch(/^\d{6}$/);
+    expect(
+      (
+        await pool.query(
+          "SELECT starts_at,version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+          [saved.appointment_id],
+        )
+      ).rows[0],
+    ).toEqual(
+      expect.objectContaining({ version: 1, starts_at: original.starts_at }),
+    );
+    await inbound("reschedule-confirm", {
+      senderId: sender,
+      body: `CONFIRM ${rescheduleCode}`,
+    });
+    let changedAppointment = (
+      await pool.query(
+        "SELECT starts_at,version,status FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+        [saved.appointment_id],
+      )
+    ).rows[0];
+    expect(changedAppointment.version).toBe(2);
+    expect(changedAppointment.status).toBe("confirmed");
+    expect(changedAppointment.starts_at.toISOString()).not.toBe(
+      original.starts_at.toISOString(),
+    );
+    await inbound("reschedule-confirm-retry", {
+      senderId: sender,
+      body: `CONFIRM ${rescheduleCode}`,
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+          [saved.appointment_id],
+        )
+      ).rows[0].version,
+    ).toBe(2);
+
+    await inbound("cancel-request", {
+      senderId: sender,
+      body: "Please cancel my appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "cancel" },
+    }));
+    change = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(change).toMatchObject({
+      action: "cancel",
+      status: "awaiting_confirmation",
+      appointment_id: saved.appointment_id,
+      expected_version: 2,
+    });
+    const cancelConfirmation = (
+      await pool.query(
+        "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE appointment_change_request_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",
+        [change.request_id],
+      )
+    ).rows[0].body;
+    const cancelCode = /CONFIRM (\d{6})/.exec(cancelConfirmation)?.[1];
+    expect(cancelCode).toMatch(/^\d{6}$/);
+    await inbound("cancel-wrong-confirm", {
+      senderId: sender,
+      body: "CONFIRM 000000",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT status,version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+          [saved.appointment_id],
+        )
+      ).rows[0],
+    ).toMatchObject({ status: "confirmed", version: 2 });
+    await inbound("cancel-confirm", {
+      senderId: sender,
+      body: `CONFIRM ${cancelCode}`,
+    });
+    changedAppointment = (
+      await pool.query(
+        "SELECT status,version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+        [saved.appointment_id],
+      )
+    ).rows[0];
+    expect(changedAppointment).toMatchObject({
+      status: "cancelled",
+      version: 3,
+    });
+    await inbound("cancel-confirm-retry", {
+      senderId: sender,
+      body: `CONFIRM ${cancelCode}`,
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+          [saved.appointment_id],
+        )
+      ).rows[0].version,
+    ).toBe(3);
+
+    const ambiguousAppointments = [];
+    for (const offset of [5, 6]) {
+      const appointmentDay = new Date(Date.now() + offset * 86400000)
+        .toISOString()
+        .slice(0, 10);
+      const available = await appointments.availability(owner, company, {
+        advisorId: advisor,
+        date: appointmentDay,
+        timezone: "Australia/Brisbane",
+      });
+      ambiguousAppointments.push(
+        (
+          await appointments.mutateAppointment(owner, company, "book", null, {
+            requestKey: randomUUID(),
+            leadId: bookingLead.lead_id,
+            advisorId: advisor,
+            startsAt: available.slots[0].startsAt,
+            timezone: "Australia/Brisbane",
+            calendarRevision: available.calendarRevision,
+            description: "Ambiguity guard",
+          })
+        ).appointment,
+      );
+    }
+    const requestCount = (
+      await pool.query(
+        "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0].count;
+    await inbound("ambiguous-cancel-request", {
+      senderId: sender,
+      body: "Cancel my appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "cancel" },
+    }));
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(requestCount);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1 AND status='confirmed'",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(2);
+
+    await appointments.mutateAppointment(
+      owner,
+      company,
+      "cancel",
+      ambiguousAppointments[0].id,
+      {
+        requestKey: randomUUID(),
+        leadId: bookingLead.lead_id,
+        expectedVersion: ambiguousAppointments[0].version,
+      },
+    );
+    const ownershipDay = new Date(Date.now() + 7 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    await inbound("ownership-change-request", {
+      senderId: sender,
+      body: "Reschedule my appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "reschedule", date: ownershipDay },
+    }));
+    let ownershipRequest = (
+      await pool.query(
+        "SELECT request_id,status FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(ownershipRequest.status).toBe("offered");
+    const additionalDay = new Date(Date.now() + 8 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const additionalAvailability = await appointments.availability(
+      owner,
+      company,
+      {
+        advisorId: advisor,
+        date: additionalDay,
+        timezone: "Australia/Brisbane",
+      },
+    );
+    const additionalAppointment = (
+      await appointments.mutateAppointment(owner, company, "book", null, {
+        requestKey: randomUUID(),
+        leadId: bookingLead.lead_id,
+        advisorId: advisor,
+        startsAt: additionalAvailability.slots[0].startsAt,
+        timezone: "Australia/Brisbane",
+        calendarRevision: additionalAvailability.calendarRevision,
+        description: "Confirmation ambiguity guard",
+      })
+    ).appointment;
+    await inbound("stale-reschedule-selection", {
+      senderId: sender,
+      body: "1",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT status FROM sophia_runtime.lead_appointment_change_requests WHERE request_id=$1",
+          [ownershipRequest.request_id],
+        )
+      ).rows[0].status,
+    ).toBe("expired");
+    await appointments.mutateAppointment(
+      owner,
+      company,
+      "cancel",
+      additionalAppointment.id,
+      {
+        requestKey: randomUUID(),
+        leadId: bookingLead.lead_id,
+        expectedVersion: additionalAppointment.version,
+      },
+    );
+    await inbound("ownership-change-request-two", {
+      senderId: sender,
+      body: "Reschedule my appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "reschedule", date: ownershipDay },
+    }));
+    ownershipRequest = (
+      await pool.query(
+        "SELECT request_id,status FROM sophia_runtime.lead_appointment_change_requests WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(ownershipRequest.status).toBe("offered");
+    detail = await api.getLead(owner, company, bookingLead.lead_id);
+    await api.changeOwnership(owner, company, bookingLead.lead_id, {
+      expectedVersion: detail.lead.ownershipVersion,
+      ownership: "human",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT status FROM sophia_runtime.lead_appointment_change_requests WHERE request_id=$1",
+          [ownershipRequest.request_id],
+        )
+      ).rows[0].status,
+    ).toBe("cancelled");
   });
   test("knowledge retirement between generation and send cancels dispatch", async () => {
     await pool.query(

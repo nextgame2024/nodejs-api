@@ -1,0 +1,48 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-appointment-changes-implementation",
+    "version": "1.0.0",
+    "updatedOn": "2026-11-04",
+    "timezone": "Australia/Brisbane",
+    "slice": "P1B.2c",
+    "status": "locally_verified_pending_migration_123_and_deployment"
+  },
+  "scope": [
+    "Adds customer-requested WhatsApp cancellation and rescheduling to the confirmed booking boundary. The reasoning provider can classify intent and an optional date/timezone only; it receives no executable tool and can never supply an appointment identifier.",
+    "Server code resolves exactly one future confirmed appointment for the conversation lead and requires it to remain with the currently assigned published advisor. Zero or multiple eligible appointments stop with a deterministic staff-help message.",
+    "Cancellation requires a separate exact six-digit confirmation. Rescheduling first offers up to three current server-computed slots while excluding the existing appointment, then requires the same separate confirmation. The existing appointment remains unchanged until confirmation commits.",
+    "Staff and WhatsApp changes use the same idempotent version, calendar revision, slot revalidation and database exclusion-constraint path. The existing published permission and WHATSAPP_BOOKING_ENABLED deployment switch remain the dual default-off gate."
+  ],
+  "securityAndConsistency": {
+    "identity": "Change requests are tenant/channel/lead/conversation/source-event/ownership-version bound. The server stores the selected appointment ID and expected version; model output and customer messages cannot choose an appointment record.",
+    "confirmation": "Cancellation requests and selected reschedule slots expire after 15 minutes. Reschedule offers expire after 30 minutes. Codes are stored only as SHA-256 digests and expire after five failed attempts.",
+    "atomicity": "The inbound confirmation, shared appointment mutation, immutable mutation result, lead timeline note, change-request state and outbound result are committed in one tenant transaction. Duplicate confirmation receipts replay the committed result without a second mutation.",
+    "conflicts": "Final confirmation revalidates appointment version/status/future time, advisor, calendar revision and exact slot. Staff edits or competing reservations make the request expire without sending a false success.",
+    "ambiguity": "If a lead has no upcoming appointment, more than one upcoming appointment, or an appointment outside the current assignment boundary, Sophia does not mutate anything and directs the customer to staff.",
+    "ownership": "Takeover and other ownership-version changes cancel active requests. Dispatch rechecks the request, appointment version/status, bot ownership, opt-out, open messaging window and current dual-gate configuration; terminal result messages may still report an already committed outcome.",
+    "providerBoundary": "No provider receives appointment IDs, availability tools or mutation tools. Intent output is validated against a strict allowlist and all authority remains server-owned."
+  },
+  "migration": "sophia-runtime/src/database/migrations/123_whatsapp_appointment_changes.sql",
+  "deployment": [
+    "Apply migration 123 with the normal Runtime migration-owner process after migration 122.",
+    "Deploy the Runtime image, Business Manager backend/reply worker and frontend together, then restart the reply worker so the new reasoner contract and outbox columns are active.",
+    "Keep WHATSAPP_BOOKING_ENABLED and the published appointment permission limited to the approved environment. No new switch is required: the existing booking permission now clearly covers confirmed booking and changes.",
+    "Verify cancellation, wrong-code, reschedule selection, stale-version conflict, duplicate confirmation and multiple-appointment ambiguity on the test number before a customer pilot."
+  ],
+  "verification": {
+    "database": "19 WhatsApp reply PostgreSQL checks passed, with the appointment scenario covering booking, no change before confirmation, reschedule, cancellation, wrong codes, duplicate confirmations, multiple-appointment ambiguity, stale confirmation and ownership takeover. All 12 independent staff scheduling PostgreSQL checks passed after the shared mutation refactor.",
+    "contracts": "10 backend setting/appointment contract checks and 7 Runtime reasoner/migration checks passed.",
+    "browser": "12 focused ChromeHeadless Settings checks passed, including default-off serialization and 390px light/dark layout assertions with the revised booking-and-changes explanation.",
+    "regression": "38 protected real-estate regression checks passed.",
+    "build": "Runtime build, frontend TypeScript and production frontend build passed. Existing frontend bundle/style-budget, CommonJS and missing primeicons warnings remain.",
+    "architecture": "Boundary scan reports only the same two pre-existing student document-analysis vendor-import violations; no new violation was added.",
+    "external": "No production migration, deployment, provider call or live WhatsApp message was performed in this slice."
+  },
+  "remaining": [
+    "Existing WhatsApp Business App coexistence and the live test-number booking/change pilot remain unverified and require explicit live-provider authority.",
+    "External calendar busy-time synchronization, invitations, reminders and attendance tracking remain out of scope.",
+    "A future customer-facing selector would be required before automated changes can safely support multiple simultaneous upcoming appointments."
+  ],
+  "nextTask": "Run the explicitly authorized test-number booking/cancellation/rescheduling pilot and verify existing WhatsApp Business App coexistence before any customer rollout.",
+  "rollback": "Disable WHATSAPP_BOOKING_ENABLED or unpublish the Settings permission to stop new appointment offers and change requests. Preserve migration 123, requests, appointments and audit history; do not drop production data."
+}

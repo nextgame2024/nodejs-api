@@ -1,28 +1,28 @@
 {
   "whatsappAssistantPlan": {
     "updatedOn": "2026-11-04",
-    "status": "whatsapp_booking_confirmation_locally_verified_pending_migration_122_deployment_and_explicit_enablement",
-    "details": "whatsapp-assistant-booking-confirmation-implementation.json",
-    "scope": "Migration 121 applied by user report. P1B.2b connects verified automatic WhatsApp conversations to assigned-advisor availability. The server offers real slots and requires numbered selection plus a separate exact confirmation code before the shared idempotent appointment transaction runs. Published Settings and the deployment switch are both default-off. Customer cancellation/rescheduling remain unfinished.",
+    "status": "whatsapp_appointment_changes_locally_verified_pending_migration_123_and_deployment",
+    "details": "whatsapp-assistant-appointment-changes-implementation.json",
+    "scope": "The prior booking deployment handoff was completed by user report. P1B.2c adds explicitly confirmed WhatsApp cancellation and rescheduling. The server, never the model or customer message, selects the single eligible future appointment and binds its exact version. Rescheduling offers real replacement slots while preserving the current appointment until a separate code confirmation; cancellation also requires a separate code. The existing published permission and deployment switch remain default-off dual gates.",
     "verification": {
-      "backend": "19 WhatsApp reply/booking PostgreSQL checks, 12 staff appointment PostgreSQL checks, 10 backend contract checks, 5 Runtime reasoner/migration checks and 38 real-estate regressions passed.",
-      "browser": "26 focused ChromeHeadless Settings/inbox checks passed, including the default-off permission, serialization, responsive controls and light/dark assertions.",
+      "backend": "19 WhatsApp reply PostgreSQL checks passed, with the appointment scenario covering booking, rescheduling, cancellation, wrong codes, duplicate confirmations, multiple-appointment ambiguity, stale confirmation and ownership takeover. 12 independent staff appointment PostgreSQL checks, 10 backend contract checks, 7 Runtime reasoner/migration checks and 38 real-estate regressions passed.",
+      "browser": "12 focused ChromeHeadless Settings checks passed, including the default-off permission, serialization, revised booking-and-changes explanation and 390px light/dark layout assertions.",
       "build": "Runtime build, frontend TypeScript and production frontend build passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
       "architecture": "Boundary checker still reports only the same two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports; no new violations.",
-      "external": "No production migration, deployment, provider calls, live messages or calendar/email invitations performed.",
+      "external": "No production migration 123, deployment, provider calls, live messages or calendar/email invitations performed in this slice.",
       "commands": [
         "LOCAL_WHATSAPP_REPLY_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappRepliesSql.test.js",
         "LOCAL_LEAD_APPOINTMENTS_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.leadAppointmentsSql.test.js",
         "npm run test:p0:real-estate",
-        "npm run build --prefix sophia-runtime; compare migration 121 source and packaged dist copy",
-        "Frontend tsc --noEmit; ng build with NG_BUILD_MAX_WORKERS=2 and dummy Maps key",
-        "ChromeHeadless ng test: lead assistant Settings and workspace specs",
+        "npm test --prefix sophia-runtime -- --runTestsByPath src/providers/reasoning/channel-reasoner.spec.ts src/database/whatsapp-appointment-confirmation-migration.spec.ts src/database/whatsapp-appointment-changes-migration.spec.ts",
+        "npm run build --prefix sophia-runtime",
+        "Frontend tsc --noEmit; ng build with a dummy Maps key",
+        "ChromeHeadless ng test: lead assistant Settings spec",
         "node scripts/check-sophia-boundaries.mjs; git diff --check in both repositories"
-      ],
-      "fixtureCorrection": "An initial closed-lead fixture attempted to create a lead directly in Closed status. The existing API correctly rejected it. The fixture now creates New, explicitly closes the lead through the normal update flow and verifies booking rejection; the final suite passes."
+      ]
     },
-    "productionChanges": "None. Apply migration 122 with the migration owner, deploy Runtime/backend/reply worker/frontend, publish the default-off booking permission, and enable WHATSAPP_BOOKING_ENABLED only for an approved test-number pilot.",
-    "nextTask": "P1B.2c add explicit customer cancellation/rescheduling confirmation on the same authority boundary, then verify the test-number booking pilot. Existing WhatsApp Business App coexistence and live voice quality/delivery remain separately unverified.",
+    "productionChanges": "None in this slice. Apply migration 123 with the migration owner and deploy Runtime/backend/reply worker/frontend together. Keep the existing appointment permission and WHATSAPP_BOOKING_ENABLED limited to the approved environment.",
+    "nextTask": "Run the explicitly authorized test-number booking/cancellation/rescheduling pilot and verify existing WhatsApp Business App coexistence. Live voice quality/delivery remains separately unverified.",
     "wireframes": "whatsapp-assistant-wireframes.html"
   },
   "studentSyncCaseBootstrap": {

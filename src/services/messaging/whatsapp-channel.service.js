@@ -11,6 +11,7 @@ import { transaction, directory } from "../leads/assistant-settings.service.js";
 import { fail, revision } from "../leads/assistant-settings.contracts.js";
 import { channelProfiles } from "./channel-profiles.js";
 import { handleAppointmentConfirmation } from "../scheduling/whatsapp-appointment-booking.service.js";
+import { handleAppointmentChangeConfirmation } from "../scheduling/whatsapp-appointment-changes.service.js";
 const s = "sophia_runtime";
 async function installed(db) {
   if (
@@ -342,14 +343,22 @@ async function applyMessage(db, profile, channel, company, e) {
     !stop &&
     e.messageType === "text" &&
     !e.truncated &&
-    (await handleAppointmentConfirmation(
+    ((await handleAppointmentChangeConfirmation(
       db,
       profile,
       channel,
       lead,
       conversation,
       e.body,
-    ));
+    )) ||
+      (await handleAppointmentConfirmation(
+        db,
+        profile,
+        channel,
+        lead,
+        conversation,
+        e.body,
+      )));
   if (
     !echo &&
     isCurrent &&

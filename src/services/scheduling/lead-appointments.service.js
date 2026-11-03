@@ -147,13 +147,14 @@ export async function authorizedAvailability(
   advisorId,
   day,
   timezone,
+  exclude = null,
 ) {
   const c = await calendar(db, tenant, advisorId);
   return {
     calendarRevision: c?.revision ?? 0,
     timezone,
     advisorTimezone: c?.timezone ?? null,
-    slots: c ? await slots(db, tenant, c, day, timezone) : [],
+    slots: c ? await slots(db, tenant, c, day, timezone, exclude) : [],
   };
 }
 export async function availability(actor, company, q) {
@@ -331,6 +332,145 @@ export async function bookAuthorizedAppointment(
   );
   return result;
 }
+export async function changeAuthorizedAppointment(
+  db,
+  tenant,
+  actor,
+  lead,
+  action,
+  id,
+  b,
+  { origin = "scheduling" } = {},
+) {
+  if (!["reschedule", "cancel"].includes(action))
+    throw fail("Unsupported appointment action.");
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+    tenant + ":appointment:" + b.requestKey,
+  ]);
+  const fingerprint = hash({ action, id, ...b });
+  const replay = (
+    await db.query(
+      `SELECT actor_identity,request_hash,result FROM ${s}.lead_appointment_mutations WHERE customer_id=$1 AND request_key=$2`,
+      [tenant, b.requestKey],
+    )
+  ).rows[0];
+  if (replay) {
+    if (replay.actor_identity !== actor || replay.request_hash !== fingerprint)
+      throw fail(
+        "This request was already used for different appointment details.",
+        409,
+      );
+    return replay.result;
+  }
+  const existing = await appointment(db, tenant, id);
+  if (!existing || existing.leadId !== b.leadId)
+    throw fail("Appointment not found.", 404);
+  if (existing.version !== b.expectedVersion)
+    throw fail("This appointment changed. Refresh before saving.", 409);
+  if (existing.status !== "confirmed")
+    throw fail("This appointment is already cancelled.", 409);
+  if (Date.parse(existing.startsAt) <= Date.now())
+    throw fail("Past appointments are read-only.", 409);
+  let c, end;
+  if (action === "reschedule") {
+    if (lead.stage === "closed")
+      throw fail("Reopen this lead before booking an appointment.", 409);
+    if (existing.advisorId !== b.advisorId)
+      throw fail("Cancel and book again to change the advisor.", 409);
+    c = await calendar(db, tenant, b.advisorId, true);
+    if (!c || c.revision !== b.calendarRevision)
+      throw fail("Availability changed. Choose a time again.", 409, ["slot"]);
+    const selected = (
+      await slots(
+        db,
+        tenant,
+        c,
+        localParts(b.startsAt, b.timezone).date,
+        b.timezone,
+        id,
+      )
+    ).find((slot) => slot.startsAt === b.startsAt);
+    if (!selected)
+      throw fail(
+        "The selected time is no longer available. Choose another time.",
+        409,
+        ["slot"],
+      );
+    end = selected.endsAt;
+  }
+  try {
+    if (action === "cancel")
+      await db.query(
+        `UPDATE ${s}.lead_appointments SET status='cancelled',version=version+1,updated_by_identity=$3,updated_at=now() WHERE customer_id=$1 AND appointment_id=$2`,
+        [tenant, id, actor],
+      );
+    else
+      await db.query(
+        `UPDATE ${s}.lead_appointments SET starts_at=$3,ends_at=$4,customer_timezone=$5,description=$6,calendar_revision=$7,version=version+1,updated_by_identity=$8,updated_at=now() WHERE customer_id=$1 AND appointment_id=$2`,
+        [
+          tenant,
+          id,
+          b.startsAt,
+          end,
+          b.timezone,
+          b.description,
+          c.revision,
+          actor,
+        ],
+      );
+  } catch (error) {
+    if (error.code === "23P01")
+      throw fail(
+        "The selected time is no longer available. Choose another time.",
+        409,
+        ["slot"],
+      );
+    throw error;
+  }
+  const result = JSON.parse(
+    JSON.stringify({ appointment: await appointment(db, tenant, id) }),
+  );
+  await db.query(
+    `INSERT INTO ${s}.lead_appointment_mutations(customer_id,request_key,actor_identity,request_hash,appointment_id,action,result) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+    [
+      tenant,
+      b.requestKey,
+      actor,
+      fingerprint,
+      id,
+      action,
+      JSON.stringify(result),
+    ],
+  );
+  const conversation = (
+    await db.query(
+      `SELECT conversation_id FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND lead_id=$2`,
+      [tenant, b.leadId],
+    )
+  ).rows[0];
+  await db.query(
+    `INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,actor_identity,kind,body,metadata) VALUES($1,$2,$3,'note',$4,$5::jsonb)`,
+    [
+      tenant,
+      conversation.conversation_id,
+      actor,
+      action === "cancel" ? "Appointment cancelled" : "Appointment rescheduled",
+      JSON.stringify({
+        origin,
+        appointmentId: id,
+        action,
+        startsAt: result.appointment.startsAt,
+        endsAt: result.appointment.endsAt,
+        advisorId: result.appointment.advisorId,
+      }),
+    ],
+  );
+  await db.query(
+    `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
+    [tenant, b.leadId],
+  );
+  return result;
+}
 // Shared booking operations do not know about WhatsApp, AI vendors or external
 // calendars. A future authorized tool adapter must use this same conflict path.
 export async function mutateAppointment(actor, company, action, id, input) {
@@ -344,163 +484,9 @@ export async function mutateAppointment(actor, company, action, id, input) {
       await requireAdvisor(db, company, access, b.advisorId);
       return bookAuthorizedAppointment(db, tenant, actor, lead, b);
     }
-    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
-      tenant + ":appointment:" + b.requestKey,
-    ]);
-    const fingerprint = hash({ action, id: id ?? null, ...b });
-    const replay = (
-      await db.query(
-        `SELECT actor_identity,request_hash,result FROM ${s}.lead_appointment_mutations WHERE customer_id=$1 AND request_key=$2`,
-        [tenant, b.requestKey],
-      )
-    ).rows[0];
-    if (replay) {
-      if (
-        replay.actor_identity !== actor ||
-        replay.request_hash !== fingerprint
-      )
-        throw fail(
-          "This request was already used for different appointment details.",
-          409,
-        );
-      return replay.result;
-    }
-    let existing;
-    if (action !== "book") {
-      existing = await appointment(db, tenant, id);
-      if (!existing || existing.leadId !== b.leadId)
-        throw fail("Appointment not found.", 404);
-      if (existing.version !== b.expectedVersion)
-        throw fail("This appointment changed. Refresh before saving.", 409);
-      if (existing.status !== "confirmed")
-        throw fail("This appointment is already cancelled.", 409);
-      if (Date.parse(existing.startsAt) <= Date.now())
-        throw fail("Past appointments are read-only.", 409);
-    }
-    let c, end;
-    if (action !== "cancel") {
-      if (lead.stage === "closed")
-        throw fail("Reopen this lead before booking an appointment.", 409);
+    if (action === "reschedule") {
       await requireAdvisor(db, company, access, b.advisorId);
-      // Rescheduling retains the advisor. Changing advisor is an explicit cancel
-      // and new booking, avoiding multi-calendar lock inversions.
-      if (existing && existing.advisorId !== b.advisorId)
-        throw fail("Cancel and book again to change the advisor.", 409);
-      c = await calendar(db, tenant, b.advisorId, true);
-      if (!c || c.revision !== b.calendarRevision)
-        throw fail("Availability changed. Choose a time again.", 409, ["slot"]);
-      const selected = (
-        await slots(
-          db,
-          tenant,
-          c,
-          localParts(b.startsAt, b.timezone).date,
-          b.timezone,
-          id,
-        )
-      ).find((slot) => slot.startsAt === b.startsAt);
-      if (!selected)
-        throw fail(
-          "The selected time is no longer available. Choose another time.",
-          409,
-          ["slot"],
-        );
-      end = selected.endsAt;
     }
-    let result;
-    try {
-      if (action === "book") {
-        const saved = (
-          await db.query(
-            `INSERT INTO ${s}.lead_appointments(customer_id,lead_id,advisor_identity,starts_at,ends_at,customer_timezone,description,calendar_revision,created_by_identity,updated_by_identity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING appointment_id`,
-            [
-              tenant,
-              b.leadId,
-              b.advisorId,
-              b.startsAt,
-              end,
-              b.timezone,
-              b.description,
-              c.revision,
-              actor,
-            ],
-          )
-        ).rows[0];
-        id = saved.appointment_id;
-      } else if (action === "cancel")
-        await db.query(
-          `UPDATE ${s}.lead_appointments SET status='cancelled',version=version+1,updated_by_identity=$3,updated_at=now() WHERE customer_id=$1 AND appointment_id=$2`,
-          [tenant, id, actor],
-        );
-      else
-        await db.query(
-          `UPDATE ${s}.lead_appointments SET starts_at=$3,ends_at=$4,customer_timezone=$5,description=$6,calendar_revision=$7,version=version+1,updated_by_identity=$8,updated_at=now() WHERE customer_id=$1 AND appointment_id=$2`,
-          [
-            tenant,
-            id,
-            b.startsAt,
-            end,
-            b.timezone,
-            b.description,
-            c.revision,
-            actor,
-          ],
-        );
-    } catch (e) {
-      if (e.code === "23P01")
-        throw fail(
-          "The selected time is no longer available. Choose another time.",
-          409,
-          ["slot"],
-        );
-      throw e;
-    }
-    result = JSON.parse(
-      JSON.stringify({ appointment: await appointment(db, tenant, id) }),
-    );
-    await db.query(
-      `INSERT INTO ${s}.lead_appointment_mutations(customer_id,request_key,actor_identity,request_hash,appointment_id,action,result) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-      [
-        tenant,
-        b.requestKey,
-        actor,
-        fingerprint,
-        id,
-        action,
-        JSON.stringify(result),
-      ],
-    );
-    const conversation = (
-      await db.query(
-        `SELECT conversation_id FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND lead_id=$2`,
-        [tenant, b.leadId],
-      )
-    ).rows[0];
-    await db.query(
-      `INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,actor_identity,kind,body,metadata) VALUES($1,$2,$3,'note',$4,$5::jsonb)`,
-      [
-        tenant,
-        conversation.conversation_id,
-        actor,
-        {
-          book: "Appointment booked",
-          reschedule: "Appointment rescheduled",
-          cancel: "Appointment cancelled",
-        }[action],
-        JSON.stringify({
-          origin: "scheduling",
-          appointmentId: id,
-          action,
-          startsAt: result.appointment.startsAt,
-          endsAt: result.appointment.endsAt,
-          advisorId: result.appointment.advisorId,
-        }),
-      ],
-    );
-    await db.query(
-      `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
-      [tenant, b.leadId],
-    );
-    return result;
+    return changeAuthorizedAppointment(db, tenant, actor, lead, action, id, b);
   });
 }
