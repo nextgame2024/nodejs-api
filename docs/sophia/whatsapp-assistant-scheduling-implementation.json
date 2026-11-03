@@ -1,0 +1,117 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-scheduling-implementation",
+    "version": "1.0.0",
+    "updatedOn": "2026-11-03",
+    "timezone": "Australia/Brisbane",
+    "slice": "P1B.2a",
+    "status": "locally_verified_pending_migration_121_and_deployment"
+  },
+  "prerequisite": "Migration 120 applied by user report. No live voice configuration or existing WhatsApp Business App coexistence verification was performed during this task.",
+  "scope": [
+    "Adds Lead appointments inside the existing Scheduling area, with a separate route that loads only when opened. Project bookings keep their existing behavior.",
+    "Adds advisor working intervals, breaks through gaps, closed dates/days off, timezone, appointment duration, minimum notice and rolling booking horizon. Calendars start with no saved hours; migration alone offers no appointment slots.",
+    "Staff can book, reschedule and cancel appointments. Confirmation happens only after the database transaction commits. Current and cancelled appointments remain in a paged, server-sorted register; past/cancelled actions stay visible and disabled.",
+    "A Book appointment action in the lead inbox preserves its existing unsaved-note/reply confirmation. Opening from a lead uses a minimal authorized projection instead of loading the conversation again.",
+    "Shared controls, timed toasts, visible field validation, loading overlays, keyboard focus trapping and desktop tables/mobile cards reuse the existing manager patterns. Available-time and lower working-hour dropdowns open upwards."
+  ],
+  "architecture": {
+    "existingModule": "Existing project Scheduling lives in public.bm_schedule with a company-wide exclusion constraint, and its user_id identifies the creator rather than an assigned advisor. Reusing that exclusion for lead bookings would prevent simultaneous appointments with different advisors. The Scheduling UI now includes a Lead appointments view; role-hardened lead calendar/appointment tables in the existing Runtime schema provide the per-advisor conflict boundary. There is no duplicated import into the project calendar and no external calendar provider. Project reservations are not inferred to be advisor busy time.",
+    "paths": {
+      "page": "frontend/src/app/manager/components/schedule/leads/lead-scheduling.page.ts",
+      "route": "/manager/scheduling/leads",
+      "service": "backend/src/services/scheduling/lead-appointments.service.js",
+      "slots": "backend/src/services/scheduling/lead-appointments.slots.js",
+      "api": "Existing /bm/schedule router, under /bm/schedule/leads",
+      "migration": "sophia-runtime/src/database/migrations/121_lead_appointments.sql"
+    },
+    "authorization": "Existing assistant identity/company and active-customer transaction helper, SET LOCAL ROLE sophia_runtime_app, tenant RLS and current published enquiry-team scope. Owners/Chief Executives/enquiry managers can manage team availability and visible leads; advisors can edit only their own availability and manage appointments for leads currently assigned to them. Content ownership alone gives no booking access. Active team members can read available times, which reveal no other lead identities.",
+    "proofs": "Tenant composite foreign keys, FORCE RLS and explicit app-role grants. Per-tenant/advisor tstzrange exclusion prevents confirmed overlaps, including concurrent inserts outside the service. Active staff and published advisor membership are checked before new bookings/reschedules. Cancelled records, mutation records and calendar history are retained; no hard-delete API is added.",
+    "atomicity": "Booking/reschedule/cancel share one transaction with the lead lock and request-key lock, authorization, optimistic version, selected slot validation, write, immutable mutation result, timeline note and commit. New bookings and reschedules lock the advisor calendar and recheck its offered revision. A failed reschedule rolls back and preserves the previous reservation. Rescheduling retains the advisor; changing advisor requires explicit cancellation and new booking.",
+    "idempotency": "A stable UUID and normalized request hash are stored with the actor and exact result. Same-key same-actor same-body retries return that result. Reusing the key for different data or action returns 409. Frontend retains the key after failures and changes it when the intended payload changes.",
+    "audit": "Calendar revisions are append-only. Appointment mutations and lead timeline notes record staff actor, action, advisor and confirmed interval. Normal runtime grants cannot update/delete mutation or calendar-audit records."
+  },
+  "availability": {
+    "storage": "Appointments are real UTC instants; advisor working hours/closed dates use the advisor IANA timezone. Availability date is interpreted in the selected customer/viewer timezone. Responses include UTC identifiers and the UI displays offsets to distinguish repeated local times.",
+    "daylightSaving": "Generate real instants between viewer-local midnights, then test the whole appointment against advisor-local working intervals and closed dates. Repeated local times keep distinct UTC choices; nonexistent spring-forward times are never manufactured from naive local strings. PostgreSQL handles viewer-date bounds; Intl handles advisor-local membership. Tests cover spring/fall transitions and different visitor/advisor dates.",
+    "limits": {
+      "workingIntervals": 28,
+      "closedDates": 100,
+      "durationsMinutes": [
+        15,
+        30,
+        45,
+        60
+      ],
+      "slotStepMinutes": 15,
+      "minimumNoticeMinutes": "0–10080",
+      "bookingHorizonDays": "1–180, rolling real-time bound",
+      "registerRangeDays": 93,
+      "pageSizes": [
+        25,
+        50,
+        100
+      ]
+    },
+    "defaults": "UI suggests 30-minute appointments, 60-minute notice and 30 days ahead, using the published business timezone. An authorized user must explicitly save working hours before any slot is offered. Changes affect future availability and do not move or cancel existing appointments.",
+    "closedLeads": "Reopen closed leads before creating/rescheduling. Cancellation remains available for future confirmed appointments, including when an advisor is no longer in the active team. Past appointments are read-only; elapsed time does not imply attendance/completion."
+  },
+  "performance": {
+    "requests": "No SaaS or AI call on list, slot search or mutation. Context loads once and the list is server-paged/sorted. Prefilled booking uses a minimal four-field lead lookup and one slot request; lead searching requests at most 25 results, debounced 250 ms. Timezone searches are debounced 350 ms with immediate stale-selection invalidation and cancellation of previous requests.",
+    "bounds": "One civil day of candidate instants per availability request, bounded working-hour arrays and indexed tenant/advisor busy ranges. The register uses a single SQL statement for count and page under one snapshot. No full student/invoice/conversation fetch is required.",
+    "lifecycle": "Pending client requests are cancelled on relevant input changes, dialog close or component destruction. Mutations disable duplicate submits and refresh the register once after success. Local formatted-time memoization is limited to 512 entries and cleared on list refresh.",
+    "measurement": "Local correctness/concurrency checks passed. No deployed latency or throughput measurement was performed; performance claims are limited to the request/query structure."
+  },
+  "api": {
+    "GET": [
+      "/bm/schedule/leads/context",
+      "/bm/schedule/leads/lead/:leadId",
+      "/bm/schedule/leads/calendars/:advisorId",
+      "/bm/schedule/leads/availability",
+      "/bm/schedule/leads/appointments"
+    ],
+    "PUT": [
+      "/bm/schedule/leads/calendars/:advisorId"
+    ],
+    "POST": [
+      "/bm/schedule/leads/appointments",
+      "/bm/schedule/leads/appointments/:id/reschedule",
+      "/bm/schedule/leads/appointments/:id/cancel"
+    ],
+    "contract": "Staff-authenticated only. Listing accepts dates, timezone, optional advisor/lead/status, page/limit and whitelisted sort/direction. Mutations require leadId/requestKey and version for changes; bookings also require advisorId, offered startsAt, calendarRevision, timezone and optional note. No browser-supplied company/tenant or authority flag is trusted."
+  },
+  "deployment": [
+    "Apply 121_lead_appointments.sql with the normal migration-owner process after existing lead migrations. btree_gist is required and installed by the migration if absent. Migration 121 was applied only to disposable localhost fixtures here.",
+    "Build Runtime to package the migration; deploy the Business Manager backend and frontend. This slice introduces no new worker and no calendar OAuth configuration. Normal accesses still assume the non-BYPASSRLS app role.",
+    "In Leads & Conversations Settings publish the active advisor team. In Scheduling → Lead appointments → Advisor availability explicitly save hours, breaks and days off for each participating advisor.",
+    "Test staff bookings/reschedules/cancellations and both customer/advisor timezones before enabling customer-facing booking tools. No WhatsApp message, email invitation or external calendar event is sent by this slice."
+  ],
+  "verification": {
+    "backend": "17 focused checks passed: 12 PostgreSQL tests and 5 contract/timezone tests. Also passed 38 real-estate regression checks. Includes migration/RLS/grants, authority, optimistic revisions, same-key concurrency, competing reservations, rollback, cancellations, small lookup projection, closed leads, breaks and daylight-saving transitions.",
+    "browser": "52 browser checks passed per viewport at desktop 1902x1016 and mobile 390x844. Covers existing lead inbox/Settings/reply routes and new booking retries, cancellation, read-only actions, request teardown, numeric select serialization, unsaved-note guard, minimal lookup, timezone debounce, upward menus, focus/dialog layout and light/dark themes.",
+    "build": "Runtime build, frontend TypeScript and production frontend build passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
+    "architecture": "Boundary checker still reports only the same two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports; no new violations.",
+    "external": "No production migration, deployment, provider calls, live messages or calendar/email invitations performed.",
+    "commands": [
+      "LOCAL_LEAD_APPOINTMENTS_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.leadAppointmentsSql.test.js tests/bm.leadAppointments.test.js",
+      "npm run test:p0:real-estate",
+      "npm run build --prefix sophia-runtime; compare migration 121 source and packaged dist copy",
+      "Frontend tsc --noEmit; ng build with NG_BUILD_MAX_WORKERS=2 and dummy Maps key",
+      "ChromeHeadless ng test: Scheduling lead specs, existing lead specs and manager routes, using 1902x1016 and 390x844 wrappers",
+      "node scripts/check-sophia-boundaries.mjs; git diff --check in both repositories"
+    ],
+    "fixtureCorrection": "An initial closed-lead fixture attempted to create a lead directly in Closed status. The existing API correctly rejected it. The fixture now creates New, explicitly closes the lead through the normal update flow and verifies booking rejection; the final suite passes."
+  },
+  "remaining": [
+    "WhatsApp/customer booking actions are not connected yet. The current endpoints require a real authenticated staff principal; do not impersonate an advisor from a model request.",
+    "P1B.2b must add channel/lead identity-bound booking capability authorization, offered-slot confirmation, ownership/cancellation checks, retries and customer-facing booking/cancellation/rescheduling responses before autonomous use. Reuse these conflict and audit rules.",
+    "No Google/Microsoft calendar busy-time synchronization, invitations, reminders, attendance tracking or automated lead qualification is added here. Dedicated knowledge authoring and richer ingestion remain separate plan items.",
+    "Existing WhatsApp number coexistence, live voice quality/delivery and booking pilot checks remain unverified."
+  ],
+  "nextTask": "P1B.2b connect verified WhatsApp conversations to availability and explicit appointment confirmation, using a separately authorized booking tool boundary shared with future Runtime continuation.",
+  "sources": [
+    "https://www.postgresql.org/docs/current/functions-datetime.html",
+    "https://www.postgresql.org/docs/current/rangetypes.html"
+  ],
+  "rollback": "Revert the new Scheduling routes/UI if necessary while retaining migration 121, appointments and audits. Do not drop production booking data to roll back application code. No provider integration or worker was enabled by this slice."
+}
