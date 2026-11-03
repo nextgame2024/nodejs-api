@@ -1,19 +1,31 @@
 {
   "whatsappAssistantPlan": {
     "updatedOn": "2026-11-03",
-    "status": "locally_verified_pending_migration_configuration_and_deployment",
-    "details": "whatsapp-assistant-replies-implementation.json",
-    "scope": "Migration 118 applied by user report. P1A.3b approved-release text generation, review/automatic modes, human composer, durable outbox, send-time authorization, delivery reconciliation and explicit resume implemented locally. Live pilot remains pending; P1B adds text-or-voice input and both response formats.",
+    "status": "voice_locally_verified_pending_migration_configuration_deployment_and_pilot",
+    "details": "whatsapp-assistant-voice-implementation.json",
+    "scope": "Migration 119 applied by user report. P1B.1 adds incoming voice transcription, paired text/generated-voice delivery, independent states, encrypted transient media, voice-only preparation retry and automatic unreadable-audio fallback. Existing text generation/delivery and human ownership remain in place.",
     "verification": {
-      "backend": "108 distinct backend/Runtime checks passed across targeted runs: 45 existing receiving/inbox/Settings checks, 18 new actual PostgreSQL reply tests, 4 outbound adapter tests, 3 Runtime reasoning-port tests and 38 real-estate regression tests.",
-      "database": "Migration 119 applied only to disposable local PostgreSQL fixtures with production-like inherited default grants. Covers takeover/newer-message races, delayed message ordering, binding revisions, bounded draft retry, source/provider retirement, current authority, explicit resume, ambiguous sends, status ordering, expired dispatch leases, concurrent dispatch and tenant/source foreign keys.",
-      "browser": "52 browser checks passed at desktop 1902x1016 and mobile 390x844, including light/dark computed layout, shared controls, reply/draft separation, preserved retry identity, explicit resume, pending polling, cleanup and existing Settings/company/navigation regressions.",
-      "build": "Frontend TypeScript, production frontend build and Runtime build/tests passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
-      "architecture": "Boundary scan still reports only the two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports. No new violations.",
-      "external": "No production database/provider calls, model requests, messages, account provisioning or deployment performed."
+      "backend": "130 backend/Runtime checks passed across targeted suites: 45 existing inbound/lead/Settings checks, 18 existing PostgreSQL text-reply checks, 13 PostgreSQL voice checks, 6 audio/crypto/media tests, 4 outbound tests, 6 Runtime speech tests and 38 real-estate regressions.",
+      "database": "Migration 120 applied to fresh disposable local PostgreSQL fixtures. Covers paired text/audio, voice-only retry, unknown-send suppression, encrypted asset expiry, ownership changes during synthesis, provider retirement, automatic transcription fallback, grounded automatic voice answer, long reply plus disclosure, spoken opt-out, delayed transcript ordering within the same provider second, FORCE RLS and app-role grants. Migration 119 text-reply fixtures also pass unchanged.",
+      "browser": "53 browser checks passed per viewport at 1902x1016 and 390x844, including light/dark layout, independent text/audio states, voice-only retry, existing inbox/Settings/company/navigation behavior.",
+      "build": "Runtime build and frontend TypeScript/production build passed. Existing initial bundle, student-case/Manrope CSS budgets, LiveAvatar CommonJS and missing primeicons stylesheet warnings remain.",
+      "architecture": "Boundary scan exits 1 for only the same two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports; no new violations.",
+      "commands": [
+        "LOCAL_WHATSAPP_VOICE_TEST_DATABASE_URL=<fresh-local-db> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappVoiceSql.test.js",
+        "LOCAL_WHATSAPP_REPLY_TEST_DATABASE_URL=<fresh-local-db> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappRepliesSql.test.js",
+        "Targeted inbound/lead/Settings suites with their LOCAL_*_TEST_DATABASE_URL variables on fresh localhost fixtures; audio/outbound tests executed outside the sandbox for the bundled codec.",
+        "npm test -- --runInBand --runTestsByPath src/providers/speech/channel-speech.spec.ts src/providers/speech/openai-speech.providers.spec.ts (Runtime)",
+        "npm run test:p0:real-estate; npm run build --prefix sophia-runtime; node scripts/check-sophia-boundaries.mjs",
+        "Frontend tsc --noEmit; ng test for leads/integrations/company/routes/navigation at desktop/mobile with ChromeHeadless; NG_BUILD_MAX_WORKERS=2 GOOGLE_MAPS_API_KEY=dummy ng build"
+      ],
+      "testEnvironmentNotes": [
+        "Initial codec run timed out in the restricted runner; rerun outside the sandbox passed.",
+        "Two reused local fixture database names initially caused schema-exists errors; both suites passed on fresh databases. No application failure was suppressed."
+      ],
+      "external": "No live provider/model calls, WhatsApp sends, production database actions, deployment or account provisioning."
     },
-    "productionChanges": "None. Apply migration 119, build/deploy Runtime/backend/frontend and the reply worker. Configure approved release/provider profile; all external effect flags default off.",
-    "nextTask": "P1B voice pipeline: either text or voice input, safe media download/transcription and both text and generated voice replies from the same grounded answer, with independent delivery tracking and partial retries. Extend the existing Scheduling module for appointments. A real text-number pilot/configuration may proceed separately when authorized.",
+    "productionChanges": "None. Apply migration 120, build/deploy backend/Runtime/frontend and restart workers; configure approved speech bindings and deployment-only media key. Voice and other external effect flags default off.",
+    "nextTask": "P1B.2 extend existing Business Manager Scheduling for lead appointments and advisor availability, then expose idempotent booking/cancellation/rescheduling through a provider-neutral adapter. Existing-number coexistence and real audio pilot remain separately unverified.",
     "wireframes": "whatsapp-assistant-wireframes.html"
   },
   "studentSyncCaseBootstrap": {

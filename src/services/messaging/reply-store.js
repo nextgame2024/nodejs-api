@@ -1,3 +1,4 @@
+import { voiceState } from "./voice-store.js";
 import { fail } from "../leads/assistant-settings.contracts.js";
 import { channelProfiles } from "./channel-profiles.js";
 export const schema = "sophia_runtime";
@@ -57,7 +58,7 @@ export async function replyState(db, tenant, access, leadId) {
     await db.query(
       `SELECT t.*,h.profile_id,h.enabled,c.ownership,c.human_owner_identity,l.stage,
  COALESCE((SELECT jsonb_agg(q ORDER BY q."createdAt" DESC,q.id) FROM (SELECT job_id AS id,state,answer,sources,created_at AS "createdAt" FROM ${schema}.assistant_reply_jobs WHERE customer_id=$1 AND lead_id=$2 ORDER BY created_at DESC,job_id LIMIT 5)q),'[]'::jsonb) AS jobs,
- COALESCE((SELECT jsonb_agg(q ORDER BY q."createdAt" DESC,q.id) FROM (SELECT message_id AS id,state,safe_code AS "safeCode",created_at AS "createdAt" FROM ${schema}.assistant_message_outbox WHERE customer_id=$1 AND lead_id=$2 ORDER BY created_at DESC,message_id LIMIT 10)q),'[]'::jsonb) AS messages FROM ${schema}.assistant_channel_contacts t JOIN ${schema}.assistant_channels h USING(customer_id,channel_id) JOIN ${schema}.assistant_lead_conversations c USING(customer_id,lead_id) JOIN ${schema}.assistant_leads l USING(customer_id,lead_id) WHERE t.customer_id=$1 AND t.lead_id=$2`,
+ COALESCE((SELECT jsonb_agg(q ORDER BY q."createdAt" DESC,q.id) FROM (SELECT message_id AS id,COALESCE(to_jsonb(assistant_message_outbox)->>'format','text') AS format,state,safe_code AS "safeCode",created_at AS "createdAt" FROM ${schema}.assistant_message_outbox WHERE customer_id=$1 AND lead_id=$2 ORDER BY created_at DESC,message_id LIMIT 10)q),'[]'::jsonb) AS messages FROM ${schema}.assistant_channel_contacts t JOIN ${schema}.assistant_channels h USING(customer_id,channel_id) JOIN ${schema}.assistant_lead_conversations c USING(customer_id,lead_id) JOIN ${schema}.assistant_leads l USING(customer_id,lead_id) WHERE t.customer_id=$1 AND t.lead_id=$2`,
       [tenant, leadId],
     )
   ).rows[0];
@@ -94,6 +95,7 @@ export async function replyState(db, tenant, access, leadId) {
     optedOut: c.opted_out,
     jobs: c.jobs,
     messages: c.messages,
+    voiceJobs: await voiceState(db, tenant, access, leadId),
   };
 }
 export async function enqueueAutomatic(db, profile, leadId, eventId, isNew) {
@@ -168,22 +170,40 @@ export async function invalidateOlderReplies(db, tenant, leadId, eventId) {
     [tenant, leadId, eventId],
   );
   await db.query(
-    `UPDATE ${schema}.assistant_message_outbox o SET state='cancelled',safe_code='newer_message' FROM ${schema}.assistant_reply_jobs j WHERE o.customer_id=$1 AND o.lead_id=$2 AND o.state='queued' AND o.job_id=j.job_id AND j.customer_id=o.customer_id AND j.source_event_id<$3`,
+    `UPDATE ${schema}.assistant_message_outbox o SET state='cancelled',safe_code='newer_message' FROM ${schema}.assistant_reply_jobs j WHERE o.customer_id=$1 AND o.lead_id=$2 AND o.state IN ('queued','preparing') AND o.job_id=j.job_id AND j.customer_id=o.customer_id AND j.source_event_id<$3`,
     [tenant, leadId, eventId],
   );
 }
 export async function providerAllowed(db, tenant, release, profile) {
-  if (!profile.reasoningCredentialRef) return false;
+  return capabilityAllowed(
+    db,
+    tenant,
+    release,
+    "reasoning",
+    profile.reasoningAdapter,
+    profile.reasoningCredentialRef,
+  );
+}
+export async function capabilityAllowed(
+  db,
+  tenant,
+  release,
+  capability,
+  adapter,
+  credential,
+) {
+  if (!adapter || !credential) return false;
   const c = release.manifest.configuration;
   return !!(
     await db.query(
-      `SELECT 1 FROM ${schema}.experience_profile_versions v JOIN ${schema}.experience_profiles x ON x.experience_profile_id=v.experience_profile_id JOIN ${schema}.experience_provider_bindings b ON b.experience_profile_version_id=v.experience_profile_version_id AND b.capability_key='reasoning' JOIN ${schema}.provider_configurations p ON p.provider_configuration_id=b.provider_configuration_id WHERE x.customer_id=$1 AND x.enabled AND v.status='published' AND v.experience_profile_version_id=ANY($2::uuid[]) AND v.business_profile_version_id=$3 AND v.pipeline_mode IN ('orchestrated-text','orchestrated-voice') AND p.customer_id=$1 AND p.status='published' AND p.adapter_key=$4 AND p.credential_ref=$5 AND p.settings='{}'::jsonb LIMIT 1`,
+      `SELECT 1 FROM ${schema}.experience_profile_versions v JOIN ${schema}.experience_profiles x ON x.experience_profile_id=v.experience_profile_id JOIN ${schema}.experience_provider_bindings b ON b.experience_profile_version_id=v.experience_profile_version_id AND b.capability_key=$6 JOIN ${schema}.provider_configurations p ON p.provider_configuration_id=b.provider_configuration_id WHERE x.customer_id=$1 AND x.enabled AND v.status='published' AND v.experience_profile_version_id=ANY($2::uuid[]) AND v.business_profile_version_id=$3 AND v.pipeline_mode IN ('orchestrated-text','orchestrated-voice') AND p.customer_id=$1 AND p.status='published' AND p.adapter_key=$4 AND p.credential_ref=$5 AND p.settings='{}'::jsonb LIMIT 1`,
       [
         tenant,
         c.experienceProfileVersionIds ?? [],
         c.businessProfileVersionId,
-        profile.reasoningAdapter,
-        profile.reasoningCredentialRef,
+        adapter,
+        credential,
+        capability,
       ],
     )
   ).rows.length;
@@ -204,7 +224,7 @@ export async function automationTarget(db, tenant, leadId) {
     return null;
   const row = (
     await db.query(
-      `SELECT h.profile_id,b.agent_release_id,e.event_id FROM ${schema}.assistant_channel_contacts t JOIN ${schema}.assistant_channels h USING(customer_id,channel_id) JOIN ${schema}.assistant_reply_bindings b USING(customer_id,channel_id) JOIN ${schema}.assistant_lead_conversations c USING(customer_id,lead_id) JOIN ${schema}.assistant_leads l USING(customer_id,lead_id) JOIN LATERAL(SELECT event_id,metadata FROM ${schema}.assistant_lead_events WHERE customer_id=t.customer_id AND conversation_id=c.conversation_id AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,event_id DESC LIMIT 1)e ON true WHERE t.customer_id=$1 AND t.lead_id=$2 AND h.enabled AND b.mode='automatic' AND l.stage<>'closed' AND NOT t.opted_out AND t.last_inbound_at>now()-interval '24 hours' AND t.last_inbound_at<=now() AND e.metadata->>'messageType'='text' AND COALESCE(e.metadata->>'truncated','false')='false'`,
+      `SELECT h.profile_id,b.agent_release_id,e.event_id FROM ${schema}.assistant_channel_contacts t JOIN ${schema}.assistant_channels h USING(customer_id,channel_id) JOIN ${schema}.assistant_reply_bindings b USING(customer_id,channel_id) JOIN ${schema}.assistant_lead_conversations c USING(customer_id,lead_id) JOIN ${schema}.assistant_leads l USING(customer_id,lead_id) JOIN LATERAL(SELECT event_id,metadata FROM ${schema}.assistant_lead_events WHERE customer_id=t.customer_id AND conversation_id=c.conversation_id AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,COALESCE((metadata->>'transcriptOf')::bigint,event_id) DESC,event_id DESC LIMIT 1)e ON true WHERE t.customer_id=$1 AND t.lead_id=$2 AND h.enabled AND b.mode='automatic' AND l.stage<>'closed' AND NOT t.opted_out AND t.last_inbound_at>now()-interval '24 hours' AND t.last_inbound_at<=now() AND e.metadata->>'messageType'='text' AND COALESCE(e.metadata->>'truncated','false')='false'`,
       [tenant, leadId],
     )
   ).rows[0];

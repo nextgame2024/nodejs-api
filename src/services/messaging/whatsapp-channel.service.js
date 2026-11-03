@@ -1,3 +1,4 @@
+import { voiceEnabled, enqueueVoiceInbound } from "./voice-store.js";
 import { reconcileDelivery } from "./delivery-store.js";
 import {
   canDispatch,
@@ -182,7 +183,7 @@ export async function receiveEvents(profile, events) {
     return { inserted };
   });
 }
-const optOut = (text) =>
+export const optOut = (text) =>
   [
     "stop",
     "unsubscribe",
@@ -272,7 +273,18 @@ async function applyMessage(db, profile, channel, company, e) {
       `UPDATE ${s}.assistant_channel_contacts SET last_inbound_at=GREATEST(last_inbound_at,$4::timestamptz),opted_out=opted_out OR $5 WHERE customer_id=$1 AND channel_id=$2 AND sender_id=$3`,
       [tenant, channel.channel_id, e.senderId, e.sentAt, stop],
     );
-  if (!echo && isCurrent && (e.messageType !== "text" || e.truncated))
+  const processVoice =
+    !echo &&
+    isCurrent &&
+    e.messageType === "audio" &&
+    !!e.media?.id &&
+    voiceEnabled(profile);
+  if (
+    !echo &&
+    isCurrent &&
+    !processVoice &&
+    (e.messageType !== "text" || e.truncated)
+  )
     await db.query(
       `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND lead_id=$2 AND ownership='bot'`,
       [tenant, contact.lead_id],
@@ -307,6 +319,16 @@ async function applyMessage(db, profile, channel, company, e) {
       contact.lead_id,
       recorded.rows[0].event_id,
     );
+  if (processVoice) {
+    const queued = await enqueueVoiceInbound(
+      db,
+      profile,
+      contact.lead_id,
+      recorded.rows[0].event_id,
+      isNew,
+    );
+    if(!queued) await db.query(`UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND lead_id=$2 AND ownership='bot'`,[tenant,contact.lead_id]);
+  }
   if (!echo && isCurrent && !stop && e.messageType === "text" && !e.truncated)
     await enqueueAutomatic(
       db,

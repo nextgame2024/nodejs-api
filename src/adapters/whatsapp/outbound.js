@@ -18,8 +18,10 @@ export async function sendText(profile, input, { fetchImpl = fetch } = {}) {
           messaging_product: "whatsapp",
           recipient_type: "individual",
           to: input.recipient,
-          type: "text",
-          text: { preview_url: false, body: input.body },
+          type: input.mediaId ? "audio" : "text",
+          ...(input.mediaId
+            ? { audio: { id: input.mediaId } }
+            : { text: { preview_url: false, body: input.body } }),
           biz_opaque_callback_data: input.messageId,
         }),
       },
@@ -72,3 +74,5 @@ export async function sendText(profile, input, { fetchImpl = fetch } = {}) {
     return { kind: "unknown", code: "send_unconfirmed" };
   }
 }
+
+export const sendAudio = sendText;

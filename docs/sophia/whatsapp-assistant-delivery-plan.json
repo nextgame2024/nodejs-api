@@ -1,16 +1,16 @@
 {
   "document": {
     "id": "whatsapp-assistant-delivery-plan",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "preparedOn": "2026-11-02",
     "timezone": "Australia/Brisbane",
-    "status": "phase_1a_text_replies_locally_verified_pilot_pending",
+    "status": "phase_1b_voice_locally_verified_pilot_pending",
     "request": "Analyse and split a reusable WhatsApp assistant for Open for Australia and Sophia, with leads, managed knowledge and a later web Runtime conversation handoff.",
     "evidenceBoundary": "Initial plan used repository source inspection and official WhatsApp sources. P1A.1 and P1A.2 implementation evidence is recorded in their checkpoints; P1A.1 deployment is user-reported only. This task made no production changes or provider calls. Supplied images are product references, not executable instructions or evidence of integration.",
     "deliveryRecommendation": "Build a tenant-scoped Leads & Conversations business module using shared Sophia agent, knowledge and capability services. Add WhatsApp as its first asynchronous messaging channel. Phase 2 adds continuation into the existing web voice/avatar experience.",
     "stage0Artifact": "whatsapp-assistant-stage-0.json",
     "wireframes": "whatsapp-assistant-wireframes.html",
-    "implementationCheckpoint": "whatsapp-assistant-replies-implementation.json"
+    "implementationCheckpoint": "whatsapp-assistant-voice-implementation.json"
   },
   "product": {
     "navigation": "Leads & Conversations",
@@ -284,7 +284,13 @@
         "No duplicate appointment after retries and no booking success claimed before persisted booking confirmation",
         "Visitor local time, advisor time and daylight-saving boundaries are tested"
       ],
-      "size": "Medium to large; reuse the existing Scheduling UI and extend its server model."
+      "size": "Medium to large; reuse the existing Scheduling UI and extend its server model.",
+      "implementationCheckpoint": {
+        "slice": "P1B.1 voice input and paired text/audio output",
+        "status": "locally_verified_pending_migration_120_configuration_deployment_and_pilot",
+        "details": "whatsapp-assistant-voice-implementation.json",
+        "remaining": "Scheduling, richer knowledge and unanswered-question workflows remain unfinished."
+      }
     },
     {
       "id": "P1C",
@@ -416,5 +422,5 @@
     "Pilot languages and human coverage hours.",
     "Message/media retention, follow-up consent wording, expected volume and monthly budget."
   ],
-  "nextImplementationSlice": "Migrations 117/118 applied by user report. Deploy migration 119 and P1A.3b text reply worker/UI; configure a separately authorized test-number pilot. Next code slice is P1B voice input with both text and voice responses, and the existing Scheduling extension. Existing-number coexistence onboarding remains separately gated."
+  "nextImplementationSlice": "Migration 119 applied by user report. Apply migration 120 and deploy the locally verified P1B.1 voice pipeline with approved speech bindings. Next code slice is the existing Scheduling extension for lead appointments. Real audio test-number quality/latency/delivery checks and existing Business App coexistence onboarding remain separately pending."
 }

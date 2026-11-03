@@ -12,6 +12,7 @@ export async function recordAccepted(db, tenant, m, providerId) {
         origin: m.job_id ? "sophia" : "team",
         messageId: providerId,
         outboxId: m.message_id,
+        messageType: m.format ?? "text",
       }),
       m.message_id,
       m.request_hash,

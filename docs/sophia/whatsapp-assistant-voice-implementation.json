@@ -1,0 +1,81 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-voice-implementation",
+    "version": "1.0.0",
+    "updatedOn": "2026-11-03",
+    "timezone": "Australia/Brisbane",
+    "phase": "P1B.1",
+    "status": "locally_verified_pending_migration_configuration_deployment_and_pilot"
+  },
+  "outcome": [
+    "Incoming text retains the existing approved-knowledge answer path. Incoming voice becomes a bounded transcription event before entering that same path.",
+    "Automatic answers and explicitly sent human replies have separate text and audio outbox records containing the same answer. Text includes an AI-generated-voice disclosure.",
+    "Voice preparation, delivery and text delivery have independent states. Retry voice only never requeues the text parent. Uncertain customer sends are never blindly retried.",
+    "Inbox displays transcription/preparation and text/audio delivery states, polls pending work and offers authorized voice-only retries. Failed transcription retains the lead and requests human assistance. Automatic transcription failure sends one text request to resend or type when the current conversation still permits it."
+  ],
+  "migration": {
+    "file": "sophia-runtime/src/database/migrations/120_whatsapp_voice_pipeline.sql",
+    "prerequisite": "119_whatsapp_replies.sql, applied by user report",
+    "scope": "Adds voice jobs, encrypted voice assets, paired outbox format and preparing state, tenant foreign keys, FORCE RLS, limited app-role grants and stale-work cancellation. Applied only to disposable local fixtures during this task."
+  },
+  "processing": {
+    "lanes": "One generation, one dispatch, one transcription and one synthesis operation at a time per worker process. This is a global bound per process, not a cross-process distributed quota; provision one worker initially. Database leases prevent duplicate processing of a job.",
+    "media": "Compressed inbound limit 5 MiB; audio duration limit 60 seconds; PCM mono 24 kHz signed 16-bit. Reject invalid containers, silent audio, excessive duration and bytes. FFmpeg uses bounded pipes, explicit demuxers, no shell, pipe-only protocol, one thread and 20-second timeout.",
+    "download": "Graph metadata first, then exact HTTPS Meta media host allowlist, public address check, redirects disabled, size/checksum verification and 20-second deadline. No caller-supplied arbitrary URLs. DNS is checked, not socket-pinned.",
+    "speech": "Existing Runtime speech adapters, approved tenant speech-input/output capabilities and environment credential references. Existing speech model/voice configuration is reused. Each speech call receives a 60-second deadline; voice jobs lease for 3 minutes and permit at most 2 preparation attempts.",
+    "delivery": "Ogg/Opus by uploaded media ID. Audio dispatch waits until the text parent is accepted/delivered/read. Sending obeys current human/AI ownership, tenant authority, open reply window, opt-out, active lead and current release/provider/binding checks. Definite 429 responses retain bounded retry handling; ambiguous sends stay unknown.",
+    "storage": "Inbound compressed bytes and decoded PCM exist only in worker memory. Generated Ogg is AES-256-GCM encrypted in the tenant-scoped database, bound to tenant/message with AAD, until upload or 1-hour expiry. Plaintext buffers are cleared where owned. No plaintext media file is written. After successful media upload the local encrypted bytes are cleared and only the provider media ID remains. Provider media retention and existing database backup retention still apply.",
+    "cleanup": "Worker clears up to 100 expired encrypted assets per tick, normally every 60 seconds, and cancels audio pending longer than 24 hours. Cleanup requires the voice worker to run; shutdown does not erase database assets immediately.",
+    "failure": "Unreadable automatic voice input moves to human_requested and queues one safe text fallback. In human-owned conversations failures remain visible for staff. Retry control is limited to failed voice preparation with attempts remaining and unchanged eligible ownership; accepted/unknown/delivery-failed audio is not regenerated automatically. No transcript retry button is exposed; ask the customer to resend or use text."
+  },
+  "deployment": {
+    "steps": [
+      "Apply migration 120 through the normal owner migration process before enabling voice.",
+      "Build Runtime (npm run build in sophia-runtime), deploy backend/frontend and restart the existing whatsapp:inbound-worker and whatsapp:reply-worker with matching profile configuration.",
+      "Configure the existing voice adapters in an approved orchestrated-voice experience for this tenant; bind speech-input and speech-output, publish and include that experience version in the WhatsApp agent release. Existing reasoning and published knowledge remain required for automatic answers.",
+      "Add voiceEnabled:true, mediaKeyEnv, transcriptionAdapter, transcriptionCredentialRef, synthesisAdapter and synthesisCredentialRef to the deployment-owned WHATSAPP_INBOUND_PROFILES entry. Use a distinct 32-byte hexadecimal media encryption key in the referenced server secret. Do not expose it to the browser. Retain the same key until encrypted assets have expired or been consumed.",
+      "Set WHATSAPP_VOICE_ENABLED=true only after migration, provider grants and test-number configuration. Existing inbound/reply worker, generation, outbound and automation flags still apply independently and default off.",
+      "Run a separately authorized test-number pilot for Spanish/English/Portuguese audio, delivery callbacks, latency, quality, opt-out, handoff and media playback before enabling the existing Business App number. Coexistence is not verified by this implementation."
+    ],
+    "profileFields": {
+      "voiceEnabled": true,
+      "mediaKeyEnv": "WHATSAPP_PILOT_MEDIA_KEY",
+      "transcriptionAdapter": "openai-transcription-v1",
+      "transcriptionCredentialRef": "env://openai-transcription",
+      "synthesisAdapter": "openai-synthesis-v1",
+      "synthesisCredentialRef": "env://openai-synthesis"
+    },
+    "rollback": "Set WHATSAPP_VOICE_ENABLED=false in backend and workers to retain text replies and visible historical statuses. Queued audio will not dispatch. Keep migration 120 and the reply worker running: its bounded encrypted-asset cleanup lane runs even while voice generation is off. Do not rotate away the only active key while unexpired assets remain."
+  },
+  "verification": {
+    "backend": "130 backend/Runtime checks passed across targeted suites: 45 existing inbound/lead/Settings checks, 18 existing PostgreSQL text-reply checks, 13 PostgreSQL voice checks, 6 audio/crypto/media tests, 4 outbound tests, 6 Runtime speech tests and 38 real-estate regressions.",
+    "database": "Migration 120 applied to fresh disposable local PostgreSQL fixtures. Covers paired text/audio, voice-only retry, unknown-send suppression, encrypted asset expiry, ownership changes during synthesis, provider retirement, automatic transcription fallback, grounded automatic voice answer, long reply plus disclosure, spoken opt-out, delayed transcript ordering within the same provider second, FORCE RLS and app-role grants. Migration 119 text-reply fixtures also pass unchanged.",
+    "browser": "53 browser checks passed per viewport at 1902x1016 and 390x844, including light/dark layout, independent text/audio states, voice-only retry, existing inbox/Settings/company/navigation behavior.",
+    "build": "Runtime build and frontend TypeScript/production build passed. Existing initial bundle, student-case/Manrope CSS budgets, LiveAvatar CommonJS and missing primeicons stylesheet warnings remain.",
+    "architecture": "Boundary scan exits 1 for only the same two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports; no new violations.",
+    "commands": [
+      "LOCAL_WHATSAPP_VOICE_TEST_DATABASE_URL=<fresh-local-db> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappVoiceSql.test.js",
+      "LOCAL_WHATSAPP_REPLY_TEST_DATABASE_URL=<fresh-local-db> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappRepliesSql.test.js",
+      "Targeted inbound/lead/Settings suites with their LOCAL_*_TEST_DATABASE_URL variables on fresh localhost fixtures; audio/outbound tests executed outside the sandbox for the bundled codec.",
+      "npm test -- --runInBand --runTestsByPath src/providers/speech/channel-speech.spec.ts src/providers/speech/openai-speech.providers.spec.ts (Runtime)",
+      "npm run test:p0:real-estate; npm run build --prefix sophia-runtime; node scripts/check-sophia-boundaries.mjs",
+      "Frontend tsc --noEmit; ng test for leads/integrations/company/routes/navigation at desktop/mobile with ChromeHeadless; NG_BUILD_MAX_WORKERS=2 GOOGLE_MAPS_API_KEY=dummy ng build"
+    ],
+    "testEnvironmentNotes": [
+      "Initial codec run timed out in the restricted runner; rerun outside the sandbox passed.",
+      "Two reused local fixture database names initially caused schema-exists errors; both suites passed on fresh databases. No application failure was suppressed."
+    ],
+    "external": "No live provider/model calls, WhatsApp sends, production database actions, deployment or account provisioning."
+  },
+  "boundaries": [
+    "No production migration, deployment, provider request, WhatsApp message or account onboarding performed.",
+    "Scheduling, booking tools, richer knowledge ingestion, automated qualification, greeting/after-hours enforcement and browser Runtime handoff are separate unfinished slices.",
+    "No new customer microphone capture or voice cloning. Generated voice uses the configured stock synthesis voice."
+  ],
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/speech-to-text",
+    "https://developers.openai.com/api/docs/guides/text-to-speech",
+    "https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/audio/"
+  ],
+  "nextTask": "P1B.2 extend the existing Business Manager Scheduling model with lead appointments, advisor availability and idempotent booking/cancellation/rescheduling before exposing booking to the assistant."
+}

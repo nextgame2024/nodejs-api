@@ -1,3 +1,4 @@
+import { retryVoice } from "../services/messaging/voice-api.service.js";
 import {
   responseSettings,
   bindResponse,
@@ -136,6 +137,17 @@ router.post(
   "/bm/lead-assistant/leads/:leadId/draft",
   handle((req) =>
     draftReply(req.user.id, req.user.companyId, req.params.leadId, req.body),
+  ),
+);
+router.post(
+  "/bm/lead-assistant/leads/:leadId/voice/:jobId/retry",
+  handle((req) =>
+    retryVoice(
+      req.user.id,
+      req.user.companyId,
+      req.params.leadId,
+      req.params.jobId,
+    ),
   ),
 );
 export default router;

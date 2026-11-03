@@ -120,5 +120,6 @@
     "Conversation onboarding, automatic lead-field qualification and applying business-hour/greeting policies remain follow-up work; this slice supplies grounded text answers and reliable delivery rather than claiming the entire assistant is finished.",
     "Knowledge authoring currently uses the existing Sophia Admin approval/publishing lifecycle; a dedicated Business Manager Knowledge surface is not added here.",
     "Voice download/transcription and paired text/voice replies remain P1B."
-  ]
+  ],
+  "successorCheckpoint": "whatsapp-assistant-voice-implementation.json"
 }

@@ -1,3 +1,4 @@
+import { queueVoicePair } from "./voice-store.js";
 import { transaction } from "../leads/assistant-settings.service.js";
 import { requiredLead, detail } from "../leads/lead-records.service.js";
 import { uuid, version, text, hash } from "../leads/lead-records.contracts.js";
@@ -80,7 +81,7 @@ export async function bindResponse(actor, company, input) {
       [tenant, channel.channel_id],
     );
     await db.query(
-      `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='settings_changed' WHERE customer_id=$1 AND channel_id=$2 AND state='queued' AND job_id IS NOT NULL`,
+      `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='settings_changed' WHERE customer_id=$1 AND channel_id=$2 AND state IN ('queued','preparing') AND job_id IS NOT NULL`,
       [tenant, channel.channel_id],
     );
     return row;
@@ -122,8 +123,8 @@ export async function queueReply(actor, company, id, input) {
           state?.blockedReason ?? "This lead has no WhatsApp conversation.",
           409,
         );
-      await db.query(
-        `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,actor_identity,body,request_key,request_hash) SELECT $1,t.channel_id,$2,$3,$4,$5,$6,$7,$8 FROM ${s}.assistant_channel_contacts t WHERE t.customer_id=$1 AND t.lead_id=$2`,
+      const queued = await db.query(
+        `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,actor_identity,body,request_key,request_hash) SELECT $1,t.channel_id,$2,$3,$4,$5,$6,$7,$8 FROM ${s}.assistant_channel_contacts t WHERE t.customer_id=$1 AND t.lead_id=$2 RETURNING message_id`,
         [
           tenant,
           id,
@@ -135,6 +136,7 @@ export async function queueReply(actor, company, id, input) {
           hash({ body }),
         ],
       );
+      await queueVoicePair(db, tenant, queued.rows[0].message_id);
       return detail(db, tenant, access, id);
     },
     { inbox: true },
@@ -167,13 +169,17 @@ export async function draftReply(actor, company, id, input) {
         throw fail("Take ownership and reload before drafting an answer.", 409);
       const target = (
         await db.query(
-          `SELECT t.channel_id,b.agent_release_id,b.revision AS binding_revision,e.event_id FROM ${s}.assistant_channel_contacts t JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id) JOIN ${s}.assistant_lead_events e ON e.customer_id=t.customer_id AND e.conversation_id=$3 AND e.kind='inbound_message' WHERE t.customer_id=$1 AND t.lead_id=$2 AND NOT t.opted_out AND e.metadata->>'messageType'='text' AND COALESCE(e.metadata->>'truncated','false')='false' ORDER BY COALESCE((e.metadata->>'sentAt')::timestamptz,e.created_at) DESC,e.event_id DESC LIMIT 1`,
+          `SELECT t.channel_id,b.agent_release_id,b.revision AS binding_revision,e.event_id,e.metadata FROM ${s}.assistant_channel_contacts t JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id) JOIN ${s}.assistant_lead_events e ON e.customer_id=t.customer_id AND e.conversation_id=$3 AND e.kind='inbound_message' WHERE t.customer_id=$1 AND t.lead_id=$2 AND NOT t.opted_out ORDER BY COALESCE((e.metadata->>'sentAt')::timestamptz,e.created_at) DESC,COALESCE((e.metadata->>'transcriptOf')::bigint,e.event_id) DESC,e.event_id DESC LIMIT 1`,
           [tenant, id, c.conversation_id],
         )
       ).rows[0];
-      if (!target)
+      if (
+        !target ||
+        target.metadata?.messageType !== "text" ||
+        target.metadata?.truncated === true
+      )
         throw fail(
-          "Choose an approved agent and receive a text enquiry before drafting.",
+          "Choose an approved agent and wait for the latest text enquiry or voice transcript before drafting.",
           409,
         );
       await currentRelease(db, tenant, target.agent_release_id);

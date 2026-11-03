@@ -61,6 +61,24 @@ export function channelProfiles(env = process.env) {
         p.reasoningCredentialRef.length <= 160
           ? p.reasoningCredentialRef
           : null,
+      voiceEnabled: p.voiceEnabled === true,
+      mediaKeyEnv: /^WHATSAPP_[A-Z0-9_]+$/.test(p.mediaKeyEnv ?? "")
+        ? p.mediaKeyEnv
+        : null,
+      transcriptionAdapter:
+        typeof p.transcriptionAdapter === "string"
+          ? p.transcriptionAdapter
+          : null,
+      transcriptionCredentialRef:
+        typeof p.transcriptionCredentialRef === "string"
+          ? p.transcriptionCredentialRef
+          : null,
+      synthesisAdapter:
+        typeof p.synthesisAdapter === "string" ? p.synthesisAdapter : null,
+      synthesisCredentialRef:
+        typeof p.synthesisCredentialRef === "string"
+          ? p.synthesisCredentialRef
+          : null,
       appSecret,
       verifyToken,
     };

@@ -1,3 +1,9 @@
+import {
+  queueVoicePair,
+  voiceInstalled,
+  voiceEnabled,
+  approveSpeech,
+} from "./voice-store.js";
 import { recordAccepted } from "./delivery-store.js";
 import { randomUUID } from "node:crypto";
 import { scoped } from "./whatsapp-channel.service.js";
@@ -71,7 +77,7 @@ export async function generateOne(profile, reasoner) {
     ).rows[0];
     const e = (
       await db.query(
-        `SELECT * FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,event_id DESC LIMIT 1`,
+        `SELECT * FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,COALESCE((metadata->>'transcriptOf')::bigint,event_id) DESC,event_id DESC LIMIT 1`,
         [profile.customerId, c.conversation_id],
       )
     ).rows[0];
@@ -273,9 +279,9 @@ export async function generateOne(profile, reasoner) {
         accepted &&
         !job.requested_by_identity &&
         process.env.WHATSAPP_AUTOMATION_ENABLED === "true"
-      )
-        await db.query(
-          `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,job_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7) ON CONFLICT DO NOTHING`,
+      ) {
+        const queued = await db.query(
+          `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,job_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7) ON CONFLICT DO NOTHING RETURNING message_id`,
           [
             profile.customerId,
             channel.channel_id,
@@ -287,6 +293,13 @@ export async function generateOne(profile, reasoner) {
             hash({ body: result.answer.trim() }),
           ],
         );
+        if (queued.rows[0])
+          await queueVoicePair(
+            db,
+            profile.customerId,
+            queued.rows[0].message_id,
+          );
+      }
     },
     { requireEnabled: false },
   );
@@ -302,7 +315,7 @@ async function authorizedSender(db, company, tenant, actor, leadId) {
     )
   ).rows[0].allowed;
 }
-export async function dispatchOne(profile, send) {
+export async function dispatchOne(profile, send, { prepareAudio } = {}) {
   if (!canDispatch(profile)) return { processed: false };
   const task = await scoped(profile, async (db, channel, company) => {
     await installed(db);
@@ -311,9 +324,10 @@ export async function dispatchOne(profile, send) {
       `UPDATE ${s}.assistant_message_outbox SET state='unknown',safe_code='send_unconfirmed',updated_at=now() WHERE customer_id=$1 AND channel_id=$2 AND state='dispatching' AND dispatch_until<now()`,
       [profile.customerId, channel.channel_id],
     );
+    const voice = await voiceInstalled(db);
     const candidate = (
       await db.query(
-        `SELECT * FROM ${s}.assistant_message_outbox WHERE customer_id=$1 AND channel_id=$2 AND state='queued' AND available_at<=now() ORDER BY created_at LIMIT 1`,
+        `SELECT o.* FROM ${s}.assistant_message_outbox o WHERE customer_id=$1 AND channel_id=$2 AND state='queued' AND available_at<=now() ${voice ? `AND (format='text' OR (${voiceEnabled(profile) ? "true" : "false"} AND EXISTS(SELECT 1 FROM sophia_runtime.assistant_message_outbox parent WHERE parent.customer_id=o.customer_id AND parent.message_id=o.parent_message_id AND parent.state IN ('accepted','delivered','read'))))` : ""} ORDER BY created_at LIMIT 1`,
         [profile.customerId, channel.channel_id],
       )
     ).rows[0];
@@ -347,6 +361,25 @@ export async function dispatchOne(profile, send) {
       ? c.ownership === "human" && c.human_owner_identity === m.actor_identity
       : process.env.WHATSAPP_AUTOMATION_ENABLED === "true" &&
         c.ownership === "bot";
+    if (m.voice_failure_job_id) {
+      const j = (
+        await db.query(
+          `SELECT j.state,j.source_event_id FROM ${s}.assistant_voice_jobs j WHERE customer_id=$1 AND voice_job_id=$2`,
+          [profile.customerId, m.voice_failure_job_id],
+        )
+      ).rows[0];
+      const latest = (
+        await db.query(
+          `SELECT event_id FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,COALESCE((metadata->>'transcriptOf')::bigint,event_id) DESC,event_id DESC LIMIT 1`,
+          [profile.customerId, m.conversation_id],
+        )
+      ).rows[0];
+      permitted =
+        process.env.WHATSAPP_AUTOMATION_ENABLED === "true" &&
+        c.ownership === "human_requested" &&
+        j?.state === "failed" &&
+        j.source_event_id === latest?.event_id;
+    }
     if (m.job_id) {
       const j = (
         await db.query(
@@ -401,6 +434,29 @@ export async function dispatchOne(profile, send) {
       );
       return null;
     }
+    if (m.format === "audio" && !voiceEnabled(profile)) return null;
+    if (m.format === "audio") {
+      const j = (
+        await db.query(
+          `SELECT j.* FROM ${s}.assistant_voice_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.message_id=$2 AND j.state='ready' AND j.binding_revision=b.revision`,
+          [profile.customerId, m.message_id],
+        )
+      ).rows[0];
+      let allowed = false;
+      try {
+        allowed =
+          !!j && (await approveSpeech(db, profile.customerId, j, profile));
+      } catch (e) {
+        if (e.status !== 409) throw e;
+      }
+      if (!allowed) {
+        await db.query(
+          `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='configuration_required' WHERE customer_id=$1 AND message_id=$2`,
+          [profile.customerId, m.message_id],
+        );
+        return null;
+      }
+    }
     const dispatch = randomUUID();
     await db.query(
       `UPDATE ${s}.assistant_message_outbox SET state='dispatching',dispatch_id=$3,dispatch_until=now()+interval '1 minute',attempts=attempts+1 WHERE customer_id=$1 AND message_id=$2`,
@@ -409,13 +465,23 @@ export async function dispatchOne(profile, send) {
     return { m, dispatch, recipient: contact.sender_id };
   });
   if (!task) return { processed: false };
-  let result;
+  let result, mediaId;
+  if (task.m.format === "audio") {
+    try {
+      if (!prepareAudio) throw new Error("Voice transport unavailable");
+      mediaId = await prepareAudio(profile, task.m);
+    } catch {
+      result = { kind: "failed", code: "voice_preparation_failed" };
+    }
+  }
   try {
-    result = await send(profile, {
-      messageId: task.m.message_id,
-      body: task.m.body,
-      recipient: task.recipient,
-    });
+    if (!result)
+      result = await send(profile, {
+        ...(mediaId ? { mediaId } : {}),
+        messageId: task.m.message_id,
+        body: task.m.body,
+        recipient: task.recipient,
+      });
   } catch {
     result = { kind: "unknown", code: "send_unconfirmed" };
   }
