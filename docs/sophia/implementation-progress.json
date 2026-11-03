@@ -2,18 +2,18 @@
   "whatsappAssistantPlan": {
     "updatedOn": "2026-11-03",
     "status": "locally_verified_pending_migration_configuration_and_deployment",
-    "details": "whatsapp-assistant-inbound-implementation.json",
-    "scope": "Migration 117 applied by user report. P1A.3a receive-only signature-verified durable channel, exact sender lead mapping, app echoes, company controls and database worker implemented. Outbound/agent processing is P1A.3b; voice transcription and text-plus-voice replies P1B.",
+    "details": "whatsapp-assistant-replies-implementation.json",
+    "scope": "Migration 118 applied by user report. P1A.3b approved-release text generation, review/automatic modes, human composer, durable outbox, send-time authorization, delivery reconciliation and explicit resume implemented locally. Live pilot remains pending; P1B adds text-or-voice input and both response formats.",
     "verification": {
-      "backend": "45 tests passed in six focused suites: 18 new webhook/real PostgreSQL channel checks plus 27 existing lead/Settings regressions. Includes raw signature/size/tenant spoofing, batch deduplication, concurrent same-contact processing, pause/resume, closed leads, sticky opt-out, app echoes, retry exhaustion, rollback, RLS and default-grant protection.",
-      "realEstate": "All 38 deterministic tests passed across the eight existing test:p0:real-estate suites.",
-      "browser": "43 tests passed at desktop 1902x1016 and mobile 390x844, including Company integration shared controls, loading, cancellation, optimistic saves, errors, no credential fields, and light/dark layout. Three additional Company checks passed, including a new cross-company visibility guard regression.",
-      "compile": "Application TypeScript passed. Bounded-worker production frontend build passed with existing initial/style-budget, CommonJS and missing primeicons warnings.",
-      "architecture": "Boundary scan still reports only the two unchanged pre-existing student-document-analysis.worker.ts/spec.ts vendor imports. No new violations.",
-      "hygiene": "JavaScript syntax, JSON parsing and both repository diff checks passed."
+      "backend": "108 distinct backend/Runtime checks passed across targeted runs: 45 existing receiving/inbox/Settings checks, 18 new actual PostgreSQL reply tests, 4 outbound adapter tests, 3 Runtime reasoning-port tests and 38 real-estate regression tests.",
+      "database": "Migration 119 applied only to disposable local PostgreSQL fixtures with production-like inherited default grants. Covers takeover/newer-message races, delayed message ordering, binding revisions, bounded draft retry, source/provider retirement, current authority, explicit resume, ambiguous sends, status ordering, expired dispatch leases, concurrent dispatch and tenant/source foreign keys.",
+      "browser": "52 browser checks passed at desktop 1902x1016 and mobile 390x844, including light/dark computed layout, shared controls, reply/draft separation, preserved retry identity, explicit resume, pending polling, cleanup and existing Settings/company/navigation regressions.",
+      "build": "Frontend TypeScript, production frontend build and Runtime build/tests passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
+      "architecture": "Boundary scan still reports only the two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports. No new violations.",
+      "external": "No production database/provider calls, model requests, messages, account provisioning or deployment performed."
     },
-    "productionChanges": "None. Apply migration 118 and deploy backend/frontend/worker. Profiles empty and worker disabled by default. No WhatsApp or AI requests made.",
-    "nextTask": "P1A.3b: bind the approved agent/knowledge release, asynchronous grounded text generation, durable outbound intents, human reply sending, opt-out/window enforcement, echo cancellation and delivery reconciliation. Then P1B adds safe voice download/transcription and text-plus-voice responses, alongside the existing Scheduling extension.",
+    "productionChanges": "None. Apply migration 119, build/deploy Runtime/backend/frontend and the reply worker. Configure approved release/provider profile; all external effect flags default off.",
+    "nextTask": "P1B voice pipeline: either text or voice input, safe media download/transcription and both text and generated voice replies from the same grounded answer, with independent delivery tracking and partial retries. Extend the existing Scheduling module for appointments. A real text-number pilot/configuration may proceed separately when authorized.",
     "wireframes": "whatsapp-assistant-wireframes.html"
   },
   "studentSyncCaseBootstrap": {

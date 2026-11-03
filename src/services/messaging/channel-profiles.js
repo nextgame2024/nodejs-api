@@ -47,6 +47,20 @@ export function channelProfiles(env = process.env) {
       businessAccountId: p.businessAccountId,
       label: p.label.trim(),
       ready,
+      sendingEnabled: p.sendingEnabled === true,
+      graphVersion: /^v[0-9]{1,3}\.[0-9]{1,2}$/.test(p.graphVersion ?? "")
+        ? p.graphVersion
+        : null,
+      accessToken: /^WHATSAPP_[A-Z0-9_]+$/.test(p.accessTokenEnv ?? "")
+        ? env[p.accessTokenEnv]
+        : null,
+      reasoningAdapter:
+        typeof p.reasoningAdapter === "string" ? p.reasoningAdapter : null,
+      reasoningCredentialRef:
+        typeof p.reasoningCredentialRef === "string" &&
+        p.reasoningCredentialRef.length <= 160
+          ? p.reasoningCredentialRef
+          : null,
       appSecret,
       verifyToken,
     };

@@ -1,3 +1,9 @@
+import { reconcileDelivery } from "./delivery-store.js";
+import {
+  canDispatch,
+  enqueueAutomatic,
+  invalidateOlderReplies,
+} from "./reply-store.js";
 import pool from "../../config/db.js";
 import { randomUUID } from "node:crypto";
 import { transaction, directory } from "../leads/assistant-settings.service.js";
@@ -35,7 +41,16 @@ export async function channelStatus(actor, company) {
         [tenant],
       )
     ).rows[0];
-    return { profiles, channels, health, mode: "receive_only" };
+    return {
+      profiles,
+      channels,
+      health,
+      mode: channelProfiles().some(
+        (p) => p.customerId === tenant && canDispatch(p),
+      )
+        ? "replies_available"
+        : "receive_only",
+    };
   });
 }
 export async function configureChannel(actor, company, input) {
@@ -112,7 +127,7 @@ export async function configureChannel(actor, company, input) {
 }
 // Profile is resolved exclusively from the deployment allowlist after signature
 // verification. All message/queue operations remain under the Runtime app role.
-async function scoped(profile, work) {
+export async function scoped(profile, work, { requireEnabled = true } = {}) {
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
@@ -130,12 +145,13 @@ async function scoped(profile, work) {
     await installed(db);
     const channel = (
       await db.query(
-        `SELECT * FROM ${s}.assistant_channels WHERE customer_id=$1 AND profile_id=$2 AND phone_number_id=$3 AND business_account_id=$4 AND enabled FOR SHARE`,
+        `SELECT * FROM ${s}.assistant_channels WHERE customer_id=$1 AND profile_id=$2 AND phone_number_id=$3 AND business_account_id=$4 AND (NOT $5::boolean OR enabled) FOR SHARE`,
         [
           profile.customerId,
           profile.id,
           profile.phoneNumberId,
           profile.businessAccountId,
+          requireEnabled,
         ],
       )
     ).rows[0];
@@ -190,6 +206,7 @@ async function applyMessage(db, profile, channel, company, e) {
       [tenant, channel.channel_id, e.senderId],
     )
   ).rows[0];
+  const isNew = !contact;
   if (!contact) {
     const release = (
       await db.query(
@@ -228,6 +245,9 @@ async function applyMessage(db, profile, channel, company, e) {
     );
     contact = { lead_id: id };
   }
+  const isCurrent =
+    !contact.last_inbound_at ||
+    new Date(e.sentAt).getTime() >= new Date(contact.last_inbound_at).getTime();
   // Same lead lock order as staff mutations, preventing deadlocks with takeover.
   await db.query(
     `SELECT lead_id FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
@@ -252,12 +272,17 @@ async function applyMessage(db, profile, channel, company, e) {
       `UPDATE ${s}.assistant_channel_contacts SET last_inbound_at=GREATEST(last_inbound_at,$4::timestamptz),opted_out=opted_out OR $5 WHERE customer_id=$1 AND channel_id=$2 AND sender_id=$3`,
       [tenant, channel.channel_id, e.senderId, e.sentAt, stop],
     );
+  if (!echo && isCurrent && (e.messageType !== "text" || e.truncated))
+    await db.query(
+      `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND lead_id=$2 AND ownership='bot'`,
+      [tenant, contact.lead_id],
+    );
   const body =
     e.messageType === "text"
       ? e.body
       : `[${echo ? "Sent" : "Received"} ${e.media?.voice ? "voice" : e.messageType} message — open WhatsApp to review]`;
-  await db.query(
-    `INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,kind,body,metadata) VALUES($1,$2,$3,$4,$5::jsonb)`,
+  const recorded = await db.query(
+    `INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,kind,body,metadata) VALUES($1,$2,$3,$4,$5::jsonb) RETURNING event_id`,
     [
       tenant,
       conversation.conversation_id,
@@ -275,6 +300,21 @@ async function applyMessage(db, profile, channel, company, e) {
       }),
     ],
   );
+  if (!echo && isCurrent)
+    await invalidateOlderReplies(
+      db,
+      profile.customerId,
+      contact.lead_id,
+      recorded.rows[0].event_id,
+    );
+  if (!echo && isCurrent && !stop && e.messageType === "text" && !e.truncated)
+    await enqueueAutomatic(
+      db,
+      profile,
+      contact.lead_id,
+      recorded.rows[0].event_id,
+      isNew,
+    );
   await db.query(
     `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
     [tenant, contact.lead_id],
@@ -291,6 +331,8 @@ export async function processChannelEvent(profile) {
     if (!receipt) return { processed: false };
     await db.query("SAVEPOINT message_work");
     try {
+      if (receipt.event.kind === "delivery")
+        await reconcileDelivery(db, profile, channel, receipt.event);
       if (["inbound", "app_echo"].includes(receipt.event.kind))
         await applyMessage(db, profile, channel, company, receipt.event);
       await db.query(

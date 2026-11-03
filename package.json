@@ -51,6 +51,7 @@
     "test:p2:contracts": "npm --prefix sophia-runtime run contracts:check && npm --prefix sophia-runtime test -- --runTestsByPath src/platform/contracts/v2/sophia-runtime-v2.contracts.spec.ts",
     "test:release": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand --testMatch \"<rootDir>/tests/bm.*.test.js\"",
     "test:release:sql": "INSPECTION_SQL_TEST_DATABASE=1 NODE_OPTIONS=\"--experimental-vm-modules --import=dotenv/config\" jest --runInBand --testMatch \"<rootDir>/tests/bm.*Sql.test.js\" --testMatch \"<rootDir>/tests/bm.demoInspectionSlots.test.js\"",
-    "whatsapp:inbound-worker": "node scripts/process-whatsapp-inbound.mjs"
+    "whatsapp:inbound-worker": "node scripts/process-whatsapp-inbound.mjs",
+    "whatsapp:reply-worker": "node scripts/process-whatsapp-replies.mjs"
   }
 }

@@ -250,7 +250,7 @@ suite("Lead records and inbox on PostgreSQL", () => {
         expectedVersion: 3,
         ownership: "bot",
       }),
-    ).rejects.toMatchObject({ status: 400 });
+    ).rejects.toMatchObject({ status: 409 });
   });
   test("prevents lost updates and requires reasons for Qualified/Closed stages", async () => {
     const writes = await Promise.allSettled([

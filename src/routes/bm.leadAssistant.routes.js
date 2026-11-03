@@ -1,3 +1,9 @@
+import {
+  responseSettings,
+  bindResponse,
+  queueReply,
+  draftReply,
+} from "../services/messaging/reply-api.service.js";
 import { Router } from "express";
 import { authRequired } from "../middlewares/authJwt.js";
 import * as settings from "../services/leads/assistant-settings.service.js";
@@ -111,5 +117,25 @@ router.get(
 router.put(
   "/bm/lead-assistant/channel",
   handle((req) => configureChannel(req.user.id, req.user.companyId, req.body)),
+);
+router.get(
+  "/bm/lead-assistant/responses",
+  handle((req) => responseSettings(req.user.id, req.user.companyId)),
+);
+router.put(
+  "/bm/lead-assistant/responses",
+  handle((req) => bindResponse(req.user.id, req.user.companyId, req.body)),
+);
+router.post(
+  "/bm/lead-assistant/leads/:leadId/replies",
+  handle((req) =>
+    queueReply(req.user.id, req.user.companyId, req.params.leadId, req.body),
+  ),
+);
+router.post(
+  "/bm/lead-assistant/leads/:leadId/draft",
+  handle((req) =>
+    draftReply(req.user.id, req.user.companyId, req.params.leadId, req.body),
+  ),
 );
 export default router;

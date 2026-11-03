@@ -1,0 +1,124 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-replies-implementation",
+    "updatedOn": "2026-11-03",
+    "slice": "P1A.3b \u2014 grounded text generation and durable outbound delivery",
+    "status": "locally_verified_pending_migration_configuration_and_deployment"
+  },
+  "priorDeployment": {
+    "migration118": "Applied, reported by user on 2026-11-03; no independent production verification.",
+    "liveChannel": "No production configuration or message delivery inspected."
+  },
+  "implemented": [
+    "Company \u2192 WhatsApp \u2192 Configure Sophia replies selects a published tenant agent release and Draft for review or Automatic text replies. Settings use optimistic revisions.",
+    "Existing approved instruction revisions, agent release manifests, published knowledge snapshots and capability grants are reused; no separate FAQ store.",
+    "Background generation retrieves at most five bounded approved source excerpts, uses the existing provider-neutral reasoning port with no tools or private staff notes, requires cited snapshot IDs and routes missing/unsupported results to the team.",
+    "Generation is pinned to both agent release and response-binding revision; citations, source publication/grants and provider eligibility are rechecked after generation and before automated dispatch.",
+    "Draft review, customer text composer, separate internal notes, explicit Resume Sophia and pending-work polling. Failed submissions retain text and the retry key; drafts never silently replace typed text.",
+    "Automatic text enquiries use bot ownership only when enabled. Existing paused/human threads remain with the team until explicitly resumed. Voice/media enquiries remain a human-review placeholder in this phase.",
+    "Durable idempotent outbox, bounded send worker, current handler/authority checks, opt-out, closed-lead and customer reply-window enforcement. Ownership changes, new messages and response-policy changes cancel undispatched work.",
+    "Official Cloud API text adapter includes an opaque outbox correlation ID. Accepted messages enter the timeline once; delivery/read statuses reconcile monotonically, including status-before-response races.",
+    "Timeouts, malformed success, ambiguous upstream errors and expired dispatch leases become Delivery uncertain and are not automatically resent. Only explicit rate-limit rejections use bounded delayed retries.",
+    "Delayed old inbound messages remain in history without replacing the current question or invalidating its answer."
+  ],
+  "schema": {
+    "migration": "119_whatsapp_replies.sql after 118",
+    "tables": [
+      "assistant_reply_bindings",
+      "assistant_reply_jobs",
+      "assistant_message_outbox"
+    ],
+    "protection": "FORCE tenant RLS, explicit least-privilege grants, tenant/conversation/source foreign keys, published release tenant FK, ownership-version cancellation trigger, bounded usage/source JSON and indexed queue/detail reads."
+  },
+  "api": {
+    "settings": "GET/PUT /api/bm/lead-assistant/responses",
+    "humanReply": "POST /api/bm/lead-assistant/leads/:leadId/replies with UUID requestKey, expected ownership version and body",
+    "draft": "POST /api/bm/lead-assistant/leads/:leadId/draft with expected ownership version",
+    "resume": "Existing ownership endpoint accepts bot only after current tenant, handler, agent/provider, opt-out and window checks",
+    "detail": "Existing authorized lead detail adds reply eligibility, latest five jobs and ten outgoing states; no email/phone fields added to register rows."
+  },
+  "authorization": {
+    "company": "Existing active organisation_owner or chief_executive authority controls bindings. Neither browser tenant IDs nor provider/model choices are trusted.",
+    "lead": "Assigned advisors and authorized enquiry/fallback owners use the existing inbox scope. Human send requires the current handler; dispatch revalidates current active staff and role/assignment.",
+    "reasoning": "A deployed reasoning adapter/credential reference must match a published reasoning provider binding in an enabled, published experience included in the pinned tenant agent release and business profile. This slice supports the existing environment-backed adapters with empty provider settings; custom per-profile settings/credentials are rejected rather than ignored.",
+    "knowledge": "Only pinned revision IDs with current published/ready/active source state and enabled capability grants within the release business profile are retrieved. Draft, retired, revoked and cross-tenant records cannot supply automated replies."
+  },
+  "configuration": {
+    "profileExtension": {
+      "sendingEnabled": false,
+      "graphVersion": "v25.0",
+      "accessTokenEnv": "WHATSAPP_OFA_SEND_TOKEN",
+      "reasoningAdapter": "openai-reasoning-v1",
+      "reasoningCredentialRef": "env://openai-reasoning"
+    },
+    "profileNotes": "Extend the existing WHATSAPP_INBOUND_PROFILES entry; example version is illustrative, not a claim about the latest supported Graph version. Pin a supported version during actual setup. Store the token only in the deployment secret store. App secret, verify token, customer/WABA/phone IDs stay as configured for receiving.",
+    "reasoningChoices": [
+      {
+        "adapter": "openai-reasoning-v1",
+        "credentialRef": "env://openai-reasoning"
+      },
+      {
+        "adapter": "anthropic-reasoning-v1",
+        "credentialRef": "env://anthropic-claude-reasoning"
+      },
+      {
+        "adapter": "gemini-reasoning-v1",
+        "credentialRef": "env://google-gemini-reasoning"
+      }
+    ],
+    "reasoningNotes": "Use the existing Runtime server-side provider credentials/models and their approved published configuration. No credentials or models are entered in the browser. The server allowlist and published experience binding must agree.",
+    "flags": {
+      "WHATSAPP_REPLY_WORKER_ENABLED": "true only on the dedicated reply worker",
+      "WHATSAPP_GENERATION_ENABLED": "true explicitly enables generation; absent/false does not call a model",
+      "WHATSAPP_OUTBOUND_ENABLED": "true explicitly enables dispatch, together with profile sendingEnabled=true and a configured token/version",
+      "WHATSAPP_AUTOMATION_ENABLED": "true explicitly enables automatic job creation and bot dispatch; absent/false preserves review/human operation"
+    },
+    "consistency": "Use consistent profile maps and relevant generation/outbound/automation flags across the Business Manager backend, receiving worker and reply worker. All switches default off. A database migration alone does not activate external effects."
+  },
+  "deployment": [
+    "Apply migration 119 through the owner-operated Runtime migration runner after 118. No production migration was executed here.",
+    "Build Runtime so both the new migration and dist/providers/reasoning/channel-reasoner.js are packaged. Deploy backend and frontend together; deploy the new worker alongside the existing inbound worker.",
+    "Prepare and publish approved instructions, source knowledge/grants, an enabled text/voice experience with a supported published reasoning binding, and a tenant agent release through the existing Sophia Admin lifecycle. Unresolved instruction variables are not supported in this channel slice.",
+    "Extend the test-number profile and configure deployment secrets/provider settings. Keep external generation/sending/automation off until the intended test setup is approved.",
+    "Start npm run whatsapp:reply-worker with WHATSAPP_REPLY_WORKER_ENABLED=true. Generation and dispatch are separate bounded lanes; enable only the required flags.",
+    "In Company \u2192 WhatsApp configure the published agent and Draft for review first. In the inbox take ownership, request a draft and check its sources, wording and language before enabling delivery.",
+    "Use a separately authorized test-number pilot to verify real provider payloads, the callback correlation field, status reconciliation, rate limits, answer quality and actual latency. Existing Business App coexistence remains a separate verified onboarding step.",
+    "Automatic mode answers eligible new text enquiries. Existing paused or human-owned conversations require Resume Sophia. Changing reply policy puts existing bot conversations back into human attention and invalidates their undispatched jobs.",
+    "Rollback by disabling generation/outbound/automation flags and pausing receiving as appropriate. Keep records and reconcile uncertain in-flight deliveries; do not reset unknown messages to queued or blindly retry them."
+  ],
+  "operations": {
+    "limits": "One generation and one dispatch lane per worker process; at most two generation attempts/job and five rate-limit send attempts. No interactive request waits for a model or send. Generation lease two minutes; provider deadline 30 seconds; dispatch lease one minute; send deadline 20 seconds.",
+    "retrieval": "At most five excerpts of 3,000 characters; no transcript-wide or unbounded knowledge load. Source citations identify approved snapshots; citations alone do not prove factual correctness, so pilot evaluations remain required.",
+    "reads": "Bounded reply projection uses one scoped contact/job/outbox query plus eligibility checks, indexed by tenant/lead/time. Browser polls pending work at bounded intervals and pauses polling while hidden; no ordinary list request calls a provider.",
+    "usage": "Per-job measured/incomplete attempt records are retained for up to two generation attempts. This does not create a billable realtime session or claim integration with the commercial meter; confirm budget/retention/usage policy before live launch.",
+    "dispatchBoundary": "Cancellation protects work that has not entered dispatch. A request already in flight cannot be recalled; its accepted/uncertain result is preserved and reconciled. HTTP acceptance is shown as Sent, separately from Delivered/Read.",
+    "manualRetries": "Draft failures/needs-human results may be explicitly retried within the attempt bound. Response binding changes create a new revision pin. Uncertain outbound messages are not automatically retried.",
+    "pilotLimits": "No live provider, throughput, p95 latency, coexistence, customer-language or answer-quality evaluation was performed in this task.",
+    "eligibility": "Automatic generation also requires enabled sending and a current inbound reply window. Manual generation rechecks current staff authority before calling a model. Pausing or cancelling work does not recall an external request already dispatched."
+  },
+  "verification": {
+    "backend": "108 distinct backend/Runtime checks passed across targeted runs: 45 existing receiving/inbox/Settings checks, 18 new actual PostgreSQL reply tests, 4 outbound adapter tests, 3 Runtime reasoning-port tests and 38 real-estate regression tests.",
+    "database": "Migration 119 applied only to disposable local PostgreSQL fixtures with production-like inherited default grants. Covers takeover/newer-message races, delayed message ordering, binding revisions, bounded draft retry, source/provider retirement, current authority, explicit resume, ambiguous sends, status ordering, expired dispatch leases, concurrent dispatch and tenant/source foreign keys.",
+    "browser": "52 browser checks passed at desktop 1902x1016 and mobile 390x844, including light/dark computed layout, shared controls, reply/draft separation, preserved retry identity, explicit resume, pending polling, cleanup and existing Settings/company/navigation regressions.",
+    "build": "Frontend TypeScript, production frontend build and Runtime build/tests passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
+    "architecture": "Boundary scan still reports only the two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports. No new violations.",
+    "external": "No production database/provider calls, model requests, messages, account provisioning or deployment performed."
+  },
+  "nextTask": "P1B voice pipeline: either text or voice input, safe media download/transcription and both text and generated voice replies from the same grounded answer, with independent delivery tracking and partial retries. Extend the existing Scheduling module for appointments. A real text-number pilot/configuration may proceed separately when authorized.",
+  "sources": [
+    {
+      "url": "https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api",
+      "note": "Official Meta API collection used as protocol reference; no live call was made."
+    },
+    {
+      "url": "https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/send-messages",
+      "note": "Current documentation returned 429 during this task. Validate provider version/payloads during separately authorized test-number setup."
+    }
+  ],
+  "remainingBeforeCompletePilot": [
+    "Real provider configuration, quality/latency and delivery tests on an authorized test number; no live pilot has been run.",
+    "Conversation onboarding, automatic lead-field qualification and applying business-hour/greeting policies remain follow-up work; this slice supplies grounded text answers and reliable delivery rather than claiming the entire assistant is finished.",
+    "Knowledge authoring currently uses the existing Sophia Admin approval/publishing lifecycle; a dedicated Business Manager Knowledge surface is not added here.",
+    "Voice download/transcription and paired text/voice replies remain P1B."
+  ]
+}

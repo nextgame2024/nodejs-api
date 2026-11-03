@@ -133,6 +133,13 @@ export function normalizePayload(body, profile, now = Date.now()) {
         result.push({
           key: `status:${status.id}:${status.status}:${status.timestamp}`,
           kind: "delivery",
+          callbackId:
+            typeof status.biz_opaque_callback_data === "string" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              status.biz_opaque_callback_data,
+            )
+              ? status.biz_opaque_callback_data
+              : null,
           messageId: status.id,
           status: status.status,
           sentAt,

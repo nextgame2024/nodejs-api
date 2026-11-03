@@ -1,3 +1,8 @@
+import {
+  replyState,
+  automationTarget,
+  enqueueAutomatic,
+} from "../messaging/reply-store.js";
 import { transaction, directory } from "./assistant-settings.service.js";
 import { fail } from "./assistant-settings.contracts.js";
 import {
@@ -47,7 +52,7 @@ async function team(db, company, access) {
   const ids = teamIds(access);
   return ids.length ? directory(db, company, { ids }) : [];
 }
-async function requiredLead(db, tenant, access, id, lock = false) {
+export async function requiredLead(db, tenant, access, id, lock = false) {
   const row = (
     await db.query(
       `SELECT l.* FROM ${s}.assistant_leads l WHERE l.customer_id=$1 AND ${visible} AND l.lead_id=$4 ${lock ? "FOR UPDATE" : ""}`,
@@ -66,7 +71,7 @@ async function events(db, tenant, conversationId, before = null) {
   ).rows;
   return { events: rows.slice(0, 50).reverse(), hasOlder: rows.length > 50 };
 }
-async function detail(db, tenant, access, id) {
+export async function detail(db, tenant, access, id) {
   const row = (
     await db.query(
       `SELECT ${detailFields} FROM ${s}.assistant_leads l JOIN ${s}.assistant_lead_conversations c ON c.customer_id=l.customer_id AND c.lead_id=l.lead_id WHERE l.customer_id=$1 AND ${visible} AND l.lead_id=$4`,
@@ -74,7 +79,11 @@ async function detail(db, tenant, access, id) {
     )
   ).rows[0];
   if (!row) throw fail("Lead not found or no longer assigned to you.", 404);
-  return { lead: row, ...(await events(db, tenant, row.conversationId)) };
+  return {
+    lead: row,
+    ...(await events(db, tenant, row.conversationId)),
+    reply: await replyState(db, tenant, access, id),
+  };
 }
 async function event(db, tenant, conversationId, actor, kind, metadata = {}) {
   await db.query(
@@ -394,7 +403,7 @@ export async function changeOwnership(actor, company, id, input) {
   uuid(id);
   const expected = version(input?.expectedVersion),
     ownership = input?.ownership;
-  if (!["human", "paused"].includes(ownership))
+  if (!["human", "paused", "bot"].includes(ownership))
     throw fail("Automated replies are not connected yet.");
   return run(actor, company, async (db, tenant, access) => {
     const lead = await requiredLead(db, tenant, access, id, true);
@@ -420,6 +429,13 @@ export async function changeOwnership(actor, company, id, input) {
         "Another team member is handling this conversation. Ask the enquiry owner to transfer it.",
         409,
       );
+    const target =
+      ownership === "bot" ? await automationTarget(db, tenant, id) : null;
+    if (ownership === "bot" && !target)
+      throw fail(
+        "Automatic replies are not configured or this conversation is not eligible.",
+        409,
+      );
     await db.query(
       `UPDATE ${s}.assistant_lead_conversations SET ownership=$3,human_owner_identity=$4,ownership_version=ownership_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
       [tenant, id, ownership, ownership === "human" ? actor : null],
@@ -428,6 +444,8 @@ export async function changeOwnership(actor, company, id, input) {
       `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
       [tenant, id],
     );
+    if (target)
+      await enqueueAutomatic(db, target.profile, id, target.eventId, false);
     await event(db, tenant, c.conversation_id, actor, "ownership_changed", {
       previousOwnership: c.ownership,
       ownership,
