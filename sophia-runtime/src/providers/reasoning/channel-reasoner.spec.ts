@@ -63,6 +63,34 @@ describe("Provider-neutral channel answer adapter", () => {
     ).rejects.toThrow();
     expect(p.open).not.toHaveBeenCalled();
   });
+  it("classifies appointment requests without exposing a booking tool or claiming a slot", async () => {
+    const p = provider([
+      {
+        type: "text.delta",
+        delta:
+          '{"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"availability","date":"2026-11-10"}}',
+      },
+      { type: "response.completed" },
+    ]);
+    const result = await generateChannelAnswer(
+      {
+        ...input(),
+        bookingContext: {
+          timezone: "Australia/Brisbane",
+          today: "2026-11-04",
+          maxDate: "2026-12-04",
+        },
+      },
+      p.implementation,
+    );
+    expect(result).toMatchObject({
+      booking: { action: "availability", date: "2026-11-10" },
+    });
+    expect(p.open.mock.calls[0][0].tools).toEqual([]);
+    expect(p.open.mock.calls[0][0].instructions).toContain(
+      "Never claim a slot is available or booked",
+    );
+  });
   it("rejects incomplete output, tool calls and malformed JSON, always closing the session", async () => {
     for (const events of [
       [

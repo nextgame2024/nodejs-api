@@ -141,6 +141,21 @@ async function slots(db, tenant, c, day, timezone, exclude = null) {
   ).rows[0];
   return filterSlots(c, row.candidates, row.busy, row.now.toISOString());
 }
+export async function authorizedAvailability(
+  db,
+  tenant,
+  advisorId,
+  day,
+  timezone,
+) {
+  const c = await calendar(db, tenant, advisorId);
+  return {
+    calendarRevision: c?.revision ?? 0,
+    timezone,
+    advisorTimezone: c?.timezone ?? null,
+    slots: c ? await slots(db, tenant, c, day, timezone) : [],
+  };
+}
 export async function availability(actor, company, q) {
   const id = uuid(q.advisorId),
     day = date(q.date),
@@ -205,6 +220,117 @@ async function appointment(db, tenant, id) {
     )
   ).rows[0];
 }
+// The caller proves who may use the advisor/lead. This function owns the single
+// idempotency, calendar-revision and exclusion-constraint path used by staff and
+// verified customer channels.
+export async function bookAuthorizedAppointment(
+  db,
+  tenant,
+  actor,
+  lead,
+  b,
+  { origin = "scheduling" } = {},
+) {
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+    tenant + ":appointment:" + b.requestKey,
+  ]);
+  const fingerprint = hash({ action: "book", id: null, ...b });
+  const replay = (
+    await db.query(
+      `SELECT actor_identity,request_hash,result FROM ${s}.lead_appointment_mutations WHERE customer_id=$1 AND request_key=$2`,
+      [tenant, b.requestKey],
+    )
+  ).rows[0];
+  if (replay) {
+    if (replay.actor_identity !== actor || replay.request_hash !== fingerprint)
+      throw fail(
+        "This request was already used for different appointment details.",
+        409,
+      );
+    return replay.result;
+  }
+  if (lead.stage === "closed")
+    throw fail("Reopen this lead before booking an appointment.", 409);
+  const c = await calendar(db, tenant, b.advisorId, true);
+  if (!c || c.revision !== b.calendarRevision)
+    throw fail("Availability changed. Choose a time again.", 409, ["slot"]);
+  const selected = (
+    await slots(
+      db,
+      tenant,
+      c,
+      localParts(b.startsAt, b.timezone).date,
+      b.timezone,
+    )
+  ).find((slot) => slot.startsAt === b.startsAt);
+  if (!selected)
+    throw fail(
+      "The selected time is no longer available. Choose another time.",
+      409,
+      ["slot"],
+    );
+  let id;
+  try {
+    id = (
+      await db.query(
+        `INSERT INTO ${s}.lead_appointments(customer_id,lead_id,advisor_identity,starts_at,ends_at,customer_timezone,description,calendar_revision,created_by_identity,updated_by_identity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING appointment_id`,
+        [
+          tenant,
+          b.leadId,
+          b.advisorId,
+          b.startsAt,
+          selected.endsAt,
+          b.timezone,
+          b.description,
+          c.revision,
+          actor,
+        ],
+      )
+    ).rows[0].appointment_id;
+  } catch (e) {
+    if (e.code === "23P01")
+      throw fail(
+        "The selected time is no longer available. Choose another time.",
+        409,
+        ["slot"],
+      );
+    throw e;
+  }
+  const result = JSON.parse(
+    JSON.stringify({ appointment: await appointment(db, tenant, id) }),
+  );
+  await db.query(
+    `INSERT INTO ${s}.lead_appointment_mutations(customer_id,request_key,actor_identity,request_hash,appointment_id,action,result) VALUES($1,$2,$3,$4,$5,'book',$6::jsonb)`,
+    [tenant, b.requestKey, actor, fingerprint, id, JSON.stringify(result)],
+  );
+  const conversation = (
+    await db.query(
+      `SELECT conversation_id FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND lead_id=$2`,
+      [tenant, b.leadId],
+    )
+  ).rows[0];
+  await db.query(
+    `INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,actor_identity,kind,body,metadata) VALUES($1,$2,$3,'note','Appointment booked',$4::jsonb)`,
+    [
+      tenant,
+      conversation.conversation_id,
+      actor,
+      JSON.stringify({
+        origin,
+        appointmentId: id,
+        action: "book",
+        startsAt: result.appointment.startsAt,
+        endsAt: result.appointment.endsAt,
+        advisorId: result.appointment.advisorId,
+      }),
+    ],
+  );
+  await db.query(
+    `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
+    [tenant, b.leadId],
+  );
+  return result;
+}
 // Shared booking operations do not know about WhatsApp, AI vendors or external
 // calendars. A future authorized tool adapter must use this same conflict path.
 export async function mutateAppointment(actor, company, action, id, input) {
@@ -214,6 +340,10 @@ export async function mutateAppointment(actor, company, action, id, input) {
   if (action !== "book") id = uuid(id);
   return run(actor, company, async (db, tenant, access) => {
     const lead = await requiredLead(db, tenant, access, b.leadId, true);
+    if (action === "book") {
+      await requireAdvisor(db, company, access, b.advisorId);
+      return bookAuthorizedAppointment(db, tenant, actor, lead, b);
+    }
     await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
       tenant + ":appointment:" + b.requestKey,
     ]);

@@ -1,0 +1,47 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-booking-confirmation-implementation",
+    "version": "1.0.0",
+    "updatedOn": "2026-11-04",
+    "timezone": "Australia/Brisbane",
+    "slice": "P1B.2b",
+    "status": "locally_verified_pending_migration_122_deployment_and_explicit_enablement"
+  },
+  "scope": [
+    "Connects verified automatic WhatsApp conversations to the assigned advisor's Scheduling availability without exposing a direct model booking tool.",
+    "The reasoning adapter can classify only a missing-date prompt or a bounded availability date/timezone request. Server code validates the channel, lead assignment, published advisor team, calendar and feature permission, then renders up to three current slots.",
+    "A customer selects an offered slot by number and must then send an exact six-digit confirmation code. The appointment is created only after that second message through the same idempotency, calendar-revision and exclusion-constraint path used by staff bookings.",
+    "Adds a default-off published Settings permission and a separate deployment switch. Existing releases remain disabled. Customer cancellation and rescheduling are not enabled by this slice."
+  ],
+  "securityAndConsistency": {
+    "authorization": "Requires WHATSAPP_BOOKING_ENABLED=true, an enabled allowlisted channel, automatic bot ownership, an open lead assigned to an advisor in the latest published team, a saved advisor calendar and appointmentBookingEnabled=true in the latest published Settings release.",
+    "confirmation": "Offers are tenant/channel/lead/conversation/source-event/ownership-version bound, expire after 30 minutes, and selections expire after 15 minutes. Confirmation codes are stored only as SHA-256 digests and expire after five failed attempts.",
+    "atomicity": "The confirmation receipt, appointment insert, immutable mutation result, lead timeline note, offer state and outbound confirmation are committed in one tenant transaction. A booking success message cannot be dispatched without the committed appointment reference.",
+    "conflicts": "The shared scheduling path locks the request key and advisor calendar, revalidates the exact offered UTC instant and calendar revision, and relies on the database exclusion constraint for competing requests.",
+    "ownership": "Takeover, pause, opt-out, lead closure, assignment changes and response-policy changes prevent or cancel active offers through existing ownership/version controls and the new offer trigger.",
+    "providerBoundary": "No provider receives an executable appointment tool. The model output is treated as a bounded intent; availability and mutation authority remain server-owned."
+  },
+  "migration": "sophia-runtime/src/database/migrations/122_whatsapp_appointment_confirmation.sql",
+  "deployment": [
+    "Apply migration 122 with the normal Runtime migration-owner process after migration 121.",
+    "Deploy the Runtime image, Business Manager backend/reply worker and frontend, then restart the reply worker so the new reasoner contract is active.",
+    "Keep WHATSAPP_BOOKING_ENABLED unset/false initially. In Leads & Conversations Settings enable confirmed WhatsApp appointment booking, save and publish; verify the lead is assigned to an active published advisor with configured Scheduling hours.",
+    "After test-number validation, set WHATSAPP_BOOKING_ENABLED=true and verify offer, selection, wrong-code, expiry, conflict and final-confirmation behavior before any customer pilot."
+  ],
+  "verification": {
+    "database": "19 WhatsApp reply/booking PostgreSQL checks passed, including no appointment before confirmation, wrong-code rejection, exact confirmation, duplicate receipt safety and existing reply regressions. All 12 existing staff appointment PostgreSQL checks also passed.",
+    "contracts": "10 backend setting/appointment contract checks and 5 Runtime reasoner/migration checks passed.",
+    "browser": "26 focused ChromeHeadless Settings/inbox checks passed, including opt-in serialization, responsive controls and light/dark assertions.",
+    "regression": "38 real-estate regression checks passed.",
+    "build": "Runtime build, frontend TypeScript and production frontend build passed. Existing frontend budget, CommonJS and missing primeicons warnings remain.",
+    "architecture": "Boundary scan reports only the same two pre-existing student document-analysis vendor-import violations; no new violation was added.",
+    "external": "No production migration, deployment, provider call or live WhatsApp message was performed."
+  },
+  "remaining": [
+    "Customer-requested cancellation and rescheduling still require explicit, conversation-bound confirmation flows before autonomous use.",
+    "Existing WhatsApp Business App coexistence, live voice quality/delivery and a test-number booking pilot remain unverified.",
+    "External calendar busy-time synchronization, invitations, reminders and attendance tracking remain out of scope."
+  ],
+  "nextTask": "P1B.2c add explicitly confirmed customer cancellation/rescheduling on the same conversation and appointment authority boundary, then run the test-number booking pilot.",
+  "rollback": "Disable WHATSAPP_BOOKING_ENABLED and unpublish the Settings permission to stop new offers. Preserve migration 122, offers, appointments and audit history; do not drop production booking data."
+}

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { transaction, directory } from "../leads/assistant-settings.service.js";
 import { fail, revision } from "../leads/assistant-settings.contracts.js";
 import { channelProfiles } from "./channel-profiles.js";
+import { handleAppointmentConfirmation } from "../scheduling/whatsapp-appointment-booking.service.js";
 const s = "sophia_runtime";
 async function installed(db) {
   if (
@@ -250,10 +251,12 @@ async function applyMessage(db, profile, channel, company, e) {
     !contact.last_inbound_at ||
     new Date(e.sentAt).getTime() >= new Date(contact.last_inbound_at).getTime();
   // Same lead lock order as staff mutations, preventing deadlocks with takeover.
-  await db.query(
-    `SELECT lead_id FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
-    [tenant, contact.lead_id],
-  );
+  const lead = (
+    await db.query(
+      `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
+      [tenant, contact.lead_id],
+    )
+  ).rows[0];
   const conversation = (
     await db.query(
       `SELECT * FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
@@ -327,9 +330,34 @@ async function applyMessage(db, profile, channel, company, e) {
       recorded.rows[0].event_id,
       isNew,
     );
-    if(!queued) await db.query(`UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND lead_id=$2 AND ownership='bot'`,[tenant,contact.lead_id]);
+    if (!queued)
+      await db.query(
+        `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND lead_id=$2 AND ownership='bot'`,
+        [tenant, contact.lead_id],
+      );
   }
-  if (!echo && isCurrent && !stop && e.messageType === "text" && !e.truncated)
+  const bookingHandled =
+    !echo &&
+    isCurrent &&
+    !stop &&
+    e.messageType === "text" &&
+    !e.truncated &&
+    (await handleAppointmentConfirmation(
+      db,
+      profile,
+      channel,
+      lead,
+      conversation,
+      e.body,
+    ));
+  if (
+    !echo &&
+    isCurrent &&
+    !stop &&
+    e.messageType === "text" &&
+    !e.truncated &&
+    !bookingHandled
+  )
     await enqueueAutomatic(
       db,
       profile,

@@ -17,6 +17,10 @@ import {
 } from "./reply-store.js";
 import { directory } from "../leads/assistant-settings.service.js";
 import { hash } from "../leads/lead-records.contracts.js";
+import {
+  bookingCapabilityContext,
+  createAppointmentOffer,
+} from "../scheduling/whatsapp-appointment-booking.service.js";
 async function handoffJob(db, tenant, job, state = "needs_human") {
   await db.query(
     `UPDATE ${s}.assistant_reply_jobs SET state=$3,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
@@ -133,6 +137,13 @@ export async function generateOne(profile, reasoner) {
       await handoffJob(db, profile.customerId, job);
       return null;
     }
+    const booking = await bookingCapabilityContext(
+      db,
+      profile,
+      channel,
+      lead,
+      c,
+    );
     const config = release.manifest.configuration;
     const words = [
       ...new Set(e.body.toLowerCase().match(/[\p{L}\p{N}]{3,40}/gu) ?? []),
@@ -152,7 +163,7 @@ export async function generateOne(profile, reasoner) {
         ],
       )
     ).rows;
-    if (!sources.length) {
+    if (!sources.length && !booking) {
       await handoffJob(db, profile.customerId, job);
       if (!job.requested_by_identity)
         await db.query(
@@ -173,6 +184,13 @@ export async function generateOne(profile, reasoner) {
       question: e.body,
       language: lead.language,
       sources,
+      booking: booking
+        ? {
+            timezone: booking.timezone,
+            today: booking.today,
+            maxDate: booking.maxDate,
+          }
+        : null,
     };
   });
   if (!task) return { processed: false };
@@ -186,6 +204,7 @@ export async function generateOne(profile, reasoner) {
       question: task.question,
       language: task.language,
       sources: task.sources,
+      bookingContext: task.booking,
       signal: AbortSignal.timeout(30000),
     });
   } catch {
@@ -193,7 +212,7 @@ export async function generateOne(profile, reasoner) {
   }
   result ??= { handoff: true, failed: true };
   const allowed = new Set(task.sources.map((x) => x.id));
-  const valid =
+  const factual =
     result &&
     result.handoff === false &&
     typeof result.answer === "string" &&
@@ -203,13 +222,27 @@ export async function generateOne(profile, reasoner) {
     result.sourceIds.length > 0 &&
     result.sourceIds.length <= 5 &&
     result.sourceIds.every((id) => allowed.has(id));
+  const booking =
+    result &&
+    result.handoff === false &&
+    result.answer === "" &&
+    Array.isArray(result.sourceIds) &&
+    result.sourceIds.length === 0 &&
+    task.booking &&
+    result.booking &&
+    (result.booking.action === "clarify_date" ||
+      (result.booking.action === "availability" &&
+        typeof result.booking.date === "string"));
+  const valid = factual || booking;
   await scoped(
     profile,
     async (db, channel) => {
-      await db.query(
-        `SELECT lead_id FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
-        [profile.customerId, task.job.lead_id],
-      );
+      const lead = (
+        await db.query(
+          `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
+          [profile.customerId, task.job.lead_id],
+        )
+      ).rows[0];
       const c = (
         await db.query(
           `SELECT * FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND conversation_id=$2 FOR UPDATE`,
@@ -236,14 +269,15 @@ export async function generateOne(profile, reasoner) {
       }
       // Recheck every cited source/grant after external generation, including retirement.
       const stillPublished =
-        checkedRelease &&
-        (await sourcesAvailable(
-          db,
-          profile.customerId,
-          checkedRelease,
-          task.sources.map((x) => x.id),
-        ));
-      const accepted =
+        !factual ||
+        (checkedRelease &&
+          (await sourcesAvailable(
+            db,
+            profile.customerId,
+            checkedRelease,
+            task.sources.map((x) => x.id),
+          )));
+      let accepted =
         valid &&
         stillPublished &&
         checkedRelease &&
@@ -254,20 +288,35 @@ export async function generateOne(profile, reasoner) {
           profile,
         )) &&
         !result.handoff;
+      let answer = factual ? result.answer.trim() : null;
+      if (accepted && booking) {
+        const offered = await createAppointmentOffer(
+          db,
+          profile,
+          channel,
+          lead,
+          c,
+          job,
+          result.booking,
+        );
+        accepted = !!offered;
+        answer = offered?.body ?? null;
+      }
       await db.query(
-        `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
+        `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,response_kind=$7,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
         [
           profile.customerId,
           job.job_id,
           accepted ? "ready" : result.failed ? "failed" : "needs_human",
-          accepted ? result.answer.trim() : null,
-          JSON.stringify(accepted ? result.sourceIds : []),
+          accepted ? answer : null,
+          JSON.stringify(accepted && factual ? result.sourceIds : []),
           JSON.stringify({
             attempts: [
               ...(Array.isArray(job.usage?.attempts) ? job.usage.attempts : []),
               result.usage ?? { measurementStatus: "incomplete" },
             ].slice(-2),
           }),
+          accepted && booking ? "appointment" : "grounded_answer",
         ],
       );
       if (!accepted && !job.requested_by_identity)
@@ -288,9 +337,9 @@ export async function generateOne(profile, reasoner) {
             job.lead_id,
             job.conversation_id,
             job.ownership_version,
-            result.answer.trim(),
+            answer,
             job.job_id,
-            hash({ body: result.answer.trim() }),
+            hash({ body: answer }),
           ],
         );
         if (queued.rows[0])
@@ -334,7 +383,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     if (!candidate) return null;
     const lead = (
       await db.query(
-        `SELECT stage FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
+        `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
         [profile.customerId, candidate.lead_id],
       )
     ).rows[0];
@@ -383,7 +432,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     if (m.job_id) {
       const j = (
         await db.query(
-          `SELECT j.state,b.mode,j.agent_release_id,j.sources,j.binding_revision,b.revision FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.job_id=$2`,
+          `SELECT j.state,b.mode,j.agent_release_id,j.sources,j.response_kind,j.binding_revision,b.revision FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.job_id=$2`,
           [profile.customerId, m.job_id],
         )
       ).rows[0];
@@ -401,17 +450,44 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
           );
           permitted =
             permitted &&
-            (await providerAllowed(db, profile.customerId, release, profile)) &&
-            (await sourcesAvailable(
+            (await providerAllowed(db, profile.customerId, release, profile));
+          if (permitted && j.response_kind === "grounded_answer")
+            permitted = await sourcesAvailable(
               db,
               profile.customerId,
               release,
               j.sources,
+            );
+          if (permitted && j.response_kind === "appointment")
+            permitted = !!(await bookingCapabilityContext(
+              db,
+              profile,
+              channel,
+              lead,
+              c,
             ));
         } catch (e) {
           if (e.status !== 409) throw e;
           permitted = false;
         }
+    }
+    if (permitted && m.appointment_offer_id) {
+      const offer = (
+        await db.query(
+          `SELECT status FROM ${s}.lead_appointment_offers WHERE customer_id=$1 AND offer_id=$2 AND channel_id=$3 AND lead_id=$4 AND conversation_id=$5`,
+          [
+            profile.customerId,
+            m.appointment_offer_id,
+            channel.channel_id,
+            m.lead_id,
+            m.conversation_id,
+          ],
+        )
+      ).rows[0];
+      permitted =
+        !!offer &&
+        (["confirmed", "expired"].includes(offer.status) ||
+          !!(await bookingCapabilityContext(db, profile, channel, lead, c)));
     }
     if (
       !permitted ||

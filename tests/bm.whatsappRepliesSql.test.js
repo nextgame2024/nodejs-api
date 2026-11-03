@@ -24,6 +24,9 @@ const settings = await import(
 const api = await import("../src/services/leads/lead-records.service.js");
 const replies = await import("../src/services/messaging/reply-api.service.js");
 const worker = await import("../src/services/messaging/reply-worker.js");
+const appointments = await import(
+  "../src/services/scheduling/lead-appointments.service.js"
+);
 const channel = await import(
   "../src/services/messaging/whatsapp-channel.service.js"
 );
@@ -55,6 +58,7 @@ const config = () => ({
   contentOwnerId: contentOwner,
   advisorIds: [advisor, second],
   coverage: [{ day: 1, start: "09:00", end: "17:00" }],
+  appointmentBookingEnabled: true,
 });
 const input = (assignedTo = advisor) => ({
   displayName: "Example enquiry",
@@ -151,12 +155,28 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
     );
+    for (const name of [
+      "121_lead_appointments.sql",
+      "122_whatsapp_appointment_confirmation.sql",
+    ])
+      await pool.query(
+        (
+          await readFile(
+            new URL(
+              "../sophia-runtime/src/database/migrations/" + name,
+              import.meta.url,
+            ),
+            "utf8",
+          )
+        ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
+      );
   });
   afterAll(async () => {
     delete process.env.WHATSAPP_INBOUND_PROFILES;
     delete process.env.WHATSAPP_OUTBOUND_ENABLED;
     delete process.env.WHATSAPP_GENERATION_ENABLED;
     delete process.env.WHATSAPP_AUTOMATION_ENABLED;
+    delete process.env.WHATSAPP_BOOKING_ENABLED;
     delete process.env.WHATSAPP_TEST_SEND;
     delete process.env.WHATSAPP_TEST_SECRET;
     delete process.env.WHATSAPP_TEST_VERIFY;
@@ -558,6 +578,136 @@ suite("WhatsApp replies on PostgreSQL", () => {
           "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE state='queued'",
         )
       ).rowCount,
+    ).toBe(1);
+  });
+  test("offers assigned-advisor slots and books only after the customer's exact confirmation", async () => {
+    process.env.WHATSAPP_BOOKING_ENABLED = "true";
+    await appointments.saveCalendar(owner, company, advisor, {
+      expectedRevision: 0,
+      timezone: "Australia/Brisbane",
+      slotMinutes: 30,
+      leadTimeMinutes: 0,
+      bookingWindowDays: 30,
+      weeklyHours: Array.from({ length: 7 }, (_, day) => ({
+        day,
+        start: "09:00",
+        end: "12:00",
+      })),
+      closedDates: [],
+    });
+    const sender = "61422222222";
+    await inbound("booking-request", {
+      senderId: sender,
+      body: "I want an appointment",
+    });
+    const bookingLead = (
+      await pool.query(
+        "SELECT l.lead_id FROM sophia_runtime.assistant_channel_contacts t JOIN sophia_runtime.assistant_leads l USING(customer_id,lead_id) WHERE t.customer_id=$1 AND t.sender_id=$2",
+        [tenant, sender],
+      )
+    ).rows[0];
+    let detail = await api.getLead(owner, company, bookingLead.lead_id);
+    await api.updateLead(owner, company, bookingLead.lead_id, {
+      expectedVersion: detail.lead.version,
+      lead: input(advisor),
+    });
+    detail = await api.getLead(owner, company, bookingLead.lead_id);
+    await api.changeOwnership(owner, company, bookingLead.lead_id, {
+      expectedVersion: detail.lead.ownershipVersion,
+      ownership: "bot",
+    });
+    const day = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+    expect(
+      await worker.generateOne(full, async () => ({
+        handoff: false,
+        answer: "",
+        sourceIds: [],
+        booking: {
+          action: "availability",
+          date: day,
+          timezone: "Pacific/Auckland",
+        },
+      })),
+    ).toEqual({ processed: true });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+    expect(
+      (
+        await pool.query(
+          "SELECT response_kind FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].response_kind,
+    ).toBe("appointment");
+    await inbound("booking-selection", { senderId: sender, body: "1" });
+    const confirmation = (
+      await pool.query(
+        "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0].body;
+    const code = /CONFIRM (\d{6})/.exec(confirmation)?.[1];
+    expect(code).toMatch(/^\d{6}$/);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+    await inbound("booking-wrong-confirm", {
+      senderId: sender,
+      body: "CONFIRM 000000",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+    await inbound("booking-confirm", {
+      senderId: sender,
+      body: `CONFIRM ${code}`,
+    });
+    const saved = (
+      await pool.query(
+        "SELECT status,appointment_id,customer_timezone FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(saved).toMatchObject({
+      status: "confirmed",
+      customer_timezone: "Pacific/Auckland",
+    });
+    expect(saved.appointment_id).toBeTruthy();
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    await inbound("booking-confirm-retry", {
+      senderId: sender,
+      body: `CONFIRM ${code}`,
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
     ).toBe(1);
   });
   test("knowledge retirement between generation and send cancels dispatch", async () => {

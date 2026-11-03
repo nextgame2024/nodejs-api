@@ -1,27 +1,28 @@
 {
   "whatsappAssistantPlan": {
-    "updatedOn": "2026-11-03",
-    "status": "staff_scheduling_foundation_locally_verified_pending_migration_121_and_deployment",
-    "details": "whatsapp-assistant-scheduling-implementation.json",
-    "scope": "Migration 120 applied by user report. P1B.2a extends the existing Scheduling area with advisor calendars and staff-managed lead appointments: timezone-aware availability, explicit booking, rescheduling, cancellation, optimistic revisions, idempotent results and database conflict protection. Existing project bookings and inbox unsaved-edit behavior are preserved. Customer booking through WhatsApp is not connected yet.",
+    "updatedOn": "2026-11-04",
+    "status": "whatsapp_booking_confirmation_locally_verified_pending_migration_122_deployment_and_explicit_enablement",
+    "details": "whatsapp-assistant-booking-confirmation-implementation.json",
+    "scope": "Migration 121 applied by user report. P1B.2b connects verified automatic WhatsApp conversations to assigned-advisor availability. The server offers real slots and requires numbered selection plus a separate exact confirmation code before the shared idempotent appointment transaction runs. Published Settings and the deployment switch are both default-off. Customer cancellation/rescheduling remain unfinished.",
     "verification": {
-      "backend": "17 focused checks passed: 12 PostgreSQL tests and 5 contract/timezone tests. Also passed 38 real-estate regression checks. Includes migration/RLS/grants, authority, optimistic revisions, same-key concurrency, competing reservations, rollback, cancellations, small lookup projection, closed leads, breaks and daylight-saving transitions.",
-      "browser": "52 browser checks passed per viewport at desktop 1902x1016 and mobile 390x844. Covers existing lead inbox/Settings/reply routes and new booking retries, cancellation, read-only actions, request teardown, numeric select serialization, unsaved-note guard, minimal lookup, timezone debounce, upward menus, focus/dialog layout and light/dark themes.",
+      "backend": "19 WhatsApp reply/booking PostgreSQL checks, 12 staff appointment PostgreSQL checks, 10 backend contract checks, 5 Runtime reasoner/migration checks and 38 real-estate regressions passed.",
+      "browser": "26 focused ChromeHeadless Settings/inbox checks passed, including the default-off permission, serialization, responsive controls and light/dark assertions.",
       "build": "Runtime build, frontend TypeScript and production frontend build passed. Existing bundle/style-budget, CommonJS and missing primeicons warnings remain.",
       "architecture": "Boundary checker still reports only the same two pre-existing unchanged student-document-analysis.worker.ts/spec.ts vendor imports; no new violations.",
       "external": "No production migration, deployment, provider calls, live messages or calendar/email invitations performed.",
       "commands": [
-        "LOCAL_LEAD_APPOINTMENTS_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.leadAppointmentsSql.test.js tests/bm.leadAppointments.test.js",
+        "LOCAL_WHATSAPP_REPLY_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.whatsappRepliesSql.test.js",
+        "LOCAL_LEAD_APPOINTMENTS_TEST_DATABASE_URL=<fresh localhost fixture> NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.leadAppointmentsSql.test.js",
         "npm run test:p0:real-estate",
         "npm run build --prefix sophia-runtime; compare migration 121 source and packaged dist copy",
         "Frontend tsc --noEmit; ng build with NG_BUILD_MAX_WORKERS=2 and dummy Maps key",
-        "ChromeHeadless ng test: Scheduling lead specs, existing lead specs and manager routes, using 1902x1016 and 390x844 wrappers",
+        "ChromeHeadless ng test: lead assistant Settings and workspace specs",
         "node scripts/check-sophia-boundaries.mjs; git diff --check in both repositories"
       ],
       "fixtureCorrection": "An initial closed-lead fixture attempted to create a lead directly in Closed status. The existing API correctly rejected it. The fixture now creates New, explicitly closes the lead through the normal update flow and verifies booking rejection; the final suite passes."
     },
-    "productionChanges": "None. Apply migration 121 with the migration owner, deploy Business Manager backend/frontend, and explicitly configure each published advisor calendar. Runtime build packages the migration; no new worker or calendar OAuth setup is required.",
-    "nextTask": "P1B.2b connect verified WhatsApp conversations to availability and explicit appointment confirmation, using a separately authorized booking tool boundary shared with future Runtime continuation. Existing WhatsApp Business App coexistence, live voice configuration/quality and customer booking pilot remain separately unverified.",
+    "productionChanges": "None. Apply migration 122 with the migration owner, deploy Runtime/backend/reply worker/frontend, publish the default-off booking permission, and enable WHATSAPP_BOOKING_ENABLED only for an approved test-number pilot.",
+    "nextTask": "P1B.2c add explicit customer cancellation/rescheduling confirmation on the same authority boundary, then verify the test-number booking pilot. Existing WhatsApp Business App coexistence and live voice quality/delivery remain separately unverified.",
     "wireframes": "whatsapp-assistant-wireframes.html"
   },
   "studentSyncCaseBootstrap": {

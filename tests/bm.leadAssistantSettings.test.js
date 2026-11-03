@@ -10,6 +10,7 @@ describe("Assistant Settings validation", () => {
     const result = configuration(defaults());
     expect(result.businessName).toBe("");
     expect(result.advisorIds).toEqual([]);
+    expect(result.appointmentBookingEnabled).toBe(false);
     expect(publicationIssues(result, new Set())).toEqual(
       expect.arrayContaining([
         "businessName",

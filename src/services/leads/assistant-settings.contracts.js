@@ -17,6 +17,7 @@ export const defaults = () => ({
   greeting: "",
   defaultLanguage: "es",
   languages: ["es"],
+  appointmentBookingEnabled: false,
 });
 export function revision(value) {
   if (!Number.isInteger(value) || value < 0)
@@ -91,6 +92,14 @@ export function configuration(input) {
     ]);
   result.languages = [...new Set(input.languages)];
   result.defaultLanguage = input.defaultLanguage;
+  if (
+    input.appointmentBookingEnabled !== undefined &&
+    typeof input.appointmentBookingEnabled !== "boolean"
+  )
+    throw fail("Choose whether customer appointment booking is enabled.", 400, [
+      "appointmentBookingEnabled",
+    ]);
+  result.appointmentBookingEnabled = input.appointmentBookingEnabled === true;
   if (!Array.isArray(input.coverage) || input.coverage.length > 28)
     throw fail("Add up to 28 coverage intervals.", 400, ["coverage"]);
   result.coverage = input.coverage

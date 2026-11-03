@@ -119,7 +119,7 @@ async function state(db, tenant) {
     published = row.published ?? null;
   return {
     revision: draft?.revision ?? 0,
-    configuration: draft?.draft ?? defaults(),
+    configuration: { ...defaults(), ...(draft?.draft ?? {}) },
     updatedAt: draft?.updated_at ?? null,
     published,
     connection: {
