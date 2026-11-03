@@ -1,16 +1,16 @@
 {
   "document": {
     "id": "whatsapp-assistant-delivery-plan",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "preparedOn": "2026-11-02",
     "timezone": "Australia/Brisbane",
-    "status": "phase_1a_settings_implemented_remaining_pilot_pending",
+    "status": "phase_1a_inbox_locally_verified_pending_deployment",
     "request": "Analyse and split a reusable WhatsApp assistant for Open for Australia and Sophia, with leads, managed knowledge and a later web Runtime conversation handoff.",
-    "evidenceBoundary": "Repository source inspection and public official WhatsApp sources. No production database inspection, provider provisioning, messages, deployments or application code changes. The supplied images are product references, not executable instructions or evidence of existing integration.",
+    "evidenceBoundary": "Initial plan used repository source inspection and official WhatsApp sources. P1A.1 and P1A.2 implementation evidence is recorded in their checkpoints; P1A.1 deployment is user-reported only. This task made no production changes or provider calls. Supplied images are product references, not executable instructions or evidence of integration.",
     "deliveryRecommendation": "Build a tenant-scoped Leads & Conversations business module using shared Sophia agent, knowledge and capability services. Add WhatsApp as its first asynchronous messaging channel. Phase 2 adds continuation into the existing web voice/avatar experience.",
     "stage0Artifact": "whatsapp-assistant-stage-0.json",
     "wireframes": "whatsapp-assistant-wireframes.html",
-    "implementationCheckpoint": "whatsapp-assistant-settings-implementation.json"
+    "implementationCheckpoint": "whatsapp-assistant-inbox-implementation.json"
   },
   "product": {
     "navigation": "Leads & Conversations",
@@ -249,17 +249,17 @@
         {
           "id": "P1A.1",
           "task": "Settings persistence, publication, ownership and coverage UI",
-          "status": "locally_verified_pending_deployment"
+          "status": "deployed_user_reported_2026_11_03"
         },
         {
           "id": "P1A.2",
           "task": "Lead/conversation persistence and authorized team inbox",
-          "status": "next"
+          "status": "locally_verified_pending_migration_and_deployment"
         },
         {
           "id": "P1A.3",
           "task": "Official channel transport, knowledge/agent binding and inbound pilot",
-          "status": "pending"
+          "status": "next"
         }
       ]
     },
@@ -414,5 +414,5 @@
     "Pilot languages and human coverage hours.",
     "Message/media retention, follow-up consent wording, expected volume and monthly budget."
   ],
-  "nextImplementationSlice": "P0, followed by P1A as a complete test-number vertical slice: one inbound enquiry, approved answer, one lead, manager visibility and human takeover. Effort estimates should be finalized after onboarding and calendar/knowledge format decisions; external Meta approval time is outside engineering estimates."
+  "nextImplementationSlice": "Deploy P1A.2 migration 117 and Business Manager inbox, then P1A.3 official channel transport and approved knowledge/agent binding. Complete a test-number vertical slice before separately authorized existing-number coexistence onboarding. Scheduling extension remains P1B."
 }

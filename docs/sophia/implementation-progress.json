@@ -1,18 +1,19 @@
 {
   "whatsappAssistantPlan": {
-    "updatedOn": "2026-11-02",
-    "status": "phase_1a_settings_locally_verified_pending_deployment",
-    "details": "whatsapp-assistant-settings-implementation.json",
-    "scope": "P1A.1 Settings implemented with draft/publish, team ownership, language, coverage, tenant authorization, RLS and immutable releases. Lead/inbox/transport work remains P1A.2 onward.",
-    "evidence": "Inspected agent, knowledge, escalation, capability ports and Runtime resolver source; researched official WhatsApp messaging policy and pricing. Current complete platform terms require authenticated review.",
-    "verification": [
-      "20 backend tests passed including disposable PostgreSQL migration and production-like default grants",
-      "16 browser/navigation tests passed at both desktop and mobile widths, light/dark included",
-      "TypeScript and production frontend build passed; initial esbuild crash resolved by bounded-worker retry",
-      "Architecture scan has two pre-existing unchanged document-worker import violations",
-      "Both repositories pass git diff --check"
-    ],
-    "productionChanges": "None. Apply Runtime migration 116 and the navigation registration SQL, then deploy Business Manager backend/frontend.",
+    "updatedOn": "2026-11-03",
+    "status": "phase_1a_inbox_locally_verified_pending_deployment",
+    "details": "whatsapp-assistant-inbox-implementation.json",
+    "scope": "P1A.1 deployment reported by user. P1A.2 implements tenant-scoped manual leads, assignment, paged register/inbox, internal notes and human ownership with published defaults. Channel/AI work remains P1A.3.",
+    "verification": {
+      "backend": "27 focused tests passed across 4 suites, including real disposable PostgreSQL migrations, RLS, tenant-composite FK, least privilege, advisor isolation, stale writes, concurrent duplicate creation, ownership races, internal-note retry, paging, active-member revocation and existing Settings regressions.",
+      "realEstate": "38 deterministic tests passed across all 8 test:p0:real-estate suites.",
+      "browser": "32 tests passed at desktop 1902x1016 and mobile 390x844, including light/dark layout checks, Settings/navigation regressions, shared controls, request cancellation, retries, unsaved notes and history races.",
+      "compile": "Application TypeScript and bounded-worker production build passed. Existing bundle/style budget, CommonJS and missing primeicons stylesheet warnings remain.",
+      "architecture": "Boundary checker exits 1 for the two existing unchanged student-document-analysis.worker.ts/spec.ts vendor-import violations; no new violations.",
+      "external": "No production database, migration, WhatsApp connection, message, AI request or deployment performed."
+    },
+    "productionChanges": "None in this task. Apply Runtime migration 117 then deploy Business Manager backend/frontend. Live WhatsApp remains inactive.",
+    "nextTask": "P1A.3 channel transport and inbound pilot; keep live sends and existing-number onboarding separately authorized.",
     "wireframes": "whatsapp-assistant-wireframes.html"
   },
   "studentSyncCaseBootstrap": {

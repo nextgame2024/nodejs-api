@@ -15,7 +15,12 @@ const managerSql = `SELECT EXISTS(SELECT 1 FROM sophia_runtime.admin_memberships
 
 // The identity pool resolves the signed-in company. All configuration reads and
 // writes use the non-BYPASSRLS Runtime role, scoped to that verified customer.
-async function transaction(actor, company, work) {
+export async function transaction(
+  actor,
+  company,
+  work,
+  { inbox = false } = {},
+) {
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
@@ -30,7 +35,9 @@ async function transaction(actor, company, work) {
     const tenant = scopes.rows[0].customer_id;
     await db.query("SET LOCAL ROLE sophia_runtime_app");
     await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenant]);
-    if (!(await db.query(managerSql, [tenant, actor])).rows[0]?.allowed)
+    const manager = !!(await db.query(managerSql, [tenant, actor])).rows[0]
+      ?.allowed;
+    if (!manager && !inbox)
       throw fail(
         "Only a business owner or Chief Executive can configure the assistant.",
         403,
@@ -46,7 +53,27 @@ async function transaction(actor, company, work) {
         "Assistant settings are not available yet. Contact your administrator to finish setup.",
         503,
       );
-    const result = await work(db, tenant);
+    let access = { manager, canManageLeads: manager, actor, published: null };
+    if (inbox) {
+      const published =
+        (
+          await db.query(
+            `SELECT release_id,configuration FROM ${schema}.lead_assistant_setting_releases WHERE customer_id=$1 ORDER BY source_revision DESC LIMIT 1`,
+            [tenant],
+          )
+        ).rows[0] ?? null;
+      const c = published?.configuration;
+      const owners = [c?.enquiryOwnerId, c?.fallbackOwnerId].filter(Boolean);
+      if (!manager && ![...owners, ...(c?.advisorIds ?? [])].includes(actor))
+        throw fail("You do not have access to the enquiries inbox.", 403);
+      access = {
+        manager,
+        canManageLeads: manager || owners.includes(actor),
+        actor,
+        published,
+      };
+    }
+    const result = await work(db, tenant, access);
     await db.query("COMMIT");
     return result;
   } catch (e) {
@@ -58,7 +85,7 @@ async function transaction(actor, company, work) {
 }
 // Identity-directory read only: fixed SQL, verified company, selected IDs or
 // bounded search. No user credentials/emails are projected or changed.
-async function directory(db, company, { q = "", ids = [] } = {}) {
+export async function directory(db, company, { q = "", ids = [] } = {}) {
   await db.query("RESET ROLE");
   try {
     return (
@@ -217,6 +244,17 @@ export async function publishSettings(actor, company, input) {
 export async function canManageSettings(actor, company) {
   try {
     await transaction(actor, company, async () => true);
+    return true;
+  } catch (e) {
+    if ([403, 503].includes(e.status) || ["42P01", "42501"].includes(e.code))
+      return false;
+    throw e;
+  }
+}
+
+export async function canAccessAssistant(actor, company) {
+  try {
+    await transaction(actor, company, async () => true, { inbox: true });
     return true;
   } catch (e) {
     if ([403, 503].includes(e.status) || ["42P01", "42501"].includes(e.code))

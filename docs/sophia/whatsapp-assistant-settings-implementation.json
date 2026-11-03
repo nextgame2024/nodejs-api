@@ -2,8 +2,8 @@
   "document": {
     "id": "whatsapp-assistant-settings-implementation",
     "updatedOn": "2026-11-02",
-    "status": "locally_verified_pending_migration_and_deployment",
-    "slice": "P1A.1 — real Settings page and persistence; the full inbound pilot remains in progress"
+    "status": "deployed_user_reported_2026_11_03",
+    "slice": "P1A.1 \u2014 real Settings page and persistence; the full inbound pilot remains in progress"
   },
   "implemented": [
     "Lazy-loaded Business Manager /manager/leads Settings page and configurable Leads & Conversations menu item",
@@ -29,7 +29,7 @@
     "Apply scripts/sql/bm_lead_assistant_navigation.sql with the authorized identity database owner to register the menu for existing active companies with Runtime customers.",
     "Deploy the Business Manager backend (Express) and frontend together. Runtime deployment is only needed as part of the established migration packaging/release process; no new Runtime HTTP controller was added.",
     "Use a current active business owner/Chief Executive account. Other staff cannot configure settings in this slice; later inbox/advisor roles are separate work.",
-    "Open Business Manager → Leads & Conversations, configure the draft and publish. Published settings alone do not activate WhatsApp or change an agent release."
+    "Open Business Manager \u2192 Leads & Conversations, configure the draft and publish. Published settings alone do not activate WhatsApp or change an agent release."
   ],
   "verification": {
     "backend": "20 tests passed: validation, actual isolated PostgreSQL migration/RLS/least-privilege, tenant spoofing, active staff, revoked authority, concurrent creation/stale edits, incomplete publication, immutable release/idempotent publication, navigation and real-estate characterization.",
@@ -46,5 +46,9 @@
     "Test-number pilot followed by verified existing Business App coexistence onboarding"
   ],
   "scheduling": "Existing project scheduling is unchanged. Its advisor appointment extension remains P1B according to the approved plan.",
-  "nextTask": "P1A.2: lead/conversation data model and team inbox, using published Settings for ownership and language defaults. Live WhatsApp activation remains gated by actual account coexistence readiness."
+  "nextTask": "P1A.2 implemented locally; see whatsapp-assistant-inbox-implementation.json for verification and deployment requirements.",
+  "deploymentReport": {
+    "reportedOn": "2026-11-03",
+    "source": "User reports changes deployed; no independent production verification."
+  }
 }

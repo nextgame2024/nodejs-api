@@ -1,0 +1,77 @@
+{
+  "document": {
+    "id": "whatsapp-assistant-inbox-implementation",
+    "updatedOn": "2026-11-03",
+    "status": "locally_verified_pending_migration_and_deployment",
+    "slice": "P1A.2 \u2014 lead records and authorized team inbox"
+  },
+  "previousDeployment": {
+    "slice": "P1A.1",
+    "reportedBy": "user",
+    "reportedOn": "2026-11-03",
+    "independentlyVerified": false
+  },
+  "implemented": [
+    "Lazy-loaded Inbox, Leads and manager-only Settings within Leads & Conversations. Existing Settings remains available.",
+    "Manual enquiry creation and editing; published language and enquiry owner/fallback defaults; New, Qualifying, Qualified and Closed stages with reasons for qualification/closure.",
+    "Server-side search, filters, sorting and pagination; desktop register/mobile cards. Inbox uses a paged conversation selector rather than a second register table.",
+    "Lead detail and immutable chronological activity, bounded 50-event history pages, internal-only notes, human takeover and pause controls.",
+    "Optimistic lead/ownership versions, duplicate-create/note protection, stale-response cancellation, preserved failed input and unsaved-edit confirmation.",
+    "Assignment changes and closure pause conversations. Manual changes record field provenance and audit summaries."
+  ],
+  "authorization": {
+    "tenant": "Active signed-in account/company resolves Runtime customer. All Runtime reads/writes use SET LOCAL ROLE sophia_runtime_app and tenant RLS. Fixed company-scoped staff directory uses the identity connection role, projecting IDs and names only.",
+    "managers": "Active organisation_owner or existing chief_executive may manage Settings and all tenant leads.",
+    "queueOwners": "Published enquiry and fallback owners may manage the tenant lead queue and assignment, without Settings publication rights.",
+    "advisors": "Published active advisors access only their assigned leads, including detail, history, notes and ownership. Cannot reassign or take a conversation from another handler.",
+    "contentOwners": "Content ownership alone grants neither inbox nor Settings authority.",
+    "revalidation": "Active company, active membership and published team access checked on every request; list counts use the same advisor scope as rows."
+  },
+  "data": {
+    "migration": "117_lead_records_and_inbox.sql",
+    "tables": [
+      "assistant_leads",
+      "assistant_lead_conversations",
+      "assistant_lead_events"
+    ],
+    "constraints": "Tenant-composite foreign keys, optimistic versions, per-tenant request keys, append-only events, forced tenant RLS and explicit least-privilege grants after revoking inherited default grants.",
+    "identityBoundary": "No student account, login, case, invoice, Xero contact, automatic matching or conversion is created."
+  },
+  "api": {
+    "base": "/api/bm/lead-assistant",
+    "context": "GET /inbox/context",
+    "register": "GET/POST /leads",
+    "detail": "GET/PUT /leads/:leadId",
+    "history": "GET /leads/:leadId/events?before=cursor",
+    "notes": "POST /leads/:leadId/notes",
+    "ownership": "POST /leads/:leadId/ownership"
+  },
+  "performance": {
+    "lists": "One scoped CTE query returns count and bounded page; 25/50/100 records, stable ID tie-breakers. Search debounced 250ms with obsolete-request cancellation. No provider calls during ordinary inbox reads.",
+    "history": "Latest 50 events and cursor-based older pages; replace pages to bound browser memory.",
+    "mutations": "One refresh after a successful user mutation; stable request keys for safe create/note retries.",
+    "limits": "No live-volume latency benchmark was performed. Case-insensitive substring searches may need indexed search at larger measured volumes."
+  },
+  "verification": {
+    "backend": "27 focused tests passed across 4 suites, including real disposable PostgreSQL migrations, RLS, tenant-composite FK, least privilege, advisor isolation, stale writes, concurrent duplicate creation, ownership races, internal-note retry, paging, active-member revocation and existing Settings regressions.",
+    "realEstate": "38 deterministic tests passed across all 8 test:p0:real-estate suites.",
+    "browser": "32 tests passed at desktop 1902x1016 and mobile 390x844, including light/dark layout checks, Settings/navigation regressions, shared controls, request cancellation, retries, unsaved notes and history races.",
+    "compile": "Application TypeScript and bounded-worker production build passed. Existing bundle/style budget, CommonJS and missing primeicons stylesheet warnings remain.",
+    "architecture": "Boundary checker exits 1 for the two existing unchanged student-document-analysis.worker.ts/spec.ts vendor-import violations; no new violations.",
+    "external": "No production database, migration, WhatsApp connection, message, AI request or deployment performed."
+  },
+  "deployment": [
+    "Apply Runtime migration 117 through the normal owner-operated migration runner after 116. Preserve the Runtime app role boundary.",
+    "Deploy Business Manager backend and frontend together. Menu registration from P1A.1 is reused; no additional navigation SQL.",
+    "Open Leads & Conversations. Publish a valid Settings configuration before creating leads. Verify manager queue access and assigned advisor access.",
+    "New conversations remain paused until explicitly taken by a human. This slice has no outbound message control and cannot enable bot ownership."
+  ],
+  "remaining": [
+    "P1A.3: official WhatsApp connection through existing integration management; verify Business App coexistence eligibility before onboarding.",
+    "Durable verified webhooks, channel identity, inbound/outbound events, opt-out/session-window rules, replay protection, outbox delivery reconciliation and app-message echoes.",
+    "Approved agent/knowledge release binding and background turn processing; human takeover must cancel pending automation before transport is enabled.",
+    "Real-time status delivery or bounded active-thread polling, human replies, test-number pilot and operational monitoring.",
+    "Appointment booked/converted stages require actual booking/conversion actions. Scheduling extension remains P1B."
+  ],
+  "nextTask": "P1A.3 channel transport and inbound pilot; keep live sends and existing-number onboarding separately authorized."
+}

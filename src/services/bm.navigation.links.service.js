@@ -1,5 +1,5 @@
 import * as modelNS from "../models/bm.navigation.links.model.js";
-import { canManageSettings } from './leads/assistant-settings.service.js';
+import { canAccessAssistant } from './leads/assistant-settings.service.js';
 import { canAccessStudentSync } from './bm.studentUserSync.service.js';
 
 const model = modelNS.default ?? modelNS;
@@ -52,7 +52,7 @@ export async function listActiveNavigationLinks(
     navigationLinks = navigationLinks.filter(link => link.navigationLabel !== 'Sync users');
   }
   if (navigationLinks.some(link => link.navigationLabel === 'Leads & Conversations') &&
-      !(await canManageSettings(userId, companyId))) {
+      !(await canAccessAssistant(userId, companyId))) {
     navigationLinks = navigationLinks.filter(link => link.navigationLabel !== 'Leads & Conversations');
   }
   const includeSophiaAdmin =
