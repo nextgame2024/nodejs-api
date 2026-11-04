@@ -76,8 +76,9 @@ suite("WhatsApp channel on PostgreSQL", () => {
    CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
    CREATE TABLE sophia_runtime.admin_memberships(customer_id uuid,identity_user_id text,status text,role_key text);
    CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,status text,pack_id text,role_key text);
+   CREATE TABLE sophia_runtime.platform_operator_assignments(identity_user_id text,operator_company_id uuid,status text);
    GRANT SELECT ON sophia_runtime.customers TO sophia_runtime_app;
-   GRANT SELECT ON sophia_runtime.admin_memberships,sophia_runtime.business_pack_entitlements TO sophia_runtime_app;
+   GRANT SELECT ON sophia_runtime.admin_memberships,sophia_runtime.business_pack_entitlements,sophia_runtime.platform_operator_assignments TO sophia_runtime_app;
    ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO sophia_runtime_app;`);
     await pool.query(
       "INSERT INTO public.bm_company VALUES($1,'active'),($2,'active')",

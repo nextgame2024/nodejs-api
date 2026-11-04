@@ -25,7 +25,8 @@ const t = "11111111-1111-4111-8111-111111111111",
   advisor = "44444444-4444-4444-8444-444444444444",
   foreign = "55555555-5555-4555-8555-555555555555",
   otherCompany = "66666666-6666-4666-8666-666666666666",
-  other = "77777777-7777-4777-8777-777777777777";
+  other = "77777777-7777-4777-8777-777777777777",
+  platformAdmin = "88888888-8888-4888-8888-888888888888";
 const complete = () => ({
   ...defaults(),
   businessName: "Example business",
@@ -48,15 +49,16 @@ suite("Assistant Settings using isolated PostgreSQL", () => {
    CREATE TABLE sophia_runtime.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
    CREATE TABLE sophia_runtime.admin_memberships(customer_id uuid,identity_user_id text,status text,role_key text);
    CREATE TABLE sophia_runtime.business_pack_entitlements(customer_id uuid,identity_user_id text,status text,pack_id text,role_key text);
-   GRANT SELECT ON sophia_runtime.admin_memberships,sophia_runtime.business_pack_entitlements TO sophia_runtime_app;
+   CREATE TABLE sophia_runtime.platform_operator_assignments(identity_user_id text,operator_company_id uuid,status text);
+   GRANT SELECT ON sophia_runtime.admin_memberships,sophia_runtime.business_pack_entitlements,sophia_runtime.platform_operator_assignments TO sophia_runtime_app;
    ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO sophia_runtime_app;`);
     await pool.query(
       "INSERT INTO public.bm_company VALUES($1,'active'),($2,'active')",
       [company, otherCompany],
     );
     await pool.query(
-      "INSERT INTO public.users VALUES($1,$3,'Owner','active','employee'),($2,$3,'Advisor','active','advisor'),($4,$5,'Other company member','active','employee')",
-      [owner, advisor, company, foreign, otherCompany],
+      "INSERT INTO public.users VALUES($1,$3,'Owner','active','employee'),($2,$3,'Advisor','active','advisor'),($4,$5,'Other company member','active','employee'),($6,$3,'Platform Admin','active','admin')",
+      [owner, advisor, company, foreign, otherCompany, platformAdmin],
     );
     await pool.query(
       "INSERT INTO sophia_runtime.customers VALUES($1,$2,'active'),($3,$4,'active')",
@@ -65,6 +67,10 @@ suite("Assistant Settings using isolated PostgreSQL", () => {
     await pool.query(
       "INSERT INTO sophia_runtime.admin_memberships VALUES($1,$2,'active','organisation_owner')",
       [t, owner],
+    );
+    await pool.query(
+      "INSERT INTO sophia_runtime.platform_operator_assignments VALUES($1,$2,'active')",
+      [platformAdmin, company],
     );
     const sql = (
       await readFile(
@@ -111,6 +117,28 @@ suite("Assistant Settings using isolated PostgreSQL", () => {
     await pool.query(
       "UPDATE sophia_runtime.admin_memberships SET status='active' WHERE identity_user_id=$1",
       [owner],
+    );
+  });
+  test("allows an active platform operator to manage only its internal company tenant", async () => {
+    const result = await api.getSettings(platformAdmin, company);
+    expect(result.canManage).toBe(true);
+    expect(result.staff.map((user) => user.id)).toEqual(
+      expect.arrayContaining([owner, advisor, platformAdmin]),
+    );
+
+    await expect(api.getSettings(platformAdmin, otherCompany)).rejects.toMatchObject({
+      status: 403,
+    });
+    await pool.query(
+      "UPDATE sophia_runtime.platform_operator_assignments SET status='revoked' WHERE identity_user_id=$1",
+      [platformAdmin],
+    );
+    await expect(api.getSettings(platformAdmin, company)).rejects.toMatchObject({
+      status: 403,
+    });
+    await pool.query(
+      "UPDATE sophia_runtime.platform_operator_assignments SET status='active' WHERE identity_user_id=$1",
+      [platformAdmin],
     );
   });
   test("concurrent first saves and stale edits cannot overwrite a newer draft", async () => {

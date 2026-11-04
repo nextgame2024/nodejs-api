@@ -11,7 +11,11 @@ const schema = "sophia_runtime";
 const managerSql = `SELECT EXISTS(SELECT 1 FROM sophia_runtime.admin_memberships
  WHERE customer_id=$1 AND identity_user_id=$2 AND status='active' AND role_key='organisation_owner')
  OR EXISTS(SELECT 1 FROM sophia_runtime.business_pack_entitlements
- WHERE customer_id=$1 AND identity_user_id=$2 AND status='active' AND pack_id='student-operations' AND role_key='chief_executive') AS allowed`;
+ WHERE customer_id=$1 AND identity_user_id=$2 AND status='active' AND pack_id='student-operations' AND role_key='chief_executive')
+ OR EXISTS(SELECT 1 FROM sophia_runtime.platform_operator_assignments assignment
+ WHERE assignment.identity_user_id=$2
+   AND assignment.operator_company_id=$3
+   AND assignment.status='active') AS allowed`;
 
 // The identity pool resolves the signed-in company. All configuration reads and
 // writes use the non-BYPASSRLS Runtime role, scoped to that verified customer.
@@ -27,7 +31,15 @@ export async function transaction(
     const scopes = await db.query(
       `SELECT c.customer_id FROM public.users u JOIN public.bm_company b ON b.company_id=u.company_id
     JOIN sophia_runtime.customers c ON c.external_company_id=b.company_id::text AND c.status='active'
-    WHERE u.id=$1 AND u.company_id=$2 AND u.status='active' AND u.type::text IN ('employee','advisor') AND b.status='active'`,
+    WHERE u.id=$1 AND u.company_id=$2 AND u.status='active' AND b.status='active'
+      AND (u.type::text IN ('employee','advisor') OR (
+        u.type::text='admin' AND EXISTS(
+          SELECT 1 FROM sophia_runtime.platform_operator_assignments assignment
+          WHERE assignment.identity_user_id=u.id::text
+            AND assignment.operator_company_id=u.company_id
+            AND assignment.status='active'
+        )
+      ))`,
       [actor, company],
     );
     if (scopes.rows.length !== 1)
@@ -35,7 +47,7 @@ export async function transaction(
     const tenant = scopes.rows[0].customer_id;
     await db.query("SET LOCAL ROLE sophia_runtime_app");
     await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenant]);
-    const manager = !!(await db.query(managerSql, [tenant, actor])).rows[0]
+    const manager = !!(await db.query(managerSql, [tenant, actor, company])).rows[0]
       ?.allowed;
     if (!manager && !inbox)
       throw fail(
@@ -90,10 +102,17 @@ export async function directory(db, company, { q = "", ids = [] } = {}) {
   try {
     return (
       await db.query(
-        `SELECT id,name FROM public.users WHERE company_id=$1 AND status='active'
-  AND type::text IN ('employee','advisor') AND
-  (id=ANY($3::uuid[]) OR (cardinality($3::uuid[])=0 AND name ILIKE $2))
-  ORDER BY lower(name),id LIMIT $4`,
+        `SELECT u.id,u.name FROM public.users u WHERE u.company_id=$1 AND u.status='active'
+  AND (u.type::text IN ('employee','advisor') OR (
+    u.type::text='admin' AND EXISTS(
+      SELECT 1 FROM sophia_runtime.platform_operator_assignments assignment
+      WHERE assignment.identity_user_id=u.id::text
+        AND assignment.operator_company_id=u.company_id
+        AND assignment.status='active'
+    )
+  )) AND
+  (u.id=ANY($3::uuid[]) OR (cardinality($3::uuid[])=0 AND u.name ILIKE $2))
+  ORDER BY lower(u.name),u.id LIMIT $4`,
         [
           company,
           `%${q.replace(/[\\%_]/g, "\\$&")}%`,

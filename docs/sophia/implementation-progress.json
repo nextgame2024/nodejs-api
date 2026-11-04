@@ -1,4 +1,22 @@
 {
+  "platformOperatorLeadTenant": {
+    "updatedOn": "2026-11-04",
+    "status": "locally_verified_pending_migration_124_and_backend_deployment",
+    "migration": "124_platform_operator_lead_tenant.sql",
+    "scope": "The internal platform-operator company can now run its own tenant-scoped Leads, Scheduling and WhatsApp configuration. Migration 124 provisions each active internal operator company as a normal Runtime customer. Active platform operators are accepted as administrators and selectable staff only for that same company; no cross-tenant Leads bypass or browser-supplied tenant authority was added.",
+    "security": "Access remains bound to the authenticated Business Manager user/company, the active platform_operator_assignments row, the internal Runtime customer mapping and the existing non-BYPASSRLS tenant transaction. Revoking the platform assignment removes both menu visibility and API access.",
+    "verification": [
+      "2 focused backend authorization checks passed, including missing-scope and revoked-assignment fail-closed cases",
+      "1 focused Runtime migration contract check passed",
+      "Runtime TypeScript build and migration copy passed",
+      "38 real-estate regression checks passed",
+      "Boundary scan reports only the same two pre-existing student document-analysis provider-import violations",
+      "JavaScript syntax and git diff checks passed"
+    ],
+    "unrun": "The updated PostgreSQL assistant-settings fixture was not executed because no disposable local PostgreSQL server was available; the installed libpq initdb lacks the postgres server binary and the Docker daemon is unavailable.",
+    "external": "No production migration, deployment, Runtime customer creation, WhatsApp profile change or provider call was performed.",
+    "deployment": "Apply migration 124 with the migration owner after preceding Runtime migrations, deploy the legacy backend and refresh the authenticated Business Manager session. Then save and publish the Admin tenant's Leads settings. Use the created Runtime customer_id in the deployment-owned WhatsApp profile before enabling receiving."
+  },
   "whatsappAssistantPlan": {
     "updatedOn": "2026-11-04",
     "status": "whatsapp_appointment_changes_locally_verified_pending_migration_123_and_deployment",
