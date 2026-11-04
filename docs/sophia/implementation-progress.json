@@ -1,4 +1,22 @@
 {
+  "internalAssistantOpenAiTextExperience": {
+    "updatedOn": "2026-11-04",
+    "status": "locally_verified_pending_migration_126_and_backend_frontend_deployment",
+    "migration": "126_internal_assistant_openai_text_experience.sql",
+    "scope": "Migration 126 provisions the Admin tenant's first published provider-neutral orchestrated-text experience, backed initially by the compiled openai-reasoning-v1 adapter and the server-owned env://openai-reasoning credential reference. It binds the existing Sophia AI managed-knowledge business profile without putting provider credentials in the browser. Additional Anthropic or Gemini experience profiles can be published later and selected alongside OpenAI without changing the agent schema or mutating this immutable version.",
+    "ui": "The Sophia Admin Agents page now follows the Business Manager form and state patterns for this touched screen: shared manager selects, toast and list loader; responsive two-column workspace; explicit checkbox cards with selection counts and Select all/Clear actions for experiences, capabilities, all nine knowledge sources and workflows; actionable empty experience state; 44px controls; and scoped light, dark and narrow-screen styling. Native multi-select controls were removed.",
+    "verification": [
+      "5 focused ChromeHeadless Agents page checks passed, including all-nine knowledge selection, shared controls, actionable empty state and narrow dark-mode layout",
+      "8 focused Runtime migration and publishability checks passed",
+      "Runtime production build and migration copy passed",
+      "Frontend production build passed; existing bundle/style-budget, CommonJS and missing primeicons warnings remain",
+      "38 protected real-estate regression checks passed",
+      "Boundary scan reports only the same two pre-existing student document-analysis provider-import violations",
+      "Both repository diff checks passed"
+    ],
+    "external": "No production migration, deployment, live provider call, WhatsApp mutation, credential creation or production-data change was performed.",
+    "deployment": "Apply migration 126 with the Runtime migration owner and deploy Runtime and frontend. Configure OPENAI_API_KEY only in the Runtime deployment environment, and keep the WhatsApp deployment profile on reasoningAdapter openai-reasoning-v1 with reasoningCredentialRef env://openai-reasoning. Refresh Sophia Admin Agents, choose Sophia AI text reasoning (OpenAI), select the nine published knowledge sources and create the sophia-whatsapp draft."
+  },
   "internalAssistantManagedKnowledge": {
     "updatedOn": "2026-11-04",
     "status": "locally_verified_pending_migration_125_and_backend_frontend_deployment",
