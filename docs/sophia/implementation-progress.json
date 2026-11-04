@@ -1,4 +1,23 @@
 {
+  "internalAssistantManagedKnowledge": {
+    "updatedOn": "2026-11-04",
+    "status": "locally_verified_pending_migration_125_and_backend_frontend_deployment",
+    "migration": "125_internal_assistant_managed_knowledge.sql",
+    "cause": "Migration 124 provisioned the internal operator as a Runtime customer but did not create a business profile or an enabled knowledge capability binding. The Knowledge publication grant therefore correctly returned zero eligible bindings, and the only compiled external knowledge connector was the unrelated Real Estate pack.",
+    "scope": "Migration 125 adds an idempotent, advisory-lock-serialised bootstrap for a connector-free core Managed Knowledge profile and enabled knowledge binding. It backfills active platform-operator assignments and installs a narrow trigger so future active assignments receive the same tenant-scoped configuration. The security-definer functions use a fixed pg_catalog search path, are not executable by PUBLIC, validate the active Business Manager company and fail closed on ambiguous Runtime customer mappings or conflicting bindings.",
+    "ui": "The touched Knowledge publication area begins the Sophia Admin alignment with Business Manager patterns: shared manager select, timed dismissible toast and list loader; actionable ready/unavailable states; responsive mobile layout; and explicit dark-mode styling. Existing unrelated Leads settings edits were preserved.",
+    "verification": [
+      "9 focused Runtime knowledge and migration contract tests passed",
+      "5 focused ChromeHeadless Knowledge page checks passed, including provisioned-binding selection and 390px dark-mode layout",
+      "Runtime production build and migration copy passed",
+      "Frontend application TypeScript and production build passed; existing bundle/style-budget, CommonJS and missing primeicons warnings remain",
+      "38 protected real-estate regression checks passed",
+      "Boundary scan reports only the same two pre-existing student document-analysis provider-import violations",
+      "Both repository diff checks passed"
+    ],
+    "external": "No production migration, deployment, live provider call, WhatsApp mutation or production-data change was performed.",
+    "deployment": "Apply migration 125 with the Runtime migration owner, then deploy Runtime and frontend. Refresh Sophia Admin Knowledge; the Publication grant should show Sophia AI managed knowledge v1 and approved sources can then be published."
+  },
   "platformOperatorLeadTenant": {
     "updatedOn": "2026-11-04",
     "status": "locally_verified_pending_migration_124_and_backend_deployment",
