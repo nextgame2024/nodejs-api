@@ -18,6 +18,13 @@ const validSite = (value) => validName(value.city, 120)
   && validOptionalText(value.mobile, 80)
   && validEmail(value.email)
   && (value.is_primary === undefined || typeof value.is_primary === 'boolean');
+const validContact = (value, requireName) => (!requireName || validName(value.name, 120))
+  && (value.name === undefined || validName(value.name, 120))
+  && validOptionalText(value.role_title, 200)
+  && validOptionalText(value.cel, 80)
+  && validOptionalText(value.tel, 80)
+  && validOptionalText(value.fax, 80)
+  && validEmail(value.email);
 const bad = (res, message) => res.status(400).json({ error: message });
 const notFound = (res) => res.status(404).json({ error: 'College not found' });
 
@@ -80,8 +87,7 @@ router.get('/bm/colleges/:collegeId/contacts', asyncHandler(async (req, res) => 
 router.post('/bm/colleges/:collegeId/contacts', asyncHandler(async (req, res) => {
   if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');
   const value = body(req, 'contact');
-  if (!validName(value.name, 120)) return bad(res, 'Contact name is required (max 120 characters)');
-  if (!validEmail(value.email)) return bad(res, 'Invalid email');
+  if (!validContact(value, true)) return bad(res, 'Enter a contact name and valid contact details');
   const contact = await colleges.createContact(req.user.companyId, req.params.collegeId, { ...value, name: value.name.trim() });
   return contact ? res.status(201).json({ contact }) : notFound(res);
 }));
@@ -89,8 +95,7 @@ router.post('/bm/colleges/:collegeId/contacts', asyncHandler(async (req, res) =>
 router.put('/bm/colleges/:collegeId/contacts/:contactId', asyncHandler(async (req, res) => {
   if (!uuid(req.params.collegeId) || !uuid(req.params.contactId)) return bad(res, 'Invalid ID');
   const value = body(req, 'contact');
-  if (value.name !== undefined && !validName(value.name, 120)) return bad(res, 'Invalid contact name');
-  if (!validEmail(value.email)) return bad(res, 'Invalid email');
+  if (!validContact(value, false)) return bad(res, 'Enter valid contact details');
   const contact = await colleges.updateContact(req.user.companyId, req.params.collegeId, req.params.contactId, value);
   return contact ? res.json({ contact }) : res.status(404).json({ error: 'Contact not found' });
 }));

@@ -8,12 +8,15 @@ const fields = `college_id AS "collegeId", company_id AS "companyId",
   postal_city AS "postalCity", postal_state AS "postalState", postal_postcode AS "postalPostcode",
   cricos_synced_at AS "cricosSyncedAt", createdat AS "createdAt", updatedat AS "updatedAt"`;
 const contactFields = `id AS "contactId", college_id AS "collegeId", name,
-  role_title AS "roleTitle", email, cel, tel, createdat AS "createdAt"`;
+  role_title AS "roleTitle", email, cel, tel, fax, source,
+  contact_type AS "contactType", source_url AS "sourceUrl",
+  source_checked_at AS "sourceCheckedAt", source_active AS "sourceActive",
+  createdat AS "createdAt", updatedat AS "updatedAt"`;
 const siteFields = `site_id AS "siteId", college_id AS "collegeId", email, address,
   phone, mobile, city, category, location_name AS "locationName", location_type AS "locationType",
   state, postcode, is_primary AS "isPrimary"`;
 const editable = ['college_name', 'owner_name', 'abn', 'notes', 'status'];
-const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel'];
+const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel', 'fax'];
 const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category'];
 
 const listSortColumns = {
@@ -92,18 +95,20 @@ export async function contacts(companyId, collegeId) {
   const parent = await get(companyId, collegeId);
   if (!parent) return null;
   const result = await pool.query(`SELECT ${contactFields} FROM bm_college_contacts
-    WHERE company_id = $1 AND college_id = $2 ORDER BY lower(name), id`, [companyId, collegeId]);
+    WHERE company_id = $1 AND college_id = $2
+      AND (source <> 'cricos' OR source_active = true)
+    ORDER BY lower(name), id`, [companyId, collegeId]);
   return result.rows;
 }
 
 export async function createContact(companyId, collegeId, value) {
   const result = await pool.query(`INSERT INTO bm_college_contacts
-    (company_id, college_id, name, role_title, email, cel, tel)
-    SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS
+    (company_id, college_id, name, role_title, email, cel, tel, fax)
+    SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS
       (SELECT 1 FROM bm_colleges WHERE company_id = $1 AND college_id = $2)
     RETURNING ${contactFields}`,
     [companyId, collegeId, value.name, value.role_title ?? null,
-      value.email ?? null, value.cel ?? null, value.tel ?? null]);
+      value.email ?? null, value.cel ?? null, value.tel ?? null, value.fax ?? null]);
   return result.rows[0] ?? null;
 }
 
@@ -112,15 +117,17 @@ export async function updateContact(companyId, collegeId, contactId, value) {
   const args = [companyId, collegeId, contactId, ...keys.map((key) => value[key])];
   const sets = keys.map((key, index) => `${key} = $${index + 4}`);
   const query = keys.length
-    ? `UPDATE bm_college_contacts SET ${sets.join(', ')} WHERE company_id = $1 AND college_id = $2 AND id = $3 RETURNING ${contactFields}`
-    : `SELECT ${contactFields} FROM bm_college_contacts WHERE company_id = $1 AND college_id = $2 AND id = $3`;
+    ? `UPDATE bm_college_contacts SET ${sets.join(', ')}, updatedat = now()
+      WHERE company_id = $1 AND college_id = $2 AND id = $3 AND source = 'manual' RETURNING ${contactFields}`
+    : `SELECT ${contactFields} FROM bm_college_contacts
+      WHERE company_id = $1 AND college_id = $2 AND id = $3 AND source = 'manual'`;
   const result = await pool.query(query, args);
   return result.rows[0] ?? null;
 }
 
 export async function deleteContact(companyId, collegeId, contactId) {
   const result = await pool.query(`DELETE FROM bm_college_contacts
-    WHERE company_id = $1 AND college_id = $2 AND id = $3`, [companyId, collegeId, contactId]);
+    WHERE company_id = $1 AND college_id = $2 AND id = $3 AND source = 'manual'`, [companyId, collegeId, contactId]);
   return result.rowCount > 0;
 }
 

@@ -60,6 +60,14 @@ describe('Business Manager college data isolation', () => {
     expect(query.mock.calls.at(-1)[1].slice(0, 3)).toEqual(['company-1', 'college-1', 'Registrar']);
   });
 
+  test('manual contact writes cannot overwrite or delete CRICOS-sourced contacts', async () => {
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rowCount: 0 });
+    expect(await colleges.updateContact('company-1', 'college-1', 'contact-1', { name: 'Changed' })).toBeNull();
+    expect(query.mock.calls.at(-1)[0]).toContain("source = 'manual'");
+    expect(await colleges.deleteContact('company-1', 'college-1', 'contact-1')).toBe(false);
+    expect(query.mock.calls.at(-1)[0]).toContain("source = 'manual'");
+  });
+
   test('updates cannot change company or college identity', async () => {
     query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1' }] });
     await colleges.update('company-1', 'college-1', { college_name: 'New name', company_id: 'other-company' });

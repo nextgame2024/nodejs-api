@@ -43,12 +43,46 @@ CREATE TABLE IF NOT EXISTS bm_college_contacts (
   email text,
   cel text,
   tel text,
+  fax text,
+  source text NOT NULL DEFAULT 'manual',
+  source_key text,
+  contact_type text,
+  source_url text,
+  source_checked_at timestamptz,
+  source_hash text,
+  source_active boolean NOT NULL DEFAULT true,
+  updatedat timestamptz,
   createdat timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (company_id, college_id)
     REFERENCES bm_colleges(company_id, college_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS bm_college_contacts_parent
   ON bm_college_contacts(company_id, college_id, lower(name), id);
+CREATE UNIQUE INDEX IF NOT EXISTS bm_college_contacts_source_key
+  ON bm_college_contacts(company_id, college_id, source, source_key)
+  WHERE source_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS bm_college_contacts_source_status
+  ON bm_college_contacts(company_id, college_id, source, source_active, id);
+
+CREATE TABLE IF NOT EXISTS bm_cricos_contact_sync (
+  company_id uuid NOT NULL,
+  college_id uuid NOT NULL,
+  cricos_provider_code text NOT NULL,
+  sample_course_code text,
+  source_url text NOT NULL,
+  status text NOT NULL CHECK (status IN ('processing', 'succeeded', 'no_contacts', 'failed')),
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 2),
+  contact_count integer NOT NULL DEFAULT 0 CHECK (contact_count >= 0),
+  last_error_code text,
+  last_attempt_at timestamptz,
+  completed_at timestamptz,
+  updatedat timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (company_id, cricos_provider_code),
+  FOREIGN KEY (company_id, college_id)
+    REFERENCES bm_colleges(company_id, college_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS bm_cricos_contact_sync_progress
+  ON bm_cricos_contact_sync(company_id, status, cricos_provider_code);
 
 CREATE TABLE IF NOT EXISTS bm_college_sites (
   site_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
