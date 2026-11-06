@@ -107,6 +107,22 @@ router.get('/bm/colleges/:collegeId/sites', asyncHandler(async (req, res) => {
   return sites ? res.json({ sites }) : notFound(res);
 }));
 
+router.get('/bm/colleges/:collegeId/courses', asyncHandler(async (req, res) => {
+  if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');
+  const page = Math.max(1, Math.min(10000, Number.parseInt(req.query.page, 10) || 1));
+  const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 25));
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+  const status = typeof req.query.status === 'string' ? req.query.status : 'active';
+  const sort = typeof req.query.sort === 'string' ? req.query.sort : 'name';
+  const direction = typeof req.query.direction === 'string' ? req.query.direction : 'asc';
+  if (!['active', 'expired', 'all'].includes(status)) return bad(res, 'Invalid course status');
+  if (!['name', 'code', 'level', 'duration', 'cost', 'status'].includes(sort)) return bad(res, 'Invalid course sort');
+  if (!['asc', 'desc'].includes(direction)) return bad(res, 'Invalid direction');
+  const result = await colleges.courses(req.user.companyId, req.params.collegeId,
+    { q, status, page, limit, sort, direction });
+  return result ? res.json(result) : notFound(res);
+}));
+
 router.post('/bm/colleges/:collegeId/sites', asyncHandler(async (req, res) => {
   if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');
   const value = body(req, 'site');

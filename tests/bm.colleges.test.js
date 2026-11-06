@@ -36,6 +36,22 @@ describe('Business Manager college data isolation', () => {
     expect(query.mock.calls.at(-2)[1]).toEqual(['company-1', 25, 25]);
   });
 
+  test('courses are tenant and college scoped with server paging and active filtering', async () => {
+    query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1' }] })
+      .mockResolvedValueOnce({ rows: [{ courseId: 'course-1' }] })
+      .mockResolvedValueOnce({ rows: [{ total: 1 }] });
+    const result = await colleges.courses('company-1', 'college-1', {
+      q: 'English', status: 'active', page: 2, limit: 25, sort: 'code', direction: 'desc',
+    });
+    expect(result.total).toBe(1);
+    const [sql, params] = query.mock.calls.at(-2);
+    expect(sql).toContain('c.company_id = $1');
+    expect(sql).toContain('c.college_id = $2');
+    expect(sql).toContain('c.expired = false');
+    expect(sql).toContain('ORDER BY lower(c.cricos_course_code) DESC NULLS LAST, c.course_id ASC');
+    expect(params).toEqual(['company-1', 'college-1', '%English%', 25, 25]);
+  });
+
   test('contact creation checks the parent in the same company', async () => {
     query.mockResolvedValueOnce({ rows: [] });
     const result = await colleges.createContact('company-1', 'college-1', { name: 'Registrar' });

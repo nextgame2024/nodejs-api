@@ -2,11 +2,16 @@ import pool from '../config/db.js';
 
 const fields = `college_id AS "collegeId", company_id AS "companyId",
   college_name AS "collegeName", owner_name AS "ownerName", abn, address, city, category,
-  email, cel, tel, notes, status, createdat AS "createdAt", updatedat AS "updatedAt"`;
+  email, cel, tel, notes, status, cricos_provider_code AS "cricosProviderCode",
+  trading_name AS "tradingName", institution_type AS "institutionType",
+  institution_capacity AS "institutionCapacity", website, postal_address AS "postalAddress",
+  postal_city AS "postalCity", postal_state AS "postalState", postal_postcode AS "postalPostcode",
+  cricos_synced_at AS "cricosSyncedAt", createdat AS "createdAt", updatedat AS "updatedAt"`;
 const contactFields = `id AS "contactId", college_id AS "collegeId", name,
   role_title AS "roleTitle", email, cel, tel, createdat AS "createdAt"`;
 const siteFields = `site_id AS "siteId", college_id AS "collegeId", email, address,
-  phone, mobile, city, category, is_primary AS "isPrimary"`;
+  phone, mobile, city, category, location_name AS "locationName", location_type AS "locationType",
+  state, postcode, is_primary AS "isPrimary"`;
 const editable = ['college_name', 'owner_name', 'abn', 'notes', 'status'];
 const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel'];
 const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category'];
@@ -24,7 +29,9 @@ export async function list(companyId, { q, status, page, limit, sort = 'name', d
   if (status) { args.push(status); where.push(`status = $${args.length}`); }
   if (q) {
     args.push(`%${q}%`);
-    where.push(`(college_name ILIKE $${args.length} OR owner_name ILIKE $${args.length} OR email ILIKE $${args.length} OR cel ILIKE $${args.length})`);
+    where.push(`(college_name ILIKE $${args.length} OR owner_name ILIKE $${args.length}
+      OR trading_name ILIKE $${args.length} OR cricos_provider_code ILIKE $${args.length}
+      OR email ILIKE $${args.length} OR cel ILIKE $${args.length})`);
   }
   const predicate = where.join(' AND ');
   const offset = (page - 1) * limit;
@@ -162,6 +169,61 @@ export async function sites(companyId, collegeId) {
     WHERE company_id = $1 AND college_id = $2
     ORDER BY is_primary DESC, lower(coalesce(city, '')), createdat, site_id`, [companyId, collegeId]);
   return result.rows;
+}
+
+const courseSortColumns = {
+  name: 'lower(c.course_name)',
+  code: 'lower(c.cricos_course_code)',
+  level: 'lower(c.course_level)',
+  duration: 'c.duration_weeks',
+  cost: 'c.estimated_total_cost_cents',
+  status: 'c.expired',
+};
+
+export async function courses(companyId, collegeId, { q, status, page, limit, sort = 'name', direction = 'asc' }) {
+  const parent = await get(companyId, collegeId);
+  if (!parent) return null;
+  const where = ['c.company_id = $1', 'c.college_id = $2'];
+  const args = [companyId, collegeId];
+  if (status === 'active') where.push('c.expired = false');
+  if (status === 'expired') where.push('c.expired = true');
+  if (q) {
+    args.push(`%${q}%`);
+    where.push(`(c.course_name ILIKE $${args.length} OR c.cricos_course_code ILIKE $${args.length}
+      OR c.vet_national_code ILIKE $${args.length} OR c.course_level ILIKE $${args.length})`);
+  }
+  const predicate = where.join(' AND ');
+  const orderColumn = courseSortColumns[sort] || courseSortColumns.name;
+  const orderDirection = direction === 'desc' ? 'DESC' : 'ASC';
+  const offset = (page - 1) * limit;
+  const [items, count] = await Promise.all([
+    pool.query(`SELECT c.course_id AS "courseId", c.college_id AS "collegeId",
+      c.cricos_course_code AS "cricosCourseCode", c.course_name AS "courseName",
+      c.vet_national_code AS "vetNationalCode", c.dual_qualification AS "dualQualification",
+      c.field_1_broad AS "field1Broad", c.field_1_narrow AS "field1Narrow",
+      c.field_1_detailed AS "field1Detailed", c.field_2_broad AS "field2Broad",
+      c.field_2_narrow AS "field2Narrow", c.field_2_detailed AS "field2Detailed",
+      c.course_level AS "courseLevel", c.foundation_studies AS "foundationStudies",
+      c.work_component AS "workComponent", c.work_component_hours_week AS "workComponentHoursWeek",
+      c.work_component_weeks AS "workComponentWeeks", c.work_component_total_hours AS "workComponentTotalHours",
+      c.course_language AS "courseLanguage", c.duration_weeks AS "durationWeeks",
+      c.tuition_fee_cents::float8 AS "tuitionFeeCents", c.non_tuition_fee_cents::float8 AS "nonTuitionFeeCents",
+      c.estimated_total_cost_cents::float8 AS "estimatedTotalCostCents", c.expired,
+      count(l.site_id)::int AS "locationCount",
+      coalesce(array_agg(s.location_name ORDER BY lower(s.location_name), s.site_id)
+        FILTER (WHERE s.site_id IS NOT NULL), ARRAY[]::text[]) AS locations
+      FROM bm_college_courses c
+      LEFT JOIN bm_college_course_locations l
+        ON l.company_id = c.company_id AND l.course_id = c.course_id
+      LEFT JOIN bm_college_sites s
+        ON s.company_id = l.company_id AND s.site_id = l.site_id
+      WHERE ${predicate}
+      GROUP BY c.course_id
+      ORDER BY ${orderColumn} ${orderDirection} NULLS LAST, c.course_id ASC
+      LIMIT $${args.length + 1} OFFSET $${args.length + 2}`, [...args, limit, offset]),
+    pool.query(`SELECT count(*)::int AS total FROM bm_college_courses c WHERE ${predicate}`, args),
+  ]);
+  return { courses: items.rows, total: count.rows[0].total, page, limit };
 }
 
 export async function createSite(companyId, collegeId, value) {
