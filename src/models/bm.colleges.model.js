@@ -1,7 +1,7 @@
 import pool from '../config/db.js';
 
 const fields = `college_id AS "collegeId", company_id AS "companyId",
-  college_name AS "collegeName", owner_name AS "ownerName", abn, address, city, category,
+  college_name AS "collegeName", acronym, owner_name AS "ownerName", abn, address, city, category,
   email, cel, tel, notes, status, cricos_provider_code AS "cricosProviderCode",
   trading_name AS "tradingName", institution_type AS "institutionType",
   institution_capacity AS "institutionCapacity", website, postal_address AS "postalAddress",
@@ -15,7 +15,7 @@ const contactFields = `id AS "contactId", college_id AS "collegeId", name,
 const siteFields = `site_id AS "siteId", college_id AS "collegeId", email, address,
   phone, mobile, city, category, location_name AS "locationName", location_type AS "locationType",
   state, postcode, is_primary AS "isPrimary"`;
-const editable = ['college_name', 'owner_name', 'abn', 'notes', 'status'];
+const editable = ['college_name', 'acronym', 'owner_name', 'abn', 'notes', 'status'];
 const contactEditable = ['name', 'role_title', 'email', 'cel', 'tel', 'fax'];
 const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category'];
 
@@ -33,7 +33,7 @@ export async function list(companyId, { q, status, page, limit, sort = 'name', d
   if (q) {
     args.push(`%${q}%`);
     where.push(`(college_name ILIKE $${args.length} OR owner_name ILIKE $${args.length}
-      OR trading_name ILIKE $${args.length} OR cricos_provider_code ILIKE $${args.length}
+      OR acronym ILIKE $${args.length} OR trading_name ILIKE $${args.length} OR cricos_provider_code ILIKE $${args.length}
       OR email ILIKE $${args.length} OR cel ILIKE $${args.length})`);
   }
   const predicate = where.join(' AND ');
@@ -56,10 +56,10 @@ export async function get(companyId, collegeId) {
 
 export async function create(companyId, value) {
   const result = await pool.query(`INSERT INTO bm_colleges
-    (company_id, college_name, owner_name, abn, notes)
-    VALUES ($1,$2,$3,$4,$5) RETURNING ${fields}`,
+    (company_id, college_name, owner_name, abn, notes, acronym)
+    VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${fields}`,
     [companyId, value.college_name, value.owner_name ?? null, value.abn ?? null,
-      value.notes ?? null]);
+      value.notes ?? null, value.acronym ?? null]);
   return result.rows[0];
 }
 

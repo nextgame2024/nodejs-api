@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authRequired } from '../middlewares/authJwt.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import * as colleges from '../models/bm.colleges.model.js';
+import { listCommissions, saveCommission, validateCommission } from '../models/bm.collegeCommissions.model.js';
 
 const router = Router();
 router.use('/bm/colleges', authRequired);
@@ -44,6 +45,8 @@ router.get('/bm/colleges', asyncHandler(async (req, res) => {
 router.post('/bm/colleges', asyncHandler(async (req, res) => {
   const value = body(req, 'college');
   if (!validName(value.college_name, 200)) return bad(res, 'college_name is required (max 200 characters)');
+  if (!validOptionalText(value.acronym, 80)) return bad(res, 'Acronym must be at most 80 characters');
+  if (value.acronym !== undefined) value.acronym = value.acronym?.trim() || null;
   if (siteDetailKeys.some((key) => value[key] !== undefined)) return bad(res, 'Add address and contact details in the Sites tab after saving the college');
   res.status(201).json({ college: await colleges.create(req.user.companyId, { ...value, college_name: value.college_name.trim() }) });
 }));
@@ -67,6 +70,8 @@ router.put('/bm/colleges/:collegeId', asyncHandler(async (req, res) => {
   const value = body(req, 'college');
   if (siteDetailKeys.some((key) => value[key] !== undefined)) return bad(res, 'Edit address and contact details in the Sites tab');
   if (value.college_name !== undefined && !validName(value.college_name, 200)) return bad(res, 'Invalid college_name');
+  if (!validOptionalText(value.acronym, 80)) return bad(res, 'Acronym must be at most 80 characters');
+  if (value.acronym !== undefined) value.acronym = value.acronym?.trim() || null;
   if (value.status !== undefined && !['active', 'archived'].includes(value.status)) return bad(res, 'Invalid status');
   const college = await colleges.update(req.user.companyId, req.params.collegeId, value);
   return college ? res.json({ college }) : notFound(res);
@@ -77,6 +82,34 @@ router.delete('/bm/colleges/:collegeId', asyncHandler(async (req, res) => {
   const college = await colleges.update(req.user.companyId, req.params.collegeId, { status: 'archived' });
   return college ? res.status(204).send() : notFound(res);
 }));
+
+router.get('/bm/colleges/:collegeId/commissions', asyncHandler(async (req, res) => {
+  if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');
+  const rules = await listCommissions(req.user.companyId, req.params.collegeId);
+  return rules ? res.json({ rules }) : notFound(res);
+}));
+
+for (const method of ['post','put','delete']) {
+  const route = `/bm/colleges/:collegeId/commissions${method === 'post' ? '' : '/:ruleId'}`;
+  router[method](route, asyncHandler(async (req, res) => {
+    if (!uuid(req.params.collegeId) || (method !== 'post' && !uuid(req.params.ruleId))) return bad(res, 'Invalid ID');
+    try {
+      let value;
+      if (method === 'delete') {
+        const token = body(req,'rule').expected_updated_at;
+        if (typeof token !== 'string' || !Number.isFinite(Date.parse(token))) return bad(res,'Reload the rule before archiving.');
+        value = { expected_updated_at: token };
+      } else value = validateCommission(body(req,'rule'),method === 'put');
+      const rule = await saveCommission(req.user.companyId,req.params.collegeId,req.params.ruleId,value,method === 'delete');
+      if (!rule) return notFound(res);
+      return method === 'delete' ? res.status(204).send() : res.status(method === 'post' ? 201 : 200).json({rule});
+    } catch (error) {
+      if (error.code === 'INVALID_COMMISSION') return bad(res,error.message);
+      if (error.code === 'COMMISSION_CONFLICT') return res.status(409).json({error:error.message});
+      throw error;
+    }
+  }));
+}
 
 router.get('/bm/colleges/:collegeId/contacts', asyncHandler(async (req, res) => {
   if (!uuid(req.params.collegeId)) return bad(res, 'Invalid college ID');

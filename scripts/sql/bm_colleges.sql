@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS bm_colleges (
   college_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL REFERENCES bm_company(company_id) ON DELETE CASCADE,
   college_name text NOT NULL CHECK (length(btrim(college_name)) BETWEEN 1 AND 200),
+  acronym text CHECK (acronym IS NULL OR length(btrim(acronym)) BETWEEN 1 AND 80),
   owner_name text,
   abn text,
   address text,

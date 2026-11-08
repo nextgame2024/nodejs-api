@@ -82,9 +82,9 @@ describe('Business Manager college data isolation', () => {
     });
     expect(result).toEqual({ collegeId: 'college-1', city: null, category: null });
     const [sql, params] = query.mock.calls.at(-1);
-    expect(sql).toContain('(company_id, college_name, owner_name, abn, notes)');
+    expect(sql).toContain('(company_id, college_name, owner_name, abn, notes, acronym)');
     expect(sql).toContain('city, category');
-    expect(params).toEqual(['company-1', 'ATI', null, null, null]);
+    expect(params).toEqual(['company-1', 'ATI', null, null, null, null]);
   });
 
   test('College Details cannot overwrite the primary site projection', async () => {
