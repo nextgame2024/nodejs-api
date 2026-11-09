@@ -1,10 +1,12 @@
 import pool from '../config/db.js';
+import { commissionDecimal } from '../utils/commissionDecimal.js';
 
 const fields = `rule_id AS "ruleId", college_id AS "collegeId", classification, location, program,
   commission_basis_points AS "commissionBasisPoints", calculation_method AS "calculationMethod",
   calculation_description AS "calculationDescription", rounding_decimal_places AS "roundingDecimalPlaces",
   cashback_status AS "cashbackStatus", cashback_description AS "cashbackDescription",
-  cashback_calculation_description AS "cashbackCalculationDescription", bonus_status AS "bonusStatus",
+  cashback_calculation_description AS "cashbackCalculationDescription", cashback_calculation AS "cashbackCalculation",
+  bonus_amount AS "bonusAmount", bonus_status AS "bonusStatus",
   bonus_description AS "bonusDescription", application_conditions AS "applicationConditions",
   active, createdat AS "createdAt", updatedat AS "updatedAt"`;
 const conditionFields = ['classification', 'location', 'program'];
@@ -13,7 +15,7 @@ const fail = (message, code = 'INVALID_COMMISSION') => Object.assign(new Error(m
 
 export function validateCommission(value, editing = false) {
   const allowed = ['classification','location','program','commission_basis_points','cashback_status',
-    'cashback_description','cashback_calculation_description','bonus_status','bonus_description','application_conditions',
+    'cashback_description','cashback_calculation_description','cashback_calculation','bonus_amount','bonus_status','bonus_description','application_conditions',
     ...(editing ? ['expected_updated_at'] : [])];
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) {
     throw fail('Enter valid commission rule fields.');
@@ -35,7 +37,11 @@ export function validateCommission(value, editing = false) {
   for (const benefit of ['cashback','bonus']) {
     if (!['not_recorded','not_applicable','specified'].includes(value[`${benefit}_status`])) throw fail(`Choose a valid ${benefit} status.`);
     result[`${benefit}_status`] = value[`${benefit}_status`];
-    if (result[`${benefit}_status`] === 'specified' && !result[`${benefit}_description`]) throw fail(`Describe the specified ${benefit}.`);
+    const numericField = benefit === 'cashback' ? 'cashback_calculation' : 'bonus_amount';
+    try { result[numericField] = commissionDecimal(value[numericField],benefit === 'cashback' ? 'Cashback calculation' : 'Bonus'); }
+    catch (error) { throw fail(error.message); }
+    if (result[`${benefit}_status`] === 'specified' && result[numericField] === null) throw fail(`Enter the numeric value for the specified ${benefit}.`);
+    if (result[`${benefit}_status`] !== 'specified' && result[numericField] !== null) throw fail(`Choose Specified to record a numeric ${benefit}.`);
   }
   if (editing) {
     if (typeof value.expected_updated_at !== 'string' || !Number.isFinite(Date.parse(value.expected_updated_at))) throw fail('Reload the rule before editing.');
@@ -83,11 +89,12 @@ export async function saveCommission(companyId, collegeId, ruleId, value, archiv
     if (!archive) {
       result = (await db.query(`INSERT INTO bm_college_commission_rules
         (company_id,college_id,classification,location,program,commission_basis_points,calculation_description,
-         cashback_status,cashback_description,cashback_calculation_description,bonus_status,bonus_description,application_conditions)
-        VALUES($1,$2,$3,$4,$5,$6,'Tuition fee x commission (2 decimals)',$7,$8,$9,$10,$11,$12) RETURNING ${fields}`,
+         cashback_status,cashback_description,cashback_calculation_description,bonus_status,bonus_description,application_conditions,
+         cashback_calculation,bonus_amount)
+        VALUES($1,$2,$3,$4,$5,$6,'Tuition fee x commission (2 decimals)',$7,$8,$9,$10,$11,$12,$13,$14) RETURNING ${fields}`,
       [companyId,collegeId,value.classification,value.location,value.program,value.commission_basis_points,
         value.cashback_status,value.cashback_description,value.cashback_calculation_description,value.bonus_status,
-        value.bonus_description,value.application_conditions])).rows[0];
+        value.bonus_description,value.application_conditions,value.cashback_calculation ?? null,value.bonus_amount ?? null])).rows[0];
     }
     await db.query('COMMIT'); return result;
   } catch (error) {

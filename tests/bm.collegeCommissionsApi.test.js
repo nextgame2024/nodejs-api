@@ -33,7 +33,16 @@ describe('College commission API rules',()=>{
     expect(validateCommission({...value,program:'  Undergraduate   Grupo ECA  '})).toMatchObject({program:'Undergraduate Grupo ECA',commission_basis_points:2500});
     for(const rate of [-1,10001,31.82,'2500']) expect(()=>validateCommission({...value,commission_basis_points:rate})).toThrow();
     for(const extra of [{company_id:'other'},{active:false},{import_id:'fake'},{calculation_method:'other'}]) expect(()=>validateCommission({...value,...extra})).toThrow();
-    expect(()=>validateCommission({...value,cashback_status:'specified'})).toThrow('Describe');
+    expect(()=>validateCommission({...value,cashback_status:'specified'})).toThrow('numeric value');
+  });
+  test('preserves two-decimal benefits and distinguishes zero from unspecified',()=>{
+    expect(validateCommission(value)).toMatchObject({cashback_calculation:null,bonus_amount:null});
+    expect(validateCommission({...value,cashback_status:'specified',cashback_calculation:'12.30',bonus_status:'specified',bonus_amount:0}))
+      .toMatchObject({cashback_calculation:'12.30',bonus_amount:'0.00'});
+    for(const amount of ['12.345',-1,'NaN','Infinity','1000000000000',{},true]) {
+      expect(()=>validateCommission({...value,cashback_status:'specified',cashback_calculation:amount})).toThrow('two decimal places');
+    }
+    expect(()=>validateCommission({...value,bonus_amount:'1.00'})).toThrow('Choose Specified');
   });
   test('permits default/specific exceptions but rejects duplicate or equally specific intersecting conditions',()=>{
     expect(()=>assertUnambiguousCommission({...value,location:'OFF-SHORE'},[value])).not.toThrow();
@@ -49,12 +58,14 @@ describe('College commission API rules',()=>{
   });
   test('replacement archives original and inserts a new version under the locked company/college',async()=>{
     const db={query:jest.fn(async sql=>({rows:sql.includes('SELECT college_id')?[{}]:sql.includes('SELECT rule_id')?[{rule_id:'old',updatedat:stamp}]:sql.includes('INSERT')?[{ruleId:'new'}]:[]})),release:jest.fn()};connect.mockResolvedValueOnce(db);
-    expect(await saveCommission('company','college','old',{...value,expected_updated_at:stamp})).toEqual({ruleId:'new'});
+    const edit=validateCommission({...value,cashback_status:'specified',cashback_calculation:'12.30',bonus_status:'specified',bonus_amount:'0.00',expected_updated_at:stamp},true);
+    expect(await saveCommission('company','college','old',edit)).toEqual({ruleId:'new'});
     expect(db.query.mock.calls[1][0]).toContain('FOR UPDATE');expect(db.query.mock.calls[1][1]).toEqual(['company','college']);
     const archived=db.query.mock.calls.find(([sql])=>sql.startsWith('UPDATE'));
     expect(archived[1]).toEqual(['company','college','old']);
     const inserted=db.query.mock.calls.find(([sql])=>sql.includes('INSERT'));
     expect(inserted[1].slice(0,2)).toEqual(['company','college']);
+    expect(inserted[1].slice(-2)).toEqual(['12.30','0.00']);
     expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');expect(db.release).toHaveBeenCalled();
   });
   test('stale edits roll back before any rule write',async()=>{

@@ -37,7 +37,7 @@ router.get('/bm/colleges', asyncHandler(async (req, res) => {
   const sort = typeof req.query.sort === 'string' ? req.query.sort : 'name';
   const direction = typeof req.query.direction === 'string' ? req.query.direction : 'asc';
   if (status && !['active', 'archived'].includes(status)) return bad(res, 'Invalid status');
-  if (!['name', 'email', 'mobile', 'status'].includes(sort)) return bad(res, 'Invalid sort');
+  if (!['name', 'tradingName', 'acronym', 'email', 'mobile', 'status'].includes(sort)) return bad(res, 'Invalid sort');
   if (!['asc', 'desc'].includes(direction)) return bad(res, 'Invalid direction');
   res.json(await colleges.list(req.user.companyId, { q, status, page, limit, sort, direction }));
 }));

@@ -4,12 +4,13 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseCsv } from './import-college-sites.mjs';
+import { commissionDecimal } from '../src/utils/commissionDecimal.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const headers = ['acronym','college','classification','location','program','commission','comission_calculation','cashback','cashback_calculation','bonus','aplication_conditions'];
 const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/gu,' ').trim();
 const conditionKey = r => JSON.stringify([r.collegeId,r.classification,r.location,r.program?.toLowerCase() ?? null]);
-const payload = r => JSON.stringify([r.commissionBasisPoints,r.calculationDescription,r.cashbackStatus,r.cashbackDescription,r.cashbackCalculationDescription,r.bonusStatus,r.bonusDescription,r.applicationConditions]);
+const payload = r => JSON.stringify([r.commissionBasisPoints,r.calculationDescription,r.cashbackStatus,r.cashbackDescription,r.cashbackCalculationDescription,r.bonusStatus,r.bonusDescription,r.applicationConditions,r.cashbackCalculation ?? null,r.bonusAmount ?? null]);
 const benefitStatus = v => /^not recorded$/iu.test(v) || !v ? 'not_recorded' : /^(not applicable|no aplica)$/iu.test(v) ? 'not_applicable' : 'specified';
 
 export function planCommissions(text) {
@@ -35,9 +36,13 @@ export function planCommissions(text) {
     const bps=rate?Number(rate[1])*100+Number((rate[2]||'').padEnd(2,'0')):NaN;
     if(!Number.isInteger(bps)||bps>10000) throw new Error(`Row ${row}: invalid percentage`);
     if(v.comission_calculation!=='Tuition fee x commission (2 decimals)') throw new Error(`Row ${row}: unsupported calculation method`);
+    const optionalNumeric = (val,label) => /^(?:not recorded|not applicable|no aplica)?$/iu.test(val) ? null : commissionDecimal(val,`Row ${row}: ${label}`);
+    const cashbackCalculation = optionalNumeric(v.cashback_calculation,'Cashback calculation');
+    const bonusAmount = optionalNumeric(v.bonus,'Bonus');
     const rule={collegeId,classification:v.classification||null,location:v.location||null,program:v.program||null,
       commissionBasisPoints:bps,calculationDescription:v.comission_calculation,
-      cashbackStatus:benefitStatus(v.cashback),cashbackDescription:v.cashback,cashbackCalculationDescription:v.cashback_calculation,
+      cashbackStatus:cashbackCalculation !== null ? 'specified' : benefitStatus(v.cashback),cashbackDescription:v.cashback,cashbackCalculationDescription:v.cashback_calculation,
+      cashbackCalculation,bonusAmount,
       bonusStatus:benefitStatus(v.bonus),bonusDescription:v.bonus,applicationConditions:v.aplication_conditions,sourceRows:[row]};
     const key=conditionKey(rule), prior=rules.get(key);
     if(prior) {
@@ -74,7 +79,7 @@ export async function importCommissions(db,plan,companyId,{apply=false,backupPat
     for(const r of plan.rules) {
       const old=existingByKey.get(conditionKey(r));
       if(!old) continue;
-      const oldPayload={commissionBasisPoints:old.commission_basis_points,calculationDescription:old.calculation_description,cashbackStatus:old.cashback_status,cashbackDescription:old.cashback_description,cashbackCalculationDescription:old.cashback_calculation_description,bonusStatus:old.bonus_status,bonusDescription:old.bonus_description,applicationConditions:old.application_conditions};
+      const oldPayload={commissionBasisPoints:old.commission_basis_points,calculationDescription:old.calculation_description,cashbackStatus:old.cashback_status,cashbackDescription:old.cashback_description,cashbackCalculationDescription:old.cashback_calculation_description,bonusStatus:old.bonus_status,bonusDescription:old.bonus_description,applicationConditions:old.application_conditions,cashbackCalculation:old.cashback_calculation,bonusAmount:old.bonus_amount};
       if(payload(oldPayload)!==payload(r)||old.calculation_method!=='tuition_fee_percentage') throw new Error(`Existing rule differs for ${r.collegeId}; review before replacing`);
       unchanged++;
     }
@@ -88,8 +93,8 @@ export async function importCommissions(db,plan,companyId,{apply=false,backupPat
       for(const r of plan.rules) {
         if(existingByKey.has(conditionKey(r))) continue;
         await db.query(`INSERT INTO bm_college_commission_rules(company_id,college_id,classification,location,program,commission_basis_points,
-          calculation_description,cashback_status,cashback_description,cashback_calculation_description,bonus_status,bonus_description,application_conditions,import_id,source_rows)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,[companyId,r.collegeId,r.classification,r.location,r.program,r.commissionBasisPoints,r.calculationDescription,r.cashbackStatus,r.cashbackDescription,r.cashbackCalculationDescription,r.bonusStatus,r.bonusDescription,r.applicationConditions,imported.rows[0].import_id,r.sourceRows]);
+          calculation_description,cashback_status,cashback_description,cashback_calculation_description,bonus_status,bonus_description,application_conditions,import_id,source_rows,cashback_calculation,bonus_amount)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,[companyId,r.collegeId,r.classification,r.location,r.program,r.commissionBasisPoints,r.calculationDescription,r.cashbackStatus,r.cashbackDescription,r.cashbackCalculationDescription,r.bonusStatus,r.bonusDescription,r.applicationConditions,imported.rows[0].import_id,r.sourceRows,r.cashbackCalculation,r.bonusAmount]);
       }
     }
     await db.query('COMMIT'); return summary;

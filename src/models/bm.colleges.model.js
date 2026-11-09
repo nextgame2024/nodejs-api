@@ -21,6 +21,8 @@ const siteEditable = ['email', 'address', 'phone', 'mobile', 'city', 'category']
 
 const listSortColumns = {
   name: 'lower(college_name)',
+  tradingName: 'lower(trading_name)',
+  acronym: 'lower(acronym)',
   email: 'lower(email)',
   mobile: 'lower(cel)',
   status: 'lower(status)',

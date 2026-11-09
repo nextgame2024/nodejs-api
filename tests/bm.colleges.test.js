@@ -35,6 +35,16 @@ describe('Business Manager college data isolation', () => {
     expect(query.mock.calls.at(-2)[0]).toContain('ORDER BY lower(email) DESC NULLS LAST, college_id ASC');
     expect(query.mock.calls.at(-2)[1]).toEqual(['company-1', 25, 25]);
   });
+  test('searches both identity fields and sorts trading name and acronym across the company list',async()=>{
+    for(const [sort,column] of [['tradingName','trading_name'],['acronym','acronym']]) {
+      query.mockResolvedValueOnce({rows:[]}).mockResolvedValueOnce({rows:[{total:0}]});
+      await colleges.list('company-1',{q:'ACAH',page:2,limit:25,sort,direction:'asc'});
+      const [sql,params]=query.mock.calls.at(-2);
+      expect(sql).toContain('acronym ILIKE $2');expect(sql).toContain('trading_name ILIKE $2');
+      expect(sql).toContain(`ORDER BY lower(${column}) ASC NULLS LAST, college_id ASC`);
+      expect(params).toEqual(['company-1','%ACAH%',25,25]);
+    }
+  });
 
   test('courses are tenant and college scoped with server paging and active filtering', async () => {
     query.mockResolvedValueOnce({ rows: [{ collegeId: 'college-1' }] })

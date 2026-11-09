@@ -17,6 +17,13 @@ describe('College commission configuration import',()=>{
   test('keeps different programs as separate rules',()=>{
     expect(parse(row('20%','','','Undergraduate Grupo ECA'),row('15%','','','Postgraduate Grupo ECA')).rules).toHaveLength(2);
   });
+  test('imports numeric cashback and bonus while preserving original CSV fields',()=>{
+    const input=row().replace('Not recorded,No aplica,Not applicable','Not recorded,15.20,0.00');
+    const p=parse(input);expect(p.rules[0]).toMatchObject({cashbackCalculation:'15.20',bonusAmount:'0.00',cashbackStatus:'specified',bonusStatus:'specified'});
+    expect(p.sourceRecords[0].cashback_calculation).toBe('15.20');
+    expect(()=>parse(input.replace('15.20','15.205'))).toThrow('two decimal places');
+    expect(parse(row()).rules[0]).toMatchObject({cashbackCalculation:null,bonusAmount:null});
+  });
   test('rejects conflicting rates, acronyms, malformed rates and equally specific overlaps',()=>{
     expect(()=>parse(row(),row('30%'))).toThrow('conflicting');
     expect(()=>parse(row(),row('25%','','','','OTHER'))).toThrow('inconsistent');
