@@ -1,4 +1,17 @@
 {
+  "studentInvoiceCollegeSelection": {
+    "updatedOn": "2026-11-10",
+    "status": "locally_verified_pending_runtime_rollout",
+    "cause": "Offer-based invoice preparation displayed and saved the extracted college name from the offer, ignoring the primary college selected for the case. Unlike the manual invoice editor, it offered no college selector.",
+    "scope": "Offer preparation now receives the full active company college directory, defaults to the primary case college, and provides the shared searchable manager selector. An explicit saved invoice college is retained on reopening; legacy drafts without a college ID use the case default. The server resolves the selected UUID in the tenant directory and stores the college ID/name, without changing the case college or source extraction. Missing or unavailable selections require correction.",
+    "partialCreation": "College changes apply to unsent invoices. Each sent or uncertain invoice retains its previous reference in the snapshot, including legacy snapshots, so Xero matching, reconciliation and projection remain accurate. Other immutable invoice fields and existing concurrency/permission guards remain enforced.",
+    "verification": [
+      "29 focused Runtime invoice checks passed across college selection, draft contracts and Xero creation; 8 cover college behavior and authorization",
+      "Runtime and frontend production builds and frontend application TypeScript check passed; existing frontend budget/CommonJS/missing-primeicons warnings remain",
+      "49 focused invoice-editor browser checks passed including case-college defaults, complete list, manual changes, saved overrides and 390/1440px light/dark layouts"
+    ],
+    "deployment": "Deploy Runtime and use the updated frontend, then refresh the case and reopen Prepare invoices. No database migration or document re-upload is required. No live invoice was created or modified during verification."
+  },
   "studentPassportNameTolerance": {
     "updatedOn": "2026-11-10",
     "status": "runtime_fix_pushed_and_live_revision_verified_pending_authenticated_case_refresh",

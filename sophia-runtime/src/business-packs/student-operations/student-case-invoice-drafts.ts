@@ -31,6 +31,7 @@ const line=z.object({kind:z.enum(['tuition','enrolment','materials','visa','oshc
 export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.number().int().positive(),caseVersion:z.number().int().positive(),advisorId:z.uuid(),
   draftBatchId:z.uuid().optional(),draftRevision:z.number().int().positive().optional(),
   catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),
+  collegeId:z.uuid().optional(),
   reviewNote:z.string().trim().max(500),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,
     conditionalFeeApplies:z.boolean(),conditionalFeeMinor:money,lines:z.array(line).min(1).max(30)}).strict()).min(1).max(200),
@@ -113,6 +114,11 @@ export class StudentCaseInvoiceDraftsService {
   }
   private financial(p:Principal){if(!hasStudentOperationsPermission(p.role,'payments.read_all'))throw new ForbiddenException('Invoice financial access required.');}
   private canCreate(p:Principal){return process.env.XERO_INVOICE_CREATION_ENABLED==='true'&&hasStudentOperationsPermission(p.role,'payments.approve');}
+  private async colleges(db:PoolClient,tenant:string,id:string){
+    return (await db.query<{collegeId:string;name:string;isPrimary:boolean}>(`SELECT d.college_id AS "collegeId",d.college_name AS name,
+      EXISTS(SELECT 1 FROM ${caseSchema()}.student_operations_case_colleges c WHERE c.customer_id=d.customer_id AND c.college_id=d.college_id AND c.case_id=$2 AND c.is_primary) AS "isPrimary"
+      FROM ${caseSchema()}.student_operations_college_directory d WHERE d.customer_id=$1 ORDER BY lower(d.college_name),d.college_id`,[tenant,id])).rows;
+  }
   async manualOptions(p:Principal,id:string,forEdit=false){
     const startedAt=Date.now();
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!hasStudentOperationsPermission(p.role,'payments.approve')||!forEdit&&!this.canCreate(p))throw new ForbiddenException();
@@ -121,7 +127,7 @@ export class StudentCaseInvoiceDraftsService {
       if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be created for a closed case.');
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
-      const colleges=(await db.query(`SELECT d.college_id AS "collegeId",d.college_name AS name,EXISTS(SELECT 1 FROM ${s}.student_operations_case_colleges c WHERE c.customer_id=d.customer_id AND c.college_id=d.college_id AND c.case_id=$2 AND c.is_primary) AS "isPrimary" FROM ${s}.student_operations_college_directory d WHERE d.customer_id=$1 ORDER BY lower(d.college_name),d.college_id`,[p.tenantId,id])).rows;
+      const colleges=await this.colleges(db,p.tenantId,id);
       return {caseVersion:c.record_version,advisors,student,colleges,catalogue:await readSalesCatalogue(db,p.tenantId)};
     });
     const localMs=Date.now()-startedAt;
@@ -206,7 +212,8 @@ export class StudentCaseInvoiceDraftsService {
         const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status!=='created';
       });
       if(!hasUnresolvedInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
-      return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,
+      const colleges=await this.colleges(db,p.tenantId,id);
+      return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,colleges,
         savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)};
     });
   }
@@ -232,14 +239,21 @@ export class StudentCaseInvoiceDraftsService {
         if(!item||item.code!==line.itemCode||!account||account.code!==line.accountCode||!tax||tax.taxType!==line.taxType||tax.rate===null)throw new BadRequestException('Select an available Xero item with valid sales account and tax defaults.');
       }
       const previous=existing?invoiceSnapshot.parse(existing.snapshot):null;
+      const colleges=await this.colleges(db,p.tenantId,id);
+      // Older clients omit the selection: use a saved explicit choice or the case college,
+      // never the OCR name printed on the offer. Resolve names within the tenant on save.
+      const collegeId=value.collegeId??previous?.collegeId??colleges.find(college=>college.isPrimary)?.collegeId;
+      const college=colleges.find(college=>college.collegeId===collegeId);
+      if(!college)throw new BadRequestException('Select an available college.');
       // A saved date accepted without a review explanation is a trusted default.
       // Keep requiring explanations for manually reviewed exceptions.
       const acceptedDefaultDates=previous&&existing.snapshot.reviewNote===''?previous.invoices:[];
-      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates),advisorLabel=`${advisor.code} ${advisor.name}`;
+      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates)
+        .map(invoice=>({...invoice,collegeName:college.name as string|null})),advisorLabel=`${advisor.code} ${advisor.name}`;
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
-        collegeName:offer.source.collegeName,reviewNote:value.reviewNote,invoices};
+        collegeId:college.collegeId,collegeName:college.name,reviewNote:value.reviewNote,invoices};
       if(existing&&previous){
         const frozen=(await db.query(`SELECT sequence,status FROM ${s}.student_case_xero_invoice_exports
           WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted' FOR UPDATE`,[p.tenantId,existing.batch_id])).rows as Array<{sequence:number;status:string}>;
@@ -247,7 +261,10 @@ export class StudentCaseInvoiceDraftsService {
         if(frozen.length&&previous.catalogueConnectionId!==snapshot.catalogueConnectionId)throw new ConflictException('The Xero organisation cannot change after invoice creation has started.');
         for(const receipt of frozen){
           const before=previous.invoices.find(invoice=>invoice.sequence===receipt.sequence),after=invoices.find(invoice=>invoice.sequence===receipt.sequence);
-          if(!before||!after||!isDeepStrictEqual(before,after))throw new ConflictException(`INV-${receipt.sequence} is read-only because Xero invoice creation has started.`);
+          // A new selection applies only to unsent invoices. Retain the original
+          // reference for already-sent invoices and uncertain Xero reconciliation.
+          if(after&&before)after.collegeName=before.collegeName!==undefined?before.collegeName:previous.collegeName;
+          if(!before||!after||!isDeepStrictEqual({...before,collegeName:after.collegeName},after))throw new ConflictException(`INV-${receipt.sequence} is read-only because Xero invoice creation has started.`);
         }
         const updated=(await db.query(`UPDATE ${s}.student_case_invoice_draft_batches SET advisor_id=$4,advisor_label=$5,snapshot=$6,actor_identity_user_id=$7,updated_at=now(),revision=revision+1
           WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 RETURNING revision,updated_at AS "updatedAt"`,[p.tenantId,id,existing.batch_id,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
@@ -287,7 +304,7 @@ export class StudentCaseInvoiceDraftsService {
       await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,id);
         const details=verified??{invoiceId:receipt.invoiceId,contactId,invoiceNumber:receipt.invoiceNumber,type:'ACCREC',status:receipt.status,
-          invoiceDate:invoice.issueDate,dueDate:invoice.dueDate,advisorName:snapshot.advisorLabel,invoiceReference:snapshot.collegeName,collegeName:snapshot.collegeName,
+          invoiceDate:invoice.issueDate,dueDate:invoice.dueDate,advisorName:snapshot.advisorLabel,invoiceReference:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,collegeName:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,
           concept:null,paymentTrack:null,total:receipt.total,amountPaid:0,amountDue:receipt.total,currencyCode:snapshot.currency,sentToContact:false,lineItems:[],updatedAt:null} as XeroInvoiceRecord;
         await projectCaseInvoice(db,p.tenantId,id,connectionId,details,p.identityUserId);
         if(verified)await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET projection_next_attempt_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence]);
@@ -463,7 +480,8 @@ export class StudentCaseInvoiceDraftsService {
   }
 }
 
-const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
+const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeId:z.uuid().optional(),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
+    collegeName:z.string().nullable().optional(),
     lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:money,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
 export type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;

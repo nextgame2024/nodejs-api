@@ -32,6 +32,6 @@ export function invoiceDraftXeroValue(snapshot:InvoiceSnapshot,invoice:InvoiceSn
   const lines:XeroInvoiceCreate['lines']=invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
     accountCode:line.accountCode,taxType:line.taxType,tracking}));
   if(invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(invoice.conditionalFeeMinor/100).toFixed(2),accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});
-  return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:snapshot.collegeName||null,currencyCode:snapshot.currency,lines,
+  return {contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:(invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName)||null,currencyCode:snapshot.currency,lines,
     ...(typeof snapshot.brandingThemeId==='string'?{brandingThemeId:snapshot.brandingThemeId}:{})};
 }
