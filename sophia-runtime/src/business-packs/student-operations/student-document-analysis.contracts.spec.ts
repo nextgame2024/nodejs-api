@@ -15,6 +15,11 @@ describe('Document extraction and deterministic validation contracts', () => {
   test.each([{ expiresOn: null }, { mrzExpiryMatches: false }, { studentName: 'Other Person' }, { evidence: [] }])('ambiguous passports require review: %j', change => {
     expect(validateDocument({ ...passport, ...change }, 'Example Student', '2026-10-25').status).toBe('needs_review');
   });
+  test('passports accept a one-letter student-name typo above the existing similarity threshold', () => {
+    const extractedName='ANDRES ARLEY MAZO SUAREZ',caseName='Andres Arley Mazo SuareT';
+    expect(nameSimilarity(extractedName,caseName)).toBeGreaterThan(0.8);
+    expect(validateDocument({ ...passport, studentName:extractedName },caseName,'2026-10-25')).toEqual({status:'passed',reasons:[]});
+  });
   test('rejects malformed dates and unexpected sensitive fields', () => {
     expect(() => documentExtraction.parse({ ...passport, expiresOn: '2026-02-30' })).toThrow();
     expect(() => documentExtraction.parse({ ...passport, passportNumber: 'not-retained' })).toThrow();

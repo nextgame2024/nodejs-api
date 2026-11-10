@@ -93,7 +93,7 @@ export function validateDocument(input: unknown, expectedName: string, today: st
   const reasons: string[] = [];
   if (!value.evidence.length) reasons.push('missing_evidence');
   if (value.kind === 'passport') {
-    if (!value.studentName || normalizedName(value.studentName) !== normalizedName(expectedName)) reasons.push('student_identity_needs_review');
+    if (!value.studentName || nameSimilarity(value.studentName,expectedName)<=0.8) reasons.push('student_identity_needs_review');
     if (!value.expiresOn) reasons.push('expiry_unreadable');
     if (value.mrzExpiryMatches === false) reasons.push('expiry_conflict');
     if(value.expiresOn){

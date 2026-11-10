@@ -1,4 +1,21 @@
 {
+  "studentPassportNameTolerance": {
+    "updatedOn": "2026-11-10",
+    "status": "locally_verified_pending_runtime_and_frontend_deployment",
+    "cause": "Passport validation used normalized exact equality for the extracted and saved student names, unlike the existing engagement-letter identity rule. A one-letter case-name typo therefore forced student_identity_needs_review even when the deterministic name similarity was safely above 80%.",
+    "scope": "Passport student identity now uses the existing accent-insensitive, punctuation-normalized and token-order-tolerant name similarity rule. Scores above 80% pass; missing names, unrelated names and scores at or below 80% still require manual review. Existing stored extraction results are evaluated through this rule on read and checklist reconciliation, so no document re-upload or new provider call is required after deployment.",
+    "ui": "The replacement dialog now follows the normal field-then-action order: the selected filename field appears first and the Select button appears on its right, while retaining the existing responsive, dark-mode and accessible file-picker behavior.",
+    "verification": [
+      "The exact reported ANDRES ARLEY MAZO SUAREZ versus Andres Arley Mazo SuareT regression passes",
+      "28 focused document-analysis contract and worker tests passed on Node 22.23.2",
+      "Runtime TypeScript typecheck passed on Node 22.23.2",
+      "Runtime production build passed and its compiled validator returned passed for the exact reported names",
+      "25 focused ChromeHeadless document-actions checks passed, including field-before-button order and 390/1440px light/dark layouts",
+      "Both repository diff checks passed"
+    ],
+    "external": "The localhost Angular environment targets the deployed https://sophia-runtime-api.onrender.com Runtime, which still returns the pre-fix verdict until deployment. No production deployment, database mutation, migration, document upload or provider call was performed by this change.",
+    "deployment": "Deploy the updated Sophia Runtime and frontend. No migration or document re-upload is required."
+  },
   "internalAssistantOpenAiTextExperience": {
     "updatedOn": "2026-11-04",
     "status": "locally_verified_pending_migration_126_and_backend_frontend_deployment",
