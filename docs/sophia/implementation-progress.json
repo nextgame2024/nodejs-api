@@ -1,7 +1,7 @@
 {
   "studentPassportNameTolerance": {
     "updatedOn": "2026-11-10",
-    "status": "locally_verified_pending_runtime_and_frontend_deployment",
+    "status": "runtime_fix_pushed_and_live_revision_verified_pending_authenticated_case_refresh",
     "cause": "Passport validation used normalized exact equality for the extracted and saved student names, unlike the existing engagement-letter identity rule. A one-letter case-name typo therefore forced student_identity_needs_review even when the deterministic name similarity was safely above 80%.",
     "scope": "Passport student identity now uses the existing accent-insensitive, punctuation-normalized and token-order-tolerant name similarity rule. Scores above 80% pass; missing names, unrelated names and scores at or below 80% still require manual review. Existing stored extraction results are evaluated through this rule on read and checklist reconciliation, so no document re-upload or new provider call is required after deployment.",
     "ui": "The replacement dialog now follows the normal field-then-action order: the selected filename field appears first and the Select button appears on its right, while retaining the existing responsive, dark-mode and accessible file-picker behavior.",
@@ -13,8 +13,8 @@
       "25 focused ChromeHeadless document-actions checks passed, including field-before-button order and 390/1440px light/dark layouts",
       "Both repository diff checks passed"
     ],
-    "external": "The localhost Angular environment targets the deployed https://sophia-runtime-api.onrender.com Runtime, which still returns the pre-fix verdict until deployment. No production deployment, database mutation, migration, document upload or provider call was performed by this change.",
-    "deployment": "Deploy the updated Sophia Runtime and frontend. No migration or document re-upload is required."
+    "external": "Follow-up verification on 2026-11-10 read the live Runtime health endpoint: revision 948b2d430c46. Inspection of that exact commit confirmed the old exact-name passport rule. GitHub master was still 6135f65; the tested fix commit 3c0d4af was then pushed successfully to origin/master. Subsequent live health verification returned 3c0d4af78765, confirming the corrected Runtime revision is deployed. No production database mutation, migration, document upload or extraction-provider call was performed by the agent. An authenticated case response was not inspected.",
+    "deployment": "Runtime rollout is verified via /api/runtime/healthz reporting 3c0d4af78765. The localhost UI calls this hosted API. Use Reload in the open document-check dialog to fetch the recalculated verdict; no migration or document re-upload is required. The earlier Select-button layout change needs frontend deployment only for hosted frontend users."
   },
   "internalAssistantOpenAiTextExperience": {
     "updatedOn": "2026-11-04",
