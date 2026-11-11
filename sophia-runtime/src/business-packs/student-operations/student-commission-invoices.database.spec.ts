@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {BadGatewayException,ConflictException,ForbiddenException} from '@nestjs/common';
+import {StudentCollegeMatchingService} from './student-college-matching.service.js';
 import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
 import {autoMatchCollegeContacts} from './student-college-auto-matching.js';
@@ -57,7 +58,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
     CREATE TABLE ${schema}.student_xero_sales_catalogues(customer_id uuid,xero_connection_id uuid,snapshot jsonb,revision integer,last_synced_at timestamptz,error_code text);
     CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,invoice_status text,invoice_date date,due_date date,total numeric,amount_paid numeric,amount_due numeric);
     ALTER TABLE ${schema}.student_operations_xero_invoices ADD PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id),ADD xero_contact_id uuid,ADD invoice_number text,ADD invoice_type text,ADD invoice_reference text,ADD concept text,ADD advisor_name text,ADD college_name text,ADD payment_track text,ADD sent_to_contact boolean,ADD line_items jsonb,ADD currency_code text,ADD provider_updated_at timestamptz,ADD last_seen_sync_run_id uuid,ADD updated_at timestamptz DEFAULT now();
-    CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,sync_run_id uuid,status text,lease_owner text,lease_expires_at timestamptz,invoice_count integer);
+    CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,sync_run_id uuid,status text,lease_owner text,lease_expires_at timestamptz,invoice_count integer,xero_connection_id uuid,created_at timestamptz DEFAULT now(),mode text);
     CREATE TABLE IF NOT EXISTS public.bm_colleges(college_id uuid PRIMARY KEY,company_id uuid,college_name text,trading_name text,acronym text,status text DEFAULT 'active');
     CREATE TABLE IF NOT EXISTS public.bm_college_commission_rules(rule_id uuid PRIMARY KEY,company_id uuid,college_id uuid,classification text,location text,program text,commission_basis_points integer,calculation_method text,rounding_decimal_places integer,cashback_status text,bonus_status text,application_conditions text,active boolean,createdat timestamptz DEFAULT now(),updatedat timestamptz DEFAULT now());
     GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
@@ -70,7 +71,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  },20000);
  beforeEach(async()=>{
   await pool.query(`TRUNCATE ${schema}.student_commission_exports,${schema}.student_commission_drafts,${schema}.student_case_xero_invoice_exports,${schema}.student_case_invoice_draft_batches CASCADE;
-    DELETE FROM ${schema}.student_college_xero_mapping_events;DELETE FROM ${schema}.student_college_xero_contact_links;DELETE FROM ${schema}.student_operations_xero_contacts;DELETE FROM ${schema}.student_operations_college_directory;DELETE FROM ${schema}.student_operations_xero_sync_configurations;DELETE FROM ${schema}.xero_connections;DELETE FROM ${schema}.customers;DELETE FROM ${schema}.student_xero_sales_catalogues;DELETE FROM ${schema}.student_operations_xero_invoices;`);
+    DELETE FROM ${schema}.student_college_xero_mapping_events;DELETE FROM ${schema}.student_college_xero_contact_links;DELETE FROM ${schema}.student_operations_xero_contacts;DELETE FROM ${schema}.student_operations_college_directory;DELETE FROM ${schema}.student_operations_xero_sync_configurations;DELETE FROM ${schema}.xero_connections;DELETE FROM ${schema}.customers;DELETE FROM ${schema}.student_xero_sales_catalogues;DELETE FROM ${schema}.student_operations_xero_invoices;DELETE FROM ${schema}.student_operations_xero_sync_runs;`);
   await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);
   await pool.query(`INSERT INTO public.bm_colleges(college_id,company_id,college_name,status) VALUES($1,$2,$3,'active')`,[collegeId,tenant,'Fixture College']);
   await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);
@@ -87,6 +88,25 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   changedTrust=providerFailure=false;live=maxLive=0;createInvoice.mockClear();session.mockClear();
  });
  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);await pool.end();}if(oldSchema===undefined)delete process.env.SOPHIA_RUNTIME_SCHEMA;else process.env.SOPHIA_RUNTIME_SCHEMA=oldSchema;if(oldFlag===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldFlag;});
+ it('separates archived/imported contacts from pending active sales and keeps empty-page totals',async()=>{
+  const run=randomUUID(),oldRun=randomUUID(),pending=randomUUID(),archived=randomUUID(),supplier=randomUUID(),deletedOnly=randomUUID(),otherCustomer=randomUUID();
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,xero_connection_id,status,mode,created_at)
+    VALUES($1,$2,$3,'succeeded','reconciliation',now()),($1,$4,$3,'succeeded','initial',now()-interval '1 day')`,[tenant,run,ptyId,oldRun]);
+  for(const [id,status] of [[pending,'ACTIVE'],[archived,'ARCHIVED'],[supplier,'ACTIVE'],[deletedOnly,'ACTIVE'],[otherCustomer,'ACTIVE']])
+    await pool.query(`INSERT INTO ${schema}.student_operations_xero_contacts VALUES($1,$2,$3,$4,$5,NULL)`,[tenant,ptyId,id,status,id]);
+  for(const [id,status,seen,type] of [[contactId,'DRAFT',run,'ACCREC'],[pending,'PAID',run,'ACCREC'],[pending,'AUTHORISED',run,'ACCRECCREDIT'],[archived,'PAID',run,'ACCREC'],[deletedOnly,'DELETED',run,'ACCREC'],[supplier,'PAID',oldRun,'ACCREC'],[otherCustomer,'DRAFT',run,'ACCREC']])
+    await pool.query(`INSERT INTO ${schema}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,invoice_status,last_seen_sync_run_id,invoice_type) VALUES($1,$2,$3,$4,$5,$6,$7)`,[tenant,ptyId,randomUUID(),id,status,seen,type]);
+  await pool.query(`INSERT INTO ${schema}.student_college_xero_contact_links(customer_id,xero_connection_id,xero_contact_id,classification,reviewed_by) VALUES($1,$2,$3,'other','actor')`,[tenant,ptyId,otherCustomer]);
+  const matching=new StudentCollegeMatchingService({tenantTransaction:tx,tenantReadTransaction:tx} as never);
+  const result=await matching.list(p,ptyId,{});
+  expect(result.total).toBe(1);expect(result.items).toEqual([expect.objectContaining({contactId:pending,invoiceCount:2})]);
+  expect(result.summary).toEqual({importedContacts:6,activeContacts:5,archivedContacts:1,salesContacts:4,pendingSalesContacts:1,salesTransactions:5,linkedTransactions:1});
+  const all=await matching.list(p,ptyId,{scope:'all',status:'all',includeColleges:'false',page:3,limit:25});
+  expect(all.total).toBe(6);expect(all.items).toEqual([]);expect(all).not.toHaveProperty('colleges');
+  expect((await matching.list(p,ptyId,{scope:'active',status:'all'})).total).toBe(5);
+  await expect(matching.list({tenantId:tenant,identityUserId:'advisor',role:'advisor'} as never,ptyId,{})).rejects.toThrow(ForbiddenException);
+  await expect(matching.list({tenantId:other,identityUserId:'other',role:'chief_executive'} as never,ptyId,{})).rejects.toThrow('PTY organisation not found');
+ });
  it('applies real migrations with forced RLS and no unrestricted Business Manager grant',async()=>{
   const role=await pool.query("SELECT rolbypassrls FROM pg_roles WHERE rolname='sophia_runtime_app'");expect(role.rows[0].rolbypassrls).toBe(false);
   const rules=await tx(tenant,db=>db.query(`SELECT * FROM ${schema}.student_college_commission_rules`));expect(rules.rowCount).toBe(1);
@@ -179,7 +199,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  });
  it('imports PTY dates, payments and credits idempotently through the actual sync upsert',async()=>{
   const runId=randomUUID(),invoiceId=randomUUID();
-  await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,'processing','worker',now()+interval '10 minutes',0)`,[tenant,runId]);
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,status,lease_owner,lease_expires_at,invoice_count) VALUES($1,$2,'processing','worker',now()+interval '10 minutes',0)`,[tenant,runId]);
   const sync=new StudentOperationsXeroSyncService({tenantTransaction:tx} as never,{} as never) as any;
   const value=invoice(invoiceDraftXeroValue(snapshot,snapshot.invoices[0],contactId),invoiceId);
   value.invoiceReference='Fixture Student';value.invoiceDate='2026-11-20';value.status='PAID';value.amountPaid=125;value.amountDue=0;

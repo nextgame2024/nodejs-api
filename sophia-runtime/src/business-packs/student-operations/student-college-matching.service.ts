@@ -6,7 +6,7 @@ import type { PoolClient } from 'pg';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
 
-const querySchema=z.object({page:z.coerce.number().int().min(1).default(1),limit:z.coerce.number().int().min(1).max(100).default(25),q:z.string().trim().max(200).default(''),status:z.enum(['all','unresolved','college','other']).default('unresolved'),direction:z.enum(['asc','desc']).default('asc')});
+const querySchema=z.object({page:z.coerce.number().int().min(1).default(1),limit:z.coerce.number().int().min(1).max(100).default(25),q:z.string().trim().max(200).default(''),status:z.enum(['all','unresolved','college','other']).default('unresolved'),direction:z.enum(['asc','desc']).default('asc'),scope:z.enum(['sales','active','all']).default('sales'),includeColleges:z.enum(['true','false']).default('true')});
 const decisionSchema=z.object({classification:z.enum(['college','other','unresolved']),collegeId:z.uuid().nullable(),expectedRevision:z.number().int().min(0)}).strict()
   .refine(v=>(v.classification==='college')===(v.collegeId!==null));
 
@@ -24,22 +24,47 @@ export class StudentCollegeMatchingService {
   }
   async list(p:Principal,connectionId:string,input:unknown){
     this.authorize(p);const parsed=querySchema.safeParse(input);if(!parsed.success)throw new BadRequestException('Check the college matching filters.');
-    const {page,limit,q,status,direction}=parsed.data,s=runtimeConfig().schema;
+    const {page,limit,q,status,direction,scope,includeColleges}=parsed.data,s=runtimeConfig().schema;
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       await this.connection(db,p.tenantId,connectionId);
-      const result=await db.query(`SELECT c.xero_contact_id AS "contactId",c.legal_name AS name,c.email,c.contact_status AS "contactStatus",
-        m.college_id AS "collegeId",d.college_name AS "collegeName",COALESCE(m.classification,'unresolved') AS classification,
-        COALESCE(m.revision,0) AS revision,count(*) OVER()::int AS total,
-        (SELECT count(*)::int FROM ${s}.student_operations_xero_invoices i WHERE i.customer_id=c.customer_id AND i.xero_connection_id=c.xero_connection_id AND i.xero_contact_id=c.xero_contact_id) AS "invoiceCount"
+      // Aggregate the local sales read model once, using the register's visibility rules.
+      // The review queue counts contacts, never individual invoices or archived suppliers.
+      const result=await db.query(`WITH sales AS (
+        SELECT i.xero_contact_id,count(*)::int AS transactions
+        FROM ${s}.student_operations_xero_invoices i
+        JOIN ${s}.student_operations_xero_sync_runs seen ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
+        WHERE i.customer_id=$1 AND i.xero_connection_id=$2
+          AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
+          AND i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')
+          AND seen.created_at>=COALESCE((SELECT max(r.created_at) FROM ${s}.student_operations_xero_sync_runs r
+            WHERE r.customer_id=$1 AND r.xero_connection_id=$2 AND r.status='succeeded' AND r.mode IN ('initial','reconciliation')),seen.created_at)
+        GROUP BY i.xero_contact_id
+      ), contacts AS (
+        SELECT c.xero_contact_id AS "contactId",c.legal_name AS name,c.email,c.contact_status AS "contactStatus",
+          m.college_id AS "collegeId",d.college_name AS "collegeName",COALESCE(m.classification,'unresolved') AS classification,
+          COALESCE(m.revision,0) AS revision,COALESCE(sales.transactions,0) AS "invoiceCount"
         FROM ${s}.student_operations_xero_contacts c
+        LEFT JOIN sales USING(xero_contact_id)
         LEFT JOIN ${s}.student_college_xero_contact_links m USING(customer_id,xero_connection_id,xero_contact_id)
         LEFT JOIN ${s}.student_operations_college_directory d ON d.customer_id=m.customer_id AND d.college_id=m.college_id
         WHERE c.customer_id=$1 AND c.xero_connection_id=$2
-          AND ($3='' OR c.legal_name ILIKE '%'||$3||'%' OR c.email ILIKE '%'||$3||'%')
-          AND ($4='all' OR COALESCE(m.classification,'unresolved')=$4)
-        ORDER BY lower(c.legal_name) ${direction.toUpperCase()},c.xero_contact_id LIMIT $5 OFFSET $6`,[p.tenantId,connectionId,q,status,limit,(page-1)*limit]);
-      const colleges=await db.query(`SELECT college_id AS "collegeId",college_name AS name,trading_name AS "tradingName",acronym FROM ${s}.student_college_matching_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId]);
-      return {items:result.rows,total:Number(result.rows[0]?.total??0),page,limit,colleges:colleges.rows};
+      ), filtered AS (
+        SELECT * FROM contacts WHERE ($3='' OR name ILIKE '%'||$3||'%' OR email ILIKE '%'||$3||'%')
+          AND ($4='all' OR classification=$4)
+          AND ($7='all' OR ("contactStatus"='ACTIVE' AND ($7='active' OR "invoiceCount">0)))
+      ), page AS (
+        SELECT * FROM filtered ORDER BY lower(name) ${direction.toUpperCase()},"contactId" LIMIT $5 OFFSET $6
+      ) SELECT COALESCE((SELECT jsonb_agg(p ORDER BY lower(p.name) ${direction.toUpperCase()},p."contactId") FROM page p),'[]'::jsonb) AS items,
+        (SELECT count(*)::int FROM filtered) AS total,
+        (SELECT jsonb_build_object('importedContacts',count(*),'activeContacts',count(*) FILTER(WHERE "contactStatus"='ACTIVE'),
+          'archivedContacts',count(*) FILTER(WHERE "contactStatus"='ARCHIVED'),
+          'salesContacts',count(*) FILTER(WHERE "invoiceCount">0),
+          'pendingSalesContacts',count(*) FILTER(WHERE "contactStatus"='ACTIVE' AND "invoiceCount">0 AND classification='unresolved'),
+          'salesTransactions',COALESCE(sum("invoiceCount"),0),
+          'linkedTransactions',COALESCE(sum("invoiceCount") FILTER(WHERE classification='college' AND "collegeName" IS NOT NULL),0)) FROM contacts) AS summary`,
+        [p.tenantId,connectionId,q,status,limit,(page-1)*limit,scope]);
+      const colleges=includeColleges==='true'?await db.query(`SELECT college_id AS "collegeId",college_name AS name,trading_name AS "tradingName",acronym FROM ${s}.student_college_matching_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId]):null;
+      return {...result.rows[0],page,limit,...(colleges?{colleges:colleges.rows}:{})};
     });
   }
   async resolve(p:Principal,connectionId:string,contactId:string,input:unknown){

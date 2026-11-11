@@ -32,3 +32,11 @@ Each PTY receipt is unique by source TRUST invoice and target organisation. Data
 Later source voids/amount changes are flagged in the preparation view; there is no automatic credit, cancellation or replacement of a financial document. A changed source is blocked before a new PTY send. Related invoices are navigable through the Payments detail modal after normal indexing. Payment and allocation snapshots are replaced during full invoice imports, not appended, preventing duplicate entries; omitted summary data preserves the previous snapshot.
 
 Xero field semantics were checked against the official [Invoices API](https://developer.xero.com/documentation/api/accounting/invoices) and [Payments API](https://developer.xero.com/documentation/api/accounting/payments).
+
+### Sync colleges follow-up (verified locally, release pending)
+
+College review now lives at `/manager/sync-colleges`, beside Sync users, rather than below Payments and Control. Existing Chief Executive Sync users entitlements expose the sibling navigation item; Runtime still enforces `integrations.manage` on every queue/mapping request. Release the Business Manager API, Runtime API and frontend together. No migration is required.
+
+The default queue is unresolved ACTIVE contacts with visible PTY sales. All-active and all-imported scopes remain available for new recipients and archived history. Transaction counts follow the Payments register's document/status/latest-full-import rules. The queue aggregates local transactions once per request and the browser loads the stable college selection directory only on the first request per organisation.
+
+Read-only verification on 11 November: 1,548 active and 130 archived contacts (1,678 imported); 7,342 visible sales documents across 569 recipients; 4,951 documents linked to colleges; 496 unresolved active sales contacts. These are contact and sales-document counts, not interchangeable pending totals. Insurance companies, individuals and other businesses should be classified separately rather than forced into college mappings.

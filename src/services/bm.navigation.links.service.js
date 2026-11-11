@@ -47,9 +47,17 @@ export async function listActiveNavigationLinks(
   let navigationLinks = await model.listActiveNavigationLinks(companyId, {
     navigationType,
   });
-  if (navigationLinks.some(link => link.navigationLabel === 'Sync users') &&
-      !(await canAccessStudentSync(userId, companyId))) {
-    navigationLinks = navigationLinks.filter(link => link.navigationLabel !== 'Sync users');
+  const syncLabels = new Set(['Sync users', 'Sync colleges']);
+  if (navigationLinks.some(link => syncLabels.has(link.navigationLabel))) {
+    if (!(await canAccessStudentSync(userId, companyId))) {
+      navigationLinks = navigationLinks.filter(link => !syncLabels.has(link.navigationLabel));
+    } else if (navigationLinks.some(link => link.navigationLabel === 'Sync users') &&
+               !navigationLinks.some(link => link.navigationLabel === 'Sync colleges')) {
+      // Existing student-workspace installations inherit the sibling sync tool.
+      // Runtime independently checks Chief Executive permission on every request.
+      const source = navigationLinks.find(link => link.navigationLabel === 'Sync users');
+      navigationLinks = [...navigationLinks, {...source, navigationLinkId: `sync-colleges:${companyId}`, navigationLabel: 'Sync colleges'}];
+    }
   }
   if (navigationLinks.some(link => link.navigationLabel === 'Leads & Conversations') &&
       !(await canAccessAssistant(userId, companyId))) {

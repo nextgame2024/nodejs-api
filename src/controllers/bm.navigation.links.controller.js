@@ -28,6 +28,7 @@ const NAVIGATION_LABELS_BY_TYPE = {
     "Payments and Control",
     "Students",
     "Sync users",
+    "Sync colleges",
     "Sites",
     "Pallets",
     "Projects",
