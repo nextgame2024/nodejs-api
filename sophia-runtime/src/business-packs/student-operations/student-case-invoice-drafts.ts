@@ -200,7 +200,9 @@ export class StudentCaseInvoiceDraftsService {
           FROM ${s}.student_case_xero_invoice_exports e WHERE e.customer_id=b.customer_id AND e.batch_id=b.batch_id),'{}'::jsonb) AS exports
         FROM ${s}.student_case_invoice_draft_batches b LEFT JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
         WHERE b.customer_id=$1 AND b.case_id=$2 ORDER BY b.created_at DESC,b.batch_id LIMIT 20`,[p.tenantId,id])).rows;
-      const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete';
+      const pairedReady=batches.some(batch=>batch.currentOffer)&&Boolean((await db.query(`SELECT to_regclass($1) IS NOT NULL AND EXISTS(
+        SELECT 1 FROM ${s}.student_operations_xero_sync_configurations WHERE customer_id=$2 AND organisation_role='operating' AND enabled) AS ready`,[`${s}.student_commission_drafts`,p.tenantId])).rows[0]?.ready);
+      const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status!=='closed'&&(c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete'||pairedReady);
       if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       const evidence=await documentChecklistEvidence(db,p.tenantId,id),offer=await this.offer(db,p,id);
       if(!offer||!evidence.completed.signed_engagement_letter||!evidence.completed.document_completeness)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
@@ -211,7 +213,7 @@ export class StudentCaseInvoiceDraftsService {
       const hasUnresolvedInvoice=!savedBatch||savedBatch.snapshot.invoices.some((invoice:{sequence:number})=>{
         const receipt=savedBatch.exports[String(invoice.sequence)];return !receipt||receipt.status!=='created';
       });
-      if(!hasUnresolvedInvoice)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
+      if(!hasUnresolvedInvoice&&!pairedReady)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       const colleges=await this.colleges(db,p.tenantId,id);
       return {batches,preparation:{offerId:offer.row.offer_id,offerVersion:offer.row.record_version,caseVersion:c.record_version,source:offer.source,advisors,student,today:analysisToday(),catalogue,colleges,
         savedBatch:savedBatch?{batchId:savedBatch.batchId,revision:savedBatch.revision,advisorId:savedBatch.advisorId,snapshot:savedBatch.snapshot,exports:savedBatch.exports}:null},canCreateXero:this.canCreate(p)};
@@ -480,7 +482,7 @@ export class StudentCaseInvoiceDraftsService {
   }
 }
 
-const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeId:z.uuid().optional(),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
+export const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeId:z.uuid().optional(),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
     collegeName:z.string().nullable().optional(),
     lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:money,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();

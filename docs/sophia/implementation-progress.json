@@ -1,7 +1,59 @@
 {
+  "studentPtyIntegration": {
+    "updatedOn": "2026-11-11",
+    "status": "production_migrations_applied_pending_code_deployment",
+    "authorization": "User approved beginning the phased implementation. Preserve bulk TRUST creation. Requested alternating tabs INV-1 (TRUST), INV-1 (PTY), INV-2 (TRUST), INV-2 (PTY). TRUST recipient is student/reference college; PTY recipient is college/reference student. Explicit Sophia relationships must supplement, not replace, these Xero conventions.",
+    "implemented": [
+      "Explicit operating-role assignment in Company and guarded Runtime endpoint; refuse changing an assigned organisation between TRUST and PTY; refresh no longer silently assigns TRUST",
+      "Payments and Control organisation selector with cancelled in-flight detail/status/filter requests, cleared rows and explicit PTY recipient/reference labels",
+      "PTY college names projected from confirmed contact mappings, never the student reference; unmatched and other business customers retained",
+      "Tenant-scoped college mapping API/UI, optimistic revision checks, company-directory validation and immutable decision audit; no student provisioning or Xero edits",
+      "Migration 127 adds mapping tables with forced RLS, a security-barrier commission rule reader, and extends existing dedicated-worker claims to operating organisations",
+      "Background sales catalogue import includes PTY; TRUST catalogue reader remains explicit and requires enabled configuration",
+      "PTY connector creation profile validates the enabled operating organisation, required branding and Type of Sale Instalment; shared provider request fixes initial status to DRAFT and tax amounts to Exclusive. Profile is not yet wired into commission export orchestration.",
+      "Standard integer-cent tuition-only commission calculation; current active unrestricted rules; user-approved Not recorded benefits treated as no benefit; specified benefits and unsupported conditions blocked",
+      "Immutable calculation snapshots and permanent TRUST/PTY receipts in migration 128; direct source receipt gate, live source verification, duplicate protection and exact unknown-outcome reconciliation",
+      "Alternating TRUST/PTY tabs, selected PTY sales item/account, optional combined preparation and server-ordered bulk creation; single PTY creation requires existing TRUST; manual tuition classification and saved manual commission reopening",
+      "Related-invoice navigation, per-organisation saved register filters and supplied payment/credit/prepayment/overpayment snapshots in existing local invoice imports",
+      "Performance: local previews and tab switches, one large catalogue read per export request, indexed revision checks, at most three concurrent sends and one shared session per organisation"
+    ],
+    "remaining": [
+      "Deploy tested Runtime API, shared student worker and frontend revisions",
+      "Explicitly assign PTY in Company, run normal initial import and confirm college contact mappings; no financial provider write is performed during release",
+      "Historical student/TRUST/PTY pair matching remains manual; no name-based financial links are inferred; unsupported conditional/benefit rules are blocked"
+    ],
+    "pendingBusinessAnswers": "No unanswered decision blocks the initial unrestricted fixed-percentage release. Current active rules and Not recorded = no benefit were explicitly confirmed. Effective-dated and conditional rules, specified benefits and automatic credit/replacement policies remain outside this first release.",
+    "verification": [
+      "46 focused Runtime tests passed across organisation isolation, college mapping, existing Xero sync/controllers, catalogue and Trust invoice creation",
+      "67 register/college-matching browser tests passed including 390/1440px light/dark college review, late response isolation and explicit organisation assignment",
+      "49 existing invoice-editor browser tests and 2 connection-warning tests passed in the earlier combined run; three legacy register fixtures needed explicit TRUST roles and passed after correction",
+      "Runtime production build passed; frontend production build passed with pre-existing budget/CommonJS/missing-primeicons warnings",
+      "No provider writes, production migration, invoice creation, push or deployment performed",
+      "After DRAFT clarification: 54 Xero client/session tests passed, including forced unsent DRAFT requests for both organisations and PTY profile guards. Runtime typecheck and git diff --check passed. No live invoices created.",
+      "11 disposable PostgreSQL checks passed with actual migrations 127/128 and app-role RLS, concurrent duplicate prevention, live-source changes, unknown outcomes, bounded workers/session reuse and real sync upsert for dates/payment snapshots",
+      "116 focused Runtime tests passed; 80 additional connector/controller/protected real-estate checks passed (some client tests overlap)",
+      "208 invoice editor/case/register browser checks passed including paired workflow and actual iframe 390/1440px light/dark layouts",
+      "Final Runtime and frontend production builds passed; frontend retains existing initial/CSS budgets, CommonJS and missing-primeicons warnings",
+      "Production read-only release preflight: ledger through 126; only 127/128 pending for this feature; zero enabled operating organisations; no migrations or live invoice writes committed at this checkpoint",
+      "61 final Payments register checks passed, including two added regressions for per-organisation filter restoration and explicit counterpart organisation navigation; 210 distinct editor/case/register browser checks now covered."
+    ],
+    "confirmedBusinessDecisions": [
+      "Both TRUST and PTY invoices must initially be unsent DRAFT invoices. Shared Xero create client owns Status=DRAFT; callers cannot supply approval or sending fields.",
+      "Users can prepare both together. Bulk creation must create TRUST invoices first, then PTY; individual PTY creation must validate its corresponding TRUST creation receipt server-side.",
+      "PTY branding: PTY Open for Australia Account. Type of Sale: Instalment. No TRUST Payment Track on PTY. Tax exclusive with GST on Income. Monetary amounts displayed to two decimals.",
+      "Initial PTY invoice dates match TRUST. Later sync must reflect Xero invoice date changes and keep payment dates separately.",
+      "Current active rules may be used; Not recorded cashback/bonus is treated as no benefit, per the explicit user answer on 2026-11-11."
+    ],
+    "releaseGuide": "docs/sophia/student-pty-release.md",
+    "production": {
+      "migration": "Owner helper applied 127_student_pty_foundation.sql and 128_student_commission_invoices.sql atomically on 2026-11-11 after preflight confirmed ledger 126 and zero enabled operating organisations.",
+      "deployment": "Backend/frontend commits and rollout verification pending.",
+      "providerWrites": "No Xero invoice, email, payment or contact write performed."
+    }
+  },
   "studentInvoiceCollegeSelection": {
     "updatedOn": "2026-11-10",
-    "status": "locally_verified_pending_runtime_rollout",
+    "status": "runtime_live_verified_local_frontend_updated",
     "cause": "Offer-based invoice preparation displayed and saved the extracted college name from the offer, ignoring the primary college selected for the case. Unlike the manual invoice editor, it offered no college selector.",
     "scope": "Offer preparation now receives the full active company college directory, defaults to the primary case college, and provides the shared searchable manager selector. An explicit saved invoice college is retained on reopening; legacy drafts without a college ID use the case default. The server resolves the selected UUID in the tenant directory and stores the college ID/name, without changing the case college or source extraction. Missing or unavailable selections require correction.",
     "partialCreation": "College changes apply to unsent invoices. Each sent or uncertain invoice retains its previous reference in the snapshot, including legacy snapshots, so Xero matching, reconciliation and projection remain accurate. Other immutable invoice fields and existing concurrency/permission guards remain enforced.",
@@ -10,7 +62,7 @@
       "Runtime and frontend production builds and frontend application TypeScript check passed; existing frontend budget/CommonJS/missing-primeicons warnings remain",
       "49 focused invoice-editor browser checks passed including case-college defaults, complete list, manual changes, saved overrides and 390/1440px light/dark layouts"
     ],
-    "deployment": "Deploy Runtime and use the updated frontend, then refresh the case and reopen Prepare invoices. No database migration or document re-upload is required. No live invoice was created or modified during verification."
+    "deployment": "Runtime commit b17e258 was pushed to master and the live /api/runtime/healthz endpoint returned revision b17e2589916f on 2026-11-10. The local frontend is updated; refresh the case and reopen Prepare invoices. Hosted frontends require the frontend changes to be deployed. No database migration or document re-upload is required. No live invoice was created or modified during verification; the authenticated case was not inspected."
   },
   "studentPassportNameTolerance": {
     "updatedOn": "2026-11-10",
@@ -202,7 +254,7 @@
   },
   "studentCaseWorkflowDefinitions": {
     "updatedOn": "2026-10-29",
-    "scope": "Case statuses and case stages only. Removed payment_received and invoices_created from selectable/current case stages and the UI progress timeline. Added Awaiting Payment and Payment Received as case statuses allowed only under Payment Monitoring, alongside its existing overdue/collections/payment-complete statuses. In progress remains allowed only for Imported — Pending Review. Pre-sale's existing Awaiting Payment stage is unchanged. Updated case labels, types, API validation, student-list status filters and tests consistently; invoice status/tracking/creation/synchronization logic is untouched.",
+    "scope": "Case statuses and case stages only. Removed payment_received and invoices_created from selectable/current case stages and the UI progress timeline. Added Awaiting Payment and Payment Received as case statuses allowed only under Payment Monitoring, alongside its existing overdue/collections/payment-complete statuses. In progress remains allowed only for Imported \u2014 Pending Review. Pre-sale's existing Awaiting Payment stage is unchanged. Updated case labels, types, API validation, student-list status filters and tests consistently; invoice status/tracking/creation/synchronization logic is untouched.",
     "migration": "106_payment_monitoring_case_statuses.sql changes CHECK constraints only. Per the user's clarification, no backfill, case updates, audit inserts or record reassignment is included. Existing imported cases retain their status and stage. Apply this owner-operated schema migration before coordinated Runtime API/frontend deployment; no production migration or deployment was performed.",
     "verification": "PASS: 41 focused Runtime/disposable PostgreSQL tests, including both new case statuses, rejection of the retired stages and a no-DML migration assertion; 94 ChromeHeadless case/student-list tests, including removed steps, six/five-step responsive timelines, In progress's imported-only stage and Payment Monitoring status options; Runtime production build, frontend application TypeScript and both diff checks. Initial UI failures reflected the obsolete eight/seven-step assertions, which were updated to six/five; final tests passed. The prior disposable cluster no longer existed, and sandbox shared-memory initialization failed; a fresh UTF-8 local cluster initialized outside the sandbox and the PostgreSQL suite passed. No production data or external provider request was made. Business Manager consistency guided shared case labels/options, server-side rules and responsive timeline behavior."
   },
@@ -340,7 +392,7 @@
   "studentDocumentContactOverflow": {
     "updatedOn": "2026-10-24",
     "status": "Automatic Xero document-only overflow implemented and verified locally. Owner migration 091 and coordinated Runtime API/shared-worker/Business Manager/frontend rollout remain pending. No production mutation, real Contact creation, file upload or deployment performed.",
-    "userDecision": "User explicitly approved additional Xero Contacts when document capacity is occupied, while S3 is deferred until the Render-to-AWS migration. This supersedes the earlier storage-full-only behaviour in studentPrimaryXeroContacts: retain one immutable billing primary per student/organisation but allow multiple document-only destinations shared across cases. Users never select a Contact. Reuse existing active linked Contacts before creating Student (STD-n) — Documents 2/3/etc. No extra Sophia student/case/invoice is created for storage.",
+    "userDecision": "User explicitly approved additional Xero Contacts when document capacity is occupied, while S3 is deferred until the Render-to-AWS migration. This supersedes the earlier storage-full-only behaviour in studentPrimaryXeroContacts: retain one immutable billing primary per student/organisation but allow multiple document-only destinations shared across cases. Users never select a Contact. Reuse existing active linked Contacts before creating Student (STD-n) \u2014 Documents 2/3/etc. No extra Sophia student/case/invoice is created for storage.",
     "durabilityAndCapacity": "091_student_document_contact_overflow.sql creates tenant-RLS document destinations with unique Contact/ordinal/reference identity, snapshot provisioning metadata, fenced leases and full observations. Uploads gain destination state and destination FK; old non-ready requests are conservatively marked attempted and cannot be silently rerouted. Explicit DELETE revocation protects destinations/upload receipts even with inherited owner defaults. Allocation locks destination rows and counts live upstream filenames plus outstanding local reserved/attempted uploads absent from that inventory, including completed-but-not-visible receipts. Concurrent cases/actors/replicas cannot take the same last slot. Full observations persist and remote deletions do not automatically refund local capacity. Only a confirmed pre-PUT capacity denial may release/reroute an unattempted reservation. Once a PUT might have happened, its identity/destination is pinned; provider receipt recovery uses the durable filename and verifies remote byte size/SHA-256 instead of overwriting or relying solely on Xero's expiring idempotency cache. Byte fencing runs after operational admission, so local admission denial does not falsely mark a write attempted.",
     "provisioningAndIdentity": "Additional destinations use stable sophia:<runtime student UUID>:docs:<ordinal> ContactNumber, immutable name snapshots, no overflow email and a fenced two-minute intent. Provider lookup/create runs outside SQL transactions and reconciles the exact external reference before each retry; concurrent provisioning reuses the same pending intent/ordinal. Primary billing identity is untouched. Sync users detects the additive destination store, validates tenant/company/existing active user links, rejects conflicting Contact/invoice ownership, repairs explicit identity/Contact/invoice associations and excludes managed destinations from fuzzy new-user grouping. Discovery filters Sophia-uploaded filenames belonging to another case so shared Contacts do not spread case-owned files across cases; historical imported documents remain unchanged.",
     "uiAndAvailability": "Business Manager consistency skill guided reuse of the existing modal, shared toast/loading states, no Contact controls and preservation of the selected file/idempotency key on a pending-storage response. The flow automatically expands capacity for ordinary uploads, with bounded work: twelve destination checks and three safe pre-PUT reroutes per request. Xero outage/quota, concurrent provisioning, unknown writes or lease expiry may require retrying the same file after two minutes; there is no honest unconditional availability guarantee and no offline binary queue. No file bytes are stored in PostgreSQL. S3, invoice attachment linking and historical file migration remain deferred.",
@@ -359,7 +411,7 @@
   "documentTypeModalPaginationFollowup": {
     "updatedOn": "2026-10-23",
     "status": "Frontend-only pagination/copy correction implemented and verified locally; frontend rollout pending. User confirmed migration completed; no new migration or production action for this follow-up.",
-    "change": "Business Manager consistency skill guided reuse of the Users register footer layout and shared PageJumpComponent: Showing start–end of total, 25/50/100 page-size dropdown and first/previous/Page input/Go/next/last controls in one wrapping group. Pagination hides for an empty directory, resets when page size changes, clamps after archiving the last row of a page and is guarded during save/load/error. Desktop layout and dark colors match Users; mobile wraps within the dialog and coarse-pointer navigation keeps 44px targets. Subtitle now reads Manage the document types available to your company. Technical future-checklist wording removed from the modal subtitle; required/upload/backend behavior is unchanged.",
+    "change": "Business Manager consistency skill guided reuse of the Users register footer layout and shared PageJumpComponent: Showing start\u2013end of total, 25/50/100 page-size dropdown and first/previous/Page input/Go/next/last controls in one wrapping group. Pagination hides for an empty directory, resets when page size changes, clamps after archiving the last row of a page and is guarded during save/load/error. Desktop layout and dark colors match Users; mobile wraps within the dialog and coarse-pointer navigation keeps 44px targets. Subtitle now reads Manage the document types available to your company. Technical future-checklist wording removed from the modal subtitle; required/upload/backend behavior is unchanged.",
     "verification": "PASS: 68 focused ChromeHeadless case-page and document-actions tests, including working navigation/page jump/ranges/size changes, empty directory, archive clamp, busy/invalid input guards and populated 390/1440px light/dark modal geometry. Initial dark assertions inspected the dropdown trigger instead of the pager button; corrected the selector and final rerun passed. PASS: application/spec TypeScript noEmit checks, frontend production build, progress JSON parse and git diff --check. Existing initial bundle/font budgets, SDK CommonJS and missing primeicons stylesheet warnings remain. No API, worker, auth scope, provider, document or database changes; prior unrelated edits preserved."
   },
   "studentDocumentTypesAndContactUploads": {
@@ -402,7 +454,12 @@
     "backend": "New authenticated manager-only POST workspace/cases/student creates Business Manager Student account, Runtime profile/link, first numbered case, append-only student audit and case activity within one tenant transaction and existing actor-scoped idempotent write contract. Existing POST cases is reused for additional cases. Server resolves company from active tenant mapping; client cannot choose tenant/user/account type for Add student. Duplicate email does not auto-link existing accounts. Failed case assignment rolls back account/profile/counter; sequence gaps on failed case writes are possible and no gapless numbering promise is made.",
     "migration": "087_student_account_case_creation.sql adds the case.create_student write operation and a narrow tenant-bound SECURITY DEFINER identity creation function. Reuses existing Business Manager student counter, Runtime case sequence and pgcrypto. Application receives only function EXECUTE, not direct public.users/counter grants. No invitation, email, Xero request, source sync, upstream financial write or default/shared login password. Unknown random secret is bcrypt-hashed and never returned; future login onboarding is separate.",
     "safety": "Chief Executive/Operations only with existing server workspace/case policy; advisor/direct-route UI and server writes are denied. Workspace loading/error race fails closed before showing a draft. Student/account IDs remain server generated. Same-payload retry keeps one key; changed payload gets a new key; saving guard prevents concurrent clicks. Success routes to the saved case and uses shared toast; navigation failure can replay the idempotent save. Existing edit behavior and deferred performance work remain intact.",
-    "verification": ["PASS: Runtime build plus 6 focused case-service/workflow tests under Node 22.23.2.", "PASS: 7 actual disposable localhost PostgreSQL case-management tests with 064/065/069-075/087 migrations and non-BYPASSRLS application role. Cover concurrent idempotent save, one account/profile/case/audit, generated IDs, contact preservation, duplicate staff/student emails, invalid/cross-tenant/role inputs, imported-stage rejection, assignment rollback and no direct identity/counter privileges. Legacy test fixtures were updated for the already-existing advisor-directory and invoice payment-track projections after initial failures; production was not involved. Disposable localhost database stopped after validation; files retained.", "PASS: Final 88 focused ChromeHeadless frontend route/register/case/service tests, including empty draft/cancel/save/retry, permission/load races, existing edit/save behavior, six edit and four creation iframe desktop/tablet/mobile light-dark layouts. App/spec TypeScript checks and final production build passed. No new case stylesheet budget warning; existing initial bundle/font budgets, SDK CommonJS and missing primeicons stylesheet warnings remain without suppression.", "PASS: 38 protected real-estate regression tests and 293-file Sophia boundary check. Progress JSON validation and both repository git diff --check passed. No skipped test counted as a pass."],
+    "verification": [
+      "PASS: Runtime build plus 6 focused case-service/workflow tests under Node 22.23.2.",
+      "PASS: 7 actual disposable localhost PostgreSQL case-management tests with 064/065/069-075/087 migrations and non-BYPASSRLS application role. Cover concurrent idempotent save, one account/profile/case/audit, generated IDs, contact preservation, duplicate staff/student emails, invalid/cross-tenant/role inputs, imported-stage rejection, assignment rollback and no direct identity/counter privileges. Legacy test fixtures were updated for the already-existing advisor-directory and invoice payment-track projections after initial failures; production was not involved. Disposable localhost database stopped after validation; files retained.",
+      "PASS: Final 88 focused ChromeHeadless frontend route/register/case/service tests, including empty draft/cancel/save/retry, permission/load races, existing edit/save behavior, six edit and four creation iframe desktop/tablet/mobile light-dark layouts. App/spec TypeScript checks and final production build passed. No new case stylesheet budget warning; existing initial bundle/font budgets, SDK CommonJS and missing primeicons stylesheet warnings remain without suppression.",
+      "PASS: 38 protected real-estate regression tests and 293-file Sophia boundary check. Progress JSON validation and both repository git diff --check passed. No skipped test counted as a pass."
+    ],
     "release": "Deploy updated sophia-runtime-api to ship the new endpoint/migration artifact, apply 087 using the existing owner migration runner, then deploy frontend. No nodejs-api change, worker configuration or provider smoke needed. Existing user/identity prerequisites and migrations through 086 must already be applied. Production validation should be an explicitly approved real student creation, not an invented test account. Never delete created accounts/cases or reset numbering on rollback; rollback UI/API independently while preserving data."
   },
   "studentCaseEditLayout": {
@@ -427,7 +484,11 @@
     "status": "Second normal-night baseline verified read-only; opt-in worker-only 120-minute change locally tested and subsequent deployment user-confirmed. Effective startup policy and post-release normal-night improvement remain unverified. Default remains 30 when unset; no production settings changed by agent.",
     "evidence": "22->23 October Brisbane: import succeeded 01:00:16->01:13:28, 2076 contacts/11382 invoices. Preview succeeded 01:13:32; nightly apply succeeded 02:00:41->02:51:48, 1120 processed/0 created, matching dependency checkpoint. Documents 03:00:08->03:30:08 claims, 145 unique successful sources; last case completion 03:30:15. Queue fell 5650->5505; 3171 succeeded case jobs, zero failed case jobs/sources or active leases. 30 sources with 79 attachment metadata entries, not confirmed content downloads. Canonical successes 290; recheck schedule zero. Quota last observed 717 remaining/200 reserve, generation 2 admissions 283; cumulative admission deltas operations +138/discovery +145. No active cooldown. Next import 24 October 01:00 Brisbane.",
     "change": "Optional STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES, strict integer 30-120/default 30. Above 30 fails closed unless quota/backoff/source dedup exactly true. Startup validates before DB readiness and ready log emits numeric documentPolicy.fetchBudgetMinutes separately from boolean feature flags. Parameterized claim deadline and health share the same policy, preserving durable date/start/counter, 500-source cap, reserve, 03-06 window, pacing, dependencies, leases, retries, RLS and pools. Legacy non-dedup path stays 30 minutes; no SQL migration.",
-    "verification": ["Runtime build; 55 policy/startup/health and 38 existing connector/import/case/batch tests passed under Node 22.23.2.", "49 disposable localhost PostgreSQL tests passed with actual 081-086 migrations and non-BYPASSRLS role, including unchanged durable start/counter, extended/expired deadlines, rollback, protection gates and concurrent 500-cap at 30/120 minutes. Sandbox shared-memory/socket failures were rerun with approval; no production test writes.", "38 real-estate regressions, 11 coordinator tests, 293-file boundary check, worker syntax, JSON parsing and git diff --check passed. Separate identity SQL suite had 18 tests skipped without its disposable DB variable; not counted as passes."],
+    "verification": [
+      "Runtime build; 55 policy/startup/health and 38 existing connector/import/case/batch tests passed under Node 22.23.2.",
+      "49 disposable localhost PostgreSQL tests passed with actual 081-086 migrations and non-BYPASSRLS role, including unchanged durable start/counter, extended/expired deadlines, rollback, protection gates and concurrent 500-cap at 30/120 minutes. Sandbox shared-memory/socket failures were rerun with approval; no production test writes.",
+      "38 real-estate regressions, 11 coordinator tests, 293-file boundary check, worker syntax, JSON parsing and git diff --check passed. Separate identity SQL suite had 18 tests skipped without its disposable DB variable; not counted as passes."
+    ],
     "release": "User deploys updated sophia-student-sync-worker only and explicitly sets STUDENT_DOCUMENT_FETCH_BUDGET_MINUTES=120 there, outside active processing. Keep all five current flags true, APIs enqueue-only and old document cron suspended. Verify ready.documentPolicy.fetchBudgetMinutes=120. No migration/API/frontend deployment or forced Xero smoke. Roll back to 30/unset and redeploy without resetting counters, queues or start timestamps.",
     "remaining": "Next normal overnight run must demonstrate improvement and preserved quota reserve; this adds processing time rather than reducing per-source latency. At observed cadence, 500 sources could fit in about 104 minutes, but no throughput guarantee. Baseline backlog scenario 38 further nights; hypothetical 500-success scenario 12 nights. Page p50/p95, staging recovery/rollback rehearsal and natural cache/recheck evidence remain open. Dashboard-first alerts deferred by user; Australian hosting deferred to P7."
   },
@@ -565,7 +626,14 @@
     "operatorEvidence": "User confirmed Runtime migration 080, identity pipeline columns, no active invoice/user jobs at the time of the check, and both APIs deployed enqueue-only. Render screenshot shows only two APIs plus document and Toolkit email crons. Do not infer current queue emptiness or successful document runs from that screenshot.",
     "behavior": "One pure sequential coordinator polls the existing invoice and identity queues, preserving their authorization, leases and overnight/manual rules. Documents run only 03:00-06:00 Brisbane for explicit configured tenant IDs after committed identity checkpoints. Two separate capped pools retain the Runtime app-role/identity boundary. No HTTP server or unrelated media/email worker starts.",
     "documentBudget": "New additive Runtime migration 081: same-transaction budget reservation with each document lease, max 500 source attempts/customer/Brisbane date and 30 minutes from the first eligible claim. Cap/deadline survive restarts; dependency waits do not start the timer. Provider failure pauses discovery until the next document night and at least bounded Retry-After, including across date rollover. Not a global provider API quota.",
-    "artifacts": ["Dockerfile.student-sync", "Dockerfile.student-sync.dockerignore", "scripts/process-student-sync.mjs", "src/workers/student-sync-worker.js", "sophia-runtime/src/operators/shared-student-sync-runtime.ts", "render.student-sync-workers.yaml"],
+    "artifacts": [
+      "Dockerfile.student-sync",
+      "Dockerfile.student-sync.dockerignore",
+      "scripts/process-student-sync.mjs",
+      "src/workers/student-sync-worker.js",
+      "sophia-runtime/src/operators/shared-student-sync-runtime.ts",
+      "render.student-sync-workers.yaml"
+    ],
     "verification": [
       "PASS: Runtime npm run build and 38 focused tests, including shared adapter preflight, durable queue delegation and missing attachment-scope holds.",
       "PASS: 19 coordinator/identity unit tests: daytime queues, Brisbane document boundaries, sequential execution, overlap protection, pacing, scheduling retry, sanitized errors, shutdown and configuration validation.",
@@ -597,7 +665,12 @@
     "plan": "student-sync-performance-plan.json",
     "evidence": "Authenticated screenshots: Students app 2942ms, access resolution 1086ms, register 1583ms; Payments app 3995ms with 1094ms pool acquisition. Setup, commit and small queries commonly take about 180ms. Neon is in Sydney. User confirms both Render APIs are in Singapore, with Runtime settings screenshot corroboration. Cross-region database access is a likely latency contributor, not proof that all observed delay is network time.",
     "behavior": "Workspace resolution and audit use two statements with RLS context established before entitlement reads; register cases/options use one combined metadata statement. Direct queries reuse batched role setup. Idle connection reuse defaults to 60 seconds with unchanged maximum pool size; timing describes new/reused connections and pool state. No auth/data cache or schema change.",
-    "verification": ["PASS: 42 focused Runtime tests and Runtime build.", "PASS: 8 isolated local PostgreSQL RLS/audit/rollback/metadata tests.", "PASS: 24 real-estate tests plus database regressions; 3 analyzer tests.", "PASS: Read-only production metadata comparison found identical chief and assigned-scope results; new SQL execution 31ms and 7ms, excluding network latency."],
+    "verification": [
+      "PASS: 42 focused Runtime tests and Runtime build.",
+      "PASS: 8 isolated local PostgreSQL RLS/audit/rollback/metadata tests.",
+      "PASS: 24 real-estate tests plus database regressions; 3 analyzer tests.",
+      "PASS: Read-only production metadata comparison found identical chief and assigned-scope results; new SQL execution 31ms and 7ms, excluding network latency."
+    ],
     "deployment": "New changes require Runtime deployment only. No production mutation, migration or live Xero call performed. New full-page latency and p95 are not yet measured.",
     "infrastructureNextStep": "User clarified that any future relocation must be toward Australia. Finish performance work first; retain Sydney Neon and defer Australian API/worker hosting assessment (possibly AWS) to Runtime P7-01/P7-02. No Singapore database relocation, provisioning or cutover in this task. Latest screenshot confirms batching is deployed; exact newer samples are in the performance plan."
   },
@@ -605,7 +678,11 @@
     "updatedOn": "2026-10-20",
     "evidence": "User screenshots show Students register/workspace 4.23/4.34s and Payments workspace/connection/invoice requests 2.83/2.17/2.58s. Code confirms serial Payments dependencies. A read-only unauthenticated deployed request confirmed timing headers are enabled; no authenticated timing phase values were available.",
     "behavior": "Students receives workspace context with its list. Payments bootstraps workspace, server-selected Trust connection and invoices in one guarded request, then loads optional status/filter metadata. Existing pagination/filter endpoints and older-server fallback remain. No new auth/data caches; non-integration roles cannot use the bootstrap to read integration data.",
-    "verification": ["PASS: 61 focused ChromeHeadless page/service tests, including new single-request loads, older-server fallback, access denial, restored pagination and changes to filters while loading.", "PASS: 27 Runtime tests for controllers, timing, Xero query contracts and guard behavior; Runtime build.", "PASS: 3 offline analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."],
+    "verification": [
+      "PASS: 61 focused ChromeHeadless page/service tests, including new single-request loads, older-server fallback, access denial, restored pagination and changes to filters while loading.",
+      "PASS: 27 Runtime tests for controllers, timing, Xero query contracts and guard behavior; Runtime build.",
+      "PASS: 3 offline analyzer tests, frontend application TypeScript check, JSON parsing and both repository diff checks."
+    ],
     "deployment": "Observed live in subsequent user screenshots, including payments-register and the consolidated Students response. Authenticated timing breakdowns received; see studentDatabaseRoundTripFollowUp. No migrations or production data changes. Phase 3 overnight orchestration remains planned."
   },
   "studentPerformanceDiagnosticsPhase2": {
@@ -638,7 +715,9 @@
   "paginationMenuAnchorFollowUp": {
     "updatedOn": "2026-10-19",
     "behavior": "Shared upward ManagerSelect menus correct rendered position against the trigger after opening, including offset/filtered/transformed/scaled containing layouts; the menu bottom stays 6px above the selector and aligns to its left edge.",
-    "verification": ["PASS: 19 focused ChromeHeadless shared-select and Students tests, including an offset filtered shell at narrow/wide widths in light/dark mode."]
+    "verification": [
+      "PASS: 19 focused ChromeHeadless shared-select and Students tests, including an offset filtered shell at narrow/wide widths in light/dark mode."
+    ]
   },
   "caseOpeningDateAndPaginationFollowUp": {
     "updatedOn": "2026-10-19",
@@ -678,7 +757,7 @@
   "advisorReconciliationFollowUp": {
     "updatedOn": "2026-10-19",
     "sourceOfTruth": "The Advisor Xero value projected by the Students register, with its stored-case-label priority over the latest invoice advisor.",
-    "audit": "Read-only comparison of all 1,068 visible students: 907 matching, 154 different assignments, 5 missing assignments, and 2 without an Advisor Xero value. Accent normalization resolves Xero Munoz to directory Muñoz without changing the source label.",
+    "audit": "Read-only comparison of all 1,068 visible students: 907 matching, 154 different assignments, 5 missing assignments, and 2 without an Advisor Xero value. Accent normalization resolves Xero Munoz to directory Mu\u00f1oz without changing the source label.",
     "migration": "077_reconcile_student_advisors_to_xero.sql contains the 159 audited corrections, guarded by tenant/company, student identity, previous assignment, current source label and active target advisor. It appends student audit events and leaves Xero fields and case login/access grants untouched.",
     "verification": [
       "PASS: scripts/verify-student-advisor-migration.mjs on isolated local PostgreSQL, seeded from the read-only audit snapshot: all 159 corrections, unchanged matching/missing-source rows, unchanged Xero fields and idempotent rerun.",

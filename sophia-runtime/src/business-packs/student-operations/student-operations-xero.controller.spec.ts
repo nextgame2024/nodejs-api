@@ -13,7 +13,7 @@ const basePrincipal = {
 describe("StudentOperationsXeroController", () => {
   it("allows the Chief Executive to begin tenant-scoped Xero consent", async () => {
     const beginAuthorization = jest.fn().mockResolvedValue({ authorizationUrl: "https://login.xero.test" });
-    const controller = new StudentOperationsXeroController({ beginAuthorization } as never, {} as never);
+    const controller = new StudentOperationsXeroController({ beginAuthorization } as never, {} as never, {} as never);
     const principal = { ...basePrincipal, role: "chief_executive" as const };
     await expect(controller.authorizeConnection({ studentOperationsPrincipal: principal }))
       .resolves.toEqual({ authorizationUrl: "https://login.xero.test" });
@@ -22,7 +22,7 @@ describe("StudentOperationsXeroController", () => {
 
   it("denies Operations and Advisor roles before connector access", () => {
     const status = jest.fn();
-    const controller = new StudentOperationsXeroController({ status } as never, {} as never);
+    const controller = new StudentOperationsXeroController({ status } as never, {} as never, {} as never);
     for (const role of ["operations", "advisor"] as const) {
       expect(() => controller.status({ studentOperationsPrincipal: { ...basePrincipal, role } }))
         .toThrow(ForbiddenException);
@@ -32,7 +32,7 @@ describe("StudentOperationsXeroController", () => {
 
   it("loads invoice-derived candidates only for the current Chief Executive tenant", async () => {
     const candidates = jest.fn().mockResolvedValue({ candidates: [], page: 1, limit: 20, total: 0 });
-    const controller = new StudentOperationsXeroController({} as never, { candidates } as never);
+    const controller = new StudentOperationsXeroController({} as never, { candidates } as never, {} as never);
     const principal = { ...basePrincipal, role: "chief_executive" as const };
 
     await expect(controller.studentCandidates(
@@ -50,7 +50,7 @@ describe("StudentOperationsXeroController", () => {
   it("loads paged invoices and invoice detail only for the current tenant", async () => {
     const invoices = jest.fn().mockResolvedValue({ invoices: [], page: 1, limit: 25, total: 0 });
     const invoice = jest.fn().mockResolvedValue({ xeroInvoiceId: "invoice-1", lineItems: [] });
-    const controller = new StudentOperationsXeroController({} as never, { invoices, invoice } as never);
+    const controller = new StudentOperationsXeroController({} as never, { invoices, invoice } as never, {} as never);
     const principal = { ...basePrincipal, role: "chief_executive" as const };
 
     await controller.studentInvoices(
@@ -74,7 +74,7 @@ describe("StudentOperationsXeroController", () => {
 
   it("queues refresh without waiting for Xero and returns the durable run", async () => {
     const enqueueManual = jest.fn().mockResolvedValue({ syncRunId: "run-1", status: "queued" });
-    const controller = new StudentOperationsXeroController({} as never, { enqueueManual } as never);
+    const controller = new StudentOperationsXeroController({} as never, { enqueueManual } as never, {} as never);
     const principal = { ...basePrincipal, role: "chief_executive" as const };
 
     await expect(controller.refreshStudents(
@@ -91,7 +91,7 @@ describe("StudentOperationsXeroController", () => {
     const configureTrust = jest.fn().mockResolvedValue({
       connectionId: "44444444-4444-4444-8444-444444444444", organisationRole: "trust",
     });
-    const controller = new StudentOperationsXeroController({} as never, { configureTrust } as never);
+    const controller = new StudentOperationsXeroController({} as never, { configureTrust } as never, {} as never);
     const principal = { ...basePrincipal, role: "chief_executive" as const };
 
     await controller.configureTrust(

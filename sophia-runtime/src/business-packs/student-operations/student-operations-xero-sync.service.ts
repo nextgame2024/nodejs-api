@@ -132,6 +132,7 @@ type InvoiceRow = {
   college_name: string | null;
   payment_track: string | null;
   line_items?: unknown;
+  settlement?:unknown;
   review_status: "pending" | "accepted" | "ignored";
   student_id: string | null;
   total_count?: number;
@@ -202,15 +203,15 @@ export class StudentOperationsXeroSyncService {
         invoice_metadata_version: number;
         invoice_detail_version: number;
       }>(
-        `INSERT INTO ${schema}.student_operations_xero_sync_configurations
-           (customer_id, xero_connection_id, organisation_role)
-         VALUES ($1, $2, 'trust')
-         ON CONFLICT (customer_id, xero_connection_id) DO UPDATE
+        `UPDATE ${schema}.student_operations_xero_sync_configurations
            SET enabled=true, updated_at=now()
+         WHERE customer_id=$1 AND xero_connection_id=$2 AND enabled
+           AND organisation_role IN ('trust','operating')
          RETURNING last_successful_sync_at, last_reconciliation_sync_at,
                    invoice_metadata_version, invoice_detail_version`,
         [principal.tenantId, connectionId],
       );
+      if (!existingConfiguration.rows.length) throw new ConflictException('Assign this organisation as TRUST or PTY in Company before refreshing.');
       const active = await db.query<SyncRunRow>(
         `SELECT sync_run_id, xero_connection_id, mode, trigger_type, status, modified_since,
                 contact_count, invoice_count, candidate_count, error_code,
@@ -252,26 +253,40 @@ export class StudentOperationsXeroSyncService {
   }
 
   async configureTrust(principal: StudentOperationsWorkspacePrincipal, connectionId: string) {
+    return this.configureOrganisation(principal, connectionId, 'trust');
+  }
+
+  async configureOrganisation(principal: StudentOperationsWorkspacePrincipal, connectionId: string, role: 'trust' | 'operating') {
     const schema = runtimeConfig().schema;
     await this.database.tenantTransaction(principal.tenantId, async (db) => {
+      // Serialize assignments across connections, including first-time assignments.
+      await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`xero-organisation-role:${principal.tenantId}`]);
       await assertConnection(db, schema, principal.tenantId, connectionId);
+      if(role==='operating'){
+        const ready=await db.query(`SELECT to_regclass($1) IS NOT NULL AS ready`,[`${schema}.student_college_xero_contact_links`]);
+        if(!ready.rows[0]?.ready)throw new ConflictException('PTY setup requires the accounting database update.');
+      }
+      const current = await db.query<{organisation_role:string}>(`SELECT organisation_role FROM ${schema}.student_operations_xero_sync_configurations
+        WHERE customer_id=$1 AND xero_connection_id=$2 FOR UPDATE`, [principal.tenantId,connectionId]);
+      if (current.rows[0] && !['unassigned',role].includes(current.rows[0].organisation_role))
+        throw new ConflictException('This organisation already has a different accounting purpose. Keep TRUST and PTY separate.');
       await db.query(
         `UPDATE ${schema}.student_operations_xero_sync_configurations
-            SET organisation_role='unassigned', enabled=false, revision=revision+1, updated_at=now()
-          WHERE customer_id=$1 AND organisation_role='trust' AND xero_connection_id<>$2`,
-        [principal.tenantId, connectionId],
+            SET enabled=false, revision=revision+1, updated_at=now()
+          WHERE customer_id=$1 AND organisation_role=$3 AND xero_connection_id<>$2`,
+        [principal.tenantId, connectionId, role],
       );
       await db.query(
         `INSERT INTO ${schema}.student_operations_xero_sync_configurations
            (customer_id, xero_connection_id, organisation_role, enabled, next_sync_at)
-         VALUES ($1,$2,'trust',true,now())
+         VALUES ($1,$2,$3,true,now())
          ON CONFLICT (customer_id, xero_connection_id) DO UPDATE SET
-           organisation_role='trust', enabled=true, next_sync_at=now(),
+           organisation_role=EXCLUDED.organisation_role, enabled=true, next_sync_at=now(),
            revision=student_operations_xero_sync_configurations.revision+1, updated_at=now()`,
-        [principal.tenantId, connectionId],
+        [principal.tenantId, connectionId, role],
       );
     });
-    return { connectionId, organisationRole: "trust" as const };
+    return { connectionId, organisationRole: role };
   }
 
   async enqueueWebhook(providerTenantId: string): Promise<boolean> {
@@ -464,7 +479,7 @@ export class StudentOperationsXeroSyncService {
       durations.invoiceQueryMs = elapsedMs(queryStartedAt);
       const total = Number(result.rows[0]?.total_count ?? 0);
       return {
-        invoices: result.rows.map(invoiceProjection),
+        invoices: await this.financialProjection(db,tenantId,connectionId,result.rows),
         page,
         limit,
         total,
@@ -529,7 +544,7 @@ export class StudentOperationsXeroSyncService {
                 c.legal_name, c.email, c.contact_number, c.account_number,
                 i.invoice_date::text, i.due_date::text, i.invoice_status, i.currency_code,
                 i.total, i.amount_paid, i.amount_due, i.sent_to_contact, i.concept,
-                i.advisor_name, i.college_name, i.payment_track, i.line_items,
+                i.advisor_name, i.college_name, i.payment_track, i.line_items, i.settlement,
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id
           FROM ${schema}.student_operations_xero_invoices i
           JOIN ${schema}.student_operations_xero_contacts c
@@ -555,8 +570,35 @@ export class StudentOperationsXeroSyncService {
       );
       const row = result.rows[0];
       if (!row) throw new NotFoundException("Xero invoice not found.");
-      return { ...invoiceProjection(row), lineItems: Array.isArray(row.line_items) ? row.line_items : [] };
+      return { ...(await this.financialProjection(db,tenantId,connectionId,[row]))[0], lineItems: Array.isArray(row.line_items) ? row.line_items : [],settlement:row.settlement??null,relatedInvoices:await this.relatedInvoices(db,tenantId,connectionId,invoiceId) };
     });
+  }
+
+  private async financialProjection(db:PoolClient,tenantId:string,connectionId:string,rows:InvoiceRow[]) {
+    const schema=runtimeConfig().schema;
+    const config=await db.query<{organisation_role:string}>(`SELECT organisation_role FROM ${schema}.student_operations_xero_sync_configurations WHERE customer_id=$1 AND xero_connection_id=$2`,[tenantId,connectionId]);
+    if(config.rows[0]?.organisation_role!=='operating')return rows.map(row=>({...invoiceProjection(row),organisationRole:'trust' as const,contactName:row.legal_name,collegeId:null as string|null,matchingStatus:null as string|null}));
+    const mappings=await db.query<{xero_contact_id:string;college_id:string|null;college_name:string|null;classification:string}>(`SELECT m.xero_contact_id,m.college_id,d.college_name,m.classification
+      FROM ${schema}.student_college_xero_contact_links m LEFT JOIN ${schema}.student_operations_college_directory d ON d.customer_id=m.customer_id AND d.college_id=m.college_id
+      WHERE m.customer_id=$1 AND m.xero_connection_id=$2 AND m.xero_contact_id=ANY($3::uuid[])`,[tenantId,connectionId,rows.map(row=>row.xero_contact_id)]);
+    const byContact=new Map(mappings.rows.map(row=>[row.xero_contact_id,row]));
+    return rows.map(row=>{const mapping=byContact.get(row.xero_contact_id);return {...invoiceProjection(row),organisationRole:'operating' as const,
+      contactName:row.legal_name,studentName:row.invoice_reference??'',studentEmail:null,suggestedStudentReference:null,studentId:null,
+      collegeName:mapping?.college_name??null,collegeId:mapping?.college_id??null,matchingStatus:mapping?.classification??'unresolved'};});
+  }
+
+  private async relatedInvoices(db:PoolClient,tenant:string,connectionId:string,invoiceId:string){
+    const s=runtimeConfig().schema;
+    if(!(await db.query('SELECT to_regclass($1) IS NOT NULL AS ready',[`${s}.student_commission_exports`])).rows[0]?.ready)return [];
+    return (await db.query(`WITH related AS (
+      SELECT e.case_id,e.batch_id,e.sequence,e.trust_connection_id AS connection_id,e.trust_invoice_id AS invoice_id,'trust' AS role,e.xero_connection_id AS source_connection,e.xero_invoice_id AS source_invoice
+      FROM ${s}.student_commission_exports e WHERE e.customer_id=$1 AND e.status='created'
+      UNION ALL SELECT e.case_id,e.batch_id,e.sequence,e.xero_connection_id,e.xero_invoice_id,'operating',e.trust_connection_id,e.trust_invoice_id
+      FROM ${s}.student_commission_exports e WHERE e.customer_id=$1 AND e.status='created')
+      SELECT r.case_id AS "caseId",r.sequence,r.role,r.connection_id AS "connectionId",r.invoice_id AS "invoiceId",i.invoice_number AS "invoiceNumber",i.invoice_status AS status,
+        i.invoice_date AS date,i.due_date AS "dueDate",i.amount_paid AS "amountPaid",i.amount_due AS "amountDue",i.xero_invoice_id IS NOT NULL AS indexed
+      FROM related r LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=r.connection_id AND i.xero_invoice_id=r.invoice_id
+      WHERE r.source_connection=$2 AND r.source_invoice=$3 ORDER BY r.sequence,r.connection_id,r.invoice_id`,[tenant,connectionId,invoiceId])).rows;
   }
 
   async process(tenantId: string, runId: string): Promise<void> {
@@ -767,10 +809,13 @@ export class StudentOperationsXeroSyncService {
                NULLIF(item->>'invoiceReference', '') AS invoice_reference,
                NULLIF(item->>'concept', '') AS concept,
                NULLIF(item->>'advisorName', '') AS advisor_name,
-               NULLIF(item->>'collegeName', '') AS college_name,
+               CASE WHEN EXISTS(SELECT 1 FROM ${schema}.student_operations_xero_sync_configurations
+                 WHERE customer_id=$1 AND xero_connection_id=$2 AND organisation_role='trust')
+                 THEN NULLIF(item->>'collegeName', '') ELSE NULL END AS college_name,
                NULLIF(item->>'paymentTrack', '') AS payment_track,
                COALESCE((item->>'sentToContact')::boolean, false) AS sent_to_contact,
                COALESCE(item->'lineItems', '[]'::jsonb) AS line_items,
+               item->'settlement' AS settlement,
                item->>'type' AS invoice_type,
                item->>'status' AS invoice_status,
                NULLIF(item->>'invoiceDate', '')::date AS invoice_date,
@@ -786,12 +831,12 @@ export class StudentOperationsXeroSyncService {
              (customer_id, xero_connection_id, xero_invoice_id, xero_contact_id,
               invoice_number, invoice_type, invoice_status, invoice_date, due_date,
               invoice_reference, concept, advisor_name, college_name, payment_track,
-              sent_to_contact, line_items,
+              sent_to_contact, line_items, settlement,
               currency_code, total, amount_paid, amount_due, provider_updated_at, last_seen_sync_run_id)
            SELECT $1::uuid, $2::uuid, xero_invoice_id, xero_contact_id,
                   invoice_number, invoice_type, invoice_status, invoice_date, due_date,
                   invoice_reference, concept, advisor_name, college_name, payment_track,
-                  sent_to_contact, line_items,
+                  sent_to_contact, line_items, settlement,
                   currency_code, total, amount_paid, amount_due, provider_updated_at, $3::uuid
              FROM source
            ON CONFLICT (customer_id, xero_connection_id, xero_invoice_id) DO UPDATE SET
@@ -799,7 +844,7 @@ export class StudentOperationsXeroSyncService {
              invoice_reference=EXCLUDED.invoice_reference, concept=EXCLUDED.concept,
              advisor_name=EXCLUDED.advisor_name, college_name=EXCLUDED.college_name,
              payment_track=EXCLUDED.payment_track, sent_to_contact=EXCLUDED.sent_to_contact,
-             line_items=EXCLUDED.line_items,
+             line_items=EXCLUDED.line_items,settlement=COALESCE(EXCLUDED.settlement,student_operations_xero_invoices.settlement),
              invoice_type=EXCLUDED.invoice_type, invoice_status=EXCLUDED.invoice_status,
              invoice_date=EXCLUDED.invoice_date, due_date=EXCLUDED.due_date,
              currency_code=EXCLUDED.currency_code, total=EXCLUDED.total,
@@ -817,7 +862,9 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
-      await db.query(`SELECT ${schema}.reconcile_latest_invoice_advisors($1::uuid)`, [tenantId]);
+      await db.query(`SELECT ${schema}.reconcile_latest_invoice_advisors($1::uuid)
+        WHERE EXISTS(SELECT 1 FROM ${schema}.student_operations_xero_sync_configurations
+          WHERE customer_id=$1 AND xero_connection_id=$2 AND organisation_role='trust')`, [tenantId,run.xero_connection_id]);
       const count = await db.query<{ count: number }>(
         `SELECT count(DISTINCT i.xero_contact_id)::int AS count
            FROM ${schema}.student_operations_xero_invoices i

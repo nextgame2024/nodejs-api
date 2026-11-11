@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
-import { XeroClient } from "./xero.client.js";
+import { XeroClient,xeroInvoiceSettlement } from "./xero.client.js";
 import type { XeroConfig } from "./xero.config.js";
 
 const config: XeroConfig = {
@@ -10,6 +10,15 @@ const config: XeroConfig = {
   stateSecret: "state-secret-that-is-longer-than-thirty-two-characters",
   encryptionKey: Buffer.alloc(32, 1),
 };
+
+describe('invoice settlement snapshots',()=>{
+  it('keeps payments and credit allocations separate from invoice dates',()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    expect(xeroInvoiceSettlement({DateString:'2026-11-11',FullyPaidOnDate:'2026-11-20',Payments:[{PaymentID:id,DateString:'2026-11-19',Amount:100}],CreditNotes:[{CreditNoteID:id,DateString:'2026-11-20',AppliedAmount:25}]})).toEqual({fullyPaidOnDate:'2026-11-20',entries:[{kind:'payment',id,date:'2026-11-19',amount:100},{kind:'credit_note',id,date:'2026-11-20',amount:25}]});
+  });
+  it('distinguishes an omitted summary from an explicitly empty allocation snapshot',()=>{expect(xeroInvoiceSettlement({})).toBeUndefined();expect(xeroInvoiceSettlement({Payments:[]})).toEqual({fullyPaidOnDate:null,entries:[]});});
+  it('rejects malformed allocations instead of persisting partial financial details',()=>{expect(()=>xeroInvoiceSettlement({Payments:[{PaymentID:'bad',Amount:100}]})).toThrow();});
+});
 
 afterEach(() => {
   jest.useRealTimers();
@@ -90,6 +99,19 @@ describe("XeroClient", () => {
     await expect(new XeroClient().createInvoice('token','tenant',{contactId:id,date:'2027-01-01',dueDate:'2027-01-15',reference:'Example College',currencyCode:'AUD',lines:[{description:'Course Name: GENERAL ENGLISH - 48 weeks',quantity:'4',unitAmount:'180.0000',itemCode:'ELICOS ON-SHORE',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:'S15 Advisor'}]}]},key)).resolves.toEqual({invoiceId:id,invoiceNumber:'INV-42',status:'DRAFT',total:720});
     const [url,options]=fetchMock.mock.calls[0];expect(url).toBe('https://api.xero.com/api.xro/2.0/Invoices?unitdp=4');expect(options).toMatchObject({method:'PUT',redirect:'error',headers:{'Idempotency-Key':key}});
     const body=JSON.parse(String(options?.body));expect(body.Invoices[0]).toMatchObject({Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:id},Date:'2027-01-01',DueDate:'2027-01-15',Reference:'Example College',LineAmountTypes:'Exclusive'});expect(body.Invoices[0].LineItems[0].Tracking).toEqual([{Name:'Payment Track',Option:'PENDING'},{Name:'Sales Representative',Option:'S15 Advisor'}]);
+  });
+  it.each(['TRUST','PTY'])('always creates an unsent %s DRAFT even when caller data contains approval fields',async organisation=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:id,InvoiceNumber:'INV-42',Status:'DRAFT',Total:100}]})));
+    const value={contactId:id,date:'2026-11-11',dueDate:'2026-11-11',reference:organisation==='TRUST'?'Example College':'Example Student',currencyCode:'AUD',lines:[],
+      status:'AUTHORISED',Status:'AUTHORISED',SentToContact:true,InvoiceNumber:'caller-number'};
+    await new XeroClient().createInvoice('token',organisation,value,'b'.repeat(64));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body=JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.Invoices[0]).toMatchObject({Type:'ACCREC',Status:'DRAFT',LineAmountTypes:'Exclusive',Reference:value.reference});
+    expect(body.Invoices[0]).not.toHaveProperty('SentToContact');
+    expect(body.Invoices[0]).not.toHaveProperty('InvoiceNumber');
+    expect(body.Invoices[0]).not.toHaveProperty('status');
   });
   it('retries an unreadable create response immediately with the identical idempotency key',async()=>{
     const id='11111111-1111-4111-8111-111111111111',key='c'.repeat(64),fetchMock=jest.spyOn(globalThis,'fetch').mockRejectedValueOnce(new TypeError('connection closed'))

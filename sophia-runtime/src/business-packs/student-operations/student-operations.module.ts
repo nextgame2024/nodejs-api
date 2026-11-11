@@ -1,5 +1,8 @@
 import {StudentCaseDeletionsService} from './student-case-deletions.service.js';
+import {StudentCommissionInvoicesController} from './student-commission-invoices.controller.js';
+import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
 import { Module } from "@nestjs/common";
+import { StudentCollegeMatchingService } from './student-college-matching.service.js';
 import { StudentCaseInvoiceEditsService } from './student-case-invoice-edits.service.js';
 import { StudentCaseInvoiceRemovalsService } from './student-case-invoice-removals.service.js';
 import { StudentCaseInvoiceDraftsService } from './student-case-invoice-drafts.js';
@@ -24,6 +27,7 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
 @Module({
   imports: [AdminModule, ConnectorsModule],
   controllers: [
+    StudentCommissionInvoicesController,
     StudentOperationsCasesController,
     StudentOperationsWorkspaceController,
     StudentOperationsCurrentWorkspaceController,
@@ -31,6 +35,8 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
     XeroWebhookController,
   ],
   providers: [
+    StudentCommissionInvoicesService,
+    StudentCollegeMatchingService,
     StudentCaseDeletionsService,
     StudentCaseInvoiceEditsService,
     StudentCaseInvoiceRemovalsService,

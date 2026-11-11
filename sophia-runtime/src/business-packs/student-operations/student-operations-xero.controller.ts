@@ -1,4 +1,5 @@
-import { Controller, ForbiddenException, Get, HttpCode, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, HttpCode, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { StudentCollegeMatchingService } from './student-college-matching.service.js';
 import { XeroConnectorService } from "../../connectors/xero/xero-connector.service.js";
 import { hasStudentOperationsPermission } from "./student-operations-policy.js";
 import { StudentOperationsWorkspaceGuard } from "./student-operations-workspace.guard.js";
@@ -17,6 +18,7 @@ export class StudentOperationsXeroController {
   constructor(
     private readonly xero: XeroConnectorService,
     private readonly sync: StudentOperationsXeroSyncService,
+    private readonly collegeMatching: StudentCollegeMatchingService,
   ) {}
 
   @Get()
@@ -107,5 +109,22 @@ export class StudentOperationsXeroController {
       throw new ForbiddenException("Chief Executive access is required to manage accounting connections.");
     }
     return principal;
+  }
+
+  @Get('connections/:connectionId/college-matching')
+  collegeMatches(@Req() request:WorkspaceRequest,@Param('connectionId') connectionId:string,@Query() query:unknown){
+    return this.collegeMatching.list(this.authorize(request),connectionId,query);
+  }
+
+  @Post('connections/:connectionId/college-matching/:contactId')
+  @HttpCode(200)
+  resolveCollege(@Req() request:WorkspaceRequest,@Param('connectionId') connectionId:string,@Param('contactId') contactId:string,@Body() body:unknown){
+    return this.collegeMatching.resolve(this.authorize(request),connectionId,contactId,body);
+  }
+
+  @Post("connections/:connectionId/student-role/operating")
+  @HttpCode(200)
+  configureOperating(@Req() request: WorkspaceRequest, @Param("connectionId") connectionId: string) {
+    return this.sync.configureOrganisation(this.authorize(request), connectionId, 'operating');
   }
 }

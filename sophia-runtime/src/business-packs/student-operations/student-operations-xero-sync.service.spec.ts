@@ -18,7 +18,7 @@ describe("StudentOperationsXeroSyncService", () => {
     const now=new Date('2026-10-20T00:00Z');
     const row={sync_run_id:'66666666-6666-4666-8666-666666666666',xero_connection_id:connectionId,
       mode:'incremental',trigger_type:'webhook',status:'queued',created_at:now};
-    const query=jest.fn(async(sql:string)=>({rows:sql.includes('SELECT sync_run_id')?[row]:[],rowCount:1}));
+    const query=jest.fn(async(sql:string)=>({rows:sql.includes('SELECT sync_run_id')?[row]:sql.includes('RETURNING last_successful_sync_at')?[{last_successful_sync_at:now}]:[],rowCount:1}));
     const database={tenantTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
     const service=new StudentOperationsXeroSyncService(database as never,{} as never);
     const processRun=jest.spyOn(service,'process').mockResolvedValue(undefined);
@@ -160,16 +160,16 @@ describe("StudentOperationsXeroSyncService", () => {
       xeroInvoiceId: invoiceId, invoiceNumber: "INV-10035", reference: "ATI",
       advisorName: "S15 Paulina", paymentTrack: "Pending", amountDue: 2200,
     }));
-    expect(query).toHaveBeenLastCalledWith(expect.stringContaining("ORDER BY i.due_date DESC"), [
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("ORDER BY i.due_date DESC"), [
       tenantId, connectionId, "%ATI%", 25, 25,
     ]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain(
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain(
       "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
     );
-    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
-    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.customer_id=$1");
-    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.xero_connection_id=$2");
-    expect(query.mock.calls.at(-1)?.[0]).toContain("count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()");
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain("full_run.customer_id=$1");
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain("full_run.xero_connection_id=$2");
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain("count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()");
   });
 
   it("applies status, inclusive invoice dates, and payment track before pagination", async () => {
@@ -188,7 +188,7 @@ describe("StudentOperationsXeroSyncService", () => {
       dateFrom: "2026-01-01", dateTo: "2026-12-31", paymentTrack: "Pending",
     });
 
-    const [sql, params] = query.mock.calls.at(-1)!;
+    const [sql, params] = query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))!;
     expect(sql).toContain("i.invoice_status = $4");
     expect(sql).toContain("i.invoice_date >= $5::date");
     expect(sql).toContain("i.invoice_date <= $6::date");
@@ -244,10 +244,10 @@ describe("StudentOperationsXeroSyncService", () => {
     const result = await service.invoice(tenantId, connectionId, invoiceId);
 
     expect(result.lineItems).toEqual([{ description: "Diploma tuition", quantity: 1, lineAmount: 2200 }]);
-    expect(query.mock.calls.at(-1)?.[0]).toContain(
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain(
       "i.invoice_status IN ('DRAFT','SUBMITTED','AUTHORISED','PAID')",
     );
-    expect(query.mock.calls.at(-1)?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
+    expect(query.mock.calls.find(([sql])=>sql.includes("SELECT i.xero_invoice_id"))?.[0]).toContain("full_run.mode IN ('initial','reconciliation')");
     expect(xero.syncInvoicePage).not.toHaveBeenCalled();
   });
 
@@ -256,7 +256,7 @@ describe("StudentOperationsXeroSyncService", () => {
     const now = new Date("2026-10-10T00:00:00.000Z");
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
-      if (sql.includes("INSERT INTO sophia_runtime.student_operations_xero_sync_configurations")) {
+      if (sql.includes("UPDATE sophia_runtime.student_operations_xero_sync_configurations")) {
         return { rows: [{ last_successful_sync_at: null, last_reconciliation_sync_at: null }], rowCount: 1 };
       }
       if (sql.includes("status IN ('queued','processing')")) return { rows: [], rowCount: 0 };
@@ -303,7 +303,7 @@ describe("StudentOperationsXeroSyncService", () => {
     const now = new Date("2026-10-10T00:00:00.000Z");
     const query = jest.fn(async (sql: string) => {
       if (sql.includes("FROM sophia_runtime.xero_connections")) return { rows: [{ exists: 1 }], rowCount: 1 };
-      if (sql.includes("INSERT INTO sophia_runtime.student_operations_xero_sync_configurations")) {
+      if (sql.includes("UPDATE sophia_runtime.student_operations_xero_sync_configurations")) {
         return {
           rows: [{
             last_successful_sync_at: now,
@@ -516,7 +516,7 @@ describe("StudentOperationsXeroSyncService", () => {
   });
 
   it("assigns one explicit TRUST source and disables the previous assignment", async () => {
-    const query = jest.fn(async () => ({ rows: [{ exists: 1 }], rowCount: 1 }));
+    const query = jest.fn(async (sql:string) => ({ rows: sql.includes("SELECT organisation_role")?[]:[{ exists: 1 }], rowCount: 1 }));
     const database = {
       tenantTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) =>
         work({ query })),
@@ -528,12 +528,12 @@ describe("StudentOperationsXeroSyncService", () => {
     } as never, connectionId)).resolves.toEqual({ connectionId, organisationRole: "trust" });
 
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("organisation_role='unassigned', enabled=false"),
-      [tenantId, connectionId],
+      expect.stringContaining("SET enabled=false"),
+      [tenantId, connectionId, "trust"],
     );
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("organisation_role='trust', enabled=true"),
-      [tenantId, connectionId],
+      expect.stringContaining("organisation_role=EXCLUDED.organisation_role, enabled=true"),
+      [tenantId, connectionId, "trust"],
     );
   });
 });

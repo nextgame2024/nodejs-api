@@ -5,13 +5,13 @@ import type { DatabaseService } from '../../database/database.service.js';
 import type { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroSalesCatalogue } from '../../connectors/xero/xero-sales-catalogue.js';
 
-export async function readSalesCatalogue(db:PoolClient,tenant:string,lock=false){
+export async function readSalesCatalogue(db:PoolClient,tenant:string,lock=false,role:'trust'|'operating'='trust'){
   const s=runtimeConfig().schema;
   const rows=(await db.query(`SELECT c.xero_connection_id AS "connectionId",c.snapshot,c.revision,c.last_synced_at AS "lastSyncedAt",c.error_code AS "errorCode"
     FROM ${s}.student_xero_sales_catalogues c
-    JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role='trust'
+    JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role=$2 AND cfg.enabled
     JOIN ${s}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id AND x.status='active'
-    WHERE c.customer_id=$1 ORDER BY c.xero_connection_id ${lock?'FOR SHARE OF c':''}`,[tenant])).rows;
+    WHERE c.customer_id=$1 ORDER BY c.xero_connection_id ${lock?'FOR SHARE OF c':''}`,[tenant,role])).rows;
   if(rows.length!==1||!rows[0].lastSyncedAt)return null;
   const row=rows[0];return {connectionId:String(row.connectionId),revision:Number(row.revision),lastSyncedAt:row.lastSyncedAt,errorCode:row.errorCode as string|null,...row.snapshot as XeroSalesCatalogue};
 }
@@ -26,9 +26,9 @@ export class StudentXeroSalesCatalogueSync {
       await db.query(`INSERT INTO ${s}.student_xero_sales_catalogues(customer_id,xero_connection_id)
         SELECT cfg.customer_id,cfg.xero_connection_id FROM ${s}.student_operations_xero_sync_configurations cfg
         JOIN ${s}.xero_connections x ON x.customer_id=cfg.customer_id AND x.xero_connection_id=cfg.xero_connection_id AND x.status='active'
-        WHERE cfg.customer_id=$1 AND cfg.organisation_role='trust' ON CONFLICT DO NOTHING`,[tenant]);
+        WHERE cfg.customer_id=$1 AND cfg.organisation_role IN ('trust','operating') AND cfg.enabled ON CONFLICT DO NOTHING`,[tenant]);
       const row=(await db.query(`SELECT c.xero_connection_id FROM ${s}.student_xero_sales_catalogues c
-        JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role='trust'
+        JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role IN ('trust','operating') AND cfg.enabled
         JOIN ${s}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id AND x.status='active'
         WHERE c.customer_id=$1 AND c.next_attempt_at<=now() AND (c.lease_expires_at IS NULL OR c.lease_expires_at<now())
         ORDER BY c.next_attempt_at,c.xero_connection_id LIMIT 1 FOR UPDATE OF c SKIP LOCKED`,[tenant])).rows[0];

@@ -8,9 +8,9 @@ const value={contactId:'contact',date:'2026-10-28',dueDate:'2026-10-28',referenc
 describe('request-scoped Xero invoice session',()=>{
   beforeEach(()=>{Object.assign(process.env,settings);});
   afterEach(()=>{jest.restoreAllMocks();for(const [key,old] of Object.entries(previous)){if(old===undefined)delete process.env[key];else process.env[key]=old;}});
-  function fixture(){
+  function fixture(operating=true){
     let scopes=['accounting.invoices','accounting.invoices.read','accounting.settings.read'];
-    const query=jest.fn(async(sql:string,params:unknown[])=>({rows:sql.includes('token_ciphertext')
+    const query=jest.fn(async(sql:string,params:unknown[])=>({rowCount:sql.includes('student_operations_xero_sync_configurations')?(operating?1:0):1,rows:sql.includes('token_ciphertext')
       ?[{token_ciphertext:params[0],token_expires_at:new Date(Date.now()+1800_000),status:'active'}]
       :[{xero_authorization_id:'authorization',xero_tenant_id:`provider-${params[0]}`,status:'active',granted_scopes:scopes}]}));
     const transact=jest.fn(async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query}));
@@ -93,6 +93,29 @@ describe('request-scoped Xero invoice session',()=>{
     const sent=(f.client.createInvoice.mock.calls as unknown as Array<[string,string,typeof input]>)[0][2];
     expect(sent.lines[0].tracking).toEqual([{name:'Payment Track',option:'Pending',trackingCategoryId:'22222222-2222-4222-8222-222222222222',trackingOptionId:'33333333-3333-4333-8333-333333333333'},{name:'Sales Representative',option:'S15 Advisor'}]);
     expect(input.lines[0].tracking[0].option).toBe('PENDING');
+  });
+  it('uses the PTY theme and Instalment category without inheriting TRUST Payment Track',async()=>{
+    const f=fixture(),theme='11111111-1111-4111-8111-111111111111';
+    f.client.brandingThemes.mockResolvedValue([{brandingThemeId:theme,name:'PTY Open for Australia Account'}]);
+    f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Type of Sale',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Instalment'}]}]);
+    const session=await f.service.invoiceCreationSession('tenant-a','connection-a','operating');
+    const input={...value,reference:'Example Student',lines:[{description:'Commission',quantity:'1',unitAmount:'472.50',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Payment Track',option:'PENDING'}]}]};
+    await session.createInvoice(input,'key');
+    expect(f.client.createInvoice).toHaveBeenCalledWith('token-tenant-a','provider-tenant-a',expect.objectContaining({brandingThemeId:theme,reference:'Example Student',lines:[expect.objectContaining({tracking:[{name:'Type of Sale',option:'Instalment',trackingCategoryId:'22222222-2222-4222-8222-222222222222',trackingOptionId:'33333333-3333-4333-8333-333333333333'}]})]}),'key');
+    expect(input.lines[0].tracking[0].name).toBe('Payment Track');
+    expect(f.query).toHaveBeenCalledWith(expect.stringContaining("organisation_role='operating'"),['tenant-a','connection-a']);
+  });
+  it('rejects PTY creation on an unassigned or disabled organisation',async()=>{
+    const f=fixture(false);
+    await expect(f.service.invoiceCreationSession('tenant-a','connection-a','operating')).rejects.toThrow('PTY organisation is not available');
+    expect(f.client.createInvoice).not.toHaveBeenCalled();
+  });
+  it('cannot override the required PTY branding with a selected TRUST theme',async()=>{
+    const f=fixture(),theme='11111111-1111-4111-8111-111111111111';
+    f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Type of Sale',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Instalment'}]}]);
+    const session=await f.service.invoiceCreationSession('tenant-a','connection-a','operating');
+    await expect(session.createInvoice({...value,brandingThemeId:theme},'key')).rejects.toThrow('available invoice branding');
+    expect(f.client.createInvoice).not.toHaveBeenCalled();
   });
   it('blocks sending when the active Payment Track Pending option is missing or ambiguous',async()=>{
     for(const options of [[],[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Pending'},{trackingOptionId:'44444444-4444-4444-8444-444444444444',name:'Pending'}]]){

@@ -71,16 +71,16 @@ export class StudentOperationsCurrentWorkspaceController {
     const status = await timeStudentOperations('xero-status', request.studentOperationsCorrelationId,
       () => this.xero.status(principal.tenantId));
     const active = status.connections.filter(connection => connection.status === 'active');
-    const connection = active.find(connection => connection.organisationRole === 'trust')
-      ?? (active.length === 1 ? active[0] : null);
-    if (!connection) return { workspace, connection: null, invoices: null,
+    const connections=active.filter(connection=>connection.organisationRole==='trust'||connection.organisationRole==='operating');
+    const connection = connections.find(connection => connection.organisationRole === 'trust') ?? null;
+    if (!connection) return { workspace, connections, connection: null, invoices: null,
       connectionIssue: active.length > 1 ? 'ambiguous' : 'unavailable' };
     if (connection.missingStudentDiscoveryScopes.length) {
-      return { workspace, connection, invoices: null, connectionIssue: 'scope_missing' };
+      return { workspace, connections, connection, invoices: null, connectionIssue: 'scope_missing' };
     }
     const invoices = await this.sync.invoices(principal.tenantId, connection.connectionId, query,
       request.studentOperationsCorrelationId);
-    return { workspace, connection, invoices, connectionIssue: null };
+    return { workspace, connections, connection, invoices, connectionIssue: null };
   }
 
   @Get("student-register")

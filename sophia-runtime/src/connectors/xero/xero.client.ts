@@ -87,6 +87,7 @@ export type XeroContactRecord = {
 };
 
 export type XeroInvoiceRecord = {
+  settlement?:XeroInvoiceSettlement;
   lineAmountTypes?:string|null;
   brandingThemeId?:string|null;
   invoiceId: string;
@@ -200,6 +201,8 @@ export class XeroClient {
     if(!/^[0-9a-f-]{36}$/i.test(value.contactId)||!/^[a-f0-9]{64}$/.test(key)||!/^\d{4}-\d{2}-\d{2}$/.test(value.date)||!/^\d{4}-\d{2}-\d{2}$/.test(value.dueDate))
       throw new BadGatewayException('Invalid Xero invoice request.');
     const policy=this.requestPolicy.getStore();let response:Response|undefined,ticket:XeroRequestTicket|void=undefined;
+    // Both TRUST and PTY creation use this path. Status is server-owned; approval
+    // and sending are separate operations, never options on invoice creation.
     const invoice={Type:'ACCREC',Contact:{ContactID:value.contactId},Date:value.date,DueDate:value.dueDate,Status:'DRAFT',CurrencyCode:value.currencyCode,
       ...(value.reference?{Reference:value.reference}:{}),...(value.brandingThemeId?{BrandingThemeID:value.brandingThemeId}:{}),LineAmountTypes:'Exclusive',LineItems:value.lines.map(line=>({Description:line.description,Quantity:line.quantity,
         UnitAmount:line.unitAmount,...(line.itemCode?{ItemCode:line.itemCode}:{}),AccountCode:line.accountCode,TaxType:line.taxType,
@@ -1102,10 +1105,26 @@ function xeroContactRecord(raw:unknown):XeroContactRecord {
     updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
+export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number}>};
+export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceSettlement|undefined{
+  const groups=[['Payments','PaymentID','payment'],['CreditNotes','CreditNoteID','credit_note'],['Prepayments','PrepaymentID','prepayment'],['Overpayments','OverpaymentID','overpayment']] as const;
+  if(!groups.some(([key])=>Array.isArray(value[key]))&&!value.FullyPaidOnDate)return undefined;
+  const entries:XeroInvoiceSettlement['entries']=[];
+  for(const [key,id,kind] of groups){
+    if(!Array.isArray(value[key]))continue;
+    if((value[key] as unknown[]).length>2000)throw new BadGatewayException('Xero returned too many invoice allocations.');
+    for(const raw of value[key] as unknown[]){const item=record(raw),identifier=optionalString(item[id]),amount=optionalNumber(item.AppliedAmount)??optionalNumber(item.Amount);
+      if(!identifier||!xeroUuid.test(identifier)||amount===null||amount<0)throw new BadGatewayException('Xero returned an invalid invoice allocation.');
+      entries.push({kind,id:identifier,date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount});
+    }
+  }
+  return {fullyPaidOnDate:optionalDate(value.FullyPaidOnDate)??optionalXeroDate(value.FullyPaidOnDate),entries};
+}
 function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
   const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];
   const total=optionalNumber(value.Total)??0,amountPaid=optionalNumber(value.AmountPaid)??0,invoiceReference=optionalString(value.Reference);
-  return {invoiceId:requiredString(value.InvoiceID,'invoice id'),contactId:requiredString(contact.ContactID,'contact id'),invoiceNumber:optionalString(value.InvoiceNumber),
+  const settlement=xeroInvoiceSettlement(value);
+  return {...(settlement?{settlement}:{}),invoiceId:requiredString(value.InvoiceID,'invoice id'),contactId:requiredString(contact.ContactID,'contact id'),invoiceNumber:optionalString(value.InvoiceNumber),
     lineAmountTypes:optionalString(value.LineAmountTypes),brandingThemeId:optionalString(value.BrandingThemeID),invoiceReference,concept:invoiceConcept(lineItems),advisorName:trackingOption(lineItems,['sales representative','advisor','adviser','counsellor','consultant','agent']),
     collegeName:invoiceReference,paymentTrack:trackingOption(lineItems,['payment track']),sentToContact:value.SentToContact===true,lineItems:lineItems.map(invoiceLineItem),
     type:requiredString(value.Type,'invoice type'),status:requiredString(value.Status,'invoice status'),invoiceDate:optionalDate(value.DateString)??optionalXeroDate(value.Date),
