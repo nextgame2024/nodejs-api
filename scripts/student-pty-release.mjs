@@ -1,9 +1,9 @@
 // Restricted release helper: defaults to read-only preflight. It applies only
-// the two reviewed PTY migrations, never unrelated pending migrations.
+// the reviewed PTY migrations, never unrelated pending migrations.
 import 'dotenv/config';
 import pg from 'pg';
 import {readFile} from 'node:fs/promises';
-const files=['127_student_pty_foundation.sql','128_student_commission_invoices.sql'];
+const files=['127_student_pty_foundation.sql','128_student_commission_invoices.sql','129_student_college_matching_aliases.sql'];
 const apply=process.argv.includes('--apply');
 if(process.argv.slice(2).some(arg=>!['--check','--apply'].includes(arg)))throw new Error('Use --check or --apply.');
 const schema=process.env.SOPHIA_RUNTIME_SCHEMA||'sophia_runtime';
@@ -19,6 +19,8 @@ try{
   if(prerequisites.some(id=>!ledger.includes(id)))throw new Error('Runtime migration prerequisites are missing.');
   const columns=(await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='bm_college_commission_rules'")).rows.map(r=>r.column_name);
   if(!['rule_id','company_id','college_id','commission_basis_points','cashback_status','bonus_status','updatedat'].every(c=>columns.includes(c)))throw new Error('Business Manager commission rules are not ready.');
+  const collegeColumns=(await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='bm_colleges'")).rows.map(r=>r.column_name);
+  if(!['college_id','company_id','college_name','trading_name','acronym','status'].every(c=>collegeColumns.includes(c)))throw new Error('College matching aliases are not ready.');
   const roles=(await db.query(`SELECT count(*)::int AS enabled FROM ${schema}.student_operations_xero_sync_configurations WHERE organisation_role='operating' AND enabled`)).rows[0];
   const pending=files.filter(file=>!ledger.includes(file));
   console.log(JSON.stringify({mode:apply?'apply':'check',lastApplied:ledger.at(-1),pending,enabledOperatingOrganisations:roles.enabled}));

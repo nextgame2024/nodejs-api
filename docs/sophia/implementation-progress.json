@@ -1,7 +1,7 @@
 {
   "studentPtyIntegration": {
     "updatedOn": "2026-11-11",
-    "status": "production_migrations_applied_pending_code_deployment",
+    "status": "initial_import_complete_alias_matching_applied_pending_code_rollout",
     "authorization": "User approved beginning the phased implementation. Preserve bulk TRUST creation. Requested alternating tabs INV-1 (TRUST), INV-1 (PTY), INV-2 (TRUST), INV-2 (PTY). TRUST recipient is student/reference college; PTY recipient is college/reference student. Explicit Sophia relationships must supplement, not replace, these Xero conventions.",
     "implemented": [
       "Explicit operating-role assignment in Company and guarded Runtime endpoint; refuse changing an assigned organisation between TRUST and PTY; refresh no longer silently assigns TRUST",
@@ -10,17 +10,18 @@
       "Tenant-scoped college mapping API/UI, optimistic revision checks, company-directory validation and immutable decision audit; no student provisioning or Xero edits",
       "Migration 127 adds mapping tables with forced RLS, a security-barrier commission rule reader, and extends existing dedicated-worker claims to operating organisations",
       "Background sales catalogue import includes PTY; TRUST catalogue reader remains explicit and requires enabled configuration",
-      "PTY connector creation profile validates the enabled operating organisation, required branding and Type of Sale Instalment; shared provider request fixes initial status to DRAFT and tax amounts to Exclusive. Profile is not yet wired into commission export orchestration.",
+      "PTY connector creation profile validates the enabled operating organisation, required branding and Type of Sale Instalment; shared provider request fixes initial status to DRAFT and tax amounts to Exclusive. Wired into commission export orchestration.",
       "Standard integer-cent tuition-only commission calculation; current active unrestricted rules; user-approved Not recorded benefits treated as no benefit; specified benefits and unsupported conditions blocked",
       "Immutable calculation snapshots and permanent TRUST/PTY receipts in migration 128; direct source receipt gate, live source verification, duplicate protection and exact unknown-outcome reconciliation",
       "Alternating TRUST/PTY tabs, selected PTY sales item/account, optional combined preparation and server-ordered bulk creation; single PTY creation requires existing TRUST; manual tuition classification and saved manual commission reopening",
       "Related-invoice navigation, per-organisation saved register filters and supplied payment/credit/prepayment/overpayment snapshots in existing local invoice imports",
-      "Performance: local previews and tab switches, one large catalogue read per export request, indexed revision checks, at most three concurrent sends and one shared session per organisation"
+      "Performance: local previews and tab switches, one large catalogue read per export request, indexed revision checks, at most three concurrent sends and one shared session per organisation",
+      "Completed PTY sync automatically matches legal college names, stored trading-name lists and acronyms; ignores client number/provider annotations; accepts unique strong name signatures/fuzzy matches; preserves manual decisions and audits every automatic link. Historical numbered contacts can share a college while new commissions retain the explicitly confirmed recipient."
     ],
     "remaining": [
-      "Deploy tested Runtime API, shared student worker and frontend revisions",
-      "Explicitly assign PTY in Company, run normal initial import and confirm college contact mappings; no financial provider write is performed during release",
-      "Historical student/TRUST/PTY pair matching remains manual; no name-based financial links are inferred; unsupported conditional/benefit rules are blocked"
+      "Deploy and verify the tested automatic matching worker/API and searchable alias selector changes",
+      "Review uncertain historical contact identities; automatic matches cover 4,951 of 7,342 visible transactions",
+      "Historical student/TRUST/PTY invoice-pair matching remains manual; unsupported conditional/benefit rules remain blocked"
     ],
     "pendingBusinessAnswers": "No unanswered decision blocks the initial unrestricted fixed-percentage release. Current active rules and Not recorded = no benefit were explicitly confirmed. Effective-dated and conditional rules, specified benefits and automatic credit/replacement policies remain outside this first release.",
     "verification": [
@@ -35,20 +36,57 @@
       "208 invoice editor/case/register browser checks passed including paired workflow and actual iframe 390/1440px light/dark layouts",
       "Final Runtime and frontend production builds passed; frontend retains existing initial/CSS budgets, CommonJS and missing-primeicons warnings",
       "Production read-only release preflight: ledger through 126; only 127/128 pending for this feature; zero enabled operating organisations; no migrations or live invoice writes committed at this checkpoint",
-      "61 final Payments register checks passed, including two added regressions for per-organisation filter restoration and explicit counterpart organisation navigation; 210 distinct editor/case/register browser checks now covered."
+      "61 final Payments register checks passed, including two added regressions for per-organisation filter restoration and explicit counterpart organisation navigation; 210 distinct editor/case/register browser checks now covered.",
+      "2026-11-11 activation check: actual localhost manager and case JavaScript bundles contain the released PTY controls. Scoped production database check verified RLS and found only the active TRUST connection, with 11,470 cached invoices and no PTY connection. Read-only transaction rolled back.",
+      "2026-11-11 follow-up: production read-only app-role recheck still returned exactly one active TRUST connection and no PTY connection. Hosted sophiaai.com.au Company screenshot displays the released TRUST/PTY connection controls. Xero permission requirements verified against https://developer.xero.com/faq/permissions.",
+      "2026-11-11 subsequent connection check: Open 4 & Co. active, unassigned/disabled, zero cached invoices, no last import error. Accounting invoice/contact write scopes, payment/settings read and offline access were granted. TRUST remains separate and unchanged.",
+      "Initial-import progress audit under RLS: first 3,200 PTY invoices all had line items, 1,848 had payment/allocation snapshots, zero assigned student IDs, and zero invoice references stored as college_name. Directory contains 1,543 colleges. Deleted/voided records are retained in the local source and excluded by normal register rules.",
+      "New matching checks: 26 focused matcher tests passed; existing sync/foundation/Trust creation tests passed during this change; 18 PostgreSQL checks passed including migration 129, alias scope, manual recipient precedence, idempotent bulk mapping and audit rollback",
+      "9 college-matching browser checks passed including searchable legal/trading/acronym labels, cached options, stale response cancellation and actual 390/1440px light/dark layouts. Runtime/frontend production builds and diff checks passed."
     ],
     "confirmedBusinessDecisions": [
       "Both TRUST and PTY invoices must initially be unsent DRAFT invoices. Shared Xero create client owns Status=DRAFT; callers cannot supply approval or sending fields.",
       "Users can prepare both together. Bulk creation must create TRUST invoices first, then PTY; individual PTY creation must validate its corresponding TRUST creation receipt server-side.",
       "PTY branding: PTY Open for Australia Account. Type of Sale: Instalment. No TRUST Payment Track on PTY. Tax exclusive with GST on Income. Monetary amounts displayed to two decimals.",
       "Initial PTY invoice dates match TRUST. Later sync must reflect Xero invoice date changes and keep payment dates separately.",
-      "Current active rules may be used; Not recorded cashback/bonus is treated as no benefit, per the explicit user answer on 2026-11-11."
+      "Current active rules may be used; Not recorded cashback/bonus is treated as no benefit, per the explicit user answer on 2026-11-11.",
+      "User confirmed Australian College of Commerce and Information Technology - 2 as the selected college recipient, and authorised approximate name matching that ignores client-added numbering. Subsequently required matching against both college and trading names, leaving doubtful identities for review."
     ],
     "releaseGuide": "docs/sophia/student-pty-release.md",
     "production": {
-      "migration": "Owner helper applied 127_student_pty_foundation.sql and 128_student_commission_invoices.sql atomically on 2026-11-11 after preflight confirmed ledger 126 and zero enabled operating organisations.",
-      "deployment": "Backend/frontend commits and rollout verification pending.",
-      "providerWrites": "No Xero invoice, email, payment or contact write performed."
+      "migration": "Owner helper applied 127_student_pty_foundation.sql and 128_student_commission_invoices.sql atomically on 2026-11-11 after preflight confirmed ledger 126 and zero enabled operating organisations. Migration 129_student_college_matching_aliases.sql was subsequently applied after 18 disposable PostgreSQL checks, exposing only eligible tenant legal/trading-name/acronym fields.",
+      "deployment": "Runtime API independently verified at 9d943df1afdc. User supplied a live Render deployment confirmation for that release: srv-da98k74s728c73d26ps0 / dep-dbpsq8ajnfac739hrplg. Frontend e8cac38 is pushed, and localhost:4200 was independently verified to serve Use as PTY, PTY commission preview, Include PTY commissions and Create TRUST and PTY drafts in its actual manager/case bundles.",
+      "providerWrites": "No Xero invoice, email, payment or contact write performed.",
+      "migrationVerification": "Post-apply owner preflight returned lastApplied=128_student_commission_invoices.sql, pending=[], enabledOperatingOrganisations=0.",
+      "activation": "User assigned Open 4 & Co. as PTY and tested both connections. App-role/RLS verification confirmed active/enabled operating connection 570c5472-21a6-4469-b0a9-5d9f1a35dbd5, separate TRUST connection unchanged. The updated shared worker imported the PTY catalogue successfully (34 items, required PTY branding, GST on Income OUTPUT 10%, account 200 Sales Commissions).",
+      "initialImport": {
+        "syncRunId": "4d5382ff-d94a-408c-b53d-6902bb4c0176",
+        "mode": "initial",
+        "trigger": "manual",
+        "requestedBy": "operator:approved-pty-initial-import",
+        "status": "succeeded",
+        "contacts": 1678,
+        "invoiceProgress": 10442,
+        "error": null,
+        "authorization": "User explicitly approved continuing setup/import after assigning PTY. One tenant-scoped app-role queue insert reused the normal worker pipeline; no direct Xero request or financial write was performed by the operator.",
+        "completedAt": "2026-11-11T05:24:40.272Z",
+        "activeVisibleTransactions": 7342,
+        "withLineItems": 10442,
+        "withPaymentAllocationSnapshots": 6284,
+        "assignedStudentIds": 0,
+        "invoiceReferencesStoredAsCollegeNames": 0
+      },
+      "collegeReadiness": "Explicitly confirmed case mapping is saved and audited: college e5f6ab43-dd89-401c-869e-069eff74841c -> PTY contact 5e5bbe24-ad5f-493f-b9f5-74b191704234. The active unrestricted 30% tuition rule, PTY branding, GST OUTPUT 10% and account 200 Sales Commissions are available.",
+      "automaticMatching": {
+        "applied": 80,
+        "manuallyConfirmed": 1,
+        "activeContacts": 1548,
+        "collegeDirectory": 1543,
+        "visibleTransactionsWithMatchedRecipients": 4951,
+        "visibleTransactions": 7342,
+        "unresolvedActiveContacts": 1467,
+        "notes": "Some unresolved contacts are non-college business customers; do not infer their classification. Dry run measured about 281ms and 12 detailed fuzzy comparisons. One app-role bulk statement saved mappings and immutable events; no Xero write or new import was issued."
+      }
     }
   },
   "studentInvoiceCollegeSelection": {

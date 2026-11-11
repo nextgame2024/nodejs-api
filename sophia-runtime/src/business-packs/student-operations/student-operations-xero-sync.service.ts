@@ -9,6 +9,7 @@ import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
 import { addDatabaseTimings, elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
+import { autoMatchCollegeContacts } from './student-college-auto-matching.js';
 
 const CandidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -862,6 +863,7 @@ export class StudentOperationsXeroSyncService {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
+      await autoMatchCollegeContacts(db,tenantId,run.xero_connection_id);
       await db.query(`SELECT ${schema}.reconcile_latest_invoice_advisors($1::uuid)
         WHERE EXISTS(SELECT 1 FROM ${schema}.student_operations_xero_sync_configurations
           WHERE customer_id=$1 AND xero_connection_id=$2 AND organisation_role='trust')`, [tenantId,run.xero_connection_id]);

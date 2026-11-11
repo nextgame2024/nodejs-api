@@ -38,7 +38,7 @@ export class StudentCollegeMatchingService {
           AND ($3='' OR c.legal_name ILIKE '%'||$3||'%' OR c.email ILIKE '%'||$3||'%')
           AND ($4='all' OR COALESCE(m.classification,'unresolved')=$4)
         ORDER BY lower(c.legal_name) ${direction.toUpperCase()},c.xero_contact_id LIMIT $5 OFFSET $6`,[p.tenantId,connectionId,q,status,limit,(page-1)*limit]);
-      const colleges=await db.query(`SELECT college_id AS "collegeId",college_name AS name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId]);
+      const colleges=await db.query(`SELECT college_id AS "collegeId",college_name AS name,trading_name AS "tradingName",acronym FROM ${s}.student_college_matching_directory WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[p.tenantId]);
       return {items:result.rows,total:Number(result.rows[0]?.total??0),page,limit,colleges:colleges.rows};
     });
   }
@@ -48,6 +48,7 @@ export class StudentCollegeMatchingService {
     const value=parsed.data,s=runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId,async db=>{
       await this.connection(db,p.tenantId,connectionId);
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`college-auto-match:${p.tenantId}:${connectionId}`]);
       const contact=await db.query(`SELECT xero_contact_id FROM ${s}.student_operations_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 FOR UPDATE`,[p.tenantId,connectionId,contactId]);
       if(!contact.rows.length)throw new NotFoundException('Xero contact not found.');
       if(value.collegeId){const college=await db.query(`SELECT college_id FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,value.collegeId]);if(!college.rows.length)throw new BadRequestException('Select an available college.');}

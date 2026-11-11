@@ -35,13 +35,18 @@ export class StudentCommissionInvoicesService{
   const s=caseSchema(),catalogue=await readSalesCatalogue(db,p.tenantId,false,'operating');
   const college=(await db.query(`SELECT college_name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,collegeId])).rows[0];
   const rules=(await db.query(`SELECT * FROM ${s}.student_college_commission_rules WHERE customer_id=$1 AND college_id=$2 AND active ORDER BY rule_id`,[p.tenantId,collegeId])).rows as CommissionRule[];
-  const mappings=catalogue?(await db.query(`SELECT m.xero_contact_id,m.revision FROM ${s}.student_college_xero_contact_links m JOIN ${s}.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
+  const mappings=catalogue?(await db.query(`SELECT m.xero_contact_id,m.revision,m.reviewed_by FROM ${s}.student_college_xero_contact_links m JOIN ${s}.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
     WHERE m.customer_id=$1 AND m.xero_connection_id=$2 AND m.college_id=$3 AND m.classification='college' AND c.contact_status='ACTIVE' ORDER BY m.xero_contact_id`,[p.tenantId,catalogue.connectionId,collegeId])).rows:[];
   const taxes=catalogue?.taxRates.filter(t=>t.name.trim().toLowerCase()==='gst on income'&&t.rate!==null)??[];
   const themes=catalogue?.brandingThemes?.filter(t=>t.name.trim().toLowerCase()==='pty open for australia account')??[];
-  const issue=!college?'Select an available college.':commissionRuleIssue(rules)??(!catalogue?'The PTY catalogue is waiting for background import.':mappings.length!==1?'Confirm one active PTY contact for this college in Payments and Control.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
+  const confirmed=mappings.filter(m=>!String(m.reviewed_by).startsWith('system:college-name-match:'));
+  // Automatic identity matching can link several historical numbered contacts.
+  // A single explicit human confirmation chooses the new-invoice recipient.
+  // Multiple human confirmations still require review; no name guess chooses it.
+  const mapping=confirmed.length===1?confirmed[0]:confirmed.length===0&&mappings.length===1?mappings[0]:null;
+  const issue=!college?'Select an available college.':commissionRuleIssue(rules)??(!catalogue?'The PTY catalogue is waiting for background import.':!mapping?'Confirm one active PTY invoice recipient for this college in Payments and Control.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
   const items=catalogue?.items.filter(i=>i.accountCode&&catalogue.accounts.some(a=>a.code===i.accountCode))??[];
-  return {available:true,issue,collegeId,collegeName:college?.college_name??null,rule:!commissionRuleIssue(rules)?rules[0]:null,catalogue,items,tax:taxes.length===1?taxes[0]:null,theme:themes.length===1?themes[0]:null,mapping:mappings.length===1?mappings[0]:null};
+  return {available:true,issue,collegeId,collegeName:college?.college_name??null,rule:!commissionRuleIssue(rules)?rules[0]:null,catalogue,items,tax:taxes.length===1?taxes[0]:null,theme:themes.length===1?themes[0]:null,mapping};
  }
  async options(p:Principal,id:string,collegeId:string){
   this.authorize(p);if(!z.uuid().safeParse(collegeId).success)throw new BadRequestException('Select a college.');
@@ -144,7 +149,9 @@ export class StudentCommissionInvoicesService{
       JOIN ${s}.student_operations_xero_contacts xc USING(customer_id,xero_connection_id,xero_contact_id)
       JOIN ${s}.student_college_commission_rules r ON r.customer_id=m.customer_id AND r.college_id=m.college_id
       WHERE cat.customer_id=$1 AND cat.xero_connection_id=$2 AND cat.revision=$3 AND cfg.enabled AND cfg.organisation_role='operating' AND x.status='active'
-       AND m.xero_contact_id=$4 AND m.revision=$5 AND m.college_id=$6 AND m.classification='college' AND xc.contact_status='ACTIVE' AND r.rule_id=$7 AND r.active AND date_trunc('milliseconds',r.updatedat)=$8::timestamptz`,
+       AND m.xero_contact_id=$4 AND m.revision=$5 AND m.college_id=$6 AND m.classification='college' AND xc.contact_status='ACTIVE' AND r.rule_id=$7 AND r.active AND date_trunc('milliseconds',r.updatedat)=$8::timestamptz
+       AND NOT EXISTS(SELECT 1 FROM ${s}.student_college_xero_contact_links other
+        WHERE other.customer_id=$1 AND other.xero_connection_id=$2 AND other.college_id=$6 AND other.classification='college' AND other.xero_contact_id<>$4 AND other.reviewed_by NOT LIKE 'system:college-name-match:%')`,
        [p.tenantId,snapshot.connectionId,snapshot.catalogueRevision,snapshot.contactId,snapshot.mappingRevision,snapshot.collegeId,snapshot.rule.rule_id,snapshot.rule.updatedat]);
      if(!fresh.rowCount)throw new ConflictException('PTY settings changed during creation. Review the calculation again.');
      const t=(await db.query(`SELECT * FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='created'`,[p.tenantId,batchId,sequence])).rows[0];
