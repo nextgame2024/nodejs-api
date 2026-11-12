@@ -5,6 +5,7 @@ import { DatabaseService } from './database.service.js';
 import { XeroQuotaAdmission } from '../connectors/xero/xero-quota-admission.js';
 import { XeroSharedBackoff } from '../connectors/xero/xero-rate-limit.js';
 import { XeroClient } from '../connectors/xero/xero.client.js';
+import { XeroConnectorService } from '../connectors/xero/xero-connector.service.js';
 
 const url=process.env.LOCAL_XERO_QUOTA_TEST_DATABASE_URL;
 if(url && (!['localhost','127.0.0.1'].includes(new URL(url).hostname)
@@ -53,6 +54,38 @@ suite('Atomic Xero quota admission under PostgreSQL RLS',()=>{
     await quota.observe(tenant,connection,ticket,{day:remaining,problem:null,retryAfterSeconds:null},200);
     return ticket;
   }
+  async function catalogueFixture(){
+    const settings={XERO_CLIENT_ID:'fixture',XERO_CLIENT_SECRET:'fixture',XERO_REDIRECT_URI:'https://example.test/callback',XERO_RETURN_URL:'https://example.test/return',XERO_OAUTH_STATE_SECRET:'x'.repeat(32),XERO_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32).toString('base64')};
+    const previous=Object.fromEntries(Object.keys(settings).map(key=>[key,process.env[key]]));Object.assign(process.env,settings);
+    const restore=()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}};
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async input=>{
+      const path=new URL(String(input)).pathname.split('/').pop();
+      const payload=path==='TrackingCategories'?{TrackingCategories:[{TrackingCategoryID:tenant,Name:'Type of Sale',Status:'ACTIVE',Options:[{TrackingOptionID:other,Name:'Instalment',Status:'ACTIVE'},{TrackingOptionID:connection,Name:'Marketing',Status:'ACTIVE'}]}]}
+        :path==='BrandingThemes'?{BrandingThemes:[]}:path==='Items'?{Items:[]}:path==='Accounts'?{Accounts:[]}:{TaxRates:[]};
+      return new Response(JSON.stringify(payload),{headers:{'X-DayLimit-Remaining':'999','X-MinLimit-Remaining':'55'}});
+    });
+    const service=new XeroConnectorService(runtime,new XeroClient(),{} as never);
+    Object.assign(service,{loadConnection:async()=>({xero_authorization_id:tenant,xero_tenant_id:connection,granted_scopes:['accounting.settings.read']}),accessToken:async()=>'fixture-token'});
+    return {restore,fetchMock,load:()=>service.salesCatalogue(tenant,connection)};
+  }
+  it('imports Type of Sale and the complete catalogue from unknown allowance without a manual connection test',async()=>{
+    const fixture=await catalogueFixture();try{
+      await expect(quota.reserve(tenant,connection,'discovery')).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_quota_unknown'})});
+      const result=await fixture.load();
+      expect(result.trackingCategories?.[0].options.map(o=>o.name)).toEqual(['Instalment','Marketing']);
+      expect(String(fixture.fetchMock.mock.calls[0][0])).toContain('/TrackingCategories');expect(fixture.fetchMock).toHaveBeenCalledTimes(5);
+      expect(await state()).toMatchObject({operational_admissions:'1',discovery_admissions:'4',generation_admissions:5,remaining:995});
+    }finally{fixture.restore();}
+  });
+  it('keeps the discovery reserve and exhausted quota enforced during catalogue recovery',async()=>{
+    const fixture=await catalogueFixture();try{
+      await ready(100);
+      await expect(fixture.load()).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_quota_reserved'})});
+      expect(fixture.fetchMock).toHaveBeenCalledTimes(1);expect(String(fixture.fetchMock.mock.calls[0][0])).toContain('/TrackingCategories');
+      await pool.query('TRUNCATE sophia_runtime.xero_quota_admission,sophia_runtime.xero_connection_rate_limits');await ready(0);fixture.fetchMock.mockClear();
+      await expect(fixture.load()).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_quota_exhausted'})});expect(fixture.fetchMock).not.toHaveBeenCalled();
+    }finally{fixture.restore();}
+  });
   it('holds unknown discovery but permits one real operational request to establish allowance',async()=>{
     await expect(quota.reserve(tenant,connection,'discovery')).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_quota_unknown'})});
     const ticket=await quota.reserve(tenant,connection,'operational');

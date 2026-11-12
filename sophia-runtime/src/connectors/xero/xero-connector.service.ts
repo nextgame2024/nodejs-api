@@ -255,10 +255,14 @@ export class XeroConnectorService {
     if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
       throw new ConflictException({errorCode:'xero_authorization_rejected',message:'Sales catalogue access requires read-only settings permission.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    const [catalogue,brandingThemes,trackingCategories]=await Promise.all([
+    // This required invoice setting is an ordinary operational read. Run it
+    // first so an expired/unknown allowance can be learned through the existing
+    // single-flight quota recovery. Starting discovery in parallel deadlocked
+    // daily refreshes until an unrelated manual operation happened to run.
+    const trackingCategories=await this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id));
+    const [catalogue,brandingThemes]=await Promise.all([
       this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery'),
       this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id),'discovery'),
-      this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id),'discovery'),
     ]);
     return {...catalogue,brandingThemes,trackingCategories:trackingCategories.filter(c=>c.name.trim().toLowerCase()==='type of sale')};
   }
