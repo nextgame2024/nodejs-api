@@ -1,3 +1,4 @@
+import {assertCollegeContactAvailable} from './student-college-contact-lifecycle.js';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { caseSchema } from './student-operations-cases.service.js';
@@ -46,6 +47,7 @@ export function offerTotals(value:OfferExtraction){
 }
 export async function assignOfferCollege(db:PoolClient,tenant:string,caseId:string,college:OfferCollege) {
   const s=caseSchema();
+  await assertCollegeContactAvailable(db,tenant,college.collegeId);
   await db.query(`INSERT INTO ${s}.student_operations_colleges(customer_id,college_id,college_name) VALUES($1,$2,$3)
     ON CONFLICT(customer_id,college_id) DO UPDATE SET college_name=excluded.college_name`,[tenant,college.collegeId,college.name]);
   await db.query(`UPDATE ${s}.student_operations_case_colleges SET is_primary=false WHERE customer_id=$1 AND case_id=$2`,[tenant,caseId]);

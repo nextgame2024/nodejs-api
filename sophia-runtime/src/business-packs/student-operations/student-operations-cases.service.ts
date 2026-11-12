@@ -1,3 +1,4 @@
+import {assertCollegeContactAvailable} from './student-college-contact-lifecycle.js';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -281,6 +282,7 @@ export class StudentOperationsCasesService {
       if(value.collegeId) {
         const college=await db.query(`SELECT college_name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,value.collegeId]);
         if(!college.rows[0]) throw new BadRequestException('College is not available in this workspace.');
+        await assertCollegeContactAvailable(db,p.tenantId,value.collegeId);
         await db.query(`INSERT INTO ${s}.student_operations_colleges(customer_id,college_id,college_name) VALUES($1,$2,$3) ON CONFLICT(customer_id,college_id) DO UPDATE SET college_name=excluded.college_name`,[p.tenantId,value.collegeId,college.rows[0].college_name]);
       }
       await db.query(`UPDATE ${s}.student_operations_case_colleges SET is_primary=false WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);

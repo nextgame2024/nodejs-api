@@ -142,9 +142,12 @@
         "Frontend case invoice and case view browser suites: 167 passed.",
         "Frontend TypeScript check and production build passed; existing budget/CommonJS/missing primeicons stylesheet warnings remain.",
         "Protected real-estate gate: 8 suites / 38 tests passed.",
-        "Production read-only application-role audit of reported case: 16 linked invoices, 8 TRUST and 8 PTY, all editable/removable under current local policy. No live Xero edits or deletes were used as tests."
+        "Production read-only application-role audit of reported case: 16 linked invoices, 8 TRUST and 8 PTY, all editable/removable under current local policy. No live Xero edits or deletes were used as tests.",
+        "Concurrency follow-up: case and offer college assignment lock the mapped contact and reject an in-progress archive; 3 focused case/offer suites passed 23 tests (38 unrelated skipped), including the guarded assignment exercised during provider contact checks. Runtime build passed."
       ],
-      "frontend": "Local changes only; not committed, pushed or deployed, as requested."
+      "frontend": "Local changes only; not committed, pushed or deployed, as requested.",
+      "initialBackendRevision": "c4aadda50eaa",
+      "initialBackendHealth": "Runtime health returned ok:true and revision c4aadda50eaa; final assignment-lock follow-up pending deployment."
     }
   },
   "studentInvoiceCollegeSelection": {

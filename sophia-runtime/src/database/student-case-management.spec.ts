@@ -1,3 +1,4 @@
+import {assertCollegeContactAvailable} from '../business-packs/student-operations/student-college-contact-lifecycle.js';
 import { readFile } from 'node:fs/promises';
 import { jest } from '@jest/globals';
 import { StudentDocumentTypesService } from '../business-packs/student-operations/student-document-types.service.js';
@@ -1613,7 +1614,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     const id=String((await service.createStudent(p,{studentName:'PTY lifecycle student',studentEmail:`pty-lifecycle-${mode}@example.test`},`pty-lifecycle-student-${mode}`)).caseId);
     const college=randomUUID();
     await pool.query(`INSERT INTO public.bm_colleges(college_id,company_id,college_name,status) VALUES($1,$2,'York Business','active')`,[college,company]);
-    const detail=await service.get(p,id),pty=randomUUID(),contact=randomUUID(),trustInvoice=randomUUID(),ptyInvoice=randomUUID(),lineId=randomUUID(),batch=randomUUID(),itemId=randomUUID();
+    const detail=await service.get(p,id),pty=randomUUID(),contact=randomUUID(),trustContact=randomUUID(),trustInvoice=randomUUID(),ptyInvoice=randomUUID(),lineId=randomUUID(),batch=randomUUID(),itemId=randomUUID();
     const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'PTY1','PTY Advisor','PTY1 PTY Advisor') ON CONFLICT(customer_id,code) DO UPDATE SET name=excluded.name RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
     await pool.query(`UPDATE sophia_runtime.student_operations_xero_sync_configurations SET enabled=false WHERE organisation_role='operating'`);
     await pool.query(`INSERT INTO sophia_runtime.xero_connections(xero_connection_id,customer_id) VALUES($1,$2)`,[pty,tenant]);
@@ -1622,7 +1623,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await transaction(tenant,async db=>{
       await db.query(`INSERT INTO sophia_runtime.student_college_xero_contact_links(customer_id,xero_connection_id,xero_contact_id,college_id,classification,reviewed_by) VALUES($1,$2,$3,$4,'college','test')`,[tenant,pty,contact,college]);
       await db.query(`INSERT INTO sophia_runtime.student_case_invoice_draft_batches(customer_id,case_id,batch_id,advisor_id,advisor_label,snapshot,actor_identity_user_id) VALUES($1,$2,$3,$4,'PTY1 PTY Advisor','{}',$5)`,[tenant,id,batch,advisorId,p.identityUserId]);
-      await db.query(`INSERT INTO sophia_runtime.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,xero_invoice_number,provider_status,requested_by_identity_user_id,completed_at) VALUES($1,$2,$3,1,$4,$5,$6,'created',$7,'TRUST-LIFECYCLE','DRAFT',$8,now())`,[tenant,id,batch,connection,invoice,'f'.repeat(64),trustInvoice,p.identityUserId]);
+      await db.query(`INSERT INTO sophia_runtime.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,xero_invoice_number,provider_status,requested_by_identity_user_id,completed_at) VALUES($1,$2,$3,1,$4,$5,$6,'created',$7,'TRUST-LIFECYCLE','DRAFT',$8,now())`,[tenant,id,batch,connection,trustContact,batch.replaceAll('-','').padEnd(64,'0'),trustInvoice,p.identityUserId]);
       await db.query(`INSERT INTO sophia_runtime.student_commission_drafts(customer_id,case_id,batch_id,sequence,source_hash,snapshot,prepared_by) VALUES($1,$2,$3,1,$4,$5,$6)`,[tenant,id,batch,'e'.repeat(64),JSON.stringify({collegeId:college,collegeName:'York Business'}),p.identityUserId]);
       await db.query(`INSERT INTO sophia_runtime.student_commission_exports(customer_id,case_id,batch_id,sequence,trust_connection_id,trust_invoice_id,xero_connection_id,xero_contact_id,provider_key,status,requested_by) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,'creating',$9)`,[tenant,id,batch,connection,trustInvoice,pty,contact,'d'.repeat(64),p.identityUserId]);
     });
@@ -1633,7 +1634,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     let live:XeroInvoiceRecord={invoiceId:ptyInvoice,contactId:contact,invoiceNumber:'PTY-LIFECYCLE',invoiceReference:'PTY lifecycle student',concept:null,advisorName:'PTY1 PTY Advisor',collegeName:'PTY lifecycle student',paymentTrack:null,sentToContact:false,type:'ACCREC',status:'DRAFT',invoiceDate:'2026-11-01',dueDate:'2026-11-02',currencyCode:'AUD',lineAmountTypes:'Exclusive',total:1056,amountPaid:0,amountDue:1056,amountCredited:0,updatedAt:'2026-11-01T00:00:00.000Z',lineItems:[{lineItemId:lineId,itemCode:'PTY-ONLY',description:'Commission',quantity:12,unitAmount:80,discountRate:null,accountCode:'200',taxType:'OUTPUT',taxAmount:96,lineAmount:960,tracking:[{name:'Type of Sale',option:'Instalment'},{name:'Sales Representative',option:'PTY1 PTY Advisor'}]}]};
     const provider={invoiceRemovalSession:async()=>({invoiceById:async()=>JSON.parse(JSON.stringify(live)),organisation:async()=>({periodLockDate:null,endOfYearLockDate:null}),updateInvoice:jest.fn(async(_id:string,value:XeroInvoiceUpdate)=>{live={...live,invoiceReference:value.reference,updatedAt:'2026-11-02T00:00:00.000Z'};return JSON.parse(JSON.stringify(live));}),removeInvoice:jest.fn(async()=>{live.status='DELETED';return JSON.parse(JSON.stringify(live));})}),
       assertCaseDeletionAccess:jest.fn(async()=>{}),contactById:jest.fn(async(_t:string,_c:string,contactId:string)=>({contactId,legalName:'York Business',status:'ACTIVE'})),contactHasTransactions:jest.fn(async()=>mode==='other-transactions'),archiveContact:jest.fn(async(_t:string,_c:string,contactId:string)=>({contactId,status:'ARCHIVED'})),
-      invoiceById:jest.fn(async(_t:string,conn:string,invoiceId:string)=>conn===pty?JSON.parse(JSON.stringify(live)):({...live,invoiceId,contactId:invoice,status:'DRAFT',amountPaid:0})),removeInvoice:jest.fn(async(_t:string,conn:string,invoiceId:string,status:string)=>({invoiceId,contactId:conn===pty?contact:invoice,status}))};
+      invoiceById:jest.fn(async(_t:string,conn:string,invoiceId:string)=>conn===pty?JSON.parse(JSON.stringify(live)):({...live,invoiceId,contactId:trustContact,status:'DRAFT',amountPaid:0})),removeInvoice:jest.fn(async(_t:string,conn:string,invoiceId:string,status:string)=>({invoiceId,contactId:conn===pty?contact:trustContact,status}))};
     const deletions=new StudentCaseDeletionsService(database,service,provider as never),confirm={recordVersion:detail.recordVersion,confirmed:true};
     await expect(deletions.remove(p,id,confirm,'pty-uncertain-delete')).rejects.toThrow('needs confirmation');
     await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_commission_exports SET status='created',xero_invoice_id=$3,xero_invoice_number='PTY-LIFECYCLE',provider_status='DRAFT',completed_at=now() WHERE customer_id=$1 AND batch_id=$2`,[tenant,batch,ptyInvoice]));
@@ -1662,6 +1663,10 @@ suite('Case management against disposable PostgreSQL',()=>{
       const receipt=(await transaction(tenant,db=>db.query(`SELECT status,provider_status FROM sophia_runtime.student_commission_exports WHERE customer_id=$1 AND batch_id=$2`,[tenant,batch]))).rows[0];
       expect(receipt).toEqual({status:'created',provider_status:'DELETED'});
     }
+    if(mode==='unused-college')provider.contactHasTransactions.mockImplementation(async()=>{
+      await expect(transaction(tenant,db=>assertCollegeContactAvailable(db,tenant,college))).rejects.toThrow('before assigning');
+      return false;
+    });
     await deletions.remove(p,id,confirm,`pty-delete-both-${mode}`);
     if(mode!=='individual')expect(provider.removeInvoice).toHaveBeenCalledWith(tenant,pty,ptyInvoice,'DELETED',expect.any(String));
     else expect(provider.removeInvoice.mock.calls.some(c=>c[2]===ptyInvoice)).toBe(false);
