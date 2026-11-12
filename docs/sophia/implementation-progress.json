@@ -1,7 +1,7 @@
 {
   "studentPtyIntegration": {
     "updatedOn": "2026-11-12",
-    "status": "paired_case_invoice_list_verified_backend_deployment_pending_frontend_local",
+    "status": "paired_case_invoice_list_backend_live_frontend_local",
     "authorization": "User approved beginning the phased implementation. Preserve bulk TRUST creation. Requested alternating tabs INV-1 (TRUST), INV-1 (PTY), INV-2 (TRUST), INV-2 (PTY). TRUST recipient is student/reference college; PTY recipient is college/reference student. Explicit Sophia relationships must supplement, not replace, these Xero conventions.",
     "implemented": [
       "Explicit operating-role assignment in Company and guarded Runtime endpoint; refuse changing an assigned organisation between TRUST and PTY; refresh no longer silently assigns TRUST",
@@ -120,9 +120,9 @@
     },
     "pairedInvoiceListVerification": {
       "caseId": "2953d315-b453-450a-8c71-4bb263ab9d58",
-      "readOnlyAudit": "Tenant app-role/RLS READ ONLY confirms 8 created TRUST receipts INV-10657 through INV-10664 and 8 created PTY receipts INV-8512 through INV-8519. Exact corrected service returned Both=16, TRUST=8, PTY=8 and PTY detail with one line. No invoices recreated or modified.",
-      "tests": "Runtime build and 8 case-service tests passed. 166 ChromeHeadless editor/case-page tests passed, including complete/partial creation, filter cancellation and existing 390/1440 light/dark geometry checks. Protected real-estate 8 suites/38 tests passed. Frontend application tsc passed; local production build pending.",
-      "deployment": "Backend only authorized; no migration required. Frontend stays local."
+      "readOnlyAudit": "Tenant app-role/RLS READ ONLY confirms 8 created TRUST receipts INV-10657 through INV-10664 and 8 created PTY receipts INV-8512 through INV-8519. Exact corrected service returned Both=16, TRUST=8, PTY=8 and PTY detail with one line. No invoices recreated or modified. Final compiled service pagination at five rows per page returned exactly 16 unique Both, 8 TRUST and 8 PTY identities.",
+      "tests": "Runtime build and 8 case-service tests passed. 166 ChromeHeadless editor/case-page tests passed, including complete/partial creation, filter cancellation and existing 390/1440 light/dark geometry checks. Protected real-estate 8 suites/38 tests passed. Frontend application tsc passed; local production build passed with existing budget/CommonJS/missing-primeicons warnings.",
+      "deployment": "Backend 3af31f612a69 independently verified via Runtime health ok=true. No migration required. Frontend remains local and uncommitted per user instruction."
     }
   },
   "studentInvoiceCollegeSelection": {
