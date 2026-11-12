@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {BadGatewayException,ConflictException,ForbiddenException} from '@nestjs/common';
+import {StudentXeroSalesCatalogueSync} from './student-xero-sales-catalogue.js';
 import {StudentCollegeMatchingService} from './student-college-matching.service.js';
 import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
@@ -55,7 +56,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
     CREATE TABLE ${schema}.student_operations_college_directory(customer_id uuid,college_id uuid,college_name text,PRIMARY KEY(customer_id,college_id));
     CREATE TABLE ${schema}.student_case_invoice_draft_batches(customer_id uuid,case_id uuid,batch_id uuid,offer_id uuid,revision integer,snapshot jsonb,PRIMARY KEY(customer_id,batch_id));
     CREATE TABLE ${schema}.student_case_offers(customer_id uuid,offer_id uuid,is_current boolean);
-    CREATE TABLE ${schema}.student_xero_sales_catalogues(customer_id uuid,xero_connection_id uuid,snapshot jsonb,revision integer,last_synced_at timestamptz,error_code text);
+    CREATE TABLE ${schema}.student_xero_sales_catalogues(customer_id uuid,xero_connection_id uuid,snapshot jsonb,revision integer,last_synced_at timestamptz,error_code text,next_attempt_at timestamptz DEFAULT now(),attempts integer DEFAULT 0,lease_token uuid,lease_expires_at timestamptz,PRIMARY KEY(customer_id,xero_connection_id));
     CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,invoice_status text,invoice_date date,due_date date,total numeric,amount_paid numeric,amount_due numeric);
     ALTER TABLE ${schema}.student_operations_xero_invoices ADD PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id),ADD xero_contact_id uuid,ADD invoice_number text,ADD invoice_type text,ADD invoice_reference text,ADD concept text,ADD advisor_name text,ADD college_name text,ADD payment_track text,ADD sent_to_contact boolean,ADD line_items jsonb,ADD currency_code text,ADD provider_updated_at timestamptz,ADD last_seen_sync_run_id uuid,ADD updated_at timestamptz DEFAULT now();
     CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,sync_run_id uuid,status text,lease_owner text,lease_expires_at timestamptz,invoice_count integer,xero_connection_id uuid,created_at timestamptz DEFAULT now(),mode text);
@@ -83,8 +84,8 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await pool.query(`INSERT INTO public.bm_college_commission_rules(rule_id,company_id,college_id,commission_basis_points,calculation_method,rounding_decimal_places,cashback_status,bonus_status,active) VALUES($1,$2,$3,3000,'tuition_fee_percentage',2,'not_recorded','not_applicable',true)`,[itemId,tenant,collegeId]);
   await pool.query(`INSERT INTO ${schema}.student_college_xero_contact_links(customer_id,xero_connection_id,xero_contact_id,college_id,classification,reviewed_by) VALUES($1,$2,$3,$4,'college','actor')`,[tenant,ptyId,contactId,collegeId]);
   await pool.query(`INSERT INTO ${schema}.student_case_invoice_draft_batches VALUES($1,$2,$3,NULL,1,$4)`,[tenant,caseId,batchId,JSON.stringify(snapshot)]);
-  const catalogue={items:[{itemId,code:'TUITION',name:'Commission',accountCode:'200',taxType:'OUTPUT'}],accounts:[{code:'200',name:'Sales Commissions',taxType:'OUTPUT'}],taxRates:[{name:'GST on Income',taxType:'OUTPUT',rate:'10'}],brandingThemes:[{brandingThemeId:itemId,name:'PTY Open for Australia Account'}]};
-  await pool.query(`INSERT INTO ${schema}.student_xero_sales_catalogues VALUES($1,$2,$3,1,now(),NULL)`,[tenant,ptyId,JSON.stringify(catalogue)]);
+  const catalogue={trackingCategories:[{trackingCategoryId:trustId,name:'Type of Sale',options:[{trackingOptionId:itemId,name:'Instalment'},{trackingOptionId:batchId,name:'Marketing'}]}],items:[{itemId,code:'TUITION',name:'Commission',accountCode:'200',taxType:'OUTPUT'}],accounts:[{code:'200',name:'Sales Commissions',taxType:'OUTPUT'}],taxRates:[{name:'GST on Income',taxType:'OUTPUT',rate:'10'}],brandingThemes:[{brandingThemeId:itemId,name:'PTY Open for Australia Account'}]};
+  await pool.query(`INSERT INTO ${schema}.student_xero_sales_catalogues(customer_id,xero_connection_id,snapshot,revision,last_synced_at,error_code,next_attempt_at) VALUES($1,$2,$3,1,now(),NULL,now()+interval '1 day')`,[tenant,ptyId,JSON.stringify(catalogue)]);
   changedTrust=providerFailure=false;live=maxLive=0;createInvoice.mockClear();session.mockClear();
  });
  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);await pool.end();}if(oldSchema===undefined)delete process.env.SOPHIA_RUNTIME_SCHEMA;else process.env.SOPHIA_RUNTIME_SCHEMA=oldSchema;if(oldFlag===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldFlag;});
@@ -113,9 +114,39 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   expect((await tx(other,db=>db.query(`SELECT * FROM ${schema}.student_college_commission_rules`))).rowCount).toBe(0);
   await expect(tx(tenant,db=>db.query('SELECT * FROM public.bm_college_commission_rules'))).rejects.toThrow('permission denied');
  });
+ it('returns the local Type of Sale list, defaults to Instalment and saves per-invoice choices',async()=>{
+  const options=await service.options(p,caseId,collegeId);
+  expect(options).toMatchObject({defaultTypeOfSaleOptionId:itemId,typeOfSaleOptions:[{value:itemId,label:'Instalment'},{value:batchId,label:'Marketing'}]});
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1},{sequence:2,typeOfSaleOptionId:batchId}]});
+  expect((await service.list(p,caseId,batchId)).items.map(row=>row.snapshot.value.lines[0].tracking[0].option)).toEqual(['Instalment','Marketing']);
+  await trustReceipts(2);await service.create(p,caseId,batchId,{sequences:[2],confirmed:true});
+  expect(createInvoice.mock.calls[0][0].lines[0].tracking).toEqual([{name:'Type of Sale',option:'Marketing',trackingCategoryId:trustId,trackingOptionId:batchId}]);
+ });
+ it('keeps omitted legacy selections on Instalment while metadata is waiting for import',async()=>{
+  await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=snapshot-'trackingCategories'`);
+  await prepareAll();expect((await service.list(p,caseId,batchId)).items[0].snapshot.value.lines[0].tracking).toEqual([{name:'Type of Sale',option:'Instalment'}]);
+ });
+ it('rejects unknown choices and a selection archived since its draft was prepared',async()=>{
+  await expect(service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,typeOfSaleOptionId:randomUUID()}]})).rejects.toThrow('active Type of Sale');
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,typeOfSaleOptionId:batchId}]});await trustReceipts();
+  await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=jsonb_set(snapshot,'{trackingCategories,0,options}',(snapshot->'trackingCategories'->0->'options')-1)`);
+  const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(result.results[0]).toMatchObject({status:'not_attempted',message:expect.stringContaining('Type of Sale changed')});expect(createInvoice).not.toHaveBeenCalled();
+ });
+ it('backfills missing tracking through one background catalogue import without bypassing retry backoff',async()=>{
+  const previous=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
+  try{
+    await pool.query(`DELETE FROM ${schema}.student_operations_xero_sync_configurations WHERE organisation_role='trust'`);
+    const original=(await pool.query(`SELECT snapshot FROM ${schema}.student_xero_sales_catalogues`)).rows[0].snapshot;
+    await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=snapshot-'trackingCategories'`);
+    const xero={salesCatalogue:jest.fn(async()=>original)},worker=new StudentXeroSalesCatalogueSync({tenantTransaction:tx,tenantReadTransaction:tx} as never,xero as never);
+    expect(await worker.processOne(tenant)).toBe(true);expect(xero.salesCatalogue).toHaveBeenCalledTimes(1);const refreshed=(await pool.query(`SELECT snapshot,error_code,attempts FROM ${schema}.student_xero_sales_catalogues`)).rows[0];expect(refreshed.error_code).toBeNull();expect(refreshed.snapshot.trackingCategories).toBeDefined();expect(await worker.processOne(tenant)).toBe(false);
+    await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=snapshot-'trackingCategories'`);xero.salesCatalogue.mockRejectedValueOnce(new Error('Provider unavailable'));
+    expect(await worker.processOne(tenant)).toBe(true);expect(await worker.processOne(tenant)).toBe(false);expect(xero.salesCatalogue).toHaveBeenCalledTimes(2);
+  }finally{if(previous===undefined)delete process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;else process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED=previous;}
+ });
  it('saves the server calculation and correct PTY recipient/reference, tax and dates',async()=>{
   await prepareAll();const rows=await service.list(p,caseId,batchId),s=rows.items[0].snapshot as any;
-  expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({itemCode:'TUITION',unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment'}]})]});
+  expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({itemCode:'TUITION',unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment',trackingCategoryId:trustId,trackingOptionId:itemId}]})]});
  });
  it('saves 12 units at 80 dollars for 960 dollars commission and 96 dollars GST',async()=>{
   const changed=structuredClone(snapshot),tuition=changed.invoices[0].lines[0];

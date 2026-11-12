@@ -14,7 +14,7 @@ describe('request-scoped Xero invoice session',()=>{
       ?[{token_ciphertext:params[0],token_expires_at:new Date(Date.now()+1800_000),status:'active'}]
       :[{xero_authorization_id:'authorization',xero_tenant_id:`provider-${params[0]}`,status:'active',granted_scopes:scopes}]}));
     const transact=jest.fn(async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query}));
-    const client={removeInvoice:jest.fn(async()=>({invoiceId:'created',status:'DELETED'})),createInvoice:jest.fn(async()=>({invoiceId:'created'})),invoiceById:jest.fn(async()=>({invoiceId:'created'})),brandingThemes:jest.fn(async()=>[{brandingThemeId:'11111111-1111-4111-8111-111111111111',name:'Trust Open for Australia acc'}]),
+    const client={salesCatalogue:jest.fn(async()=>({items:[],accounts:[],taxRates:[]})),removeInvoice:jest.fn(async()=>({invoiceId:'created',status:'DELETED'})),createInvoice:jest.fn(async()=>({invoiceId:'created'})),invoiceById:jest.fn(async()=>({invoiceId:'created'})),brandingThemes:jest.fn(async()=>[{brandingThemeId:'11111111-1111-4111-8111-111111111111',name:'Trust Open for Australia acc'}]),
       trackingCategories:jest.fn(async()=>[{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Payment Track',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Pending'}]}]),
       withRequestPolicy:jest.fn(async(_policy:unknown,work:()=>Promise<unknown>)=>work())};
     const crypto={open:(cipher:string)=>JSON.stringify({accessToken:`token-${cipher}`,refreshToken:'refresh'})};
@@ -104,6 +104,23 @@ describe('request-scoped Xero invoice session',()=>{
     expect(f.client.createInvoice).toHaveBeenCalledWith('token-tenant-a','provider-tenant-a',expect.objectContaining({brandingThemeId:theme,reference:'Example Student',lines:[expect.objectContaining({tracking:[{name:'Type of Sale',option:'Instalment',trackingCategoryId:'22222222-2222-4222-8222-222222222222',trackingOptionId:'33333333-3333-4333-8333-333333333333'}]})]}),'key');
     expect(input.lines[0].tracking[0].name).toBe('Payment Track');
     expect(f.query).toHaveBeenCalledWith(expect.stringContaining("organisation_role='operating'"),['tenant-a','connection-a']);
+  });
+  it('preserves different active PTY Type of Sale choices while loading Xero tracking once',async()=>{
+    const f=fixture(),category='22222222-2222-4222-8222-222222222222',instalment='33333333-3333-4333-8333-333333333333',marketing='44444444-4444-4444-8444-444444444444';
+    f.client.brandingThemes.mockResolvedValue([{brandingThemeId:'11111111-1111-4111-8111-111111111111',name:'PTY Open for Australia Account'}]);
+    f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:category,name:'Type of Sale',options:[{trackingOptionId:instalment,name:'Instalment'},{trackingOptionId:marketing,name:'Marketing'}]}]);
+    const session=await f.service.invoiceCreationSession('tenant-a','connection-a','operating');
+    const line={description:'Commission',quantity:'12',unitAmount:'80.00',accountCode:'200',taxType:'OUTPUT'};
+    await session.createInvoice({...value,lines:[{...line,tracking:[{name:'Type of Sale',option:'Instalment',trackingCategoryId:category,trackingOptionId:instalment}]}]},'one');
+    await session.createInvoice({...value,lines:[{...line,tracking:[{name:'Type of Sale',option:'Marketing',trackingCategoryId:category,trackingOptionId:marketing}]}]},'two');
+    expect(f.client.trackingCategories).toHaveBeenCalledTimes(1);
+    expect(f.client.createInvoice.mock.calls[1]).toEqual(expect.arrayContaining([expect.objectContaining({lines:[expect.objectContaining({tracking:[{name:'Type of Sale',option:'Marketing',trackingCategoryId:category,trackingOptionId:marketing}]})]})]));
+    await expect(session.createInvoice({...value,lines:[{...line,tracking:[{name:'Type of Sale',option:'Archived'}]}]},'invalid')).rejects.toThrow('active Type of Sale');
+    expect(f.client.createInvoice).toHaveBeenCalledTimes(2);
+  });
+  it('imports active tracking metadata with the existing catalogue request',async()=>{
+    const f=fixture();f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Type of Sale',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Instalment'}]}]);const result=await f.service.salesCatalogue('tenant-a','connection-a');
+    expect(result.trackingCategories?.[0].name).toBe('Type of Sale');expect(f.client.trackingCategories).toHaveBeenCalledTimes(1);expect(f.client.salesCatalogue).toHaveBeenCalledTimes(1);
   });
   it('rejects PTY creation on an unassigned or disabled organisation',async()=>{
     const f=fixture(false);

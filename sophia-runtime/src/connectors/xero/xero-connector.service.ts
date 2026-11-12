@@ -255,11 +255,12 @@ export class XeroConnectorService {
     if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
       throw new ConflictException({errorCode:'xero_authorization_rejected',message:'Sales catalogue access requires read-only settings permission.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    const [catalogue,brandingThemes]=await Promise.all([
+    const [catalogue,brandingThemes,trackingCategories]=await Promise.all([
       this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery'),
       this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id),'discovery'),
+      this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id),'discovery'),
     ]);
-    return {...catalogue,brandingThemes};
+    return {...catalogue,brandingThemes,trackingCategories:trackingCategories.filter(c=>c.name.trim().toLowerCase()==='type of sale')};
   }
 
   async syncInvoicePage(
@@ -497,27 +498,33 @@ export class XeroConnectorService {
       if(matches.length!==1)throw new ConflictException({errorCode:'xero_branding_theme_missing',message:'Select an available invoice branding theme before creating the invoice.'});
       return matches[0].brandingThemeId;
     };
-    let pendingTracking:Promise<{name:string;option:string;trackingCategoryId:string;trackingOptionId:string}>|undefined;
-    const resolvePendingTracking=()=>pendingTracking??= (async()=>{
+    let trackingCategories:Promise<Awaited<ReturnType<XeroClient['trackingCategories']>>>|undefined;
+    const loadTracking=()=>trackingCategories??= (async()=>{
       const {connection,accessToken}=await credentials();
       if(missingScopes(connection.granted_scopes,['accounting.settings.read']).length&&missingScopes(connection.granted_scopes,['accounting.settings']).length)
         throw new ConflictException({errorCode:'xero_tracking_scope_missing',message:'An administrator must authorize Xero settings access before checking invoice tracking.'});
-      let categories:Awaited<ReturnType<XeroClient['trackingCategories']>>;
-      try{categories=await this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id));}
-      catch{throw new ConflictException({errorCode:'xero_pending_tracking_unavailable',message:'PENDING tracking could not be verified. No invoice was sent; retry when Xero settings are available.'});}
-      const categoryName=purpose==='operating'?'type of sale':'payment track',optionName=purpose==='operating'?'instalment':'pending';
-      const matches=categories.filter(category=>category.name.trim().toLowerCase()===categoryName);
-      const options=matches.length===1?matches[0].options.filter(option=>option.name.trim().toLowerCase()===optionName):[];
-      if(matches.length!==1||options.length!==1)throw new ConflictException({errorCode:'xero_pending_tracking_missing',message:purpose==='operating'?'Configure one active Instalment option in the PTY Type of Sale category.':'Configure one active Pending option in the Xero Payment Track category before creating invoices.'});
-      return {name:matches[0].name,option:options[0].name,trackingCategoryId:matches[0].trackingCategoryId,trackingOptionId:options[0].trackingOptionId};
+      try{return await this.providerRequest(tenantId,connectionId,()=>this.client.trackingCategories(accessToken,connection.xero_tenant_id));}
+      catch{throw new ConflictException({errorCode:'xero_pending_tracking_unavailable',message:'Invoice tracking could not be verified. No invoice was sent; retry when Xero settings are available.'});}
     })();
+    const resolveTracking=(categories:Awaited<ReturnType<XeroClient['trackingCategories']>>,selected?:{option:string;trackingCategoryId?:string;trackingOptionId?:string})=>{
+      const categoryName=purpose==='operating'?'type of sale':'payment track',optionName=purpose==='operating'?(selected?.option??'Instalment'):'Pending';
+      const matches=categories.filter(category=>category.name.trim().toLowerCase()===categoryName);
+      const options=matches.length===1?matches[0].options.filter(option=>selected?.trackingOptionId?option.trackingOptionId===selected.trackingOptionId&&option.name.trim().toLowerCase()===optionName.trim().toLowerCase():option.name.trim().toLowerCase()===optionName.trim().toLowerCase()):[];
+      if(matches.length!==1||options.length!==1||selected?.trackingCategoryId&&selected.trackingCategoryId!==matches[0].trackingCategoryId)throw new ConflictException({errorCode:'xero_pending_tracking_missing',message:purpose==='operating'?'Select one active Type of Sale option from the PTY Xero organisation.':'Configure one active Pending option in the Xero Payment Track category before creating invoices.'});
+      return {name:matches[0].name,option:options[0].name,trackingCategoryId:matches[0].trackingCategoryId,trackingOptionId:options[0].trackingOptionId};
+    };
     return {
       createInvoice:async(value:import('./xero.client.js').XeroInvoiceCreate,key:string)=>{
         if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
-        const [brandingThemeId,pending]=await Promise.all([resolveBrandingTheme(value.brandingThemeId),resolvePendingTracking()]);
+        const [brandingThemeId,categories]=await Promise.all([resolveBrandingTheme(value.brandingThemeId),loadTracking()]);
+        const pending=purpose==='trust'?resolveTracking(categories):null;
         const {connection,accessToken}=await credentials();
         if(process.env.XERO_INVOICE_CREATION_ENABLED!=='true')throw new ConflictException({errorCode:'xero_invoice_creation_disabled',message:'An administrator must enable Xero invoice creation.'});
-        const lines=value.lines.map(line=>({...line,tracking:purpose==='operating'?[pending]:line.tracking.map(item=>item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'?pending:item)}));
+        const lines=value.lines.map(line=>{
+          const selected=line.tracking.filter(item=>item.name.trim().toLowerCase()==='type of sale');
+          if(purpose==='operating'&&selected.length>1)throw new ConflictException('Select one PTY Type of Sale per invoice line.');
+          return {...line,tracking:purpose==='operating'?[resolveTracking(categories,selected[0])]:line.tracking.map(item=>item.name.trim().toLowerCase()==='payment track'&&item.option.trim().toLowerCase()==='pending'?pending!:item)};
+        });
         return this.providerRequest(tenantId,connectionId,()=>this.client.createInvoice(accessToken,connection.xero_tenant_id,{...value,lines,brandingThemeId},key));
       },
       invoiceById:async(invoiceId:string)=>{

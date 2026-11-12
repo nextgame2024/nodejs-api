@@ -4,7 +4,7 @@ Both organisations create unsent ACCREC **DRAFT** invoices with tax-exclusive li
 
 Current active college rules apply under the user's confirmed initial policy. `not_recorded` cashback/bonus means no benefit. Specified benefits, conditional classification/location/program rules, ambiguous rules and unsupported application conditions block automatic commissions. The first release supports unrestricted fixed tuition percentages only. Integer cents are summed across tuition lines and rounded half up once per instalment; enrolment, materials, conditional transfer fees and other charges are excluded.
 
-PTY inherits the corresponding TRUST tuition item code, resolves the unique matching item in the PTY catalogue and uses that PTY item's sales account, the local catalogue's exact GST on Income rate, branding `PTY Open for Australia Account` and Type of Sale `Instalment`. No TRUST Payment Track is copied. Initial dates match the source TRUST dates. Invoice dates, fully paid dates and individual payment/allocation dates remain distinct during sync.
+PTY inherits the corresponding TRUST tuition item code, resolves the unique matching item in the PTY catalogue and uses that PTY item's sales account, the local catalogue's exact GST on Income rate, branding `PTY Open for Australia Account` and a per-instalment Type of Sale selected from the active PTY Xero category, defaulting to `Instalment`. No TRUST Payment Track is copied. Initial dates match the source TRUST dates. Invoice dates, fully paid dates and individual payment/allocation dates remain distinct during sync.
 
 ## Release order
 
@@ -52,3 +52,9 @@ Per-invoice actions are named Create Xero Invoice and align right. PTY creation 
 The active invoice number, organisation and status share one header style immediately before Close. PTY follows the TRUST fields/table/totals layout, including responsive cards. PTY quantity comes from the corresponding positive TRUST tuition lines for the matched item; price is the rounded commission divided by that quantity. For tuition 3,840, quantity 12 and commission 25%, the saved Xero line is quantity 12, unit amount 80.00, net 960.00, GST 96.00 and total 1,056.00.
 
 Unit prices use up to four decimals and integer arithmetic. A total that cannot retain both the source quantity and the exact rounded cents is held for review. The creation gate rejects pending legacy one-unit payloads until re-prepared; created and unknown-outcome payloads remain unchanged for safe reconciliation. Deploy Runtime first, then frontend. No migration or worker configuration change is needed.
+
+### Selectable PTY Type of Sale and compact tabs (12 November 2026)
+
+The existing durable catalogue importer now caches the active PTY Type of Sale options. One metadata backfill is claimed for existing PTY snapshots without tracking metadata; failures retain normal lease, quota and retry backoff. Normal daily imports maintain freshness. Previews and tab changes read only the local catalogue. Creation validates each saved choice against current cached and live options, sharing one live tracking lookup per request session. Existing clients that omit a choice retain the Instalment default.
+
+The local frontend uses the shared selector per PTY instalment, restores saved selections, and locks created or unknown-outcome values. Smaller invoice tabs retain touch targets and use a green active background in light/dark modes. Per the user's explicit instruction, deploy only the backend now; keep this frontend follow-up local and unpublished. No migration or new worker schedule is required. The shared worker must run the updated backend source to import the option metadata.

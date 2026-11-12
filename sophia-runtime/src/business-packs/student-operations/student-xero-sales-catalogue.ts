@@ -30,7 +30,7 @@ export class StudentXeroSalesCatalogueSync {
       const row=(await db.query(`SELECT c.xero_connection_id FROM ${s}.student_xero_sales_catalogues c
         JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role IN ('trust','operating') AND cfg.enabled
         JOIN ${s}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id AND x.status='active'
-        WHERE c.customer_id=$1 AND c.next_attempt_at<=now() AND (c.lease_expires_at IS NULL OR c.lease_expires_at<now())
+        WHERE c.customer_id=$1 AND (c.next_attempt_at<=now() OR (cfg.organisation_role='operating' AND c.last_synced_at IS NOT NULL AND c.attempts=0 AND NOT(c.snapshot ? 'trackingCategories'))) AND (c.lease_expires_at IS NULL OR c.lease_expires_at<now())
         ORDER BY c.next_attempt_at,c.xero_connection_id LIMIT 1 FOR UPDATE OF c SKIP LOCKED`,[tenant])).rows[0];
       if(!row)return null;
       await db.query(`UPDATE ${s}.student_xero_sales_catalogues SET lease_token=$3,lease_expires_at=now()+interval '5 minutes',attempts=attempts+1
