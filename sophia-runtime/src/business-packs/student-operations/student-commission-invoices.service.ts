@@ -12,9 +12,10 @@ import {hasStudentOperationsPermission} from './student-operations-policy.js';
 import {invoiceSnapshot,xeroPreflightFailure,type InvoiceSnapshot} from './student-case-invoice-drafts.js';
 import {invoiceDraftXeroValue,matchesXeroInvoice,exactXeroInvoiceMatches} from './student-case-invoice-matching.js';
 import {readSalesCatalogue} from './student-xero-sales-catalogue.js';
+import {commissionTuitionItemCode} from './student-commission-items.js';
 import {commissionAmount,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
 
-const selection=z.object({sequence:z.number().int().positive(),itemId:z.uuid()}).strict();
+const selection=z.object({sequence:z.number().int().positive(),itemId:z.uuid().optional()}).strict();
 const prepare=z.object({batchRevision:z.number().int().positive(),selections:z.array(selection).min(1).max(200)}).strict();
 const create=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 type Calculation=ReturnType<typeof commissionAmount>;
@@ -44,7 +45,7 @@ export class StudentCommissionInvoicesService{
   // A single explicit human confirmation chooses the new-invoice recipient.
   // Multiple human confirmations still require review; no name guess chooses it.
   const mapping=confirmed.length===1?confirmed[0]:confirmed.length===0&&mappings.length===1?mappings[0]:null;
-  const issue=!college?'Select an available college.':commissionRuleIssue(rules)??(!catalogue?'The PTY catalogue is waiting for background import.':!mapping?'Confirm one active PTY invoice recipient for this college in Payments and Control.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
+  const issue=!college?'Select an available college.':commissionRuleIssue(rules)??(!catalogue?'The PTY catalogue is waiting for background import.':!mapping?'Confirm one active PTY invoice recipient for this college in Sync colleges.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
   const items=catalogue?.items.filter(i=>i.accountCode&&catalogue.accounts.some(a=>a.code===i.accountCode))??[];
   return {available:true,issue,collegeId,collegeName:college?.college_name??null,rule:!commissionRuleIssue(rules)?rules[0]:null,catalogue,items,tax:taxes.length===1?taxes[0]:null,theme:themes.length===1?themes[0]:null,mapping};
  }
@@ -90,12 +91,20 @@ export class StudentCommissionInvoicesService{
    if(!b.snapshot.collegeId)throw new BadRequestException('Select a college on the TRUST invoice.');
    const o=await this.optionsIn(db,p,b.snapshot.collegeId);
    if(o.issue||!o.rule||!o.catalogue||!o.tax||!o.theme||!o.mapping)throw new ConflictException(o.issue??'PTY settings are incomplete.');
+   const itemsByCode=new Map<string,typeof o.items>();
+   for(const item of o.items){const code=item.code.trim().toLowerCase();itemsByCode.set(code,[...(itemsByCode.get(code)??[]),item]);}
    for(const selected of v.data.selections){
-    const invoice=b.snapshot.invoices.find(i=>i.sequence===selected.sequence),item=o.items.find(i=>i.itemId===selected.itemId);
-    if(!invoice||!item?.accountCode)throw new BadRequestException('Select an available PTY sales item for each instalment.');
+    const invoice=b.snapshot.invoices.find(i=>i.sequence===selected.sequence);
+    if(!invoice)throw new BadRequestException('Select an available TRUST instalment.');
     if(invoice.collegeName!==undefined&&invoice.collegeName!==o.collegeName)throw new ConflictException('This TRUST invoice belongs to a different college. Review its original college before preparing commission.');
     const frozen=(await db.query(`SELECT status FROM ${s}.student_commission_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,selected.sequence])).rows[0];
     if(frozen&&frozen.status!=='not_attempted')continue;
+    let code:string;try{code=commissionTuitionItemCode(invoice.lines);}catch(error){throw new BadRequestException((error as Error).message);}
+    const matches=itemsByCode.get(code)??[];
+    if(matches.length!==1)throw new BadRequestException(`The TRUST tuition item “${code}” needs one matching item with an account in PTY. Refresh the item catalogue or check its setup.`);
+    const item=matches[0];
+    if(!item.accountCode)throw new BadRequestException('The matching PTY item needs a sales account.');
+    if(selected.itemId&&selected.itemId!==item.itemId)throw new BadRequestException('The PTY item must match the corresponding TRUST tuition item. Reload the invoice preview.');
     const calculation=commissionAmount(invoice.lines.map(l=>({kind:l.kind,amountMinor:l.amountMinor})),o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
     const value:XeroInvoiceCreate={contactId:o.mapping.xero_contact_id,date:invoice.issueDate,dueDate:invoice.dueDate,reference:b.snapshot.studentName,currencyCode:b.snapshot.currency,brandingThemeId:o.theme.brandingThemeId,
      lines:[{description:`Student Name: ${b.snapshot.studentName}\nCommission for INV-${invoice.sequence}\n${invoice.lines.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`.slice(0,4000),quantity:'1',unitAmount:(calculation.commissionMinor/100).toFixed(2),itemCode:item.code,accountCode:item.accountCode,taxType:o.tax.taxType,tracking:[{name:'Type of Sale',option:'Instalment'}]}]};

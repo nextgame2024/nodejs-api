@@ -42,7 +42,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   const db=await pool.connect();try{await db.query('BEGIN');await db.query('SET LOCAL ROLE sophia_runtime_app');await db.query("SELECT set_config('sophia.tenant_id',$1,true)",[tenantId]);const result=await work(db);await db.query('COMMIT');return result;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
  }
  async function prepareAll(count=1){return service.prepare(p,caseId,batchId,{batchRevision:1,selections:Array.from({length:count},(_,i)=>({sequence:i+1,itemId}))});}
- async function trustReceipts(count=1){for(let sequence=1;sequence<=count;sequence++)await pool.query(`INSERT INTO ${schema}.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,completed_at,requested_by_identity_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,'created',$8,now(),'actor')`,[tenant,caseId,batchId,sequence,trustId,contactId,String(sequence).padStart(64,'0'),randomUUID()]);}
+ async function trustReceipts(count=1,first=1){for(let sequence=first;sequence<first+count;sequence++)await pool.query(`INSERT INTO ${schema}.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,completed_at,requested_by_identity_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,'created',$8,now(),'actor')`,[tenant,caseId,batchId,sequence,trustId,contactId,String(sequence).padStart(64,'0'),randomUUID()]);}
  beforeAll(async()=>{
   const parsed=new URL(url!);if(!['127.0.0.1','localhost'].includes(parsed.hostname)||parsed.pathname!=='/sophia_pty_validation')throw new Error('Use only the disposable local sophia_pty_validation database.');
   pool=new pg.Pool({connectionString:url,max:6});process.env.SOPHIA_RUNTIME_SCHEMA=schema;process.env.XERO_INVOICE_CREATION_ENABLED='true';
@@ -83,7 +83,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await pool.query(`INSERT INTO public.bm_college_commission_rules(rule_id,company_id,college_id,commission_basis_points,calculation_method,rounding_decimal_places,cashback_status,bonus_status,active) VALUES($1,$2,$3,3000,'tuition_fee_percentage',2,'not_recorded','not_applicable',true)`,[itemId,tenant,collegeId]);
   await pool.query(`INSERT INTO ${schema}.student_college_xero_contact_links(customer_id,xero_connection_id,xero_contact_id,college_id,classification,reviewed_by) VALUES($1,$2,$3,$4,'college','actor')`,[tenant,ptyId,contactId,collegeId]);
   await pool.query(`INSERT INTO ${schema}.student_case_invoice_draft_batches VALUES($1,$2,$3,NULL,1,$4)`,[tenant,caseId,batchId,JSON.stringify(snapshot)]);
-  const catalogue={items:[{itemId,code:'COMMISSION',name:'Commission',accountCode:'200',taxType:'OUTPUT'}],accounts:[{code:'200',name:'Sales Commissions',taxType:'OUTPUT'}],taxRates:[{name:'GST on Income',taxType:'OUTPUT',rate:'10'}],brandingThemes:[{brandingThemeId:itemId,name:'PTY Open for Australia Account'}]};
+  const catalogue={items:[{itemId,code:'TUITION',name:'Commission',accountCode:'200',taxType:'OUTPUT'}],accounts:[{code:'200',name:'Sales Commissions',taxType:'OUTPUT'}],taxRates:[{name:'GST on Income',taxType:'OUTPUT',rate:'10'}],brandingThemes:[{brandingThemeId:itemId,name:'PTY Open for Australia Account'}]};
   await pool.query(`INSERT INTO ${schema}.student_xero_sales_catalogues VALUES($1,$2,$3,1,now(),NULL)`,[tenant,ptyId,JSON.stringify(catalogue)]);
   changedTrust=providerFailure=false;live=maxLive=0;createInvoice.mockClear();session.mockClear();
  });
@@ -115,10 +115,35 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  });
  it('saves the server calculation and correct PTY recipient/reference, tax and dates',async()=>{
   await prepareAll();const rows=await service.list(p,caseId,batchId),s=rows.items[0].snapshot as any;
-  expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment'}]})]});
+  expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({itemCode:'TUITION',unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment'}]})]});
+ });
+ it('derives the PTY item from saved TRUST tuition using organisation-local IDs',async()=>{
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1}]});
+  expect((await service.list(p,caseId,batchId)).items[0].snapshot.value.lines[0]).toMatchObject({itemCode:'TUITION',accountCode:'200',taxType:'OUTPUT'});
+ });
+ it('rejects an unrelated client-selected PTY item without saving drafts',async()=>{
+  await expect(service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,itemId:randomUUID()}]})).rejects.toThrow('must match');
+  expect((await service.list(p,caseId,batchId)).items).toEqual([]);
+ });
+ it('keeps PTY pending when its catalogue has no corresponding tuition item',async()=>{
+  await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=jsonb_set(snapshot,'{items,0,code}','"DIFFERENT"'::jsonb)`);
+  await expect(prepareAll()).rejects.toThrow('one matching item');expect((await service.list(p,caseId,batchId)).items).toEqual([]);
+ });
+ it('uses each instalment tuition code rather than one global PTY selection',async()=>{
+  const otherItem=randomUUID(),changed=structuredClone(snapshot);changed.invoices[1].lines[0].itemCode='VET';
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET snapshot=$1`,[JSON.stringify(changed)]);
+  await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=jsonb_set(snapshot,'{items}',(snapshot->'items')||$1::jsonb)`,[JSON.stringify([{itemId:otherItem,code:'VET',name:'VET commission',accountCode:'200',taxType:'OUTPUT'}])]);
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1},{sequence:2}]});
+  const rows=(await service.list(p,caseId,batchId)).items;expect(rows.map(row=>row.snapshot.value.lines[0].itemCode)).toEqual(['TUITION','VET']);
  });
  it('refuses direct PTY creation until its TRUST receipt exists',async()=>{
   await prepareAll();const r=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(r.results[0]).toMatchObject({status:'not_attempted',message:expect.stringContaining('TRUST invoice first')});expect(createInvoice).not.toHaveBeenCalled();
+ });
+ it('allows only the PTY instalment whose corresponding TRUST receipt exists',async()=>{
+  await prepareAll(2);await trustReceipts(1,2);
+  const result=await service.create(p,caseId,batchId,{sequences:[1,2],confirmed:true});
+  expect(result.results).toEqual([expect.objectContaining({sequence:1,status:'not_attempted',message:expect.stringContaining('TRUST invoice first')}),expect.objectContaining({sequence:2,status:'created'})]);
+  expect(createInvoice).toHaveBeenCalledTimes(1);
  });
  it('creates once and skips duplicate or concurrent calls',async()=>{
   await prepareAll();await trustReceipts();await Promise.all([service.create(p,caseId,batchId,{sequences:[1],confirmed:true}),service.create(p,caseId,batchId,{sequences:[1],confirmed:true})]);expect(createInvoice).toHaveBeenCalledTimes(1);
