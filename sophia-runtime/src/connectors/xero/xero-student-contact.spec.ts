@@ -63,3 +63,22 @@ describe('student Contact provisioning',()=>{
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('owned student contact name refresh',()=>{
+  it('updates only Name on the exact owned contact and preserves its identity',async()=>{
+    const name='Andres Arley Mazo SuareT (STD-1076)';
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValueOnce(response([{...contact,Name:'TEST5'}])).mockResolvedValueOnce(response([{...contact,Name:name}]));
+    expect(await new XeroClient().refreshStudentContactName('fake','organisation',contactId,value.contactNumber,name,key)).toMatchObject({contactId,legalName:name});
+    expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({Contacts:[{ContactID:contactId,Name:name}]});
+  });
+  it('recovers a successful prior rename with only a read',async()=>{
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(response([contact]));
+    await new XeroClient().refreshStudentContactName('fake','organisation',contactId,value.contactNumber,value.name,key);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  for(const change of [{ContactNumber:'another-student'},{ContactStatus:'ARCHIVED'}])it('rejects changed ownership or archived contacts before writing',async()=>{
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(response([{...contact,...change}]));
+    await expect(new XeroClient().refreshStudentContactName('fake','organisation',contactId,value.contactNumber,'New name',key)).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

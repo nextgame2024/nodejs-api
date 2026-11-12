@@ -383,7 +383,14 @@ export class StudentCaseInvoiceDraftsService {
         }
         rows.push({invoice,status:receipt.status,provider_key:receipt.provider_key,owned});
       }
-      return {snapshot,connectionId,contact,rows};
+      const recipient=(await db.query(`SELECT st.legal_name,st.student_reference,xc.legal_name AS contact_name,xc.contact_number
+        FROM ${s}.student_operations_students st JOIN ${s}.student_operations_xero_contacts xc
+          ON xc.customer_id=st.customer_id AND xc.xero_connection_id=$3 AND xc.xero_contact_id=$4
+        WHERE st.customer_id=$1 AND st.student_id=$2`,[p.tenantId,c.student_id,connectionId,contact])).rows[0];
+      const expectedName=recipient?`${recipient.legal_name} (${recipient.student_reference})`:null;
+      const rename=recipient?.contact_number===`sophia:${c.student_id}`&&recipient.contact_name!==expectedName
+        ?{name:expectedName!,contactNumber:recipient.contact_number}:null;
+      return {snapshot,connectionId,contact,rows,rename};
     });
     const claim=await claimInvoices().catch(async error=>{
       if(!(error instanceof MissingContactProjection))throw error;
@@ -405,11 +412,29 @@ export class StudentCaseInvoiceDraftsService {
     const claimMs=Date.now()-startedAt;
     type Result={sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;errorCode?:string;message?:string};
     let session:ReturnType<XeroConnectorService['invoiceCreationSession']>|undefined;
+    // One shared preflight per batch, including parallel workers. Only contacts
+    // carrying this student's exact Sophia identity may be renamed.
+    let recipientReady:Promise<void>|undefined;
+    const prepareRecipient=async()=>{
+      if(!claim.rename)return;
+      const key=createHash('sha256').update(`student-contact-name:${p.tenantId}:${batchId}:${claim.contact}:${claim.rename.name}`).digest('hex');
+      const updated=await this.xero.refreshStudentContactName(p.tenantId,claim.connectionId,claim.contact,claim.rename.contactNumber,claim.rename.name,key);
+      await this.database.tenantTransaction(p.tenantId,async db=>{
+        await this.cases.authorizedCase(db,p,id,true);
+        await db.query(`UPDATE ${s}.student_operations_xero_contacts SET legal_name=$4
+          WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 AND contact_number=$5`,
+          [p.tenantId,claim.connectionId,claim.contact,updated.legalName,claim.rename!.contactNumber]);
+        await db.query(`UPDATE ${s}.student_operations_primary_xero_contacts SET contact_name=$4
+          WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 AND contact_number=$5`,
+          [p.tenantId,claim.connectionId,claim.contact,updated.legalName,claim.rename!.contactNumber]);
+      });
+    };
     const execute=async(item:typeof claim.rows[number]):Promise<Result>=>{
       if(!item.owned)return {sequence:item.invoice.sequence,status:item.status==='created'?'already_created':item.status};
       const value=this.xeroValue(claim.snapshot,item.invoice,claim.contact);
-      let providerReturned=false;
+      let providerReturned=false,recipientPrepared=false;
       try{
+        await (recipientReady??=prepareRecipient());recipientPrepared=true;
         const connection=await (session??=this.xero.invoiceCreationSession(p.tenantId,claim.connectionId));
         // A batch may wait behind earlier waves. Recheck the case and renew the
         // active-send window immediately before each provider mutation.
@@ -427,7 +452,7 @@ export class StudentCaseInvoiceDraftsService {
         const projectionPending=await this.confirmCreated(p,id,batchId,claim.connectionId,claim.contact,claim.snapshot,item.invoice,receipt,verified);
         return {sequence:item.invoice.sequence,status:'created',invoiceId:receipt.invoiceId,invoiceNumber:receipt.invoiceNumber,...(projectionPending?{message:'Created in Xero. A register refresh was queued to complete local indexing.'}:{})};
       }catch(error){
-        const status=!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException)?'not_attempted':'review_required';
+        const status=!recipientPrepared||(!providerReturned&&(error instanceof ConflictException||error instanceof BadRequestException))?'not_attempted':'review_required';
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status=$4,completed_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status='creating'`,[p.tenantId,batchId,item.invoice.sequence,status]));
         const detail=xeroPreflightFailure(error);
         return {sequence:item.invoice.sequence,status,...detail};

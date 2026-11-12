@@ -15,6 +15,14 @@ function setup(scopes:string[]) {
 }
 describe('Xero Contact attachment write boundary',()=>{
   const id='11111111-1111-4111-8111-111111111111';
+  it('requires contact write scope and shared quota admission before student renaming',async()=>{
+    const denied=setup(['accounting.contacts.read']),fetchMock=jest.spyOn(globalThis,'fetch');
+    await expect(denied.service.refreshStudentContactName('tenant',id,id,`sophia:${id}`,'Student','a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_contact_write_scope_missing'})});
+    expect(denied.accessToken).not.toHaveBeenCalled();
+    const allowed=setup(['accounting.contacts']);
+    await expect(allowed.service.refreshStudentContactName('tenant',id,id,`sophia:${id}`,'Student','a'.repeat(64))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'xero_rate_limited'})});
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it('requires contact read scope for exact-ID recovery and retains shared quota admission',async()=>{
     const denied=setup(['accounting.invoices']);
     const fetchMock=jest.spyOn(globalThis,'fetch');

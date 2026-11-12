@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, Injectable } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import type { XeroConfig } from "./xero.config.js";
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { xeroRateObservation, type XeroRequestPolicy,type XeroRequestTicket } from './xero-rate-limit.js';
@@ -256,6 +256,28 @@ export class XeroClient {
     const contact=xeroContactRecord(payload.Contacts[0]);
     if(contact.contactId!==contactId||contact.status!=='ARCHIVED')throw new BadGatewayException('Contact change could not be confirmed. Retry deletion.');
     return contact;
+  }
+
+  async refreshStudentContactName(accessToken:string,tenantId:string,contactId:string,contactNumber:string,name:string,key:string):Promise<XeroContactRecord> {
+    if(!/^sophia:[0-9a-f-]{36}$/i.test(contactNumber)||!name.trim()||name.length>255||!/^[a-f0-9]{64}$/.test(key))
+      throw new BadRequestException('Invalid student contact name.');
+    const current=await this.contactById(accessToken,tenantId,contactId);
+    if(current.contactNumber!==contactNumber||current.status!=='ACTIVE')
+      throw new ConflictException('The student contact identity changed. Review the linked TRUST contact.');
+    if(current.legalName===name)return current;
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();let response:Response;
+    try{response=await fetch(`https://api.xero.com/api.xro/2.0/Contacts/${contactId}`,{method:'POST',
+      headers:{Authorization:`Bearer ${accessToken}`,'xero-tenant-id':tenantId,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':key},
+      body:JSON.stringify({Contacts:[{ContactID:contactId,Name:name}]}),redirect:'error',signal:AbortSignal.timeout(30_000)});}
+    catch{throw xeroUnavailableError();}
+    try{await policy?.observe(response,ticket);}catch(error){await response.body?.cancel();throw error;}
+    if(!response.ok){await response.body?.cancel();throw providerError(response);}
+    const payload=record(await parseJson(response));
+    if(!Array.isArray(payload.Contacts)||payload.Contacts.length!==1)throw new BadGatewayException('Student contact name confirmation failed.');
+    const raw=record(payload.Contacts[0]),updated=xeroContactRecord(raw);
+    if(raw.HasValidationErrors===true||(Array.isArray(raw.ValidationErrors)&&raw.ValidationErrors.length)||updated.contactId!==contactId||updated.contactNumber!==contactNumber||updated.status!=='ACTIVE'||updated.legalName!==name)
+      throw new BadGatewayException('Student contact name confirmation failed.');
+    return updated;
   }
 
   async ensureStudentContact(accessToken:string,tenantId:string,value:{contactNumber:string;name:string;email:string|null},key:string):Promise<XeroContactRecord> {

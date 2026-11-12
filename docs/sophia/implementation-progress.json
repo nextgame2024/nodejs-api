@@ -1,7 +1,7 @@
 {
   "studentPtyIntegration": {
     "updatedOn": "2026-11-13",
-    "status": "completed_pty_invoice_lifecycle_backend_release_pending",
+    "status": "completed_pty_invoice_lifecycle_backend_live",
     "authorization": "User approved beginning the phased implementation. Preserve bulk TRUST creation. Requested alternating tabs INV-1 (TRUST), INV-1 (PTY), INV-2 (TRUST), INV-2 (PTY). TRUST recipient is student/reference college; PTY recipient is college/reference student. Explicit Sophia relationships must supplement, not replace, these Xero conventions.",
     "implemented": [
       "Explicit operating-role assignment in Company and guarded Runtime endpoint; refuse changing an assigned organisation between TRUST and PTY; refresh no longer silently assigns TRUST",
@@ -132,7 +132,7 @@
       "deployment": "Backend 82ac8193e7e7 verified live via Runtime health ok=true on 13 November 2026 Brisbane. No frontend change or migration required."
     },
     "ptyLifecycle": {
-      "status": "migration_applied_backend_deployment_pending",
+      "status": "backend_live_frontend_local",
       "migration": "130_student_case_pty_lifecycle.sql",
       "migrationVerification": "Applied to configured production owner connection; application cannot execute internal purge or directly delete commission receipts; guarded wrapper permission retained. No financial records changed during verification.",
       "verification": [
@@ -143,11 +143,32 @@
         "Frontend TypeScript check and production build passed; existing budget/CommonJS/missing primeicons stylesheet warnings remain.",
         "Protected real-estate gate: 8 suites / 38 tests passed.",
         "Production read-only application-role audit of reported case: 16 linked invoices, 8 TRUST and 8 PTY, all editable/removable under current local policy. No live Xero edits or deletes were used as tests.",
-        "Concurrency follow-up: case and offer college assignment lock the mapped contact and reject an in-progress archive; 3 focused case/offer suites passed 23 tests (38 unrelated skipped), including the guarded assignment exercised during provider contact checks. Runtime build passed."
+        "Concurrency follow-up: case and offer college assignment lock the mapped contact and reject an in-progress archive; 3 focused case/offer suites passed 23 tests (38 unrelated skipped), including the guarded assignment exercised during provider contact checks. Runtime build passed.",
+        "Final Angular browser rerun after removing TRUST-only PTY controls: 167 passed. Frontend remains uncommitted/unpushed/local."
       ],
       "frontend": "Local changes only; not committed, pushed or deployed, as requested.",
       "initialBackendRevision": "c4aadda50eaa",
-      "initialBackendHealth": "Runtime health returned ok:true and revision c4aadda50eaa; final assignment-lock follow-up pending deployment."
+      "initialBackendHealth": "Runtime health returned ok:true and revision c4aadda50eaa; final assignment-lock follow-up pending deployment.",
+      "backendRevision": "4af06ea6f501",
+      "backendHealth": "Verified live Runtime health ok:true, revision 4af06ea6f501. Migration 130 recorded; internal purge/direct commission DELETE remain unavailable to app role."
+    },
+    "trustStudentContactNameFix": {
+      "updatedOn": "2026-11-13",
+      "status": "tested_backend_deployment_pending",
+      "cause": "Read-only tenant-scoped audit confirmed current student name Andres Arley Mazo SuareT but Sophia-owned primary TRUST contact retained TEST5 - Student (STD-1076). Invoice creation reused the contact ID without refreshing its name.",
+      "implementation": [
+        "Refresh stale Sophia-owned TRUST contact name from current student profile before invoice creation, preserving student reference suffix and contact ID.",
+        "Exact live ContactNumber ownership and ACTIVE status verified before a name-only update; external contact naming remains unchanged.",
+        "Single preflight per batch; no provider contact call for unchanged names or already-created invoices. Failed name confirmation marks invoices not_attempted for safe retry.",
+        "PTY college recipient and student reference unchanged. Existing live test records were not modified."
+      ],
+      "verification": [
+        "Runtime build passed.",
+        "Focused invoice/contact/projection regression gate: 4 suites, 38 tests passed.",
+        "Protected real-estate gate: 8 suites, 38 tests passed."
+      ],
+      "migrationRequired": false,
+      "frontendDeployment": false
     }
   },
   "studentInvoiceCollegeSelection": {

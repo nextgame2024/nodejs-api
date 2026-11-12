@@ -16,8 +16,10 @@ function fixture(count=7){
   const snapshot={studentName:'Fixture Student',advisorLabel:'Fixture Advisor',currency:'AUD',collegeName:'Fixture College',catalogueConnectionId:connection,
     invoices:Array.from({length:count},(_,index)=>({sequence:index+1,invoiceNumber:`INV-${index+1}`,issueDate:'2026-10-28',dueDate:'2026-10-28',conditionalFeeMinor:0,totalMinor:10000,
       lines:[{description:'Tuition',quantity:'1',unitPrice:'100.00',unitAmountMinor:10000,itemCode:'TUITION',accountCode:'812',taxType:'BASEXCLUDED'}]}))};
+  const recipient={legal_name:'Andres Arley Mazo SuareT',student_reference:'STD-FIXTURE',contact_name:'Andres Arley Mazo SuareT (STD-FIXTURE)',contact_number:'sophia:student-uuid'};
   const exports=new Map<number,{status:string;provider_key:string}>();let projectionFails=false;
   const query=jest.fn(async(sql:string,params:unknown[]=[])=>{
+    if(sql.includes('SELECT st.legal_name'))return {rows:[recipient]};
     if(sql.includes('SELECT b.snapshot'))return {rows:[{snapshot,offer_id:'offer',is_current:true}]};
     if(sql.includes('SELECT 1 FROM')&&sql.includes('xero_connections'))return {rows:[{}]};
     if(sql.includes('coalesce(primary_contact'))return {rows:[{xero_contact_id:contact}]};
@@ -43,14 +45,33 @@ function fixture(count=7){
   const invoiceById=jest.fn(async(_id:string)=>record({contactId:contact,date:'2026-10-28',dueDate:'2026-10-28',reference:'Fixture College',currencyCode:'AUD',lines:[{description:'Tuition',quantity:'1',unitAmount:'100',itemCode:'TUITION',accountCode:'812',taxType:'BASEXCLUDED',tracking:[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:'Fixture Advisor'}]}]},1));
   const invoiceCreationSession=jest.fn(async()=>({createInvoice,invoiceById}));
   const cases={authorizedCase:jest.fn(async()=>({student_id:'student-uuid',student_reference:'STD-FIXTURE'})),activity:jest.fn(async()=>{})};
-  const service=new StudentCaseInvoiceDraftsService({tenantTransaction:transaction} as never,cases as never,{invoiceCreationSession} as never);
+  const refreshStudentContactName=jest.fn(async()=>({legalName:`${recipient.legal_name} (${recipient.student_reference})`}));
+  const service=new StudentCaseInvoiceDraftsService({tenantTransaction:transaction} as never,cases as never,{invoiceCreationSession,refreshStudentContactName} as never);
   const run=()=>service.createXero(principal as never,'fixture-case',batch,{sequences:snapshot.invoices.map(invoice=>invoice.sequence),confirmed:true});
-  return {service,run,snapshot,query,cases,exports,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
+  return {service,run,snapshot,query,cases,exports,recipient,refreshStudentContactName,createInvoice,invoiceById,invoiceCreationSession,projectionFailure:()=>{projectionFails=true;}};
 }
 describe('bounded Xero invoice creation',()=>{
   const previous={enabled:process.env.XERO_INVOICE_CREATION_ENABLED,url:process.env.SOPHIA_RUNTIME_DATABASE_URL};
   beforeEach(()=>{process.env.XERO_INVOICE_CREATION_ENABLED='true';process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.invalid/runtime';jest.spyOn(Logger.prototype,'log').mockImplementation(()=>{});jest.spyOn(Logger.prototype,'warn').mockImplementation(()=>{});});
   afterEach(()=>{jest.useRealTimers();jest.restoreAllMocks();for(const [key,value] of [['XERO_INVOICE_CREATION_ENABLED',previous.enabled],['SOPHIA_RUNTIME_DATABASE_URL',previous.url]]){if(value===undefined)delete process.env[key!];else process.env[key!]=value;}});
+  it('refreshes a stale Sophia-owned student name once before any TRUST invoice is sent',async()=>{
+    const f=fixture();f.recipient.contact_name='TEST5 - Student (STD-FIXTURE)';
+    expect(await f.run()).toMatchObject({created:7});
+    expect(f.refreshStudentContactName).toHaveBeenCalledTimes(1);
+    expect(f.refreshStudentContactName).toHaveBeenCalledWith(tenant,connection,contact,'sophia:student-uuid','Andres Arley Mazo SuareT (STD-FIXTURE)',expect.any(String));
+    expect(f.refreshStudentContactName.mock.invocationCallOrder[0]).toBeLessThan(f.createInvoice.mock.invocationCallOrder[0]);
+    expect(f.createInvoice.mock.calls.every(([v])=>v.contactId===contact&&v.reference==='Fixture College')).toBe(true);
+  });
+  it('leaves every invoice retryable if contact name confirmation fails',async()=>{
+    const f=fixture(3);f.recipient.contact_name='TEST5';f.refreshStudentContactName.mockRejectedValue(new BadGatewayException('Timeout'));
+    expect(await f.run()).toMatchObject({created:0,results:Array.from({length:3},()=>({status:'not_attempted'}))});
+    expect(f.createInvoice).not.toHaveBeenCalled();expect(f.refreshStudentContactName).toHaveBeenCalledTimes(1);
+  });
+  it('preserves externally managed contact naming and skips unchanged owned names',async()=>{
+    const f=fixture(1);await f.run();expect(f.refreshStudentContactName).not.toHaveBeenCalled();
+    const legacy=fixture(1);legacy.recipient.contact_number='external';legacy.recipient.contact_name='S15 - Fixture Student';
+    await legacy.run();expect(legacy.refreshStudentContactName).not.toHaveBeenCalled();
+  });
   it('creates seven invoices in three waves, keeps result order and shares one connection session',async()=>{
     jest.useFakeTimers();const f=fixture();let active=0,peak=0;
     f.createInvoice.mockImplementation(async(value,_key)=>{const sequence=f.createInvoice.mock.calls.length;active++;peak=Math.max(peak,active);
