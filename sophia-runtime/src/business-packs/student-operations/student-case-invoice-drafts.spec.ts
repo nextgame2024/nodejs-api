@@ -1,6 +1,6 @@
 import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
-import { exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
+import { StudentCaseInvoiceDraftsService,exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
 import type { OfferExtraction } from './student-case-offers.js';
 
@@ -9,6 +9,30 @@ const source:OfferExtraction={kind:'letter_of_offer',studentName:'Fixture Studen
 function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',catalogueRevision:1,reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
   lines:[{kind:'tuition',description:'Tuition',itemId:'44444444-4444-4444-8444-444444444444',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
 describe('Sophia-only invoice draft contract',()=>{
+  it('hides preparation for a completed paired batch without loading catalogues or document evidence',async()=>{
+    const before=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
+    try{
+      const query=jest.fn(async(sql:string)=>({rows:sql.includes(' AS exports')?[{currentOffer:true}]:[{ready:false}]}));
+      const database={tenantReadTransaction:async(_tenant:string,work:any)=>work({query})};
+      const cases={authorizedCase:async()=>({lifecycle_status:'pre_sale',current_stage:'awaiting_payment'})};
+      const service=new StudentCaseInvoiceDraftsService(database as never,cases as never,{} as never);
+      const result=await service.list({tenantId:'tenant',role:'chief_executive'} as never,'case');
+      expect(result.preparation).toBeNull();expect(query).toHaveBeenCalledTimes(2);
+      const [sql,values]=query.mock.calls[1] as unknown as [string,unknown[]];
+      expect(sql).toContain('e.batch_id=b.batch_id');expect(sql).toContain("e.status='created'");expect(sql).toContain('b.case_id=$3');expect(values[2]).toBe('case');
+    }finally{if(before===undefined)delete process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;else process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED=before;}
+  });
+  it('still checks preparation evidence when PTY invoices remain unfinished after TRUST creation',async()=>{
+    const before=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
+    try{
+      const query=jest.fn(async(sql:string)=>({rows:sql.includes(' AS exports')?[{currentOffer:true}]:sql.includes(' AS ready')?[{ready:true}]:[]}));
+      const database={tenantReadTransaction:async(_tenant:string,work:any)=>work({query})};
+      const cases={authorizedCase:async()=>({lifecycle_status:'pre_sale',current_stage:'awaiting_payment'})};
+      const service=new StudentCaseInvoiceDraftsService(database as never,cases as never,{} as never);
+      await service.list({tenantId:'tenant',role:'chief_executive'} as never,'case');
+      expect(query.mock.calls.some(([sql])=>sql.includes('student_operations_status_document_requirements'))).toBe(true);
+    }finally{if(before===undefined)delete process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;else process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED=before;}
+  });
   it('keeps the 970 base and 995 with transfer fee without double-counting',()=>{
     const v=request();expect(validateDraftSchedule(source,v)[0]).toMatchObject({totalMinor:97000,sourceTotalMinor:99500,differenceMinor:0,status:'DRAFT',paymentTrack:'PENDING',invoiceNumber:'INV-1'});
     v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;

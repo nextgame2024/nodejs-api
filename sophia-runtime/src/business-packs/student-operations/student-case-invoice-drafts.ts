@@ -201,7 +201,13 @@ export class StudentCaseInvoiceDraftsService {
         FROM ${s}.student_case_invoice_draft_batches b LEFT JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id
         WHERE b.customer_id=$1 AND b.case_id=$2 ORDER BY b.created_at DESC,b.batch_id LIMIT 20`,[p.tenantId,id])).rows;
       const pairedReady=batches.some(batch=>batch.currentOffer)&&Boolean((await db.query(`SELECT to_regclass($1) IS NOT NULL AND EXISTS(
-        SELECT 1 FROM ${s}.student_operations_xero_sync_configurations WHERE customer_id=$2 AND organisation_role='operating' AND enabled) AS ready`,[`${s}.student_commission_drafts`,p.tenantId])).rows[0]?.ready);
+        SELECT 1 FROM ${s}.student_operations_xero_sync_configurations WHERE customer_id=$2 AND organisation_role='operating' AND enabled)
+        AND EXISTS(SELECT 1 FROM ${s}.student_case_invoice_draft_batches b
+          JOIN ${s}.student_case_offers o ON o.customer_id=b.customer_id AND o.offer_id=b.offer_id AND o.is_current
+          CROSS JOIN LATERAL jsonb_array_elements(b.snapshot->'invoices') invoice
+          WHERE b.customer_id=$2 AND b.case_id=$3 AND NOT EXISTS(
+            SELECT 1 FROM ${s}.student_commission_exports e WHERE e.customer_id=b.customer_id AND e.case_id=b.case_id
+              AND e.batch_id=b.batch_id AND e.sequence=(invoice->>'sequence')::int AND e.status='created')) AS ready`,[`${s}.student_commission_drafts`,p.tenantId,id])).rows[0]?.ready);
       const eligible=documentWorkflowEnabled()&&hasStudentOperationsPermission(p.role,'payments.prepare')&&c.lifecycle_status!=='closed'&&(c.lifecycle_status==='pre_sale'&&c.current_stage==='checklist_complete'||pairedReady);
       if(!eligible)return {batches,preparation:null,canCreateXero:this.canCreate(p)};
       const evidence=await documentChecklistEvidence(db,p.tenantId,id),offer=await this.offer(db,p,id);
