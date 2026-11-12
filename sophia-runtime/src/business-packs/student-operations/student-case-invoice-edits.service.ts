@@ -42,6 +42,7 @@ export class StudentCaseInvoiceEditsService{
     const s=caseSchema(),invoiceId=updated.invoiceId;
     await projectCaseInvoice(db,p.tenantId,id,connectionId,updated,p.identityUserId);
     await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET provider_status=$4,verified_invoice=$5,projection_next_attempt_at=NULL WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,updated.status,JSON.stringify(updated)]);
+    await db.query(`UPDATE ${s}.student_commission_exports SET provider_status=$4 WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,updated.status]);
     await db.query(`UPDATE ${s}.student_case_invoice_edits SET completed=true,lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId]);
     await this.cases.activity(db,p,id,'case.invoice_updated','Invoice updated');await reconcileDocumentChecklist(db,p.tenantId,id);
   }
@@ -50,20 +51,23 @@ export class StudentCaseInvoiceEditsService{
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.cases.authorizedCase(db,p,id),s=caseSchema();
       if(c.lifecycle_status==='closed')throw new ConflictException('Invoices cannot be edited for a closed case.');
-      const row=(await db.query(`SELECT coalesce(i.xero_contact_id,e.xero_contact_id) AS contact_id FROM (
+      const row=(await db.query(`SELECT coalesce(i.xero_contact_id,e.xero_contact_id,ce.xero_contact_id) AS contact_id, ce.xero_invoice_id IS NOT NULL AS operating, xc.legal_name AS contact_name FROM (
         SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
-        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') l
+        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'
+        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') l
         LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=l.xero_connection_id AND i.xero_invoice_id=l.xero_invoice_id
         LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=l.xero_connection_id AND e.xero_invoice_id=l.xero_invoice_id
+        LEFT JOIN ${s}.student_commission_exports ce ON ce.customer_id=$1 AND ce.case_id=$2 AND ce.xero_connection_id=l.xero_connection_id AND ce.xero_invoice_id=l.xero_invoice_id AND ce.status='created'
+        LEFT JOIN ${s}.student_operations_xero_contacts xc ON xc.customer_id=$1 AND xc.xero_connection_id=l.xero_connection_id AND xc.xero_contact_id=coalesce(i.xero_contact_id,e.xero_contact_id,ce.xero_contact_id)
         WHERE l.xero_connection_id=$3 AND l.xero_invoice_id=$4`,[p.tenantId,id,connectionId,invoiceId])).rows[0];
       if(!row?.contact_id)throw new NotFoundException('Linked invoice not found.');
-      return String(row.contact_id);
+      return {contactId:String(row.contact_id),contactName:row.contact_name??null,role:row.operating?'operating' as const:'trust' as const};
     });
   }
   async options(p:Principal,id:string,connectionId:string,invoiceId:string){
-    const contactId=await this.linked(p,id,connectionId,invoiceId);
+    const {contactId,contactName,role}=await this.linked(p,id,connectionId,invoiceId);
     const session=await this.xero.invoiceRemovalSession(p.tenantId,connectionId);
-    const [invoice,organisation,options]=await Promise.all([session.invoiceById(invoiceId),session.organisation(),this.drafts.manualOptions(p,id,true)]);
+    const [invoice,organisation,options]=await Promise.all([session.invoiceById(invoiceId),session.organisation(),this.drafts.manualOptions(p,id,true,role)]);
     if(invoice.invoiceId!==invoiceId||invoice.contactId!==contactId)throw new ConflictException('The invoice no longer matches this case.');
     // Read repair after a lost response never sends another provider mutation.
     const pending=await this.database.tenantTransaction(p.tenantId,async db=>{
@@ -79,10 +83,10 @@ export class StudentCaseInvoiceEditsService{
     const lockDate=[organisation.periodLockDate,organisation.endOfYearLockDate].filter((v):v is string=>!!v).sort().at(-1)??null;
     this.editable(invoice,lockDate);
     if(options.catalogue?.connectionId!==connectionId)throw new ConflictException('The item catalogue for this invoice is not available.');
-    return {...options,invoice,expectedFingerprint:invoiceEditFingerprint(invoice),pending};
+    return {...options,organisation:role==='operating'?'PTY':'TRUST',contactName:role==='operating'?contactName:null,invoice,expectedFingerprint:invoiceEditFingerprint(invoice),pending};
   }
   async update(p:Principal,id:string,connectionId:string,invoiceId:string,input:unknown,key?:string){
-    const contactId=await this.linked(p,id,connectionId,invoiceId),parsed=request.safeParse(input);
+    const {contactId,role}=await this.linked(p,id,connectionId,invoiceId),parsed=request.safeParse(input);
     if(!parsed.success||!key||!/^[A-Za-z0-9._:-]{8,160}$/.test(key))throw new BadRequestException('Review the invoice fields and confirm your changes.');
     const v=parsed.data;if(v.dueDate<v.issueDate)throw new BadRequestException('Due date must be on or after the issue date.');
     const s=caseSchema(),lease=randomUUID(),requestHash=hash(v);
@@ -113,11 +117,12 @@ export class StudentCaseInvoiceEditsService{
     }
     if(!desired){
       desired=await this.database.tenantReadTransaction(p.tenantId,async db=>{
-        const catalogue=await readSalesCatalogue(db,p.tenantId);
+        const catalogue=await readSalesCatalogue(db,p.tenantId,false,role);
         if(!catalogue||catalogue.connectionId!==connectionId)throw new ConflictException('The invoice catalogue is not available.');
         const advisor=(await db.query(`SELECT code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND advisor_id=$2 AND status='active'`,[p.tenantId,v.advisorId])).rows[0];
         if(!advisor)throw new BadRequestException('Select an active advisor.');
         let reference=v.reference;
+        if(role==='operating'&&v.referenceMode!=='reference')throw new BadRequestException('PTY invoices use the student reference.');
         if(v.referenceMode==='college'){
           const college=(await db.query(`SELECT college_name FROM ${s}.student_operations_college_directory WHERE customer_id=$1 AND college_id=$2`,[p.tenantId,v.collegeId??null])).rows[0];
           if(!college)throw new BadRequestException('Select an available college.');reference=college.college_name;

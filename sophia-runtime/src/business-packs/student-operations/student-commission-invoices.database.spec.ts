@@ -52,6 +52,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
     CREATE TABLE ${schema}.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
     CREATE TABLE ${schema}.xero_connections(customer_id uuid,xero_connection_id uuid,status text,PRIMARY KEY(xero_connection_id,customer_id));
     CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,organisation_role text,enabled boolean,next_sync_at timestamptz,PRIMARY KEY(customer_id,xero_connection_id));
+    CREATE TABLE ${schema}.student_case_deletions(customer_id uuid,case_id uuid,completed_at timestamptz,targets jsonb);
     CREATE TABLE ${schema}.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,contact_status text,legal_name text,email text,PRIMARY KEY(customer_id,xero_connection_id,xero_contact_id));
     CREATE TABLE ${schema}.student_operations_college_directory(customer_id uuid,college_id uuid,college_name text,PRIMARY KEY(customer_id,college_id));
     CREATE TABLE ${schema}.student_case_invoice_draft_batches(customer_id uuid,case_id uuid,batch_id uuid,offer_id uuid,revision integer,snapshot jsonb,PRIMARY KEY(customer_id,batch_id));
@@ -121,6 +122,12 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   expect((await service.list(p,caseId,batchId)).items.map(row=>row.snapshot.value.lines[0].tracking[0].option)).toEqual(['Instalment','Marketing']);
   await trustReceipts(2);await service.create(p,caseId,batchId,{sequences:[2],confirmed:true});
   expect(createInvoice.mock.calls[0][0].lines[0].tracking).toEqual([{name:'Type of Sale',option:'Marketing',trackingCategoryId:trustId,trackingOptionId:batchId}]);
+ });
+ it('blocks a new commission while its college contact is reserved for case deletion',async()=>{
+  await prepareAll();await trustReceipts();
+  await pool.query(`INSERT INTO ${schema}.student_case_deletions(customer_id,case_id,targets) VALUES($1,$2,$3)`,[tenant,randomUUID(),JSON.stringify({contacts:[{connectionId:ptyId,contactId,college:true}]})]);
+  try{const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(result.results[0]).toMatchObject({status:'not_attempted',message:expect.stringContaining('Finish the case deletion')});expect(createInvoice).not.toHaveBeenCalled();}
+  finally{await pool.query(`DELETE FROM ${schema}.student_case_deletions WHERE customer_id=$1`,[tenant]);}
  });
  it('keeps omitted legacy selections on Instalment while metadata is waiting for import',async()=>{
   await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=snapshot-'trackingCategories'`);

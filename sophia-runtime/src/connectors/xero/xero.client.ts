@@ -596,6 +596,16 @@ export class XeroClient {
     return xeroInvoiceRecord(record(payload.Invoices[0]));
   }
 
+  /** Bounded existence check; both sales and purchases protect a shared contact. */
+  async contactHasRecords(accessToken:string,tenantId:string,contactId:string,endpoint:'Invoices'|'CreditNotes'|'Prepayments'|'Overpayments'|'BankTransactions'){
+    if(!/^[0-9a-f-]{36}$/i.test(contactId))throw new BadGatewayException('Invalid Xero contact identity.');
+    const url=new URL(`https://api.xero.com/api.xro/2.0/${endpoint}`);
+    url.search=new URLSearchParams({where:`Contact.ContactID==Guid("${contactId}") AND Status!="DELETED" AND Status!="VOIDED"`,page:'1',pageSize:'1'}).toString();
+    const payload=record(await this.json(url.toString(),accessToken,tenantId));
+    if(!Array.isArray(payload[endpoint]))throw new BadGatewayException('Contact usage could not be verified.');
+    return (payload[endpoint] as unknown[]).length>0;
+  }
+
   async invoiceCandidates(accessToken:string,tenantId:string,contactId:string,date:string):Promise<XeroInvoiceRecord[]>{
     if(!/^[0-9a-f-]{36}$/i.test(contactId)||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new BadGatewayException('Invalid Xero invoice reconciliation request.');
     const [year,month,day]=date.split('-').map(Number),url=new URL('https://api.xero.com/api.xro/2.0/Invoices');

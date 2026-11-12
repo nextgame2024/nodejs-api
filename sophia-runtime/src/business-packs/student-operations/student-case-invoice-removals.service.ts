@@ -23,11 +23,13 @@ export class StudentCaseInvoiceRemovalsService {
       await this.cases.authorizedCase(db,p,id,true);
       const editing=await db.query(`SELECT 1 FROM ${s}.student_case_invoice_edits WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND NOT completed AND NOT failed`,[p.tenantId,connectionId,invoiceId]);
       if(editing.rowCount)throw new ConflictException('An invoice update needs confirmation before this invoice can be removed.');
-      const linked=(await db.query(`SELECT coalesce(i.xero_contact_id,e.xero_contact_id) AS contact_id
+      const linked=(await db.query(`SELECT coalesce(i.xero_contact_id,e.xero_contact_id,ce.xero_contact_id) AS contact_id, ce.xero_invoice_id IS NOT NULL AS operating
         FROM (SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
-          UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') l
+          UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'
+        UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status='created') l
         LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=l.xero_connection_id AND i.xero_invoice_id=l.xero_invoice_id
         LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=l.xero_connection_id AND e.xero_invoice_id=l.xero_invoice_id AND e.status='created'
+        LEFT JOIN ${s}.student_commission_exports ce ON ce.customer_id=$1 AND ce.case_id=$2 AND ce.xero_connection_id=l.xero_connection_id AND ce.xero_invoice_id=l.xero_invoice_id AND ce.status='created'
         WHERE l.xero_connection_id=$3 AND l.xero_invoice_id=$4`,[p.tenantId,id,connectionId,invoiceId])).rows[0];
       if(!linked?.contact_id)throw new NotFoundException('Linked invoice not found.');
       const prior=(await db.query(`SELECT * FROM ${s}.student_case_invoice_removals WHERE customer_id=$1 AND actor_identity_user_id=$2 AND idempotency_key=$3`,[p.tenantId,p.identityUserId,key])).rows[0];
@@ -68,6 +70,7 @@ export class StudentCaseInvoiceRemovalsService {
             await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET provider_status=$4,verified_invoice=$5
               WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,invoice.status,JSON.stringify(invoice)]);
           });
+          await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_commission_exports SET provider_status=$4 WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,invoice.status]));
           throw new ConflictException('This invoice can no longer be deleted or voided. Refresh the invoice list.');
         }
         invoice=await session.removeInvoice(invoiceId,target,createHash('sha256').update(`${p.tenantId}:${connectionId}:${invoiceId}:${target}`).digest('hex'));
@@ -82,6 +85,7 @@ export class StudentCaseInvoiceRemovalsService {
           WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,target,invoice.updatedAt]);
         await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET provider_status=$4,verified_invoice=$5,projection_next_attempt_at=NULL
           WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,target,JSON.stringify(invoice)]);
+        await db.query(`UPDATE ${s}.student_commission_exports SET provider_status=$4 WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,connectionId,invoiceId,target]);
         await db.query(`UPDATE ${s}.student_case_invoice_removals SET completed=true,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
           WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND lease_token=$4`,[p.tenantId,connectionId,invoiceId,lease]);
         await this.cases.activity(db,p,id,action==='delete'?'case.invoice_deleted':'case.invoice_voided',action==='delete'?'Invoice deleted':'Invoice voided');

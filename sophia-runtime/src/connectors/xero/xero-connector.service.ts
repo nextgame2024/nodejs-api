@@ -442,6 +442,15 @@ export class XeroConnectorService {
     await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
   }
 
+  async contactHasTransactions(tenantId:string,connectionId:string,contactId:string){
+    const connection=await this.loadConnection(tenantId,connectionId);
+    const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
+    for(const endpoint of ['Invoices','CreditNotes','Prepayments','Overpayments','BankTransactions'] as const){
+      if(await this.providerRequest(tenantId,connectionId,()=>this.client.contactHasRecords(accessToken,connection.xero_tenant_id,contactId,endpoint)))return true;
+    }
+    return false;
+  }
+
   async archiveContact(tenantId:string,connectionId:string,contactId:string,key:string){
     const connection=await this.loadConnection(tenantId,connectionId);
     if(missingScopes(connection.granted_scopes,['accounting.contacts']).length)

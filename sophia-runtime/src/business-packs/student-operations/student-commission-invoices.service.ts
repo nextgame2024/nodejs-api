@@ -171,6 +171,10 @@ export class StudentCommissionInvoicesService{
       if(selected.length!==1||!current.saleCategory||options.length!==1||selected[0].trackingCategoryId&&selected[0].trackingCategoryId!==current.saleCategory.trackingCategoryId)throw new ConflictException('The PTY Type of Sale changed. Review and prepare this commission again.');
      }
      if(!current||current.issue||current.collegeId!==snapshot.collegeId||current.catalogue?.connectionId!==snapshot.connectionId||commissionHash(current.rule)!==commissionHash(snapshot.rule)||current.mapping?.xero_contact_id!==snapshot.contactId||current.mapping?.revision!==snapshot.mappingRevision||current.catalogue?.revision!==snapshot.catalogueRevision)throw new ConflictException('The PTY rule, contact or catalogue changed. Review the calculation again.');
+     await db.query(`SELECT 1 FROM ${s}.student_operations_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 FOR UPDATE`,[p.tenantId,snapshot.connectionId,snapshot.contactId]);
+     const archiving=await db.query(`SELECT 1 FROM ${s}.student_case_deletions d,jsonb_array_elements(coalesce(d.targets->'contacts','[]')) c
+       WHERE d.customer_id=$1 AND d.completed_at IS NULL AND c->>'connectionId'=$2::text AND c->>'contactId'=$3::text LIMIT 1`,[p.tenantId,snapshot.connectionId,snapshot.contactId]);
+     if(archiving.rowCount)throw new ConflictException('Finish the case deletion using this college contact before creating a commission.');
      const fresh=await db.query(`SELECT 1 FROM ${s}.student_xero_sales_catalogues cat
       JOIN ${s}.student_operations_xero_sync_configurations cfg USING(customer_id,xero_connection_id)
       JOIN ${s}.xero_connections x USING(customer_id,xero_connection_id)

@@ -1,7 +1,7 @@
 {
   "studentPtyIntegration": {
     "updatedOn": "2026-11-13",
-    "status": "completed_invoice_preparation_visibility_fix_verified_deployment_pending",
+    "status": "completed_pty_invoice_lifecycle_backend_release_pending",
     "authorization": "User approved beginning the phased implementation. Preserve bulk TRUST creation. Requested alternating tabs INV-1 (TRUST), INV-1 (PTY), INV-2 (TRUST), INV-2 (PTY). TRUST recipient is student/reference college; PTY recipient is college/reference student. Explicit Sophia relationships must supplement, not replace, these Xero conventions.",
     "implemented": [
       "Explicit operating-role assignment in Company and guarded Runtime endpoint; refuse changing an assigned organisation between TRUST and PTY; refresh no longer silently assigns TRUST",
@@ -25,7 +25,8 @@
       "PTY commission lines inherit each corresponding TRUST tuition quantity (sum of same-item positive tuition lines), and divide the instalment commission into a four-decimal unit price using integer arithmetic. Exact rounded commission cents are preserved; unrepresentable totals are blocked. The API guards pending legacy one-unit drafts until re-prepared, while created/uncertain receipts keep their recorded payloads for safe display and reconciliation.",
       "PTY Type of Sale is selected per instalment from active Xero options cached by the existing durable daily catalogue importer, defaulting to Instalment. Immutable snapshots retain the selection; local and live dispatch guards reject removed options. Existing clients can omit the choice. Smaller invoice tabs retain 44px touch targets and highlight the active tab green in light/dark layouts. Frontend changes remain local by explicit user instruction.",
       "Fixed catalogue refresh deadlock after allowance expiry: required Type of Sale tracking settings read now runs first as a real operational request under existing atomic quota/backoff admission; remaining catalogue reads retain discovery reserve protection. No extra provider call, probe job, schedule or page-level Xero request. TRUST labels no longer depend on asynchronous PTY availability; PTY prerequisites share one notice and an unavailable selector is disabled.",
-      "Case linked invoices include confirmed PTY commission receipts alongside TRUST, with server-side Both/TRUST/PTY filtering, connection-scoped identities, local snapshot fallbacks, and safe read-only PTY details. Counts avoid line JSON expansion. Local frontend closes a fully successful paired batch, preserves partial failures, and cancels stale filter requests."
+      "Case linked invoices include confirmed PTY commission receipts alongside TRUST, with server-side Both/TRUST/PTY filtering, connection-scoped identities, local snapshot fallbacks, and safe read-only PTY details. Counts avoid line JSON expansion. Local frontend closes a fully successful paired batch, preserves partial failures, and cancels stale filter requests.",
+      "PTY linked invoices use the existing guarded edit/delete/void workflow with the operating catalogue, preserved college recipient/student reference and Type of Sale. Case archive checks active PTY work; permanent deletion preflights both organisations, protects paid/credited invoices, preserves shared college contacts and checks remaining provider transactions before archiving an unused college. Migration 130 purges dependent PTY records before TRUST receipts without new Runtime DELETE grants."
     ],
     "remaining": [
       "All invoice editor frontend follow-ups remain local/uncommitted/unpublished per explicit user instruction. User should reopen Prepare invoices to load the successfully imported PTY settings; no manual connection test or migration is needed.",
@@ -127,8 +128,23 @@
     "preparationVisibilityFix": {
       "cause": "pairedReady depended only on an enabled operating organisation, so completed paired batches still returned preparation and kept the Prepare invoices action visible.",
       "change": "Require an unfinished commission sequence for the current case/current offer, scoped to tenant and batch. Missing, not_attempted, creating and review_required receipts retain preparation; created receipts complete it. Existing initial and partial TRUST preparation rules remain. Uses the existing local read query with indexed receipt lookups and no additional provider calls.",
-      "verification": "Runtime build and 23 draft/creation tests passed. Exact compiled service READ ONLY under tenant app-role/RLS returns preparationAvailable=false for the reported case; confirmed created receipt counts remain TRUST=8 and PTY=8. No financial writes.",
-      "deployment": "Backend only; no frontend change or migration required. Deployment pending."
+      "verification": "Runtime build and 23 draft/creation tests passed. Exact compiled service READ ONLY under tenant app-role/RLS returns preparationAvailable=false for the reported case; confirmed created receipt counts remain TRUST=8 and PTY=8. No financial writes. Protected real-estate regression suite passed 8 suites/38 tests.",
+      "deployment": "Backend 82ac8193e7e7 verified live via Runtime health ok=true on 13 November 2026 Brisbane. No frontend change or migration required."
+    },
+    "ptyLifecycle": {
+      "status": "migration_applied_backend_deployment_pending",
+      "migration": "130_student_case_pty_lifecycle.sql",
+      "migrationVerification": "Applied to configured production owner connection; application cannot execute internal purge or directly delete commission receipts; guarded wrapper permission retained. No financial records changed during verification.",
+      "verification": [
+        "Runtime npm run build passed.",
+        "Disposable PostgreSQL case lifecycle suite: 9 focused tests passed, 40 unrelated tests skipped; includes individual/bulk PTY removal, correct catalogue/projection, payment protection, shared and unused college behavior, completed receipt retries, and release of contact reservations after failed preflight.",
+        "Five Runtime invoice/client suites: 94 tests passed including 31 PostgreSQL commission cases.",
+        "Frontend case invoice and case view browser suites: 167 passed.",
+        "Frontend TypeScript check and production build passed; existing budget/CommonJS/missing primeicons stylesheet warnings remain.",
+        "Protected real-estate gate: 8 suites / 38 tests passed.",
+        "Production read-only application-role audit of reported case: 16 linked invoices, 8 TRUST and 8 PTY, all editable/removable under current local policy. No live Xero edits or deletes were used as tests."
+      ],
+      "frontend": "Local changes only; not committed, pushed or deployed, as requested."
     }
   },
   "studentInvoiceCollegeSelection": {

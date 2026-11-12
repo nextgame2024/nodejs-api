@@ -8,15 +8,27 @@ import {hasStudentOperationsPermission} from './student-operations-policy.js';
 import {studentDocumentTempStorage} from './student-document-temp-storage.js';
 import {invoiceRemovalAction} from './student-invoice-removal-policy.js';
 import type {StudentOperationsWorkspacePrincipal as Principal} from './student-operations-workspace.service.js';
-type Invoice={connectionId:string;invoiceId:string;contactId:string};
-type Contact={connectionId:string;contactId:string};
-type Targets={invoices:Invoice[];contacts:Contact[];mutating?:boolean;tempKeys?:string[]};
+type Invoice={connectionId:string;invoiceId:string;contactId:string;college?:boolean};
+type Contact={connectionId:string;contactId:string;college?:boolean};
+type Targets={invoices:Invoice[];contacts:Contact[];mutating?:boolean;paired?:boolean;tempKeys?:string[]};
 const body=z.object({recordVersion:z.number().int().positive(),confirmed:z.literal(true)}).strict();
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 /** Durable provider-first deletion. Provider outcomes are re-read on every retry. */
 @Injectable()
 export class StudentCaseDeletionsService{
   constructor(@Inject(DatabaseService) private readonly database:DatabaseService,private readonly cases:StudentOperationsCasesService,private readonly xero:XeroConnectorService){}
+  private async collegeUsed(db:import('pg').PoolClient,tenant:string,id:string,contact:Contact){
+    const s=caseSchema();
+    return !!(await db.query(`SELECT 1 FROM ${s}.student_college_xero_contact_links m
+      JOIN ${s}.student_operations_case_colleges c ON c.customer_id=m.customer_id AND c.college_id=m.college_id
+      WHERE m.customer_id=$1 AND m.xero_connection_id=$2 AND m.xero_contact_id=$3 AND c.case_id<>$4
+      UNION ALL SELECT 1 FROM ${s}.student_commission_exports WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 AND case_id<>$4
+        AND (status IN ('creating','review_required') OR status='created' AND coalesce(provider_status,'DRAFT') NOT IN ('DELETED','VOIDED'))
+      UNION ALL SELECT 1 FROM ${s}.student_commission_drafts WHERE customer_id=$1 AND case_id<>$4 AND snapshot->>'connectionId'=$2::text AND snapshot->>'contactId'=$3::text
+      UNION ALL SELECT 1 FROM ${s}.student_case_deletions d,jsonb_array_elements(coalesce(d.targets->'contacts','[]')) c
+        WHERE d.customer_id=$1 AND d.case_id<>$4 AND d.completed_at IS NULL AND c->>'connectionId'=$2::text AND c->>'contactId'=$3::text
+      LIMIT 1`,[tenant,contact.connectionId,contact.contactId,id])).rowCount;
+  }
   async remove(p:Principal,id:string,input:unknown,key?:string){
     if(!['cases.manage','payments.prepare','payments.read_all'].every(permission=>hasStudentOperationsPermission(p.role,permission as Parameters<typeof hasStudentOperationsPermission>[1])))throw new ForbiddenException();
     caseId(id);const parsed=body.safeParse(input);
@@ -47,7 +59,8 @@ export class StudentCaseDeletionsService{
       if(active)throw new ConflictException('Document or invoice work is still running. Try deletion when it finishes.');
       // Unlike reversible archiving, permanent deletion cannot abandon an
       // uncertain provider creation. Resolve its existing receipt first.
-      const uncertain=await db.query(`SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status IN ('creating','review_required')`,[p.tenantId,id]);
+      const uncertain=await db.query(`SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status IN ('creating','review_required')
+        UNION ALL SELECT 1 FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status IN ('creating','review_required')`,[p.tenantId,id]);
       if(uncertain.rowCount)throw new ConflictException('An earlier invoice creation needs confirmation before this case can be permanently deleted.');
       // Archived cases still own this student's contact. Permanent deletion
       // must be explicit for every case before the contact can be archived.
@@ -55,21 +68,27 @@ export class StudentCaseDeletionsService{
       let targets=prior?.targets as Targets|undefined;
       // Old interrupted jobs may contain contacts selected by the former
       // archived-siblings rule. Reapply the current policy on every retry.
-      if(targets?.mutating&&hasOtherCase)targets={...targets,contacts:[]};
+      if(targets?.mutating&&hasOtherCase)targets={...targets,contacts:targets.contacts.filter(c=>c.college)};
+      // Upgrade an interrupted pre-PTY plan before continuing provider work.
+      if(targets?.mutating&&!targets.paired){
+        const pty=(await db.query(`SELECT xero_connection_id AS "connectionId",xero_invoice_id AS "invoiceId",xero_contact_id AS "contactId",true AS college FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'`,[p.tenantId,id])).rows as Invoice[];
+        targets={...targets,paired:true,invoices:[...new Map([...targets.invoices,...pty].map(i=>[`${i.connectionId}:${i.invoiceId}`,i])).values()]};
+      }
       if(!targets?.mutating){
         const invoices=(await db.query(`WITH ids AS (
           SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
-          UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created')
-          SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",coalesce(i.xero_contact_id,e.xero_contact_id) AS "contactId"
+          UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'
+          UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status='created')
+          SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",coalesce(i.xero_contact_id,e.xero_contact_id,ce.xero_contact_id) AS "contactId",ce.xero_invoice_id IS NOT NULL AS college
           FROM ids LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
-          LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id`,[p.tenantId,id])).rows as Invoice[];
+          LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id
+          LEFT JOIN ${s}.student_commission_exports ce ON ce.customer_id=$1 AND ce.case_id=$2 AND ce.xero_connection_id=ids.xero_connection_id AND ce.xero_invoice_id=ids.xero_invoice_id`,[p.tenantId,id])).rows as Invoice[];
         if(invoices.some(i=>!i.contactId))throw new ConflictException('Refresh invoice details before deleting this case.');
-        const shared=await db.query(`SELECT 1 FROM ${s}.student_case_xero_invoice_exports e JOIN ${s}.student_operations_case_invoice_links l
-          ON l.customer_id=e.customer_id AND l.xero_connection_id=e.xero_connection_id AND l.xero_invoice_id=e.xero_invoice_id
-          WHERE e.customer_id=$1 AND ((e.case_id=$2 AND l.case_id<>$2) OR (l.case_id=$2 AND e.case_id<>$2))
-          UNION ALL SELECT 1 FROM ${s}.student_case_xero_invoice_exports a JOIN ${s}.student_case_xero_invoice_exports b
-          ON a.customer_id=b.customer_id AND a.xero_connection_id=b.xero_connection_id AND a.xero_invoice_id=b.xero_invoice_id
-          WHERE a.customer_id=$1 AND a.case_id=$2 AND b.case_id<>$2`,[p.tenantId,id]);
+        const shared=await db.query(`WITH all_links AS (
+          SELECT case_id,xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1
+          UNION SELECT case_id,xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND status='created'
+          UNION SELECT case_id,xero_connection_id,xero_invoice_id FROM ${s}.student_commission_exports WHERE customer_id=$1 AND status='created')
+          SELECT 1 FROM all_links a JOIN all_links b USING(xero_connection_id,xero_invoice_id) WHERE a.case_id=$2 AND b.case_id<>$2 LIMIT 1`,[p.tenantId,id]);
         if(shared.rowCount)throw new ConflictException('An invoice is shared with another case. Resolve its case links before deletion.');
         let contacts:Contact[]=[];
         if(!hasOtherCase){
@@ -77,7 +96,7 @@ export class StudentCaseDeletionsService{
             UNION SELECT xero_connection_id,xero_contact_id FROM ${s}.student_operations_document_contacts WHERE customer_id=$1 AND student_id=$2 AND xero_contact_id IS NOT NULL
             UNION SELECT xero_connection_id,xero_contact_id FROM ${s}.student_operations_xero_invoices WHERE customer_id=$1 AND student_id=$3 AND xero_contact_id IS NOT NULL
             UNION SELECT xero_connection_id,xero_contact_id FROM ${s}.student_operations_student_contact_links WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id,c.student_reference])).rows as Contact[];
-          contacts=[...new Map([...contacts,...invoices.map(i=>({connectionId:i.connectionId,contactId:i.contactId}))].map(c=>[`${c.connectionId}:${c.contactId}`,c])).values()];
+          contacts=[...new Map([...contacts,...invoices.filter(i=>!i.college).map(i=>({connectionId:i.connectionId,contactId:i.contactId}))].map(c=>[`${c.connectionId}:${c.contactId}`,c])).values()];
           for(const contact of contacts){
             const sharedContact=await db.query(`SELECT 1 FROM ${s}.student_operations_primary_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 AND student_id<>$4
               UNION ALL SELECT 1 FROM ${s}.student_operations_document_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 AND student_id<>$4
@@ -85,13 +104,18 @@ export class StudentCaseDeletionsService{
             if(sharedContact.rowCount)throw new ConflictException('A contact belongs to another student and cannot be archived by deleting this case.');
           }
         }
+        for(const contact of [...new Map(invoices.filter(i=>i.college).map(i=>[`${i.connectionId}:${i.contactId}`,{connectionId:i.connectionId,contactId:i.contactId,college:true}])).values()]){
+          // The same row lock is taken by commission creation before its claim.
+          await db.query(`SELECT 1 FROM ${s}.student_operations_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 FOR UPDATE`,[p.tenantId,contact.connectionId,contact.contactId]);
+          if(!await this.collegeUsed(db,p.tenantId,id,contact))contacts.push(contact);
+        }
         const tempKeys:string[]=[];
         if(studentDocumentTempStorage.enabled){
           const sources=await db.query(`SELECT upload_id AS operation_id,content_sha256 FROM ${s}.student_operations_document_uploads WHERE customer_id=$1 AND case_id=$2
             UNION SELECT replacement_id,content_sha256 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND case_id=$2`,[p.tenantId,id]);
           for(const source of sources.rows)tempKeys.push(studentDocumentTempStorage.key(p.tenantId,id,source.operation_id,source.content_sha256));
         }
-        targets={invoices,contacts,tempKeys};
+        targets={invoices,contacts,tempKeys,paired:true};
       }
       await db.query(`INSERT INTO ${s}.student_case_deletions(customer_id,case_id,student_id,actor_identity_user_id,idempotency_key,record_version,targets,lease_token,lease_expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '5 minutes') ON CONFLICT(customer_id,case_id) DO UPDATE SET targets=excluded.targets,lease_token=excluded.lease_token,lease_expires_at=excluded.lease_expires_at`,[p.tenantId,id,c.student_id,p.identityUserId,key,version,JSON.stringify(targets),lease]);
@@ -128,7 +152,12 @@ export class StudentCaseDeletionsService{
         await this.database.tenantTransaction(p.tenantId,db=>db.query(`UPDATE ${s}.student_operations_xero_invoices SET invoice_status=$4,amount_due=0,updated_at=now() WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3`,[p.tenantId,invoice.connectionId,invoice.invoiceId,invoice.target??invoice.status]));
       });
       for(const contact of job.targets.contacts){
-        await renew();const existing=await this.xero.contactById(p.tenantId,contact.connectionId,contact.contactId);
+        await renew();
+        if(contact.college){
+          const used=await this.database.tenantReadTransaction(p.tenantId,db=>this.collegeUsed(db,p.tenantId,id,contact));
+          if(used||await this.xero.contactHasTransactions(p.tenantId,contact.connectionId,contact.contactId))continue;
+        }
+        const existing=await this.xero.contactById(p.tenantId,contact.connectionId,contact.contactId);
         if(existing.contactId!==contact.contactId)throw new ConflictException('The contact no longer matches this case.');
         if(existing.status!=='ARCHIVED'){const result=await this.xero.archiveContact(p.tenantId,contact.connectionId,contact.contactId,hash(`case-contact-archive:${p.tenantId}:${contact.connectionId}:${contact.contactId}`));
           if(result.contactId!==contact.contactId||result.status!=='ARCHIVED')throw new ConflictException('Contact archiving could not be confirmed. Retry Delete case.');}
@@ -145,7 +174,7 @@ export class StudentCaseDeletionsService{
     }catch(error){
       await this.database.tenantTransaction(p.tenantId,async db=>{
         if(!mutating)await db.query(`UPDATE ${s}.student_operations_cases SET deleting_at=NULL WHERE customer_id=$1 AND case_id=$2 AND EXISTS(SELECT 1 FROM ${s}.student_case_deletions WHERE customer_id=$1 AND case_id=$2 AND lease_token=$3)`,[p.tenantId,id,lease]);
-        await db.query(`UPDATE ${s}.student_case_deletions SET lease_token=NULL,lease_expires_at=NULL WHERE customer_id=$1 AND case_id=$2 AND lease_token=$3`,[p.tenantId,id,lease]);
+        await db.query(`UPDATE ${s}.student_case_deletions SET lease_token=NULL,lease_expires_at=NULL,targets=CASE WHEN $4 THEN targets ELSE jsonb_set(targets,'{contacts}','[]'::jsonb) END WHERE customer_id=$1 AND case_id=$2 AND lease_token=$3`,[p.tenantId,id,lease,mutating]);
       }).catch(()=>{}); // A database outage leaves a bounded lease for recovery.
       if((error as {code?:string}).code==='23503')throw new ConflictException('The student still has related records that must be resolved before deletion can finish.');
       throw error;

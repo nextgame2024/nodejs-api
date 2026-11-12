@@ -119,7 +119,7 @@ export class StudentCaseInvoiceDraftsService {
       EXISTS(SELECT 1 FROM ${caseSchema()}.student_operations_case_colleges c WHERE c.customer_id=d.customer_id AND c.college_id=d.college_id AND c.case_id=$2 AND c.is_primary) AS "isPrimary"
       FROM ${caseSchema()}.student_operations_college_directory d WHERE d.customer_id=$1 ORDER BY lower(d.college_name),d.college_id`,[tenant,id])).rows;
   }
-  async manualOptions(p:Principal,id:string,forEdit=false){
+  async manualOptions(p:Principal,id:string,forEdit=false,role:'trust'|'operating'='trust'){
     const startedAt=Date.now();
     this.financial(p);if(!hasStudentOperationsPermission(p.role,'payments.prepare')||!hasStudentOperationsPermission(p.role,'payments.approve')||!forEdit&&!this.canCreate(p))throw new ForbiddenException();
     const options=await this.database.tenantReadTransaction(p.tenantId,async db=>{
@@ -128,7 +128,7 @@ export class StudentCaseInvoiceDraftsService {
       const advisors=(await db.query(`SELECT advisor_id AS "advisorId",code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND status='active' ORDER BY lower(name),advisor_id`,[p.tenantId])).rows;
       const student=(await db.query(`SELECT legal_name AS name,advisor_id AS "advisorId" FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const colleges=await this.colleges(db,p.tenantId,id);
-      return {caseVersion:c.record_version,advisors,student,colleges,catalogue:await readSalesCatalogue(db,p.tenantId)};
+      return {caseVersion:c.record_version,advisors,student,colleges,catalogue:await readSalesCatalogue(db,p.tenantId,false,role)};
     });
     const localMs=Date.now()-startedAt;
     // Prefer the durable catalogue; old snapshots use a bounded settings cache.

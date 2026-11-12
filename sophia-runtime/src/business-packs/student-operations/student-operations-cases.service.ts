@@ -169,6 +169,7 @@ export class StudentOperationsCasesService {
           EXISTS(SELECT 1 FROM ${s}.student_operations_document_replacements WHERE customer_id=$1 AND case_id=$2 AND status<>'completed' AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_operations_document_deletions WHERE customer_id=$1 AND case_id=$2 AND status<>'completed' AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='creating' AND requested_at>now()-interval '2 minutes') OR
+          EXISTS(SELECT 1 FROM ${s}.student_commission_exports WHERE customer_id=$1 AND case_id=$2 AND status='creating' AND requested_at>now()-interval '2 minutes') OR
           EXISTS(SELECT 1 FROM ${s}.student_case_invoice_edits WHERE customer_id=$1 AND case_id=$2 AND NOT completed AND NOT failed AND lease_token IS NOT NULL AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_case_invoice_removals WHERE customer_id=$1 AND case_id=$2 AND NOT completed AND lease_expires_at>now()) OR
           EXISTS(SELECT 1 FROM ${s}.student_operations_primary_xero_contacts WHERE customer_id=$1 AND student_id=$3 AND lease_expires_at>now()) AS pending`,[p.tenantId,id,row.student_id])).rows[0]?.pending;
@@ -328,7 +329,7 @@ export class StudentOperationsCasesService {
         ${filter}`,[p.tenantId,id]);
       const canRemove=financial&&hasStudentOperationsPermission(p.role,'cases.manage')&&hasStudentOperationsPermission(p.role,'payments.prepare');
       const canEdit=canRemove&&hasStudentOperationsPermission(p.role,'payments.approve');
-      return {invoices:rows.rows.map(row=>({...row,canEdit:!!canEdit&&row.organisation!=='PTY'&&invoiceCanEdit(row),removalAction:canRemove&&row.organisation!=='PTY'?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
+      return {invoices:rows.rows.map(row=>({...row,canEdit:!!canEdit&&invoiceCanEdit(row),removalAction:canRemove?invoiceRemovalAction(row):null})),total:count.rows[0].total,page:q.page,limit:q.limit};
     });
   }
 

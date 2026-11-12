@@ -127,6 +127,13 @@ describe("XeroClient", () => {
       .toMatchObject({invoiceId:id,invoice:{invoiceId:id,contactId:contact,invoiceDate:'2026-10-28',dueDate:'2026-11-01',lineItems:[{description:'Tuition',quantity:1,unitAmount:100,accountCode:'812'}]}});
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it('checks contact usage with bounded queries and fails closed on malformed responses',async()=>{
+    const contact='22222222-2222-4222-8222-222222222222',fetchMock=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Invoices:[{InvoiceID:'existing'}]})));
+    const client=new XeroClient();expect(await client.contactHasRecords('token','tenant',contact,'Invoices')).toBe(true);
+    const url=new URL(String(fetchMock.mock.calls[0]?.[0]));expect(url.searchParams.get('pageSize')).toBe('1');expect(url.searchParams.get('where')).toContain(contact);expect(url.searchParams.get('where')).toContain('Status!="DELETED"');
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({CreditNotes:[]})));expect(await client.contactHasRecords('token','tenant',contact,'CreditNotes')).toBe(false);
+    fetchMock.mockResolvedValueOnce(new Response('{}'));await expect(client.contactHasRecords('token','tenant',contact,'Overpayments')).rejects.toThrow('could not be verified');
+  });
   it('reads a created invoice by id and finds bounded same-day app-created candidates for reconciliation',async()=>{
     const invoiceId='11111111-1111-4111-8111-111111111111',contactId='22222222-2222-4222-8222-222222222222',payload={Invoices:[{InvoiceID:invoiceId,InvoiceNumber:'INV-10577',Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:contactId},DateString:'2026-10-27',DueDateString:'2026-10-27',CurrencyCode:'AUD',Reference:'Fixture College',Total:970,LineItems:[]}]};
     const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify(payload)));
