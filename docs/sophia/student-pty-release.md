@@ -46,3 +46,9 @@ Read-only verification on 11 November: 1,548 active and 130 archived contacts (1
 Deploy Runtime before the frontend: commission preparation now accepts sequence-only selections and derives each PTY item from the saved corresponding TRUST tuition code. Supplied legacy item IDs must match that derived item. Missing or ambiguous PTY codes and multiple different tuition codes in one instalment remain pending instead of guessing. No schema migration is needed.
 
 Per-invoice actions are named Create Xero Invoice and align right. PTY creation remains disabled until that exact TRUST sequence has a confirmed Xero creation receipt. The general Create Xero invoices action uses the existing ordered orchestration; Xero invoices remain unsent DRAFT. Individual TRUST creation remains independent when PTY configuration is unavailable.
+
+### Shared invoice header, PTY table and inherited quantity (12 November 2026)
+
+The active invoice number, organisation and status share one header style immediately before Close. PTY follows the TRUST fields/table/totals layout, including responsive cards. PTY quantity comes from the corresponding positive TRUST tuition lines for the matched item; price is the rounded commission divided by that quantity. For tuition 3,840, quantity 12 and commission 25%, the saved Xero line is quantity 12, unit amount 80.00, net 960.00, GST 96.00 and total 1,056.00.
+
+Unit prices use up to four decimals and integer arithmetic. A total that cannot retain both the source quantity and the exact rounded cents is held for review. The creation gate rejects pending legacy one-unit payloads until re-prepared; created and unknown-outcome payloads remain unchanged for safe reconciliation. Deploy Runtime first, then frontend. No migration or worker configuration change is needed.

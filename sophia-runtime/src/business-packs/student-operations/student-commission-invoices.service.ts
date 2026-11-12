@@ -5,7 +5,7 @@ import type {PoolClient} from 'pg';
 import {DatabaseService} from '../../database/database.service.js';
 import {XeroConnectorService} from '../../connectors/xero/xero-connector.service.js';
 import type {XeroInvoiceCreate,XeroInvoiceRecord} from '../../connectors/xero/xero.client.js';
-import {lineTaxMinor} from '../../connectors/xero/xero-sales-catalogue.js';
+import {lineTaxMinor,scaled4} from '../../connectors/xero/xero-sales-catalogue.js';
 import {StudentOperationsCasesService,caseSchema} from './student-operations-cases.service.js';
 import type {StudentOperationsWorkspacePrincipal as Principal} from './student-operations-workspace.service.js';
 import {hasStudentOperationsPermission} from './student-operations-policy.js';
@@ -13,7 +13,7 @@ import {invoiceSnapshot,xeroPreflightFailure,type InvoiceSnapshot} from './stude
 import {invoiceDraftXeroValue,matchesXeroInvoice,exactXeroInvoiceMatches} from './student-case-invoice-matching.js';
 import {readSalesCatalogue} from './student-xero-sales-catalogue.js';
 import {commissionTuitionItemCode} from './student-commission-items.js';
-import {commissionAmount,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
+import {commissionAmount,commissionPricing,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
 
 const selection=z.object({sequence:z.number().int().positive(),itemId:z.uuid().optional()}).strict();
 const prepare=z.object({batchRevision:z.number().int().positive(),selections:z.array(selection).min(1).max(200)}).strict();
@@ -56,7 +56,8 @@ export class StudentCommissionInvoicesService{
    const o=await this.optionsIn(db,p,collegeId);
    // Send the selectable items once; the full catalogue and mapping identifiers
    // remain server-side. Tab changes reuse this local response.
-   return {available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
+   const itemAccounts=new Set(o.items.map(i=>i.accountCode));
+   return {accounts:o.catalogue?.accounts.filter(a=>itemAccounts.has(a.code))??[],available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
   });
  }
  private async batch(db:PoolClient,p:Principal,id:string,batchId:string,lock=false){
@@ -106,8 +107,9 @@ export class StudentCommissionInvoicesService{
     if(!item.accountCode)throw new BadRequestException('The matching PTY item needs a sales account.');
     if(selected.itemId&&selected.itemId!==item.itemId)throw new BadRequestException('The PTY item must match the corresponding TRUST tuition item. Reload the invoice preview.');
     const calculation=commissionAmount(invoice.lines.map(l=>({kind:l.kind,amountMinor:l.amountMinor})),o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
+    const pricing=commissionPricing(invoice.lines,calculation.commissionMinor);
     const value:XeroInvoiceCreate={contactId:o.mapping.xero_contact_id,date:invoice.issueDate,dueDate:invoice.dueDate,reference:b.snapshot.studentName,currencyCode:b.snapshot.currency,brandingThemeId:o.theme.brandingThemeId,
-     lines:[{description:`Student Name: ${b.snapshot.studentName}\nCommission for INV-${invoice.sequence}\n${invoice.lines.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`.slice(0,4000),quantity:'1',unitAmount:(calculation.commissionMinor/100).toFixed(2),itemCode:item.code,accountCode:item.accountCode,taxType:o.tax.taxType,tracking:[{name:'Type of Sale',option:'Instalment'}]}]};
+     lines:[{description:`Student Name: ${b.snapshot.studentName}\nCommission for INV-${invoice.sequence}\n${invoice.lines.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`.slice(0,4000),quantity:pricing.quantity,unitAmount:pricing.unitAmount,itemCode:item.code,accountCode:item.accountCode,taxType:o.tax.taxType,tracking:[{name:'Type of Sale',option:'Instalment'}]}]};
     const snapshot:Snapshot={connectionId:o.catalogue.connectionId,contactId:o.mapping.xero_contact_id,mappingRevision:o.mapping.revision,collegeId:o.collegeId,collegeName:o.collegeName,catalogueRevision:o.catalogue.revision,rule:o.rule,calculation,taxMinor,totalMinor:calculation.commissionMinor+taxMinor,value};
     await db.query(`INSERT INTO ${s}.student_commission_drafts(customer_id,case_id,batch_id,sequence,source_hash,snapshot,prepared_by) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)
      ON CONFLICT(customer_id,batch_id,sequence) DO UPDATE SET source_hash=EXCLUDED.source_hash,snapshot=EXCLUDED.snapshot,prepared_by=EXCLUDED.prepared_by,prepared_at=now(),revision=student_commission_drafts.revision+1`,[p.tenantId,id,batchId,selected.sequence,commissionHash(sourceValue(b.snapshot,invoice)),JSON.stringify(snapshot),p.identityUserId]);
@@ -150,6 +152,8 @@ export class StudentCommissionInvoicesService{
      if(e&&e.status!=='not_attempted')return {existing:e.status};
      const source=b.snapshot.invoices.find(i=>i.sequence===sequence),snapshot=d.snapshot as Snapshot;
      if(!source||commissionHash(sourceValue(b.snapshot,source))!==d.source_hash)throw new ConflictException('The TRUST draft changed. Prepare the PTY calculation again.');
+     const pricing=commissionPricing(source.lines,snapshot.calculation.commissionMinor),line=snapshot.value.lines[0];
+     if(snapshot.value.lines.length!==1||scaled4(line.quantity)!==scaled4(pricing.quantity)||scaled4(line.unitAmount)!==scaled4(pricing.unitAmount))throw new ConflictException('The PTY quantity or price no longer matches TRUST. Prepare the PTY calculation again.');
      if(!current||current.issue||current.collegeId!==snapshot.collegeId||current.catalogue?.connectionId!==snapshot.connectionId||commissionHash(current.rule)!==commissionHash(snapshot.rule)||current.mapping?.xero_contact_id!==snapshot.contactId||current.mapping?.revision!==snapshot.mappingRevision||current.catalogue?.revision!==snapshot.catalogueRevision)throw new ConflictException('The PTY rule, contact or catalogue changed. Review the calculation again.');
      const fresh=await db.query(`SELECT 1 FROM ${s}.student_xero_sales_catalogues cat
       JOIN ${s}.student_operations_xero_sync_configurations cfg USING(customer_id,xero_connection_id)

@@ -117,6 +117,24 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await prepareAll();const rows=await service.list(p,caseId,batchId),s=rows.items[0].snapshot as any;
   expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({itemCode:'TUITION',unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment'}]})]});
  });
+ it('saves 12 units at 80 dollars for 960 dollars commission and 96 dollars GST',async()=>{
+  const changed=structuredClone(snapshot),tuition=changed.invoices[0].lines[0];
+  tuition.quantity='12';tuition.unitPrice='320.00';tuition.unitAmountMinor=32000;tuition.amountMinor=384000;changed.invoices[0].totalMinor=386500;
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET snapshot=$1`,[JSON.stringify(changed)]);
+  await pool.query('UPDATE public.bm_college_commission_rules SET commission_basis_points=2500 WHERE company_id=$1',[tenant]);
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1}]});
+  const row=(await service.list(p,caseId,batchId)).items[0].snapshot;
+  expect(row.value.lines[0]).toMatchObject({quantity:'12',unitAmount:'80.00',itemCode:'TUITION',accountCode:'200'});
+  expect(row.calculation.commissionMinor).toBe(96000);expect(row.taxMinor).toBe(9600);expect(row.totalMinor).toBe(105600);
+ });
+ it('refuses a legacy pending one-unit commission until its TRUST quantity is prepared again',async()=>{
+  const changed=structuredClone(snapshot);changed.invoices[0].lines[0].quantity='12';
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET snapshot=$1`,[JSON.stringify(changed)]);
+  await prepareAll();await trustReceipts();
+  await pool.query(`UPDATE ${schema}.student_commission_drafts SET snapshot=jsonb_set(jsonb_set(snapshot,'{value,lines,0,quantity}','"1"'::jsonb),'{value,lines,0,unitAmount}','"30.00"'::jsonb)`);
+  const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});
+  expect(result.results[0]).toMatchObject({status:'not_attempted',message:expect.stringContaining('quantity or price')});expect(createInvoice).not.toHaveBeenCalled();
+ });
  it('derives the PTY item from saved TRUST tuition using organisation-local IDs',async()=>{
   await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1}]});
   expect((await service.list(p,caseId,batchId)).items[0].snapshot.value.lines[0]).toMatchObject({itemCode:'TUITION',accountCode:'200',taxType:'OUTPUT'});

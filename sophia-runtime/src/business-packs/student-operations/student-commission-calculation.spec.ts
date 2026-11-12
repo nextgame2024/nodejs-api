@@ -1,5 +1,5 @@
 import {describe,expect,it,jest} from '@jest/globals';
-import {commissionAmount,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
+import {commissionAmount,commissionPricing,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
 import {StudentCommissionInvoicesController} from './student-commission-invoices.controller.js';
 const rule:CommissionRule={rule_id:'rule',college_id:'college',commission_basis_points:3000,calculation_method:'tuition_fee_percentage',rounding_decimal_places:2,cashback_status:'not_recorded',bonus_status:'not_applicable',classification:null,location:null,program:null,application_conditions:'TRUST tuition fees only. Excludes Enrolment, Materials, and Other Fees.',active:true,updatedat:'2026-11-11T00:00:00Z'};
 describe('standard college commissions',()=>{
@@ -32,5 +32,22 @@ describe('paired invoice ordering',()=>{
  it('does not reach PTY if TRUST authorization or validation fails',async()=>{
   const trust={createXero:jest.fn(async()=>{throw new Error('denied');})},commissions={create:jest.fn()};
   await expect(new StudentCommissionInvoicesController(commissions as never,trust as never).createPaired(request,'case','batch',{trustSequences:[1],ptySequences:[1],confirmed:true})).rejects.toThrow('denied');expect(commissions.create).not.toHaveBeenCalled();
+ });
+});
+
+describe('PTY quantity and unit price',()=>{
+ it('retains the TRUST quantity and divides the commission across its units',()=>{
+  expect(commissionPricing([{kind:'tuition',amountMinor:384000,quantity:'12'}],96000)).toEqual({quantity:'12',unitAmount:'80.00'});
+ });
+ it('supports fractional quantities and four-decimal unit prices without changing the net amount',()=>{
+  expect(commissionPricing([{kind:'tuition',amountMinor:384000,quantity:'12.5'}],96000)).toEqual({quantity:'12.5',unitAmount:'76.80'});
+  expect(commissionPricing([{kind:'tuition',amountMinor:100,quantity:'3'}],100)).toEqual({quantity:'3',unitAmount:'0.3333'});
+ });
+ it('sums matching tuition quantities and excludes fees and free lines',()=>{
+  expect(commissionPricing([{kind:'tuition',amountMinor:100000,quantity:'3'},{kind:'tuition',amountMinor:284000,quantity:'9'},{kind:'materials',amountMinor:5000,quantity:'1'},{kind:'tuition',amountMinor:0,quantity:'4'}],96000)).toEqual({quantity:'12',unitAmount:'80.00'});
+ });
+ it('blocks invalid quantities and unrepresentable totals instead of changing quantities or cents',()=>{
+  for(const quantity of ['0','-1','not-a-number','1.12345'])expect(()=>commissionPricing([{kind:'tuition',amountMinor:384000,quantity}],96000)).toThrow();
+  expect(()=>commissionPricing([{kind:'tuition',amountMinor:10,quantity:'200'}],1)).toThrow('exact total');
  });
 });

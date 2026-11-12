@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {BadRequestException} from '@nestjs/common';
+import {pricedLineMinor,scaled4} from '../../connectors/xero/xero-sales-catalogue.js';
 
 export type CommissionRule={rule_id:string;college_id:string;commission_basis_points:number;calculation_method:string;rounding_decimal_places:number;
   cashback_status:string;bonus_status:string;classification:string|null;location:string|null;program:string|null;application_conditions:string|null;active:boolean;updatedat:Date|string};
@@ -25,6 +26,17 @@ export function commissionAmount(lines:Array<{kind?:unknown;amountMinor?:unknown
   const commissionMinor=(tuitionMinor*BigInt(basisPoints)+5000n)/10000n;
   if(commissionMinor<=0n)throw new BadRequestException('The calculated commission must be at least one cent.');
   return {tuitionMinor:Number(tuitionMinor),basisPoints,commissionMinor:Number(commissionMinor),rounding:'half_up_per_instalment' as const};
+}
+export function commissionPricing(lines:ReadonlyArray<{kind?:unknown;amountMinor?:unknown;quantity?:unknown}>,commissionMinor:number){
+  const tuition=lines.filter(l=>l.kind==='tuition'&&typeof l.amountMinor==='number'&&l.amountMinor>0);
+  if(!tuition.length||tuition.some(l=>typeof l.quantity!=='string'||!/^\d{1,6}(\.\d{1,4})?$/.test(l.quantity)||scaled4(l.quantity)<=0n))throw new BadRequestException('Confirm the TRUST tuition quantities before preparing commission.');
+  const quantityScaled=tuition.reduce((n,l)=>n+scaled4(l.quantity as string),0n);
+  if(!Number.isSafeInteger(commissionMinor)||commissionMinor<=0)throw new BadRequestException('Check the calculated commission.');
+  const priceScaled=(BigInt(commissionMinor)*1_000_000n+quantityScaled/2n)/quantityScaled;
+  const format=(value:bigint,minDecimals=0)=>{const fraction=String(value%10000n).padStart(4,'0').replace(/0+$/,'').padEnd(minDecimals,'0');return `${value/10000n}${fraction?'.'+fraction:''}`;};
+  const quantity=format(quantityScaled),unitAmount=format(priceScaled,2);
+  if(priceScaled<=0n||priceScaled>999_999_999_999n||pricedLineMinor(quantity,unitAmount)!==commissionMinor)throw new BadRequestException('The commission cannot retain the TRUST quantity and exact total at four decimal places. Review this instalment.');
+  return {quantity,unitAmount};
 }
 function canonical(value:unknown):unknown{
   if(value instanceof Date)return value.toISOString();
