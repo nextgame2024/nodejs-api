@@ -5,6 +5,7 @@ import type { DatabaseService } from '../../database/database.service.js';
 import type { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import { caseSchema,StudentOperationsCasesService } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
+import { waitForStudentDocumentStorage } from './student-document-storage-wait.js';
 import { publishXeroContact } from './student-xero-contact-projection.js';
 
 // Explicit upload mutation only: no provider requests or writes on page/dialog GETs.
@@ -23,6 +24,10 @@ export class StudentPrimaryXeroContact {
   }
 
   async ensure(p:Principal,caseId:string) {
+    return waitForStudentDocumentStorage(()=>this.ensureOnce(p,caseId));
+  }
+
+  private async ensureOnce(p:Principal,caseId:string) {
     const s=caseSchema(),lease=randomUUID();
     const row=await this.database.tenantTransaction(p.tenantId,async db=>{
       const current=await this.cases.authorizedCase(db,p,caseId,true);

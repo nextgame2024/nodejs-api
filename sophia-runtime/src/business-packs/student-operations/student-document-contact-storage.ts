@@ -1,3 +1,4 @@
+import { waitForStudentDocumentStorage } from './student-document-storage-wait.js';
 import { ConflictException } from '@nestjs/common';
 import { createHash,randomUUID } from 'node:crypto';
 import type { DatabaseService } from '../../database/database.service.js';
@@ -53,7 +54,7 @@ export class StudentDocumentContactStorage {
         ORDER BY (d.xero_contact_id=$5) DESC,d.kind,d.sequence_number NULLS FIRST,d.storage_contact_id LIMIT 1`,
         [p.tenantId,current.student_id,job.xero_connection_id,visited,job.source_id]));
       let bucket=candidates.rows[0];
-      if(!bucket) bucket=await this.overflow(p,job,current.student_id,current.student_reference,lease,visited);
+      if(!bucket) bucket=await waitForStudentDocumentStorage(()=>this.overflow(p,job,current.student_id,current.student_reference,lease,visited));
       visited.push(bucket.storage_contact_id);
       await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,job.case_id);

@@ -557,6 +557,21 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect((await transaction('88888888-8888-4888-8888-888888888888',db=>db.query('SELECT * FROM sophia_runtime.student_operations_student_contact_links'))).rowCount).toBe(0);
     await expect(transaction(tenant,db=>db.query('SELECT * FROM public.bm_xero_student_contact_links'))).rejects.toThrow('permission denied');
   });
+  test('three initial document requests wait for one shared primary contact',async()=>{
+    const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';
+    try{
+      const created=await service.createStudent(p,{studentName:'Concurrent Upload Student',studentEmail:'concurrent-upload@example.test'},'primary-concurrent-success');
+      const id=String(created.caseId),contactId=randomUUID();
+      const ensureStudentContact=jest.fn(async(_tenant:string,_connection:string,value:{contactNumber:string;name:string;email:string|null})=>{
+        await new Promise(resolve=>setTimeout(resolve,300));
+        return {contactId,status:'ACTIVE',legalName:value.name,email:value.email,contactNumber:value.contactNumber,accountNumber:null,updatedAt:null};
+      });
+      const results=await Promise.all([1,2,3].map(()=>new StudentPrimaryXeroContact(
+        {tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,{ensureStudentContact} as unknown as XeroConnectorService).ensure(p,id)));
+      expect(results).toEqual(Array.from({length:3},()=>({xero_connection_id:connection,source_id:contactId})));
+      expect(ensureStudentContact).toHaveBeenCalledTimes(1);
+    }finally{if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;}
+  });
   test('concurrent cases share one provisioning lease and uncertain creation retains the snapshot',async()=>{
     const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';
     try {
@@ -576,7 +591,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       await expect(resolver.ensure(p,id)).rejects.toThrow('timeout');
       expect(xero.ensureStudentContact.mock.calls[1]).toEqual(firstCall);
     } finally {if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;}
-  });
+  },20000);
   test('does not silently reroute an archived primary or pick an ambiguous organisation',async()=>{
     const id=(await service.list(p,{})).cases.find(c=>c.studentReference==='STD-1')!.caseId;
     const resolver=new StudentPrimaryXeroContact({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,{} as XeroConnectorService);

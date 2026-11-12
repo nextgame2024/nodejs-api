@@ -154,7 +154,7 @@
     },
     "trustStudentContactNameFix": {
       "updatedOn": "2026-11-13",
-      "status": "tested_backend_deployment_pending",
+      "status": "backend_live",
       "cause": "Read-only tenant-scoped audit confirmed current student name Andres Arley Mazo SuareT but Sophia-owned primary TRUST contact retained TEST5 - Student (STD-1076). Invoice creation reused the contact ID without refreshing its name.",
       "implementation": [
         "Refresh stale Sophia-owned TRUST contact name from current student profile before invoice creation, preserving student reference suffix and contact ID.",
@@ -165,10 +165,12 @@
       "verification": [
         "Runtime build passed.",
         "Focused invoice/contact/projection regression gate: 4 suites, 38 tests passed.",
-        "Protected real-estate gate: 8 suites, 38 tests passed."
+        "Protected real-estate gate: 8 suites, 38 tests passed.",
+        "Live Runtime health returned ok:true and revision c59b5e707adc after backend-only deployment."
       ],
       "migrationRequired": false,
-      "frontendDeployment": false
+      "frontendDeployment": false,
+      "backendRevision": "c59b5e707adc"
     }
   },
   "studentInvoiceCollegeSelection": {
@@ -3519,5 +3521,26 @@
   ],
   "nextReadyTask": null,
   "nextBlockedTask": "P6-A06C4",
-  "stopAfterCheckpoint": true
+  "stopAfterCheckpoint": true,
+  "studentDocumentConcurrentSetup": {
+    "updatedOn": "2026-11-13",
+    "status": "tested_backend_release_pending",
+    "cause": "Concurrent first uploads share a durable primary-contact provisioning lease. Previously other requests immediately returned student_document_storage_pending; frontend mislabeled this as additional storage.",
+    "implementation": [
+      "Wait only for storage-pending lease conflicts, outside transactions, at 250/750/1500/3000/5000ms intervals (10.5 seconds maximum). Applied to primary setup and overflow allocation.",
+      "Preserve durable provisioning leases, per-file idempotency and existing upload concurrency. Never retry file writes, provider errors, rate limits or authorization failures.",
+      "Local frontend retry message says document storage is still being prepared; does not falsely assert overflow or require a two-minute wait.",
+      "Retain visible TRUST student-reference suffix to distinguish same-name contacts; stable ContactID/ContactNumber remain authoritative. PTY student reference already name-only; both supplied Xero screenshots show TRUST."
+    ],
+    "verification": [
+      "Runtime build passed.",
+      "Disposable PostgreSQL selected storage tests: 5 passed, including three concurrent primary requests creating exactly one contact and uncertain-provider recovery.",
+      "Focused runtime regression suites: 4 suites, 41 tests passed.",
+      "Document upload ChromeHeadless suite: 25 passed.",
+      "Protected real-estate gate: 8 suites, 38 tests passed.",
+      "No live document uploads, invoice changes or contact writes were performed."
+    ],
+    "migrationRequired": false,
+    "frontendDeployment": false
+  }
 }
