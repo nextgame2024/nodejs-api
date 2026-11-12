@@ -1,3 +1,4 @@
+import {assertStudentContactNameAvailable} from '../business-packs/student-operations/student-contact-name.js';
 import {assertCollegeContactAvailable} from '../business-packs/student-operations/student-college-contact-lifecycle.js';
 import { readFile } from 'node:fs/promises';
 import { jest } from '@jest/globals';
@@ -530,7 +531,7 @@ suite('Case management against disposable PostgreSQL',()=>{
       await docs.upload(p,String(second.caseId),{documentTypeId:type.documentTypeId},file,'primary-second-upload');
       expect(xero.ensureStudentContact).toHaveBeenCalledTimes(1);
       expect((await transaction(tenant,db=>db.query('SELECT contact_status,last_seen_sync_run_id FROM sophia_runtime.student_operations_xero_contacts WHERE xero_contact_id=$1',[contact]))).rows).toEqual([{contact_status:'ACTIVE',last_seen_sync_run_id:null}]);
-      expect(xero.ensureStudentContact).toHaveBeenCalledWith(tenant,connection,{contactNumber:`sophia:${detail.studentId}`,name:`No Invoices (${detail.studentReference})`,email:'no-invoices@example.test'},expect.stringMatching(/^[a-f0-9]{64}$/));
+      expect(xero.ensureStudentContact).toHaveBeenCalledWith(tenant,connection,{contactNumber:`sophia:${detail.studentId}`,name:'No Invoices',email:'no-invoices@example.test'},expect.stringMatching(/^[a-f0-9]{64}$/));
       expect(xero.uploadAttachment.mock.calls.every(call=>call[3]===contact)).toBe(true);
       expect((await service.invoices(p,id,{})).total).toBe(0);
       expect((await docs.list(p,id,{})).documents).toHaveLength(1);
@@ -556,6 +557,17 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(xero.ensureStudentContact).not.toHaveBeenCalled();
     expect((await transaction('88888888-8888-4888-8888-888888888888',db=>db.query('SELECT * FROM sophia_runtime.student_operations_student_contact_links'))).rowCount).toBe(0);
     await expect(transaction(tenant,db=>db.query('SELECT * FROM public.bm_xero_student_contact_links'))).rejects.toThrow('permission denied');
+  });
+  test('student display names reject exact normalized duplicates but allow similar names',async()=>{
+    const first=await service.createStudent(p,{studentName:'Name Check Suarez',studentEmail:'name-check-a@example.test'},'name-check-first');
+    const second=await service.createStudent(p,{studentName:'Name Check Suaret',studentEmail:'name-check-b@example.test'},'name-check-second');
+    const a=await service.get(p,String(first.caseId)),b=await service.get(p,String(second.caseId));
+    await expect(transaction(tenant,db=>assertStudentContactNameAvailable(db,tenant,b.studentId,connection,'Name Check Suaret',null))).resolves.toBeUndefined();
+    await expect(transaction(tenant,db=>assertStudentContactNameAvailable(db,tenant,b.studentId,connection,'  NAME  CHECK SUAREZ  ',null))).rejects.toMatchObject({response:expect.objectContaining({errorCode:'student_contact_name_conflict'})});
+    const providerContact=randomUUID();
+    await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,contact_status,legal_name,contact_number)
+      VALUES($1,$2,$3,'ARCHIVED','Archived   Name Check','other-system')`,[tenant,connection,providerContact]);
+    await expect(transaction(tenant,db=>assertStudentContactNameAvailable(db,tenant,a.studentId,connection,'archived name check',null))).rejects.toThrow('exact name');
   });
   test('three initial document requests wait for one shared primary contact',async()=>{
     const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';

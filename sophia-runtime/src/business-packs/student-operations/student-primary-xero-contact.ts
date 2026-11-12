@@ -1,3 +1,4 @@
+import {assertStudentContactNameAvailable,studentContactName} from './student-contact-name.js';
 import { ConflictException } from '@nestjs/common';
 import { createHash,randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -56,10 +57,11 @@ export class StudentPrimaryXeroContact {
         const selected=candidates.rows[0];
         if(!selected && process.env.XERO_CONTACT_CREATION_ENABLED!=='true')
           throw new ConflictException({errorCode:'student_document_setup_required',message:'An administrator must enable document storage for this student in company integrations.'});
+        if(!selected)await assertStudentContactNameAvailable(db,p.tenantId,current.student_id,connectionId,profile.rows[0].legal_name,null);
         await db.query(`INSERT INTO ${s}.student_operations_primary_xero_contacts
           (customer_id,student_id,xero_connection_id,xero_contact_id,contact_number,contact_name,contact_email,selection_method,linked_at)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $4::uuid IS NOT NULL THEN now() END)`,
-          [p.tenantId,current.student_id,connectionId,selected?.xero_contact_id??null,number,`${profile.rows[0].legal_name} (${current.student_reference})`,profile.rows[0].email,selected?.method??'created']);
+          [p.tenantId,current.student_id,connectionId,selected?.xero_contact_id??null,number,studentContactName(profile.rows[0].legal_name),profile.rows[0].email,selected?.method??'created']);
         if(selected) await this.cases.activity(db,p,caseId,'student.document_storage_linked','Student document storage linked');
         saved=await db.query(`SELECT *,false AS leased FROM ${s}.student_operations_primary_xero_contacts
           WHERE customer_id=$1 AND student_id=$2 AND xero_connection_id=$3`,[p.tenantId,current.student_id,connectionId]);

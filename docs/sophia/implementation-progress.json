@@ -3524,7 +3524,7 @@
   "stopAfterCheckpoint": true,
   "studentDocumentConcurrentSetup": {
     "updatedOn": "2026-11-13",
-    "status": "tested_backend_release_pending",
+    "status": "backend_live_frontend_message_local",
     "cause": "Concurrent first uploads share a durable primary-contact provisioning lease. Previously other requests immediately returned student_document_storage_pending; frontend mislabeled this as additional storage.",
     "implementation": [
       "Wait only for storage-pending lease conflicts, outside transactions, at 250/750/1500/3000/5000ms intervals (10.5 seconds maximum). Applied to primary setup and overflow allocation.",
@@ -3538,7 +3538,29 @@
       "Focused runtime regression suites: 4 suites, 41 tests passed.",
       "Document upload ChromeHeadless suite: 25 passed.",
       "Protected real-estate gate: 8 suites, 38 tests passed.",
-      "No live document uploads, invoice changes or contact writes were performed."
+      "No live document uploads, invoice changes or contact writes were performed.",
+      "Live Runtime health returned ok:true and revision c7ab53cb57e1."
+    ],
+    "migrationRequired": false,
+    "frontendDeployment": false,
+    "backendRevision": "c7ab53cb57e1"
+  },
+  "studentXeroNameOnlyLabels": {
+    "updatedOn": "2026-11-13",
+    "status": "tested_backend_release_pending",
+    "authorization": "User prefers name-only invoice contact labels for printing and college recipients, with duplicate-name checks in Sophia.",
+    "implementation": [
+      "New primary TRUST contacts use normalized legal name without the visible student ID suffix. Stable ContactNumber and ContactID still establish identity.",
+      "Before creating a new primary contact or renaming an owned contact for invoice export, check tenant students and organisation-local cached Xero contacts for exact names ignoring case and repeated whitespace. Include archived contacts; exclude the same student/contact. Similar names are allowed and names never automatically merge identities.",
+      "Existing owned TRUST contact rename preflight now targets the name-only label. PTY recipient and student reference remain unchanged.",
+      "Local frontend surfaces name-conflict review feedback for uploads and invoice creation. No frontend deployment or live contact bulk rename."
+    ],
+    "verification": [
+      "Runtime build passed.",
+      "26 focused runtime invoice/contact tests passed.",
+      "3 selected disposable PostgreSQL tests passed, including normalized duplicates, similar names, archived contact conflict, new contact provisioning and concurrent setup.",
+      "101 ChromeHeadless upload/invoice tests passed.",
+      "Protected real-estate gate: 8 suites, 38 tests passed."
     ],
     "migrationRequired": false,
     "frontendDeployment": false

@@ -1,3 +1,4 @@
+import {assertStudentContactNameAvailable,studentContactName} from './student-contact-name.js';
 import { BadRequestException,ConflictException,ForbiddenException,HttpException,Inject,Injectable,Logger,NotFoundException } from '@nestjs/common';
 import { createHash,randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -387,9 +388,10 @@ export class StudentCaseInvoiceDraftsService {
         FROM ${s}.student_operations_students st JOIN ${s}.student_operations_xero_contacts xc
           ON xc.customer_id=st.customer_id AND xc.xero_connection_id=$3 AND xc.xero_contact_id=$4
         WHERE st.customer_id=$1 AND st.student_id=$2`,[p.tenantId,c.student_id,connectionId,contact])).rows[0];
-      const expectedName=recipient?`${recipient.legal_name} (${recipient.student_reference})`:null;
+      const expectedName=recipient?studentContactName(recipient.legal_name):null;
       const rename=recipient?.contact_number===`sophia:${c.student_id}`&&recipient.contact_name!==expectedName
         ?{name:expectedName!,contactNumber:recipient.contact_number}:null;
+      if(rename&&rows.some(row=>row.owned))await assertStudentContactNameAvailable(db,p.tenantId,c.student_id,connectionId,rename.name,contact);
       return {snapshot,connectionId,contact,rows,rename};
     });
     const claim=await claimInvoices().catch(async error=>{
