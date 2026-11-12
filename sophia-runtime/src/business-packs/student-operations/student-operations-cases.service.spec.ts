@@ -4,6 +4,23 @@ import { StudentOperationsCasesService } from './student-operations-cases.servic
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
 describe('Case view data', () => {
+  it('includes confirmed PTY receipts and filters rows and counts together',async()=>{
+    const calls:string[]=[];
+    const query=jest.fn(async(sql:string)=>{calls.push(sql);return {rows:sql.includes('student_operations_student_user_links')?[{student_id:'student'}]:sql.includes('count(*)::int total')?[{total:1}]:[{organisation:'PTY',status:'DRAFT',type:'ACCREC',amountPaid:0}]};});
+    const service=new StudentOperationsCasesService({tenantReadTransaction:async(_tenant:string,work:any)=>work({query})} as never);
+    const result=await service.invoices({tenantId:'11111111-1111-4111-8111-111111111111',role:'chief_executive'} as never,'22222222-2222-4222-8222-222222222222',{organisation:'pty'});
+    expect(result.total).toBe(1);expect(result.invoices[0]).toMatchObject({organisation:'PTY',canEdit:false,removalAction:null});
+    for(const sql of calls.slice(1)){expect(sql).toContain('student_commission_exports');expect(sql).toContain("xc.organisation_role='operating' OR pe.xero_invoice_id IS NOT NULL");expect(sql).toContain("AND status='created'");}
+    await expect(service.invoices({} as never,'case',{organisation:'invalid'})).rejects.toThrow('Invalid case request');
+  });
+  it('opens a confirmed PTY receipt before indexing using its amounts and tracking',async()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const query=jest.fn(async(sql:string)=>({rows:sql.includes('student_operations_student_user_links')?[{student_id:id}]:[{indexed:false,synchronized:false,invoiceNumber:'PTY-1',commissionSnapshot:{taxMinor:9600,calculation:{commissionMinor:96000},value:{lines:[{quantity:'12',unitAmount:'80',itemCode:'TUITION',tracking:[{name:'Type of Sale',option:'Instalment'}]}]}}}]}));
+    const service=new StudentOperationsCasesService({tenantReadTransaction:async(_tenant:string,work:any)=>work({query})} as never);
+    const result=await service.invoiceDetail({tenantId:id,role:'chief_executive'} as never,id,id,id);
+    expect(result.lineItems).toEqual([expect.objectContaining({quantity:12,unitAmount:80,lineAmount:960,taxAmount:96,tracking:[{name:'Type of Sale',option:'Instalment'}]})]);
+    expect(result).not.toHaveProperty('commissionSnapshot');
+  });
   it('refuses progress for an unauthorized case before reading its saved validation state',async()=>{
     const query=jest.fn(async()=>({rows:[]}));
     const database={tenantReadTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({query})};
