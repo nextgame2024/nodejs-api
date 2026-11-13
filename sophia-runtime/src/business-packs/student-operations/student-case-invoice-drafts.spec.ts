@@ -58,6 +58,17 @@ describe('Sophia-only invoice draft contract',()=>{
     const ambiguous={...source,instalments:[{...source.instalments[0],components:[{label:'Total',amountMinor:99500}]}]};
     expect(validateDraftSchedule(ambiguous,v)[0].sourceIncludedConditionalFeeMinor).toBe(2500);
   });
+  it('reconciles the first payment bundled enrolment/COE charge against the explicit fee breakdown',()=>{
+    const offer={...source,fees:[{label:'Enrolment Fee',amountMinor:20000,conditional:false,condition:null},{label:'COE Issue Fee',amountMinor:0,conditional:false,condition:null},{label:'International Fund Transfer (IFT) Fee',amountMinor:2500,conditional:true,condition:'International payments'}],
+      instalments:[{...source.instalments[0],includedConditionalFeeMinor:0,components:[{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000},{label:'Other (Enrolment & COE Issue Fee, see breakdown on main page 1)',amountMinor:22500}]}]};
+    const v=request();
+    expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:97000,differenceMinor:0,sourceIncludedConditionalFeeMinor:2500});
+    v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;
+    expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:99500,differenceMinor:0});
+    expect(offer.instalments[0].includedConditionalFeeMinor).toBe(0);
+    offer.fees[1].amountMinor=1000;
+    expect(()=>validateDraftSchedule(offer,v)).toThrow('Explain');
+  });
   it('requires an explicit boolean fee decision and rejects authority/provider fields',()=>{
     const v=request() as any;delete v.invoices[0].conditionalFeeApplies;expect(invoiceDraftRequest.safeParse(v).success).toBe(false);
     expect(invoiceDraftRequest.safeParse({...request(),customerId:'foreign',xeroContactId:'foreign'}).success).toBe(false);

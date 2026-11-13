@@ -3582,6 +3582,21 @@
     ],
     "migrationRequired": false,
     "frontendDeployment": false,
-    "deployment": "Backend pending push and live revision verification."
+    "deployment": "Backend live: health ok:true at revision a07f377f0ae5. Frontend remains local."
+  },
+  "invoiceBundledFeeCorrection20261113": {
+    "implementation": [
+      "Read-only audit of new case found first payment Other enrolment/COE component22500 vs detailed enrolment20000,COE0 and conditional transfer2500, with included flag0.",
+      "Reconcile only exact first-payment bundle, full component total and unambiguous fee breakdown; preserve all printed amounts and ambiguous sources.",
+      "Clarified extraction instructions for bundled first-payment fees. No provider writes or invoice creation performed."
+    ],
+    "verification": [
+      "Runtime build passed.",
+      "18 focused invoice tests passed including bundled fee yes/no and ambiguous breakdown rejection.",
+      "38 protected real-estate tests passed."
+    ],
+    "migrationRequired": false,
+    "frontendDeployment": false,
+    "deployment": "Backend pending rollout."
   }
 }

@@ -37,8 +37,22 @@ export const offerExtraction = z.object({
 /** A fee is additional when the known tuition/material/enrolment components
  * already account for the entire printed payment. Preserve ambiguous offers. */
 export function normalizeOfferConditionalFees(source:z.infer<typeof offerExtraction>):z.infer<typeof offerExtraction>{
+  const firstSequence=Math.min(...source.instalments.map(item=>item.sequence));
+  const enrolment=source.fees.filter(f=>!f.conditional&&/^Enrolment Fee$/i.test(f.label.trim()));
+  const coe=source.fees.filter(f=>!f.conditional&&/^COE Issue Fee$/i.test(f.label.trim()));
+  const transfer=source.fees.filter(f=>f.conditional&&/transfer/i.test(f.label));
   return {...source,instalments:source.instalments.map(payment=>{
     const components=payment.components??[];
+    // Some offers bundle enrolment/COE and the transfer charge in the first
+    // payment's Other column. Resolve only an exact, fully accounted breakdown.
+    const bundled=components.filter(c=>/^Other\s*\(Enrolment\s*&\s*COE Issue Fee(?:,.*)?\)$/i.test(c.label.trim()));
+    if(payment.sequence===firstSequence&&payment.includedConditionalFeeMinor===0&&bundled.length===1&&
+      enrolment.length===1&&coe.length===1&&transfer.length===1&&transfer[0].amountMinor>0&&
+      components.every(c=>c===bundled[0]||/^(?:tuition|materials?)(?:\s+fees?)?$/i.test(c.label.trim()))&&
+      components.reduce((sum,c)=>sum+c.amountMinor,0)===payment.totalMinor&&
+      bundled[0].amountMinor===enrolment[0].amountMinor+coe[0].amountMinor+transfer[0].amountMinor){
+      return {...payment,includedConditionalFeeMinor:transfer[0].amountMinor};
+    }
     const fullyItemized=components.length>0&&components.every(c=>
       /^(?:(?:total|course)\s+)?(?:tuition|materials?|enrol(?:l)?ment)(?:\s+fees?)?$/i.test(c.label.trim()));
     return payment.includedConditionalFeeMinor>0&&fullyItemized&&
