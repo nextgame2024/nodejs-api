@@ -3547,7 +3547,7 @@
   },
   "studentXeroNameOnlyLabels": {
     "updatedOn": "2026-11-13",
-    "status": "tested_backend_release_pending",
+    "status": "backend_live_frontend_local",
     "authorization": "User prefers name-only invoice contact labels for printing and college recipients, with duplicate-name checks in Sophia.",
     "implementation": [
       "New primary TRUST contacts use normalized legal name without the visible student ID suffix. Stable ContactNumber and ContactID still establish identity.",
@@ -3560,9 +3560,11 @@
       "26 focused runtime invoice/contact tests passed.",
       "3 selected disposable PostgreSQL tests passed, including normalized duplicates, similar names, archived contact conflict, new contact provisioning and concurrent setup.",
       "101 ChromeHeadless upload/invoice tests passed.",
-      "Protected real-estate gate: 8 suites, 38 tests passed."
+      "Protected real-estate gate: 8 suites, 38 tests passed.",
+      "Live Runtime health returned ok:true at revision 77a337c77910."
     ],
     "migrationRequired": false,
-    "frontendDeployment": false
+    "frontendDeployment": false,
+    "backendRevision": "77a337c77910"
   }
 }
