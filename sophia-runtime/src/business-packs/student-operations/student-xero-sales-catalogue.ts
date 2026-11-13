@@ -16,6 +16,19 @@ export async function readSalesCatalogue(db:PoolClient,tenant:string,lock=false,
   const row=rows[0];return {connectionId:String(row.connectionId),revision:Number(row.revision),lastSyncedAt:row.lastSyncedAt,errorCode:row.errorCode as string|null,...row.snapshot as XeroSalesCatalogue};
 }
 
+/** Offer review needs only tracking choices, not the full item/account catalogue. */
+export async function readPtySaleOptions(db:PoolClient,tenant:string){
+  const s=runtimeConfig().schema;
+  const rows=(await db.query(`SELECT c.snapshot->'trackingCategories' AS categories
+    FROM ${s}.student_xero_sales_catalogues c
+    JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role='operating' AND cfg.enabled
+    JOIN ${s}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id AND x.status='active'
+    WHERE c.customer_id=$1 AND c.last_synced_at IS NOT NULL`,[tenant])).rows;
+  const categories:NonNullable<XeroSalesCatalogue['trackingCategories']>=rows.length===1?rows[0].categories??[]:[];
+  const matches=categories.filter(c=>c.name.trim().toLowerCase()==='type of sale');
+  return matches.length===1?matches[0].options:[];
+}
+
 /** One in-flight durable lease, daily refresh, safe bounded retry, no user-facing provider request. */
 export class StudentXeroSalesCatalogueSync {
   constructor(private readonly database:DatabaseService,private readonly xero:XeroConnectorService){}

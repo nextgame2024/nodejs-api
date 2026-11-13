@@ -1,3 +1,4 @@
+import {normalizeOfferConditionalFees,offerProviderExtraction} from './student-document-analysis.contracts.js';
 import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { StudentCaseInvoiceDraftsService,exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
@@ -66,8 +67,17 @@ describe('Sophia-only invoice draft contract',()=>{
     v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;
     expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:99500,differenceMinor:0});
     expect(offer.instalments[0].includedConditionalFeeMinor).toBe(0);
+    const normalized=normalizeOfferConditionalFees(offer);
+    expect(normalized.instalments[0].components).toEqual([{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000},{label:'Enrolment Fee',amountMinor:20000}]);
+    expect(normalizeOfferConditionalFees(normalized)).toEqual(normalized);
     offer.fees[1].amountMinor=1000;
     expect(()=>validateDraftSchedule(offer,v)).toThrow('Explain');
+  });
+  it('carries the reviewed Type of Sale into the trusted draft snapshot',()=>{
+    const id='11111111-1111-4111-8111-111111111111';
+    const offer={...source,instalments:[{...source.instalments[0],typeOfSaleOptionId:id}]};
+    expect(validateDraftSchedule(offer,request())[0]).toMatchObject({typeOfSaleOptionId:id});
+    expect(offerProviderExtraction.shape.instalments.element.shape).not.toHaveProperty('typeOfSaleOptionId');
   });
   it('requires an explicit boolean fee decision and rejects authority/provider fields',()=>{
     const v=request() as any;delete v.invoices[0].conditionalFeeApplies;expect(invoiceDraftRequest.safeParse(v).success).toBe(false);

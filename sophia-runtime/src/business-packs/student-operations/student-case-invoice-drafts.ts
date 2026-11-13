@@ -97,7 +97,7 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
         expectedTotalMinor:expected,totalMinor:total,sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,
         message:`INV-${invoice.sequence} (TRUST): ${details} Explain the difference in the review note, or correct the invoice/offer details.`});
     }
-    return {...invoice,lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
+    return {...invoice,...(original.typeOfSaleOptionId?{typeOfSaleOptionId:original.typeOfSaleOptionId}:{}),lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
       sourceTotalMinor:original.totalMinor,sourceDueDate:original.dueOn,sourceDueTerm:original.dueTerm,
       sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,expectedTotalMinor:expected,differenceMinor:difference,totalMinor:total};
   }).sort((a,b)=>a.sequence-b.sequence);

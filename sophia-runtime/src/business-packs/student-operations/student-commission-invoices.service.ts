@@ -114,10 +114,11 @@ export class StudentCommissionInvoicesService{
     if(selected.itemId&&selected.itemId!==item.itemId)throw new BadRequestException('The PTY item must match the corresponding TRUST tuition item. Reload the invoice preview.');
     const calculation=commissionAmount(invoice.lines.map(l=>({kind:l.kind,amountMinor:l.amountMinor})),o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
     const pricing=commissionPricing(invoice.lines,calculation.commissionMinor);
-    const saleOption=selected.typeOfSaleOptionId?o.saleOptions.find(option=>option.trackingOptionId===selected.typeOfSaleOptionId):o.defaultSaleOption;
+    const saleOptionId=selected.typeOfSaleOptionId??(typeof invoice.typeOfSaleOptionId==='string'?invoice.typeOfSaleOptionId:undefined);
+    const saleOption=saleOptionId?o.saleOptions.find(option=>option.trackingOptionId===saleOptionId):o.defaultSaleOption;
     // Existing clients omitted a selection and used Instalment. Keep that
     // behaviour until their catalogue imports tracking; dispatch still validates Xero.
-    if(!saleOption&&(selected.typeOfSaleOptionId||o.catalogue.trackingCategories!==undefined))throw new BadRequestException('Select an active Type of Sale option from the PTY Xero organisation.');
+    if(!saleOption&&(saleOptionId||o.catalogue.trackingCategories!==undefined))throw new BadRequestException('Select an active Type of Sale option from the PTY Xero organisation.');
     const saleTracking=saleOption&&o.saleCategory?{name:o.saleCategory.name,option:saleOption.name,trackingCategoryId:o.saleCategory.trackingCategoryId,trackingOptionId:saleOption.trackingOptionId}:{name:'Type of Sale',option:'Instalment'};
     const value:XeroInvoiceCreate={contactId:o.mapping.xero_contact_id,date:invoice.issueDate,dueDate:invoice.dueDate,reference:b.snapshot.studentName,currencyCode:b.snapshot.currency,brandingThemeId:o.theme.brandingThemeId,
      lines:[{description:`Student Name: ${b.snapshot.studentName}\nCommission for INV-${invoice.sequence}\n${invoice.lines.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`.slice(0,4000),quantity:pricing.quantity,unitAmount:pricing.unitAmount,itemCode:item.code,accountCode:item.accountCode,taxType:o.tax.taxType,tracking:[saleTracking]}]};

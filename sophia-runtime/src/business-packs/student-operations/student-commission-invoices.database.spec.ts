@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {BadGatewayException,ConflictException,ForbiddenException} from '@nestjs/common';
-import {StudentXeroSalesCatalogueSync} from './student-xero-sales-catalogue.js';
+import {StudentXeroSalesCatalogueSync,readPtySaleOptions} from './student-xero-sales-catalogue.js';
 import {StudentCollegeMatchingService} from './student-college-matching.service.js';
 import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
@@ -116,12 +116,20 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await expect(tx(tenant,db=>db.query('SELECT * FROM public.bm_college_commission_rules'))).rejects.toThrow('permission denied');
  });
  it('returns the local Type of Sale list, defaults to Instalment and saves per-invoice choices',async()=>{
+  expect((await tx(tenant,db=>readPtySaleOptions(db,tenant))).map(o=>o.name)).toEqual(['Instalment','Marketing']);
+  expect(await tx(other,db=>readPtySaleOptions(db,other))).toEqual([]);
   const options=await service.options(p,caseId,collegeId);
   expect(options).toMatchObject({defaultTypeOfSaleOptionId:itemId,typeOfSaleOptions:[{value:itemId,label:'Instalment'},{value:batchId,label:'Marketing'}]});
   await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1},{sequence:2,typeOfSaleOptionId:batchId}]});
   expect((await service.list(p,caseId,batchId)).items.map(row=>row.snapshot.value.lines[0].tracking[0].option)).toEqual(['Instalment','Marketing']);
   await trustReceipts(2);await service.create(p,caseId,batchId,{sequences:[2],confirmed:true});
   expect(createInvoice.mock.calls[0][0].lines[0].tracking).toEqual([{name:'Type of Sale',option:'Marketing',trackingCategoryId:trustId,trackingOptionId:batchId}]);
+ });
+ it('uses the offer Type of Sale snapshot unless explicitly overridden for PTY',async()=>{
+  const reviewed=structuredClone(snapshot);reviewed.invoices[0].typeOfSaleOptionId=batchId;reviewed.invoices[1].typeOfSaleOptionId=batchId;
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET snapshot=$3 WHERE customer_id=$1 AND batch_id=$2`,[tenant,batchId,JSON.stringify(reviewed)]);
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1},{sequence:2,typeOfSaleOptionId:itemId}]});
+  expect((await service.list(p,caseId,batchId)).items.map(row=>row.snapshot.value.lines[0].tracking[0].option)).toEqual(['Marketing','Instalment']);
  });
  it('blocks a new commission while its college contact is reserved for case deletion',async()=>{
   await prepareAll();await trustReceipts();

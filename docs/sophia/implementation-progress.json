@@ -3597,6 +3597,25 @@
     ],
     "migrationRequired": false,
     "frontendDeployment": false,
+    "deployment": "Backend live: health ok:true revision1b191ea68947. No frontend deployment."
+  },
+  "offerScheduleSaleDefaults20261113": {
+    "implementation": [
+      "Offer review exposes active PTY Type of Sale options through a tenant-scoped local catalogue projection fetching only tracking categories.",
+      "Optional per-instalment Type of Sale ID persists in reviewed JSON and trusted draft snapshot; review checks membership in current tenant PTY options. AI extraction schema excludes operator selection.",
+      "PTY preparation uses reviewed selection when no explicit override is supplied; existing frozen receipts remain unchanged.",
+      "Review projection separates proven bundled first-payment enrolment200 and IFT25 while preserving995 printed total; normalization is idempotent.",
+      "Local frontend widens offer dialog, adds per-instalment dropdown defaulting to Instalment, carries selection to editable PTY defaults, and prefixes fee/schedule currency inputs."
+    ],
+    "verification": [
+      "Runtime build passed.",
+      "31 contract and invoice regression tests passed.",
+      "32 disposable local PostgreSQL PTY tests passed with RLS, reviewed defaults and explicit overrides; live Xero mocked.",
+      "125 ChromeHeadless review/document/invoice tests passed, including desktop/mobile and light/dark layout checks.",
+      "Protected real-estate gate:38 tests passed."
+    ],
+    "migrationRequired": false,
+    "frontendDeployment": false,
     "deployment": "Backend pending rollout."
   }
 }

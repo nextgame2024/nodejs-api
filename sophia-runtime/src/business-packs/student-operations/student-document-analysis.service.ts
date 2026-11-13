@@ -1,3 +1,4 @@
+import {readPtySaleOptions} from './student-xero-sales-catalogue.js';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -5,7 +6,7 @@ import { DatabaseService } from '../../database/database.service.js';
 import { StudentOperationsCasesService, caseId, caseSchema } from './student-operations-cases.service.js';
 import type { StudentOperationsWorkspacePrincipal as Principal } from './student-operations-workspace.service.js';
 import { hasStudentOperationsPermission } from './student-operations-policy.js';
-import { documentExtraction, documentReview,OFFER_ANALYSIS_VERSION,DOCUMENT_ANALYSIS_VERSION } from './student-document-analysis.contracts.js';
+import { documentExtraction, normalizeOfferConditionalFees, documentReview,OFFER_ANALYSIS_VERSION,DOCUMENT_ANALYSIS_VERSION } from './student-document-analysis.contracts.js';
 import { enqueueDocumentAnalysis } from './student-document-analysis.queue.js';
 import { assignOfferCollege,matchOfferColleges,offerCollegeDirectory,offerConfirmationProblems,offerTotals,persistOffer } from './student-case-offers.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
@@ -72,18 +73,21 @@ export class StudentDocumentAnalysisService {
       const profile=await db.query(`SELECT legal_name FROM ${caseSchema()}.student_operations_students s
         JOIN ${caseSchema()}.student_operations_cases c ON c.customer_id=s.customer_id AND c.student_id=s.student_id WHERE c.customer_id=$1 AND c.case_id=$2`,[p.tenantId,id]);
       const {parsed,verdict,status,reviewed}=analysisVerdict(row,profile.rows[0]?.legal_name??'');
+      const extraction=parsed.success&&parsed.data.kind==='letter_of_offer'?normalizeOfferConditionalFees(parsed.data):parsed.success?parsed.data:null;
       let offer=null;
       if(manager&&parsed.success&&parsed.data.kind==='letter_of_offer'){
         const colleges=await offerCollegeDirectory(db,p.tenantId),match=matchOfferColleges(parsed.data.collegeName,parsed.data.abn,colleges);
         const primary=(await db.query(`SELECT college_id FROM ${caseSchema()}.student_operations_case_colleges WHERE customer_id=$1 AND case_id=$2 AND is_primary`,[p.tenantId,id])).rows[0];
         const header=(await db.query(`SELECT offer_id,status,is_current,resolved_college_id FROM ${caseSchema()}.student_case_offers
           WHERE customer_id=$1 AND result_id=$2 ORDER BY review_version DESC LIMIT 1`,[p.tenantId,row.result_id])).rows[0];
-        offer={...match,colleges,currentCollegeId:primary?.college_id??null,selectedCollegeId:header?.resolved_college_id??match.exactCollegeId,
+        const saleOptions=await readPtySaleOptions(db,p.tenantId);
+        const defaults=saleOptions.filter(o=>o.name.trim().toLowerCase()==='instalment');
+        offer={typeOfSaleOptions:saleOptions.map(o=>({value:o.trackingOptionId,label:o.name})),defaultTypeOfSaleOptionId:defaults.length===1?defaults[0].trackingOptionId:null,...match,colleges,currentCollegeId:primary?.college_id??null,selectedCollegeId:header?.resolved_college_id??match.exactCollegeId,
           caseRecordVersion:caseRow.record_version,offerId:header?.offer_id??null,isCurrent:header?.is_current??false,
-          totals:offerTotals(parsed.data),problems:offerConfirmationProblems(parsed.data)};
+          totals:offerTotals(extraction as Extract<typeof extraction,{kind:"letter_of_offer"}>),problems:offerConfirmationProblems(extraction as Extract<typeof extraction,{kind:"letter_of_offer"}>)};
       }
       return {documentId,jobId:row.job_id??null,resultId:row.result_id??null,status,reviewVersion:row.review_version??0,
-        extraction:manager&&parsed.success?parsed.data:null,reasons:manager?verdict?.reasons??[]:[],
+        extraction:manager?extraction:null,reasons:manager?verdict?.reasons??[]:[],
         reviewReason:manager&&reviewed?row.reason??null:null,decision:reviewed??null,enabled:analysisEnabled(),offer,canStart,
         ...(manager&&documentChecklistEnabled()?{currentForType:await isLatestTypedDocument(db,p.tenantId,id,documentId)}:{})};
     });
@@ -104,6 +108,11 @@ export class StudentDocumentAnalysisService {
       if(corrected.kind==='letter_of_offer'){
         if(value.expectedCaseVersion!==caseRow.record_version)throw new ConflictException('Case changed. Reload the offer before saving.');
         if(value.decision==='confirmed'){
+          const selectedSaleIds=corrected.instalments.flatMap(i=>i.typeOfSaleOptionId?[i.typeOfSaleOptionId]:[]);
+          if(selectedSaleIds.length){
+            const options=new Set((await readPtySaleOptions(db,p.tenantId)).map(o=>o.trackingOptionId));
+            if(selectedSaleIds.some(id=>!options.has(id)))throw new BadRequestException('Select an active PTY Type of Sale option for each instalment.');
+          }
           const problems=offerConfirmationProblems(corrected);
           if(problems.length)throw new BadRequestException(problems[0]);
           if(offerTotals(corrected).unexplainedDifference&&!value.acknowledgeTotals)throw new BadRequestException('Review and acknowledge the difference between the offer total and instalments.');
