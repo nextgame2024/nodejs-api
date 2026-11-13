@@ -38,6 +38,26 @@ describe('Sophia-only invoice draft contract',()=>{
     v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;
     expect(validateDraftSchedule(source,v)[0]).toMatchObject({totalMinor:99500,differenceMinor:0});expect(source.instalments[0].totalMinor).toBe(99500);
   });
+  it('treats itemized instalment fees as additional without changing tuition or materials',()=>{
+    const totals=[144000,113000,108000,113000,108000,113000,108000];
+    for(const [index,total] of totals.entries()){
+      const materials=total===113000?5000:0;
+      const offer={...source,instalments:[{...source.instalments[0],sequence:index+2,totalMinor:total,components:[{label:'Tuition fee',amountMinor:total-materials},{label:'Materials fee',amountMinor:materials}]}]};
+      const v=request();v.invoices[0].sequence=index+2;
+      v.invoices[0].lines=[{...v.invoices[0].lines[0],amountMinor:total,unitAmountMinor:total}];
+      expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:total,differenceMinor:0,sourceIncludedConditionalFeeMinor:0});
+      v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;
+      expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:total+2500,differenceMinor:0});
+      expect(offer.instalments[0].includedConditionalFeeMinor).toBe(2500);
+    }
+  });
+  it('preserves included fees and does not infer inclusion from ambiguous components',()=>{
+    const v=request();
+    const included={...source,instalments:[{...source.instalments[0],components:[{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000}]}]};
+    expect(validateDraftSchedule(included,v)[0]).toMatchObject({totalMinor:97000,sourceIncludedConditionalFeeMinor:2500});
+    const ambiguous={...source,instalments:[{...source.instalments[0],components:[{label:'Total',amountMinor:99500}]}]};
+    expect(validateDraftSchedule(ambiguous,v)[0].sourceIncludedConditionalFeeMinor).toBe(2500);
+  });
   it('requires an explicit boolean fee decision and rejects authority/provider fields',()=>{
     const v=request() as any;delete v.invoices[0].conditionalFeeApplies;expect(invoiceDraftRequest.safeParse(v).success).toBe(false);
     expect(invoiceDraftRequest.safeParse({...request(),customerId:'foreign',xeroContactId:'foreign'}).success).toBe(false);
@@ -45,6 +65,16 @@ describe('Sophia-only invoice draft contract',()=>{
   it('requires one and only one draft per offer instalment',()=>{
     const v=request();v.invoices.push({...v.invoices[0]});expect(()=>validateDraftSchedule(source,v)).toThrow('exactly one');
     v.invoices[0].sequence=9;expect(()=>validateDraftSchedule(source,v)).toThrow('exactly one');
+  });
+  it('identifies the payment and conditional fee mismatch without changing approved amounts',()=>{
+    const v=request();v.invoices[0].sequence=2;v.invoices[0].lines=[{...v.invoices[0].lines[0],quantity:'1',unitAmountMinor:144000,amountMinor:144000}];
+    const offer={...source,instalments:[{...source.instalments[0],sequence:2,totalMinor:144000,includedConditionalFeeMinor:2500}]};
+    try{validateDraftSchedule(offer,v);throw new Error('Expected review requirement');}catch(error){
+      expect((error as any).getResponse()).toMatchObject({errorCode:'invoice_review_note_required',sequence:2,totalMinor:144000,expectedTotalMinor:141500,differenceMinor:2500,sourceIncludedConditionalFeeMinor:2500});
+      expect((error as Error).message).toContain('INV-2 (TRUST)');
+    }
+    v.reviewNote='Reviewed payment against the approved offer';
+    expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:144000,differenceMinor:2500});
   });
   it('requires an explanation for amount or source-date changes',()=>{
     const v=request();v.invoices[0].dueDate='2026-11-02';expect(()=>validateDraftSchedule(source,v)).toThrow('Explain');v.reviewNote='Client confirmed revised date';expect(validateDraftSchedule(source,v)[0].sourceDueDate).toBe('2026-11-01');

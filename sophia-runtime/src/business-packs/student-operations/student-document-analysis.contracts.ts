@@ -34,6 +34,18 @@ export const offerExtraction = z.object({
     components:paymentComponents.optional(),
   }).strict()).max(200),
 }).strict();
+/** A fee is additional when the known tuition/material/enrolment components
+ * already account for the entire printed payment. Preserve ambiguous offers. */
+export function normalizeOfferConditionalFees(source:z.infer<typeof offerExtraction>):z.infer<typeof offerExtraction>{
+  return {...source,instalments:source.instalments.map(payment=>{
+    const components=payment.components??[];
+    const fullyItemized=components.length>0&&components.every(c=>
+      /^(?:(?:total|course)\s+)?(?:tuition|materials?|enrol(?:l)?ment)(?:\s+fees?)?$/i.test(c.label.trim()));
+    return payment.includedConditionalFeeMinor>0&&fullyItemized&&
+      components.reduce((sum,c)=>sum+c.amountMinor,0)===payment.totalMinor
+      ?{...payment,includedConditionalFeeMinor:0}:payment;
+  })};
+}
 // Provider output is strict/all-required; stored and earlier provider offers remain readable.
 export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),studentSigned:z.boolean(),studentSignerName:text.nullable(),studentSignedOn:date.nullable(),collegeSigned:z.boolean().nullable(),instalments:z.array(offerExtraction.shape.instalments.element.extend({components:paymentComponents})).max(200)});
 export const documentExtraction = z.discriminatedUnion('kind', [engagementExtraction, passportExtraction, offerExtraction]);

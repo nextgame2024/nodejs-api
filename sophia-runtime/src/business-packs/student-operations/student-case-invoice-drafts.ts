@@ -12,7 +12,7 @@ import {matchesXeroInvoice,exactXeroInvoiceMatches,invoiceDraftXeroValue} from '
 export {matchesXeroInvoice,matchesXeroInvoiceHeader,exactXeroInvoiceMatches} from './student-case-invoice-matching.js';
 import { analysisToday,documentWorkflowEnabled } from './student-document-analysis-state.js';
 import type { PoolClient } from 'pg';
-import { offerExtraction,paymentWithConditionalFee } from './student-document-analysis.contracts.js';
+import { offerExtraction,normalizeOfferConditionalFees,paymentWithConditionalFee } from './student-document-analysis.contracts.js';
 import { readSalesCatalogue } from './student-xero-sales-catalogue.js';
 import { decimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xero-sales-catalogue.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
@@ -64,6 +64,7 @@ export function lineTotal(quantity:string,unitAmountMinor:number){
 }
 type AcceptedDraftDates={sequence:number;issueDate:string;dueDate:string};
 export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string,acceptedDefaultDates:AcceptedDraftDates[]=[]){
+  source=normalizeOfferConditionalFees(source);
   const sequences=value.invoices.map(i=>i.sequence);
   if(new Set(sequences).size!==sequences.length||value.invoices.length!==source.instalments.length||source.instalments.some(i=>!sequences.includes(i.sequence)))throw new BadRequestException('Prepare exactly one invoice for each offer instalment.');
   return value.invoices.map(invoice=>{
@@ -89,7 +90,13 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     const retainsAcceptedDefault=acceptedDefaultDates.some(saved=>saved.sequence===invoice.sequence&&saved.issueDate===saved.dueDate&&saved.issueDate===invoice.issueDate&&saved.dueDate===invoice.dueDate);
     const usesSystemDefaultDates=(systemDefaultDate!==undefined&&invoice.issueDate===systemDefaultDate&&invoice.dueDate===systemDefaultDate)||retainsAcceptedDefault;
     const changesSourceDueDate=Boolean(original.dueOn&&original.dueOn!==invoice.dueDate&&!usesSystemDefaultDates);
-    if((difference!==0||changesSourceDueDate)&&!value.reviewNote)throw new BadRequestException('Explain changes from the offer amounts or dates in the review note.');
+    if((difference!==0||changesSourceDueDate)&&!value.reviewNote){
+      const details=[difference!==0?`Invoice total ${source.currency} ${(total/100).toFixed(2)}; expected ${source.currency} ${(expected/100).toFixed(2)} after the conditional fee choice.`:null,
+        changesSourceDueDate?`Due date ${invoice.dueDate}; offer due date ${original.dueOn}.`:null].filter(Boolean).join(' ');
+      throw new BadRequestException({errorCode:'invoice_review_note_required',sequence:invoice.sequence,differenceMinor:difference,
+        expectedTotalMinor:expected,totalMinor:total,sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,
+        message:`INV-${invoice.sequence} (TRUST): ${details} Explain the difference in the review note, or correct the invoice/offer details.`});
+    }
     return {...invoice,lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
       sourceTotalMinor:original.totalMinor,sourceDueDate:original.dueOn,sourceDueTerm:original.dueTerm,
       sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,expectedTotalMinor:expected,differenceMinor:difference,totalMinor:total};
@@ -190,7 +197,7 @@ export class StudentCaseInvoiceDraftsService {
       JOIN ${caseSchema()}.student_document_analysis_results r ON r.customer_id=o.customer_id AND r.result_id=o.result_id
       JOIN ${caseSchema()}.student_document_reviews v ON v.customer_id=o.customer_id AND v.review_id=o.review_id
       WHERE o.customer_id=$1 AND o.case_id=$2 AND o.is_current AND o.status='confirmed'`,[p.tenantId,id])).rows[0];
-    return row?{row,source:offerExtraction.parse(row.corrections??row.extraction)}:null;
+    return row?{row,source:normalizeOfferConditionalFees(offerExtraction.parse(row.corrections??row.extraction))}:null;
   }
   async list(p:Principal,id:string){
     this.financial(p);

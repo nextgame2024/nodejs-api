@@ -3566,5 +3566,22 @@
     "migrationRequired": false,
     "frontendDeployment": false,
     "backendRevision": "77a337c77910"
+  },
+  "invoiceConditionalFeeCorrection20261113": {
+    "implementation": [
+      "Normalize included conditional fees to additional only when known tuition/material/enrolment components exactly account for the printed payment total; preserve ambiguous metadata and all source amounts.",
+      "User confirmed instalments 2\u20138 transfer fee is additional when applicable; first payment remains included.",
+      "Return structured review errors identifying instalment and amounts; local editor opens affected TRUST tab and defaults additional transfer fee from approved fee list."
+    ],
+    "verification": [
+      "Runtime build passed.",
+      "17 invoice draft contract tests passed.",
+      "77 ChromeHeadless invoice editor tests passed.",
+      "38 protected real-estate tests passed.",
+      "Read-only tenant-scoped audit confirmed actual eight-payment component labels and totals."
+    ],
+    "migrationRequired": false,
+    "frontendDeployment": false,
+    "deployment": "Backend pending push and live revision verification."
   }
 }
