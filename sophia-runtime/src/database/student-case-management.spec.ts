@@ -1608,6 +1608,19 @@ suite('Case management against disposable PostgreSQL',()=>{
       await expect(analysis.review(p,secondCase,secondFile,freshPayload,'offer-replace-denied')).rejects.toThrow('replacing');
       await analysis.review(p,secondCase,secondFile,{...freshPayload,replaceCollege:true},'offer-replace-confirmed');
       expect((await service.get(p,secondCase)).colleges.find(c=>c.isPrimary)?.collegeId).toBe(collegeId);
+      expect((await service.get(p,secondCase)).studentName).toBe('Offer Workflow');
+      const nameReview=await analysis.get(p,secondCase,secondFile);
+      expect(nameReview.offer?.currentStudentName).toBe('Offer Workflow');
+      const rename={...freshPayload,replaceCollege:true,replaceStudentName:true,expectedStudentName:'Stale Name',expectedReviewVersion:nameReview.reviewVersion,expectedCaseVersion:nameReview.offer!.caseRecordVersion,corrections:{...extraction,studentName:'Corrected Offer Student',studentSignerName:'Corrected Offer Student'}};
+      await expect(analysis.review(p,secondCase,secondFile,rename,'offer-name-stale')).rejects.toThrow('Student name changed');
+      await analysis.review(p,secondCase,secondFile,{...rename,expectedStudentName:'Offer Workflow'},'offer-name-replace');
+      expect((await service.get(p,secondCase)).studentName).toBe('Corrected Offer Student');
+      expect((await service.get(p,student.caseId)).studentName).toBe('Corrected Offer Student');
+      expect((await pool.query('SELECT name FROM public.users WHERE id=$1',[student.userId])).rows[0].name).toBe('Corrected Offer Student');
+      expect((await analysis.get(p,secondCase,secondFile)).status).toBe('passed');
+      const context=(await transaction(tenant,db=>db.query(`SELECT review_context FROM sophia_runtime.student_document_reviews WHERE case_id=$1 ORDER BY review_version DESC LIMIT 1`,[secondCase]))).rows[0].review_context;
+      expect(context).toMatchObject({previousStudentName:'Offer Workflow',studentNameAtReview:'Corrected Offer Student',replaceStudentName:true});
+
     }finally{restore();if(old===undefined)delete process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED;else process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED=old;if(oldOffer===undefined)delete process.env.STUDENT_OFFER_ANALYSIS_ENABLED;else process.env.STUDENT_OFFER_ANALYSIS_ENABLED=oldOffer;}
   });
   test('upload through analysis and audited review/retry respects permissions and optimistic versions',async()=>{

@@ -3668,7 +3668,7 @@
     "deployment": "Runtime health verified ok at cfa128adda72. Frontend local only. No migration."
   },
   "collegeAliasSearch20261114": {
-    "status": "verified_backend_ready_to_deploy_frontend_local",
+    "status": "backend_live_frontend_local",
     "changes": [
       "Tenant-scoped existing matching directory supplies acronym and tradingName for case editing, saved details and offer college directory; no migration or provider requests.",
       "College dropdown search includes legal name, acronym and trading name. File picker cancellation no longer bubbles to modal close.",
@@ -3680,6 +3680,17 @@
       "38 protected real-estate tests pass",
       "Runtime build and frontend TypeScript check pass"
     ],
-    "deployment": "Backend only; frontend remains local."
+    "deployment": "Render Runtime health verified ok at 3367b54b045c. No migration required. Frontend remains local."
+  },
+  "offerStudentNameReplacement20261114": {
+    "status": "verified_ready_for_backend_deployment",
+    "behavior": "Optional unchecked checkbox replaces the current student name with the reviewed offer name on confirmation only. Reuses scoped profile update function; checks expected current name under row lock; audit stores previous and replacement names. Case and review optimistic locking retained. No sync process changes.",
+    "validation": [
+      "31 offer review Chrome tests passed",
+      "Offer workflow PostgreSQL regression passed including shared profile replacement, stale-name rejection and audit",
+      "38 protected real-estate tests passed",
+      "Runtime build passed"
+    ],
+    "deployment": "Backend only; frontend remains local; no migration required."
   }
 }

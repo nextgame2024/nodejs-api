@@ -14,7 +14,7 @@ import { documentChecklistEnabled,isLatestTypedDocument,reconcileDocumentCheckli
 export { analysisToday,analysisVerdict } from './student-document-analysis-state.js';
 
 const reviewSchema=documentReview.extend({collegeId:z.uuid().nullable().optional(),expectedCaseVersion:z.number().int().positive().optional(),
-  replaceCollege:z.boolean().optional(),acknowledgeTotals:z.boolean().optional()}).strict();
+  replaceStudentName:z.boolean().optional(),expectedStudentName:z.string().max(200).optional(),replaceCollege:z.boolean().optional(),acknowledgeTotals:z.boolean().optional()}).strict();
 
 export const analysisEnabled = () => process.env.STUDENT_DOCUMENT_ANALYSIS_ENABLED === 'true';
 export async function eligibleAnalysisUploads(db:PoolClient,tenant:string,id:string,documents:string[]) {
@@ -82,7 +82,7 @@ export class StudentDocumentAnalysisService {
           WHERE customer_id=$1 AND result_id=$2 ORDER BY review_version DESC LIMIT 1`,[p.tenantId,row.result_id])).rows[0];
         const saleOptions=await readPtySaleOptions(db,p.tenantId);
         const defaults=saleOptions.filter(o=>o.name.trim().toLowerCase()==='instalment');
-        offer={typeOfSaleOptions:saleOptions.map(o=>({value:o.trackingOptionId,label:o.name})),defaultTypeOfSaleOptionId:defaults.length===1?defaults[0].trackingOptionId:null,...match,colleges,currentCollegeId:primary?.college_id??null,selectedCollegeId:header?.resolved_college_id??match.exactCollegeId,
+        offer={currentStudentName:profile.rows[0]?.legal_name??'',typeOfSaleOptions:saleOptions.map(o=>({value:o.trackingOptionId,label:o.name})),defaultTypeOfSaleOptionId:defaults.length===1?defaults[0].trackingOptionId:null,...match,colleges,currentCollegeId:primary?.college_id??null,selectedCollegeId:header?.resolved_college_id??match.exactCollegeId,
           caseRecordVersion:caseRow.record_version,offerId:header?.offer_id??null,isCurrent:header?.is_current??false,
           totals:offerTotals(extraction as Extract<typeof extraction,{kind:"letter_of_offer"}>),problems:offerConfirmationProblems(extraction as Extract<typeof extraction,{kind:"letter_of_offer"}>)};
       }
@@ -123,11 +123,24 @@ export class StudentDocumentAnalysisService {
         }
       }
       if(value.decision==='confirmed'&&corrected.kind==='passport'&&(!corrected.expiresOn||corrected.mrzExpiryMatches===false))throw new BadRequestException('Confirm the passport expiry and resolve conflicting dates before accepting.');
-      const studentNameAtReview=(await db.query(`SELECT legal_name FROM ${caseSchema()}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,caseRow.student_id])).rows[0]?.legal_name??'';
+      let studentNameAtReview=(await db.query(`SELECT legal_name FROM ${caseSchema()}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,caseRow.student_id])).rows[0]?.legal_name??'';
+      let previousStudentName:string|null=null;
+      if(value.replaceStudentName&&value.decision==='confirmed'){
+        if(corrected.kind!=='letter_of_offer')throw new BadRequestException('Student names can only be replaced from the offer review.');
+        const name=corrected.studentName?.trim();
+        if(!name||name.length>200)throw new BadRequestException('Enter a student name between 1 and 200 characters.');
+        const profile=(await db.query(`SELECT s.legal_name,s.email,contact.mobile,contact.phone FROM ${caseSchema()}.student_operations_students s
+          LEFT JOIN ${caseSchema()}.student_operations_case_contact contact ON contact.customer_id=s.customer_id AND contact.case_id=$3
+          WHERE s.customer_id=$1 AND s.student_id=$2 FOR UPDATE OF s`,[p.tenantId,caseRow.student_id,id])).rows[0];
+        if(!profile||value.expectedStudentName!==profile.legal_name)throw new ConflictException('Student name changed. Reload the offer before replacing it.');
+        previousStudentName=profile.legal_name;
+        await db.query(`SELECT ${caseSchema()}.update_student_case_profile($1,$2,$3,$4,$5)`,[id,name,profile.email,profile.mobile,profile.phone]);
+        studentNameAtReview=name;
+      }
       const saved=await db.query(`INSERT INTO ${caseSchema()}.student_document_reviews
         (customer_id,case_id,document_id,result_id,review_version,decision,corrections,reason,actor_identity_user_id,review_context)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING review_id`,[p.tenantId,id,documentId,value.resultId,value.expectedReviewVersion+1,value.decision,value.corrections?JSON.stringify(value.corrections):null,value.reason,p.identityUserId,
-          JSON.stringify({studentNameAtReview,...(corrected.kind==='letter_of_offer'?{collegeId:selected?.collegeId??null,expectedCaseVersion:value.expectedCaseVersion,replaceCollege:Boolean(value.replaceCollege),acknowledgeTotals:Boolean(value.acknowledgeTotals)}:{})})]);
+          JSON.stringify({studentNameAtReview,...(previousStudentName!==null?{previousStudentName,replaceStudentName:true}:{}),...(corrected.kind==='letter_of_offer'?{collegeId:selected?.collegeId??null,expectedCaseVersion:value.expectedCaseVersion,replaceCollege:Boolean(value.replaceCollege),acknowledgeTotals:Boolean(value.acknowledgeTotals)}:{})})]);
       if(corrected.kind==='letter_of_offer'){
         if(selected){
           await assignOfferCollege(db,p.tenantId,id,selected);
