@@ -3645,7 +3645,7 @@
     }
   },
   "archivedStudentNameAndUploadStaging20261114": {
-    "status": "verified_pending_backend_deployment",
+    "status": "backend_live_frontend_local",
     "changes": [
       "Exclude ARCHIVED Xero contacts from new contact exact-name validation; active duplicates remain blocked. Deleted Sophia students are already physically removed.",
       "Automatic local staging when both document type and files are selected; remove Add button; uploads remain explicit.",
@@ -3665,6 +3665,21 @@
       ],
       "diffCheck": "passed"
     },
-    "deployment": "Backend only; frontend stays local; no migration."
+    "deployment": "Runtime health verified ok at cfa128adda72. Frontend local only. No migration."
+  },
+  "collegeAliasSearch20261114": {
+    "status": "verified_backend_ready_to_deploy_frontend_local",
+    "changes": [
+      "Tenant-scoped existing matching directory supplies acronym and tradingName for case editing, saved details and offer college directory; no migration or provider requests.",
+      "College dropdown search includes legal name, acronym and trading name. File picker cancellation no longer bubbles to modal close.",
+      "Edit/create replaces Case opened with Advisor and read-only trading-name textarea; saved summary includes acronym/trading name."
+    ],
+    "validation": [
+      "155 focused Chrome tests pass, including responsive light/dark layouts",
+      "College alias PostgreSQL regression passes under Runtime app-role tenant scope and verifies saved case details",
+      "38 protected real-estate tests pass",
+      "Runtime build and frontend TypeScript check pass"
+    ],
+    "deployment": "Backend only; frontend remains local."
   }
 }

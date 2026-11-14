@@ -1,3 +1,4 @@
+import {offerCollegeDirectory} from '../business-packs/student-operations/student-case-offers.js';
 import {assertStudentContactNameAvailable} from '../business-packs/student-operations/student-contact-name.js';
 import {assertCollegeContactAvailable} from '../business-packs/student-operations/student-college-contact-lifecycle.js';
 import { readFile } from 'node:fs/promises';
@@ -102,7 +103,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query((await readFile(new URL('./migrations/094_student_document_analysis.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA sophia_runtime REVOKE DELETE,UPDATE ON TABLES FROM sophia_runtime_app');
     await pool.query((await readFile(new URL('./migrations/095_student_document_analysis_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
-    await pool.query('ALTER TABLE public.bm_colleges ADD COLUMN abn text');
+    await pool.query('ALTER TABLE public.bm_colleges ADD COLUMN abn text, ADD COLUMN trading_name text, ADD COLUMN acronym text');
     await pool.query((await readFile(new URL('./migrations/096_student_offer_review.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/097_student_document_checklist.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
     await pool.query((await readFile(new URL('./migrations/098_student_verified_document_workflow.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
@@ -115,7 +116,7 @@ suite('Case management against disposable PostgreSQL',()=>{
     await pool.query(`ALTER TABLE sophia_runtime.student_operations_xero_sync_configurations ADD COLUMN IF NOT EXISTS enabled boolean DEFAULT true;
       CREATE TABLE public.bm_college_commission_rules(company_id uuid,rule_id uuid,college_id uuid,classification text,location text,program text,commission_basis_points integer,calculation_method text,rounding_decimal_places integer,cashback_status text,bonus_status text,application_conditions text,active boolean,createdat timestamptz,updatedat timestamptz);`);
     await pool.query(`CREATE FUNCTION sophia_runtime.claim_due_student_operations_xero_worker_runs(integer) RETURNS SETOF sophia_runtime.student_operations_xero_sync_configurations LANGUAGE sql AS $$ SELECT * FROM sophia_runtime.student_operations_xero_sync_configurations c WHERE c.organisation_role='trust' $$`);
-    for(const name of ['127_student_pty_foundation.sql','128_student_commission_invoices.sql','130_student_case_pty_lifecycle.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
+    for(const name of ['127_student_pty_foundation.sql','128_student_commission_invoices.sql','129_student_college_matching_aliases.sql','130_student_case_pty_lifecycle.sql'])await pool.query((await readFile(new URL(`./migrations/${name}`,import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','sophia_runtime'));
   });
   afterAll(async()=>{await pool.end();});
   const analysisQueueTest=async()=>{
@@ -1717,6 +1718,16 @@ suite('Case management against disposable PostgreSQL',()=>{
     else expect(provider.archiveContact).not.toHaveBeenCalled();
     for(const table of ['student_commission_drafts','student_commission_exports','student_case_xero_invoice_exports','student_case_invoice_draft_batches'])expect((await transaction(tenant,db=>db.query(`SELECT 1 FROM sophia_runtime.${table} WHERE customer_id=$1 AND case_id=$2`,[tenant,id]))).rowCount).toBe(0);
     await expect(deletions.remove(p,id,confirm,`pty-delete-both-${mode}`)).resolves.toEqual({caseId:id,deleted:true});
+  });
+
+  test('returns scoped college aliases for editing, offer search and saved case details',async()=>{
+    await pool.query(`UPDATE public.bm_colleges SET trading_name='York Training',acronym='YBC' WHERE college_id=$1`,[college]);
+    expect((await service.editOptions(p)).colleges).toEqual(expect.arrayContaining([expect.objectContaining({collegeId:college,tradingName:'York Training',acronym:'YBC'})]));
+    const created=await service.createStudent(p,{studentName:'College Alias Student',studentEmail:'college-alias@example.test',collegeId:college},'college-alias-student');
+    expect((await service.get(p,String(created.caseId))).colleges).toEqual(expect.arrayContaining([expect.objectContaining({collegeId:college,tradingName:'York Training',acronym:'YBC'})]));
+    const client=await pool.connect();try {await client.query('BEGIN');await client.query('SET LOCAL ROLE sophia_runtime_app');await client.query("SELECT set_config('sophia.tenant_id',$1,true)",[tenant]);
+      expect(await offerCollegeDirectory(client,tenant)).toEqual(expect.arrayContaining([expect.objectContaining({collegeId:college,tradingName:'York Training',acronym:'YBC'})]));
+    }finally{await client.query('ROLLBACK');client.release();}
   });
 
 });

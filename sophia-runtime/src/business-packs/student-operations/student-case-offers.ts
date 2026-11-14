@@ -6,7 +6,7 @@ import { nameSimilarity,offerExtraction } from './student-document-analysis.cont
 import { isLatestTypedDocument } from './student-document-checklist.js';
 
 export type OfferExtraction=z.infer<typeof offerExtraction>;
-export interface OfferCollege { collegeId:string;name:string;abn:string|null; }
+export interface OfferCollege { collegeId:string;name:string;abn:string|null;tradingName?:string|null;acronym?:string|null; }
 const normalized=(s:string)=>s.normalize('NFKC').trim().replace(/\s+/g,' ').toLocaleLowerCase('en');
 const digits=(s:string)=>s.replace(/\D/g,'');
 export function matchOfferColleges(name:string|null,abn:string|null,colleges:OfferCollege[]) {
@@ -21,8 +21,9 @@ export function matchOfferColleges(name:string|null,abn:string|null,colleges:Off
     candidates:[...exact,...partial].slice(0,20)};
 }
 export async function offerCollegeDirectory(db:PoolClient,tenant:string):Promise<OfferCollege[]> {
-  return (await db.query(`SELECT college_id AS "collegeId",college_name AS name,abn FROM ${caseSchema()}.student_operations_offer_college_directory
-    WHERE customer_id=$1 ORDER BY lower(college_name),college_id`,[tenant])).rows;
+  return (await db.query(`SELECT d.college_id AS "collegeId",d.college_name AS name,d.abn,m.trading_name AS "tradingName",m.acronym FROM ${caseSchema()}.student_operations_offer_college_directory d
+    LEFT JOIN ${caseSchema()}.student_college_matching_directory m ON m.customer_id=d.customer_id AND m.college_id=d.college_id
+    WHERE d.customer_id=$1 ORDER BY lower(d.college_name),d.college_id`,[tenant])).rows;
 }
 export function offerConfirmationProblems(value:OfferExtraction) {
   const problems:string[]=[];
