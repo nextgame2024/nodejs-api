@@ -1,3 +1,4 @@
+import * as forms from "../services/leads/lead-forms.service.js";
 import { retryVoice } from "../services/messaging/voice-api.service.js";
 import {
   responseSettings,
@@ -148,6 +149,42 @@ router.post(
       req.params.leadId,
       req.params.jobId,
     ),
+  ),
+);
+router.get(
+  "/bm/lead-assistant/form-types",
+  handle((req) => forms.listTypes(req.user.id, req.user.companyId)),
+);
+router.post(
+  "/bm/lead-assistant/form-types",
+  handle((req) => forms.createType(req.user.id, req.user.companyId, req.body)),
+);
+router.delete(
+  "/bm/lead-assistant/form-types/:id",
+  handle((req) =>
+    forms.deleteType(req.user.id, req.user.companyId, req.params.id),
+  ),
+);
+router.get(
+  "/bm/lead-assistant/forms",
+  handle((req) => forms.listForms(req.user.id, req.user.companyId, req.query)),
+);
+router.get(
+  "/bm/lead-assistant/forms/:id",
+  handle((req) =>
+    forms.getForm(req.user.id, req.user.companyId, req.params.id),
+  ),
+);
+router.put(
+  "/bm/lead-assistant/forms/:id",
+  handle((req) =>
+    forms.saveForm(req.user.id, req.user.companyId, req.params.id, req.body),
+  ),
+);
+router.delete(
+  "/bm/lead-assistant/forms/:id",
+  handle((req) =>
+    forms.deleteForm(req.user.id, req.user.companyId, req.params.id, req.body),
   ),
 );
 export default router;

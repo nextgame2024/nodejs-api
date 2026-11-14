@@ -1,4 +1,25 @@
 {
+  "leadForms": {
+    "updatedOn": "2026-11-15",
+    "status": "implemented_and_locally_verified_migration_pending",
+    "implemented": [
+      "Forms tab with server-paginated list, type modal, ordered seven-block builder and safe preview",
+      "Tenant-scoped CRUD, lead-manager write permissions, optimistic versions, protected used types and immutable audit history",
+      "Migration 131 adds form definitions, default type support and forced RLS"
+    ],
+    "verification": [
+      "Angular development build passed (Node 22.23.2)",
+      "TypeScript application and test configurations: --noEmit passed",
+      "20 focused ChromeHeadless Forms and Leads tests passed, including 390px/1280px light/dark list layout checks",
+      "12 backend contract and service tests passed",
+      "2 disposable-local PostgreSQL tests passed: migration, CRUD, stale writes, tenant isolation, audit privileges; temporary database removed",
+      "git diff --check passed in frontend and backend"
+    ],
+    "deployment": [
+      "Apply 131_lead_forms.sql through the configured owner migration runner before enabling Forms APIs; no application or production database migration applied"
+    ],
+    "scope": "Form authoring and preview only; no public submission endpoint or response collection."
+  },
   "studentPtyIntegration": {
     "updatedOn": "2026-11-13",
     "status": "completed_pty_invoice_lifecycle_backend_live",
@@ -3718,7 +3739,7 @@
     "deployment": "Runtime health verified ok at ce4aaf0d92a4. No migration or frontend deployment."
   },
   "agencyDiscountLine20261114": {
-    "status": "verified_ready_for_backend_deployment",
+    "status": "backend_live_frontend_verified",
     "behavior": "TRUST retains gross tuition and adds one negative Agency discount item matching the approved offer discount. PTY commission base remains gross tuition. Editable legacy drafts are upgraded locally; frozen exports retain their original snapshot. Existing invoice editing accepts signed line prices with existing account, tax, identity and lock validation.",
     "validation": [
       "39 Runtime invoice/catalogue/edit-policy tests passed",
@@ -3727,6 +3748,6 @@
       "Runtime build and frontend typecheck passed"
     ],
     "catalogue": "Scoped TRUST catalogue refresh completed 2026-11-14T11:36:15Z, Agency discount imported, error_code null. No Xero invoices created or modified.",
-    "deployment": "Backend only; frontend remains local. No migration required."
+    "deployment": "Runtime health verified ok at 16ee90bb342e. Backend only deployed by this task; frontend changes verified locally. No migration required."
   }
 }
