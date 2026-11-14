@@ -47,7 +47,7 @@ export function normalizeOfferConditionalFees(source:z.infer<typeof offerExtract
     const components=payment.components??[];
     // Some offers bundle enrolment/COE and the transfer charge in the first
     // payment's Other column. Resolve only an exact, fully accounted breakdown.
-    const bundled=components.filter(c=>/^Other\s*\(Enrolment\s*&\s*COE Issue Fee(?:,.*)?\)$/i.test(c.label.trim()));
+    const bundled=components.filter(c=>/^(?:Other\s*\(Enrolment\s*&\s*COE Issue Fee(?:,.*)?\)|Enrolment Fee\s*\+\s*COE(?: Issue Fee)?\s*\+\s*IFT(?:\s*\(by sum difference\))?)$/i.test(c.label.trim()));
     if(payment.sequence===firstSequence&&(payment.includedConditionalFeeMinor===0||payment.includedConditionalFeeMinor===transfer[0]?.amountMinor)&&bundled.length===1&&
       enrolment.length===1&&coe.length===1&&transfer.length===1&&transfer[0].amountMinor>0&&
       components.every(c=>c===bundled[0]||/^(?:tuition|materials?)(?:\s+fees?)?$/i.test(c.label.trim()))&&

@@ -3683,7 +3683,7 @@
     "deployment": "Render Runtime health verified ok at 3367b54b045c. No migration required. Frontend remains local."
   },
   "offerStudentNameReplacement20261114": {
-    "status": "verified_ready_for_backend_deployment",
+    "status": "backend_live_frontend_local",
     "behavior": "Optional unchecked checkbox replaces the current student name with the reviewed offer name on confirmation only. Reuses scoped profile update function; checks expected current name under row lock; audit stores previous and replacement names. Case and review optimistic locking retained. No sync process changes.",
     "validation": [
       "31 offer review Chrome tests passed",
@@ -3691,6 +3691,16 @@
       "38 protected real-estate tests passed",
       "Runtime build passed"
     ],
-    "deployment": "Backend only; frontend remains local; no migration required."
+    "deployment": "Backend health verified ok at df2d10c8cfdc; frontend remains local; no migration required."
+  },
+  "bundledIftFee20261114": {
+    "status": "validated_ready_for_backend_deployment",
+    "behavior": "Recognise the extracted Enrolment Fee + COE + IFT (by sum difference) bundle and split it using the exact explicit fee breakdown. Existing offer reads and invoice preparation normalise enrolment 200 and IFT 25 once, preserving total 995. Ambiguous breakdowns remain unchanged. Invoice filter display renamed Both to All locally.",
+    "validation": [
+      "21 invoice draft tests passed, including both bundled labels, idempotence, explicit IFT and mismatched breakdown",
+      "Runtime build passed",
+      "38 protected real-estate tests passed"
+    ],
+    "deployment": "Backend only; no migration; frontend remains local."
   }
 }

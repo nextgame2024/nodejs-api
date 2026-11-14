@@ -67,9 +67,9 @@ describe('Sophia-only invoice draft contract',()=>{
     const ambiguous={...source,instalments:[{...source.instalments[0],components:[{label:'Total',amountMinor:99500}]}]};
     expect(validateDraftSchedule(ambiguous,v)[0].sourceIncludedConditionalFeeMinor).toBe(2500);
   });
-  it('reconciles the first payment bundled enrolment/COE charge against the explicit fee breakdown',()=>{
+  it.each(['Other (Enrolment & COE Issue Fee, see breakdown on main page 1)','Enrolment Fee + COE + IFT (by sum difference)'])('separates bundled IFT from %s using the explicit fee breakdown',(label)=>{
     const offer={...source,fees:[{label:'Enrolment Fee',amountMinor:20000,conditional:false,condition:null},{label:'COE Issue Fee',amountMinor:0,conditional:false,condition:null},{label:'International Fund Transfer (IFT) Fee',amountMinor:2500,conditional:true,condition:'International payments'}],
-      instalments:[{...source.instalments[0],includedConditionalFeeMinor:0,components:[{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000},{label:'Other (Enrolment & COE Issue Fee, see breakdown on main page 1)',amountMinor:22500}]}]};
+      instalments:[{...source.instalments[0],includedConditionalFeeMinor:0,components:[{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000},{label,amountMinor:22500}]}]};
     const v=request();
     expect(validateDraftSchedule(offer,v)[0]).toMatchObject({totalMinor:97000,differenceMinor:0,sourceIncludedConditionalFeeMinor:2500});
     v.invoices[0].conditionalFeeApplies=true;v.invoices[0].conditionalFeeMinor=2500;
@@ -78,6 +78,8 @@ describe('Sophia-only invoice draft contract',()=>{
     const normalized=normalizeOfferConditionalFees(offer);
     expect(normalized.instalments[0].components).toEqual([{label:'Tuition',amountMinor:72000},{label:'Material',amountMinor:5000},{label:'Enrolment Fee',amountMinor:20000}]);
     expect(normalizeOfferConditionalFees(normalized)).toEqual(normalized);
+    expect(normalized.instalments[0].components!.reduce((sum,c)=>sum+c.amountMinor,0)+normalized.instalments[0].includedConditionalFeeMinor).toBe(99500);
+    expect(normalizeOfferConditionalFees({...offer,instalments:[{...offer.instalments[0],includedConditionalFeeMinor:2500}]})).toEqual(normalized);
     offer.fees[1].amountMinor=1000;
     expect(()=>validateDraftSchedule(offer,v)).toThrow('Explain');
   });
