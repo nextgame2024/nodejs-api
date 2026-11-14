@@ -163,6 +163,15 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await prepareAll();const rows=await service.list(p,caseId,batchId),s=rows.items[0].snapshot as any;
   expect(s.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(s.taxMinor).toBe(300);expect(s.value).toMatchObject({contactId,date:'2026-11-11',reference:'Fixture Student',lines:[expect.objectContaining({itemCode:'TUITION',unitAmount:'30.00',accountCode:'200',taxType:'OUTPUT',tracking:[{name:'Type of Sale',option:'Instalment',trackingCategoryId:trustId,trackingOptionId:itemId}]})]});
  });
+ it('uses full approved tuition for PTY when TRUST has an agency discount',async()=>{
+  for(const net of [8000,0]){
+  const changed:any=structuredClone(snapshot);changed.invoices[0].agencyDiscountMinor=10000-net;changed.invoices[0].commissionTuitionMinor=10000;
+  changed.invoices[0].lines[0].amountMinor=net;changed.invoices[0].lines[0].unitAmountMinor=net;changed.invoices[0].lines[0].unitPrice=(net/100).toFixed(2);
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET snapshot=$1`,[JSON.stringify(changed)]);
+  await prepareAll();const row=(await service.list(p,caseId,batchId)).items[0].snapshot;
+  expect(row.calculation).toMatchObject({tuitionMinor:10000,commissionMinor:3000});expect(row.value.lines[0]).toMatchObject({quantity:'1',unitAmount:'30.00'});
+  }
+ });
  it('saves 12 units at 80 dollars for 960 dollars commission and 96 dollars GST',async()=>{
   const changed=structuredClone(snapshot),tuition=changed.invoices[0].lines[0];
   tuition.quantity='12';tuition.unitPrice='320.00';tuition.unitAmountMinor=32000;tuition.amountMinor=384000;changed.invoices[0].totalMinor=386500;

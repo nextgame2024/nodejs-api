@@ -32,6 +32,7 @@ export const offerExtraction = z.object({
     dueTerm: text.nullable(), dueOn: date.nullable(), totalMinor: money,
     includedConditionalFeeMinor: money,
     typeOfSaleOptionId:z.uuid().optional(),
+    agencyDiscountMinor:money.optional(),
     components:paymentComponents.optional(),
   }).strict()).max(200),
 }).strict();
@@ -63,7 +64,7 @@ export function normalizeOfferConditionalFees(source:z.infer<typeof offerExtract
   })};
 }
 // Provider output is strict/all-required; stored and earlier provider offers remain readable.
-export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),studentSigned:z.boolean(),studentSignerName:text.nullable(),studentSignedOn:date.nullable(),collegeSigned:z.boolean().nullable(),instalments:z.array(offerExtraction.shape.instalments.element.omit({typeOfSaleOptionId:true}).extend({components:paymentComponents})).max(200)});
+export const offerProviderExtraction=offerExtraction.extend({campusAddress:text.nullable(),studentSigned:z.boolean(),studentSignerName:text.nullable(),studentSignedOn:date.nullable(),collegeSigned:z.boolean().nullable(),instalments:z.array(offerExtraction.shape.instalments.element.omit({typeOfSaleOptionId:true,agencyDiscountMinor:true}).extend({components:paymentComponents})).max(200)});
 export const documentExtraction = z.discriminatedUnion('kind', [engagementExtraction, passportExtraction, offerExtraction]);
 export type DocumentExtraction = z.infer<typeof documentExtraction>;
 export type DocumentKind = z.infer<typeof documentKind>;

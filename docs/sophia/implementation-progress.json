@@ -3616,6 +3616,27 @@
     ],
     "migrationRequired": false,
     "frontendDeployment": false,
-    "deployment": "Backend pending rollout."
+    "deployment": "Backend live:health ok:true at revision fed67918db42. Frontend changes local only."
+  },
+  "agencyDiscount20261114": {
+    "status": "verified_pending_backend_deployment",
+    "requirements": [
+      "Keep Tuition; add monetary Agency discount default zero before Tuition.",
+      "Payment TRUST deducts discount; Payment PTY preserves gross tuition and fees.",
+      "TRUST invoice tuition subtracts approved discount; PTY commission uses full approved tuition.",
+      "Wider offer modal, blue TRUST fields, automatic component/conditional-fee total recalculation; legacy unitemised balances preserved.",
+      "No frontend deployment or existing Xero invoice mutations."
+    ],
+    "validation": {
+      "runtimeBuild": "passed",
+      "frontendTypecheck": "passed",
+      "runtimeUnitTests": 58,
+      "isolatedPostgresTests": 33,
+      "browserTests": 127,
+      "protectedRealEstateTests": 38,
+      "responsive": "390/900/1440px, light and dark",
+      "diffCheck": "passed"
+    },
+    "migration": "None: discount persists in reviewed offer JSON and trusted invoice snapshots."
   }
 }

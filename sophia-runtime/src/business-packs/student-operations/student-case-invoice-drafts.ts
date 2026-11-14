@@ -76,7 +76,10 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     const fee=invoice.conditionalFeeApplies?invoice.conditionalFeeMinor:0;
     if(invoice.conditionalFeeApplies&&fee===0)throw new BadRequestException('Confirm the conditional fee amount or choose not to apply it.');
     if(!invoice.conditionalFeeApplies&&invoice.conditionalFeeMinor!==0)throw new BadRequestException('An excluded conditional fee must be zero.');
-    const expected=paymentWithConditionalFee(original.totalMinor,original.includedConditionalFeeMinor,Math.max(original.includedConditionalFeeMinor,invoice.conditionalFeeMinor),invoice.conditionalFeeApplies);
+    const discount=original.agencyDiscountMinor??0;
+    const grossTuition=(original.components??[]).filter(c=>/tuition/i.test(c.label)).reduce((n,c)=>n+c.amountMinor,0);
+    if(discount>grossTuition||discount>original.totalMinor-original.includedConditionalFeeMinor)throw new BadRequestException('Agency discount cannot exceed tuition.');
+    const expected=paymentWithConditionalFee(original.totalMinor,original.includedConditionalFeeMinor,Math.max(original.includedConditionalFeeMinor,invoice.conditionalFeeMinor),invoice.conditionalFeeApplies)-discount;
     const lines=invoice.lines.map(l=>({...l,unitAmountMinor:l.unitPrice!==undefined?Number(l.unitPrice)*100:l.unitAmountMinor!,taxAmountMinor:taxForLine(l)}));
     const base=lines.reduce((n,l)=>n+l.amountMinor,0),tax=lines.reduce((n,l)=>n+l.taxAmountMinor,0),total=base+tax+fee;
     if(total>1_000_000_000)throw new BadRequestException('Invoice amount exceeds the supported limit.');
@@ -97,7 +100,7 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
         expectedTotalMinor:expected,totalMinor:total,sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,
         message:`INV-${invoice.sequence} (TRUST): ${details} Explain the difference in the review note, or correct the invoice/offer details.`});
     }
-    return {...invoice,...(original.typeOfSaleOptionId?{typeOfSaleOptionId:original.typeOfSaleOptionId}:{}),lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
+    return {...invoice,...(discount>0?{agencyDiscountMinor:discount,commissionTuitionMinor:grossTuition}:{}),...(original.typeOfSaleOptionId?{typeOfSaleOptionId:original.typeOfSaleOptionId}:{}),lines,subtotalMinor:base,taxMinor:tax,invoiceNumber:`INV-${invoice.sequence}`,status:'DRAFT' as const,paymentTrack:'PENDING' as const,
       sourceTotalMinor:original.totalMinor,sourceDueDate:original.dueOn,sourceDueTerm:original.dueTerm,
       sourceIncludedConditionalFeeMinor:original.includedConditionalFeeMinor,expectedTotalMinor:expected,differenceMinor:difference,totalMinor:total};
   }).sort((a,b)=>a.sequence-b.sequence);

@@ -22,6 +22,16 @@ type Calculation=ReturnType<typeof commissionAmount>;
 type Snapshot={connectionId:string;contactId:string;mappingRevision:number;collegeId:string;collegeName:string;catalogueRevision:number;rule:CommissionRule;
  calculation:Calculation;taxMinor:number;totalMinor:number;value:XeroInvoiceCreate};
 type Result={sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;message?:string;errorCode?:string};
+function commissionSourceLines(invoice:InvoiceSnapshot['invoices'][number]){
+ const lines=invoice.lines.map(l=>({...l,kind:l.kind,amountMinor:l.amountMinor}));
+ if(typeof invoice.commissionTuitionMinor==='number'){
+  const tuition=lines.filter(l=>l.kind==='tuition');
+  // The approved full tuition is independent of the agency's TRUST discount.
+  if(tuition.length===1)tuition[0].amountMinor=invoice.commissionTuitionMinor;
+  else if(tuition.length>1){const total=tuition.reduce((n,l)=>n+Number(l.amountMinor),0);tuition[0].amountMinor=Number(tuition[0].amountMinor)+invoice.commissionTuitionMinor-total;}
+ }
+ return lines;
+}
 const sourceValue=(s:InvoiceSnapshot,i:InvoiceSnapshot['invoices'][number])=>({studentName:s.studentName,currency:s.currency,collegeId:s.collegeId,collegeName:i.collegeName??s.collegeName,connectionId:s.catalogueConnectionId,invoice:i});
 
 @Injectable()
@@ -106,14 +116,15 @@ export class StudentCommissionInvoicesService{
     if(invoice.collegeName!==undefined&&invoice.collegeName!==o.collegeName)throw new ConflictException('This TRUST invoice belongs to a different college. Review its original college before preparing commission.');
     const frozen=(await db.query(`SELECT status FROM ${s}.student_commission_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,selected.sequence])).rows[0];
     if(frozen&&frozen.status!=='not_attempted')continue;
-    let code:string;try{code=commissionTuitionItemCode(invoice.lines);}catch(error){throw new BadRequestException((error as Error).message);}
+    const commissionLines=commissionSourceLines(invoice);
+    let code:string;try{code=commissionTuitionItemCode(commissionLines);}catch(error){throw new BadRequestException((error as Error).message);}
     const matches=itemsByCode.get(code)??[];
     if(matches.length!==1)throw new BadRequestException(`The TRUST tuition item “${code}” needs one matching item with an account in PTY. Refresh the item catalogue or check its setup.`);
     const item=matches[0];
     if(!item.accountCode)throw new BadRequestException('The matching PTY item needs a sales account.');
     if(selected.itemId&&selected.itemId!==item.itemId)throw new BadRequestException('The PTY item must match the corresponding TRUST tuition item. Reload the invoice preview.');
-    const calculation=commissionAmount(invoice.lines.map(l=>({kind:l.kind,amountMinor:l.amountMinor})),o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
-    const pricing=commissionPricing(invoice.lines,calculation.commissionMinor);
+    const calculation=commissionAmount(commissionLines,o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
+    const pricing=commissionPricing(commissionLines,calculation.commissionMinor);
     const saleOptionId=selected.typeOfSaleOptionId??(typeof invoice.typeOfSaleOptionId==='string'?invoice.typeOfSaleOptionId:undefined);
     const saleOption=saleOptionId?o.saleOptions.find(option=>option.trackingOptionId===saleOptionId):o.defaultSaleOption;
     // Existing clients omitted a selection and used Instalment. Keep that
@@ -164,7 +175,7 @@ export class StudentCommissionInvoicesService{
      if(e&&e.status!=='not_attempted')return {existing:e.status};
      const source=b.snapshot.invoices.find(i=>i.sequence===sequence),snapshot=d.snapshot as Snapshot;
      if(!source||commissionHash(sourceValue(b.snapshot,source))!==d.source_hash)throw new ConflictException('The TRUST draft changed. Prepare the PTY calculation again.');
-     const pricing=commissionPricing(source.lines,snapshot.calculation.commissionMinor),line=snapshot.value.lines[0];
+     const pricing=commissionPricing(commissionSourceLines(source),snapshot.calculation.commissionMinor),line=snapshot.value.lines[0];
      if(snapshot.value.lines.length!==1||scaled4(line.quantity)!==scaled4(pricing.quantity)||scaled4(line.unitAmount)!==scaled4(pricing.unitAmount))throw new ConflictException('The PTY quantity or price no longer matches TRUST. Prepare the PTY calculation again.');
      if(current?.catalogue?.trackingCategories!==undefined){
       const selected=line.tracking.filter(t=>t.name.trim().toLowerCase()==='type of sale');

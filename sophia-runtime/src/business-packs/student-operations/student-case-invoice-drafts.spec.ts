@@ -10,6 +10,14 @@ const source:OfferExtraction={kind:'letter_of_offer',studentName:'Fixture Studen
 function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',catalogueRevision:1,reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
   lines:[{kind:'tuition',description:'Tuition',itemId:'44444444-4444-4444-8444-444444444444',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
 describe('Sophia-only invoice draft contract',()=>{
+  it('reduces TRUST by the agency discount while freezing the full PTY tuition base',()=>{
+    const offer=structuredClone(source);offer.instalments[0].components=[{label:'Tuition',amountMinor:97000}];offer.instalments[0].agencyDiscountMinor=10000;
+    const value=request();value.invoices[0].lines[0].unitAmountMinor=87000;value.invoices[0].lines[0].amountMinor=87000;
+    expect(validateDraftSchedule(offer,value)[0]).toMatchObject({totalMinor:87000,expectedTotalMinor:87000,differenceMinor:0,agencyDiscountMinor:10000,commissionTuitionMinor:97000});
+    value.invoices[0].conditionalFeeApplies=true;value.invoices[0].conditionalFeeMinor=2500;
+    expect(validateDraftSchedule(offer,value)[0].totalMinor).toBe(89500);
+    offer.instalments[0].agencyDiscountMinor=97001;expect(()=>validateDraftSchedule(offer,value)).toThrow('Agency discount cannot exceed tuition');
+  });
   it('hides preparation for a completed paired batch without loading catalogues or document evidence',async()=>{
     const before=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
     try{
