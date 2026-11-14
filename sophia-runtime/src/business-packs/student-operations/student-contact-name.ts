@@ -13,7 +13,7 @@ export async function assertStudentContactNameAvailable(db:PoolClient,tenant:str
   const conflicts=await db.query(`SELECT 1 FROM ${s}.student_operations_students
     WHERE customer_id=$1 AND student_id<>$2 AND lower(regexp_replace(btrim(legal_name),'\\s+',' ','g'))=lower($4)
     UNION ALL SELECT 1 FROM ${s}.student_operations_xero_contacts
-    WHERE customer_id=$1 AND xero_connection_id=$3 AND ($5::uuid IS NULL OR xero_contact_id<>$5)
+    WHERE customer_id=$1 AND xero_connection_id=$3 AND contact_status='ACTIVE' AND ($5::uuid IS NULL OR xero_contact_id<>$5)
       AND contact_number IS DISTINCT FROM ('sophia:'||$2::text)
       AND lower(regexp_replace(btrim(legal_name),'\\s+',' ','g'))=lower($4)
     LIMIT 1`,[tenant,studentId,connectionId,studentContactName(name),contactId]);

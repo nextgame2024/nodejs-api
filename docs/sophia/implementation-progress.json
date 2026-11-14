@@ -3619,7 +3619,7 @@
     "deployment": "Backend live:health ok:true at revision fed67918db42. Frontend changes local only."
   },
   "agencyDiscount20261114": {
-    "status": "verified_pending_backend_deployment",
+    "status": "backend_live_frontend_local",
     "requirements": [
       "Keep Tuition; add monetary Agency discount default zero before Tuition.",
       "Payment TRUST deducts discount; Payment PTY preserves gross tuition and fees.",
@@ -3637,6 +3637,34 @@
       "responsive": "390/900/1440px, light and dark",
       "diffCheck": "passed"
     },
-    "migration": "None: discount persists in reviewed offer JSON and trusted invoice snapshots."
+    "migration": "None: discount persists in reviewed offer JSON and trusted invoice snapshots.",
+    "deployment": {
+      "revision": "519c246d8e59",
+      "runtimeHealth": "ok",
+      "frontend": "Local changes only; not deployed."
+    }
+  },
+  "archivedStudentNameAndUploadStaging20261114": {
+    "status": "verified_pending_backend_deployment",
+    "changes": [
+      "Exclude ARCHIVED Xero contacts from new contact exact-name validation; active duplicates remain blocked. Deleted Sophia students are already physically removed.",
+      "Automatic local staging when both document type and files are selected; remove Add button; uploads remain explicit.",
+      "No sync/import name-cleanup changes, no archived contact restoration or live Xero mutation."
+    ],
+    "validation": {
+      "runtimeBuild": "passed",
+      "browserTests": 27,
+      "protectedRealEstateTests": 38,
+      "databaseTests": "47 passed, 5 failed; pre-change baseline has the identical 5 failures (46 passed). New archived-name and fresh-contact tests passed.",
+      "baselineFailures": [
+        "Case management against disposable PostgreSQL \u203a document checklist uses latest accepted evidence, audits transitions, reopens on expiry/replacement and stays tenant scoped",
+        "Case management against disposable PostgreSQL \u203a last-case migration repairs only completed deletion orphans and refuses unrelated cascade children",
+        "Case management against disposable PostgreSQL \u203a manual invoice drafts create independently of an offer and reuse safe export and list refresh",
+        "Case management against disposable PostgreSQL \u203a manual review controls document holds and prepares eight immutable tenant-scoped Sophia drafts without Xero writes",
+        "Case management against disposable PostgreSQL \u203a administrator cleanup previews safely, refuses unsafe targets and removes only the synthetic student"
+      ],
+      "diffCheck": "passed"
+    },
+    "deployment": "Backend only; frontend stays local; no migration."
   }
 }

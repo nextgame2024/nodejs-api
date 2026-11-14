@@ -567,7 +567,22 @@ suite('Case management against disposable PostgreSQL',()=>{
     const providerContact=randomUUID();
     await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,contact_status,legal_name,contact_number)
       VALUES($1,$2,$3,'ARCHIVED','Archived   Name Check','other-system')`,[tenant,connection,providerContact]);
+    await expect(transaction(tenant,db=>assertStudentContactNameAvailable(db,tenant,a.studentId,connection,'archived name check',null))).resolves.toBeUndefined();
+    await pool.query("UPDATE sophia_runtime.student_operations_xero_contacts SET contact_status='ACTIVE' WHERE xero_contact_id=$1",[providerContact]);
     await expect(transaction(tenant,db=>assertStudentContactNameAvailable(db,tenant,a.studentId,connection,'archived name check',null))).rejects.toThrow('exact name');
+  });
+  test('creates fresh student storage when a deleted student left an archived same-name Xero contact',async()=>{
+    const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';
+    try{
+      const archived=randomUUID(),fresh=randomUUID(),name='Recreated Archived Student';
+      await pool.query(`INSERT INTO sophia_runtime.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,contact_status,legal_name,contact_number) VALUES($1,$2,$3,'ARCHIVED',$4,$5)`,[tenant,connection,archived,name,`sophia:${randomUUID()}`]);
+      const created=await service.createStudent(p,{studentName:name,studentEmail:'recreated-archived@example.test'},'recreated-archived-student');
+      const ensureStudentContact=jest.fn(async(_tenant:string,_connection:string,value:{contactNumber:string;name:string;email:string|null})=>({contactId:fresh,status:'ACTIVE',legalName:value.name,email:value.email,contactNumber:value.contactNumber,accountNumber:null,updatedAt:null}));
+      const resolver=new StudentPrimaryXeroContact({tenantTransaction:transaction,tenantReadTransaction:transaction} as DatabaseService,service,{ensureStudentContact} as unknown as XeroConnectorService);
+      expect(await resolver.ensure(p,String(created.caseId))).toEqual({xero_connection_id:connection,source_id:fresh});
+      expect(ensureStudentContact).toHaveBeenCalledTimes(1);
+      expect((await pool.query('SELECT contact_status FROM sophia_runtime.student_operations_xero_contacts WHERE xero_contact_id=$1',[archived])).rows[0].contact_status).toBe('ARCHIVED');
+    }finally{if(old===undefined)delete process.env.XERO_CONTACT_CREATION_ENABLED;else process.env.XERO_CONTACT_CREATION_ENABLED=old;}
   });
   test('three initial document requests wait for one shared primary contact',async()=>{
     const old=process.env.XERO_CONTACT_CREATION_ENABLED;process.env.XERO_CONTACT_CREATION_ENABLED='true';
