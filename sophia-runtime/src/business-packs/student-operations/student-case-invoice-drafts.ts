@@ -14,7 +14,7 @@ import { analysisToday,documentWorkflowEnabled } from './student-document-analys
 import type { PoolClient } from 'pg';
 import { offerExtraction,normalizeOfferConditionalFees,paymentWithConditionalFee } from './student-document-analysis.contracts.js';
 import { readSalesCatalogue } from './student-xero-sales-catalogue.js';
-import { decimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xero-sales-catalogue.js';
+import { signedDecimal4,pricedLineMinor,lineTaxMinor } from '../../connectors/xero/xero-sales-catalogue.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import type { XeroInvoiceCreate,XeroInvoiceRecord } from '../../connectors/xero/xero.client.js';
 import { publishXeroContact } from './student-xero-contact-projection.js';
@@ -41,10 +41,12 @@ class MissingContactProjection extends Error {
 }
 
 const text=z.string().trim().min(1).max(500),money=z.number().int().min(0).max(1_000_000_000);
+const signedMoney=z.number().int().min(-1_000_000_000).max(1_000_000_000);
 const date=z.iso.date();
-const line=z.object({kind:z.enum(['tuition','enrolment','materials','visa','oshc','other']),description:z.string().trim().min(1).max(4000),itemId:z.uuid(),
-  itemCode:text,quantity:z.string().regex(/^\d{1,6}(\.\d{1,4})?$/),unitAmountMinor:money.optional(),unitPrice:decimal4.optional(),amountMinor:money,
-  accountCode:text,taxType:text}).strict().refine(l=>l.unitPrice!==undefined||l.unitAmountMinor!==undefined);
+const line=z.object({kind:z.enum(['tuition','enrolment','materials','visa','oshc','other','agency_discount']),description:z.string().trim().min(1).max(4000),itemId:z.uuid(),
+  itemCode:text,quantity:z.string().regex(/^\d{1,6}(\.\d{1,4})?$/),unitAmountMinor:signedMoney.optional(),unitPrice:signedDecimal4.optional(),amountMinor:signedMoney,
+  accountCode:text,taxType:text}).strict().refine(l=>l.unitPrice!==undefined||l.unitAmountMinor!==undefined)
+  .refine(l=>l.kind==='agency_discount' ? l.itemCode==='Agency discount'&&l.quantity==='1'&&l.amountMinor<0 : l.amountMinor>=0&&(l.unitPrice===undefined||Number(l.unitPrice)>=0)&&(l.unitAmountMinor===undefined||l.unitAmountMinor>=0));
 export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.number().int().positive(),caseVersion:z.number().int().positive(),advisorId:z.uuid(),
   draftBatchId:z.uuid().optional(),draftRevision:z.number().int().positive().optional(),
   catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),
@@ -76,10 +78,10 @@ export function xeroPreflightFailure(error:unknown){
 /** Integer minor units and four-decimal quantities; round only once per line. */
 export function lineTotal(quantity:string,unitAmountMinor:number){
   const [whole,fraction='']=quantity.split('.'),q=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));
-  return Number((q*BigInt(unitAmountMinor)+5000n)/10000n);
+  return Math.sign(unitAmountMinor)*Number((q*BigInt(Math.abs(unitAmountMinor))+5000n)/10000n);
 }
 type AcceptedDraftDates={sequence:number;issueDate:string;dueDate:string};
-export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string,acceptedDefaultDates:AcceptedDraftDates[]=[]){
+export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,value:InvoiceDraftRequest,taxForLine:(line:InvoiceDraftRequest['invoices'][number]['lines'][number])=>number=()=>0,systemDefaultDate?:string,acceptedDefaultDates:AcceptedDraftDates[]=[],legacyFrozenDiscountSequences:readonly number[]=[]){
   source=normalizeOfferConditionalFees(source);
   const sequences=value.invoices.map(i=>i.sequence);
   if(new Set(sequences).size!==sequences.length||value.invoices.length!==source.instalments.length||source.instalments.some(i=>!sequences.includes(i.sequence)))throw new BadRequestException('Prepare exactly one invoice for each offer instalment.');
@@ -95,10 +97,12 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     const discount=original.agencyDiscountMinor??0;
     const grossTuition=(original.components??[]).filter(c=>/tuition/i.test(c.label)).reduce((n,c)=>n+c.amountMinor,0);
     if(discount>grossTuition||discount>original.totalMinor-original.includedConditionalFeeMinor)throw new BadRequestException('Agency discount cannot exceed tuition.');
+    const discounts=invoice.lines.filter(l=>l.kind==='agency_discount');
+    if(!(discount>0&&discounts.length===0&&legacyFrozenDiscountSequences.includes(invoice.sequence))&&(discount>0 ? discounts.length!==1||discounts[0].amountMinor!==-discount||discounts[0].itemCode!=='Agency discount' : discounts.length>0))throw new BadRequestException('Use one Agency discount line matching the approved offer discount.');
     const expected=paymentWithConditionalFee(original.totalMinor,original.includedConditionalFeeMinor,Math.max(original.includedConditionalFeeMinor,invoice.conditionalFeeMinor),invoice.conditionalFeeApplies)-discount;
     const lines=invoice.lines.map(l=>({...l,unitAmountMinor:l.unitPrice!==undefined?Number(l.unitPrice)*100:l.unitAmountMinor!,taxAmountMinor:taxForLine(l)}));
     const base=lines.reduce((n,l)=>n+l.amountMinor,0),tax=lines.reduce((n,l)=>n+l.taxAmountMinor,0),total=base+tax+fee;
-    if(total>1_000_000_000)throw new BadRequestException('Invoice amount exceeds the supported limit.');
+    if(total<0||total>1_000_000_000)throw new BadRequestException('Invoice amount exceeds the supported limit.');
     const difference=total-expected;
     // Legacy editors started both dates at the organisation's current date.
     // Retain those accepted defaults without requiring a new review note.
@@ -282,16 +286,18 @@ export class StudentCaseInvoiceDraftsService {
       if(!college)throw new BadRequestException('Select an available college.');
       // A saved date accepted without a review explanation is a trusted default.
       // Keep requiring explanations for manually reviewed exceptions.
+      const frozen=existing?(await db.query(`SELECT sequence,status FROM ${s}.student_case_xero_invoice_exports
+          WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted' FOR UPDATE`,[p.tenantId,existing.batch_id])).rows as Array<{sequence:number;status:string}>:[];
+      // Only immutable provider receipts may retain the old net-tuition representation.
+      const legacyFrozenDiscountSequences=frozen.filter(receipt=>previous?.invoices.some(invoice=>invoice.sequence===receipt.sequence&&!invoice.lines.some(line=>line.kind==='agency_discount'))).map(receipt=>receipt.sequence);
       const acceptedDefaultDates=previous&&existing.snapshot.reviewNote===''?previous.invoices:[];
-      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates)
+      const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates,legacyFrozenDiscountSequences)
         .map(invoice=>({...invoice,collegeName:college.name as string|null})),advisorLabel=`${advisor.code} ${advisor.name}`;
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
         collegeId:college.collegeId,collegeName:college.name,reviewNote:value.reviewNote,invoices};
       if(existing&&previous){
-        const frozen=(await db.query(`SELECT sequence,status FROM ${s}.student_case_xero_invoice_exports
-          WHERE customer_id=$1 AND batch_id=$2 AND status<>'not_attempted' FOR UPDATE`,[p.tenantId,existing.batch_id])).rows as Array<{sequence:number;status:string}>;
         if(frozen.length&&existing.advisor_id!==value.advisorId)throw new ConflictException('The advisor cannot change after Xero invoice creation has started.');
         if(frozen.length&&previous.catalogueConnectionId!==snapshot.catalogueConnectionId)throw new ConflictException('The Xero organisation cannot change after invoice creation has started.');
         for(const receipt of frozen){
@@ -547,5 +553,5 @@ export class StudentCaseInvoiceDraftsService {
 export const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeId:z.uuid().optional(),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
     collegeName:z.string().nullable().optional(),
-    lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:money,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
+    lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:signedMoney,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
 export type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;

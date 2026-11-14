@@ -11,7 +11,7 @@ import type {StudentOperationsWorkspacePrincipal as Principal} from './student-o
 import {hasStudentOperationsPermission} from './student-operations-policy.js';
 import {invoiceCanEdit,invoiceEditFingerprint,matchesEditedInvoice} from './student-invoice-edit-policy.js';
 import {readSalesCatalogue} from './student-xero-sales-catalogue.js';
-import {decimal4,pricedLineMinor,lineTaxMinor} from '../../connectors/xero/xero-sales-catalogue.js';
+import {decimal4,signedDecimal4,pricedLineMinor,lineTaxMinor} from '../../connectors/xero/xero-sales-catalogue.js';
 import {projectCaseInvoice} from './student-invoice-projection.js';
 import {reconcileDocumentChecklist} from './student-document-checklist.js';
 
@@ -20,7 +20,7 @@ const request=z.object({expectedFingerprint:z.string().regex(/^[a-f0-9]{64}$/),c
   referenceMode:z.enum(['reference','college']),collegeId:z.uuid().optional(),brandingThemeId:z.uuid().optional(),currency:z.string().regex(/^[A-Z]{3}$/),reviewNote:z.string().max(500),
   issueDate:date,dueDate:date,conditionalFeeMinor:money,conditionalFeeLineId:z.uuid().optional(),
   lines:z.array(z.object({lineItemId:z.uuid().optional(),itemCode:z.string().max(50),description:z.string().trim().min(1).max(4000),
-    quantity:z.string().regex(/^\d{1,6}(\.\d{1,4})?$/),unitPrice:decimal4,accountCode:z.string().min(1).max(50),taxType:z.string().min(1).max(100)}).strict()).min(1).max(30),
+    quantity:z.string().regex(/^\d{1,6}(\.\d{1,4})?$/),unitPrice:signedDecimal4,accountCode:z.string().min(1).max(50),taxType:z.string().min(1).max(100)}).strict()).min(1).max(30),
 }).strict();
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const advisorCategory=(name:string)=>/^(sales representative|advisor|adviser|counsellor|consultant|agent)$/i.test(name.trim());
@@ -36,7 +36,7 @@ export class StudentCaseInvoiceEditsService{
     if(!invoiceCanEdit(invoice))throw new ConflictException('This invoice can no longer be edited in full. Refresh the invoice list.');
     if(lockDate&&(!invoice.invoiceDate||invoice.invoiceDate<=lockDate))throw new ConflictException('This invoice belongs to a locked accounting period.');
     if(invoice.lineAmountTypes&&invoice.lineAmountTypes!=='Exclusive'||invoice.lineItems.some(l=>Number(l.discountRate??0)!==0))throw new ConflictException('This invoice uses inclusive tax or discounts. Edit it in the accounting system to preserve those values.');
-    if(!invoice.lineItems.length||invoice.lineItems.length>30||invoice.lineItems.some(l=>l.quantity==null||l.quantity<=0||!decimal4.safeParse(String(l.quantity)).success||l.unitAmount==null||!decimal4.safeParse(String(l.unitAmount)).success||l.lineAmount==null||Math.round(l.lineAmount*100)!==pricedLineMinor(String(l.quantity),String(l.unitAmount))))throw new ConflictException('This invoice has adjustments or incomplete line amounts that need a specialised editor.');
+    if(!invoice.lineItems.length||invoice.lineItems.length>30||invoice.lineItems.some(l=>l.quantity==null||l.quantity<=0||!decimal4.safeParse(String(l.quantity)).success||l.unitAmount==null||!signedDecimal4.safeParse(String(l.unitAmount)).success||l.lineAmount==null||Math.round(l.lineAmount*100)!==pricedLineMinor(String(l.quantity),String(l.unitAmount))))throw new ConflictException('This invoice has adjustments or incomplete line amounts that need a specialised editor.');
   }
   private async publish(db:PoolClient,p:Principal,id:string,connectionId:string,updated:XeroInvoiceRecord){
     const s=caseSchema(),invoiceId=updated.invoiceId;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const decimal4=z.string().regex(/^\d{1,8}(\.\d{1,4})?$/);
+export const signedDecimal4=z.string().regex(/^-?\d{1,8}(\.\d{1,4})?$/);
 const text=z.string().max(4000),optional=text.nullish();
 const number=z.union([z.number().finite(),decimal4]).nullish();
 const details=z.object({UnitPrice:number,AccountCode:optional,TaxType:optional}).passthrough();
@@ -24,5 +25,5 @@ export function parseSalesCatalogue(rawItems:unknown,rawAccounts:unknown,rawTaxR
 }
 export type XeroSalesCatalogue=ReturnType<typeof parseSalesCatalogue>&{brandingThemes?:Array<{brandingThemeId:string;name:string}>;trackingCategories?:Array<{trackingCategoryId:string;name:string;options:Array<{trackingOptionId:string;name:string}>}>};
 export function scaled4(value:string):bigint{const [whole,fraction='']=decimal4.parse(value).split('.');return BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));}
-export function pricedLineMinor(quantity:string,price:string){return Number((scaled4(quantity)*scaled4(price)+500000n)/1000000n);}
-export function lineTaxMinor(net:number,rate:string){return Number((BigInt(net)*scaled4(rate)+500000n)/1000000n);}
+export function pricedLineMinor(quantity:string,price:string){signedDecimal4.parse(price);const sign=price.startsWith('-')?-1:1;return (sign*Number((scaled4(quantity)*scaled4(price.replace(/^-/,''))+500000n)/1000000n))||0;}
+export function lineTaxMinor(net:number,rate:string){return (Math.sign(net)*Number((BigInt(Math.abs(net))*scaled4(rate)+500000n)/1000000n))||0;}

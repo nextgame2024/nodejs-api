@@ -3704,7 +3704,7 @@
     "deployment": "Runtime health verified ok at daa45265491d. Backend only; no migration; frontend remains local."
   },
   "invoiceAdvisorAndDiscount20261114": {
-    "status": "advisor_validated_ready_to_deploy_discount_proposal_only",
+    "status": "advisor_backend_live_discount_proposal_only",
     "changes": [
       "Confirmed TRUST creation and reconciliation fill an unassigned student profile advisor from the saved batch, reflecting on case details. Case lock, null predicate, tenant scope, active directory check and activity audit protect existing assignments. No advisor assignment for saved-only drafts.",
       "Read-only imported Xero catalogue and invoice audit: TRUST College Discount and Discount - Bogota/Medellin items use 812 BASEXCLUDED. INV-10222 has College Discount -500; INV-9468 has -20. Recommend dedicated Agency discount negative line preserving gross tuition and PTY base; no provider items or invoices changed."
@@ -3715,6 +3715,18 @@
       "38 protected real-estate tests passed",
       "Runtime build and diff check passed"
     ],
-    "deployment": "Backend only; no migration; frontend not deployed."
+    "deployment": "Runtime health verified ok at ce4aaf0d92a4. No migration or frontend deployment."
+  },
+  "agencyDiscountLine20261114": {
+    "status": "verified_ready_for_backend_deployment",
+    "behavior": "TRUST retains gross tuition and adds one negative Agency discount item matching the approved offer discount. PTY commission base remains gross tuition. Editable legacy drafts are upgraded locally; frozen exports retain their original snapshot. Existing invoice editing accepts signed line prices with existing account, tax, identity and lock validation.",
+    "validation": [
+      "39 Runtime invoice/catalogue/edit-policy tests passed",
+      "79 invoice preview ChromeHeadless tests passed, including negative-line payload",
+      "38 protected real-estate tests passed",
+      "Runtime build and frontend typecheck passed"
+    ],
+    "catalogue": "Scoped TRUST catalogue refresh completed 2026-11-14T11:36:15Z, Agency discount imported, error_code null. No Xero invoices created or modified.",
+    "deployment": "Backend only; frontend remains local. No migration required."
   }
 }

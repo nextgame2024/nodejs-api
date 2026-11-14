@@ -12,11 +12,28 @@ function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-
 describe('Sophia-only invoice draft contract',()=>{
   it('reduces TRUST by the agency discount while freezing the full PTY tuition base',()=>{
     const offer=structuredClone(source);offer.instalments[0].components=[{label:'Tuition',amountMinor:97000}];offer.instalments[0].agencyDiscountMinor=10000;
-    const value=request();value.invoices[0].lines[0].unitAmountMinor=87000;value.invoices[0].lines[0].amountMinor=87000;
+    const value=request();value.invoices[0].lines.push({...value.invoices[0].lines[0],kind:'agency_discount',description:'Agency discount',itemCode:'Agency discount',unitAmountMinor:-10000,amountMinor:-10000});
+    expect(invoiceDraftRequest.safeParse(value).success).toBe(true);
     expect(validateDraftSchedule(offer,value)[0]).toMatchObject({totalMinor:87000,expectedTotalMinor:87000,differenceMinor:0,agencyDiscountMinor:10000,commissionTuitionMinor:97000});
     value.invoices[0].conditionalFeeApplies=true;value.invoices[0].conditionalFeeMinor=2500;
     expect(validateDraftSchedule(offer,value)[0].totalMinor).toBe(89500);
     offer.instalments[0].agencyDiscountMinor=97001;expect(()=>validateDraftSchedule(offer,value)).toThrow('Agency discount cannot exceed tuition');
+  });
+  it('rejects missing, duplicate or altered agency discounts and negative tuition',()=>{
+    const offer=structuredClone(source);offer.instalments[0].components=[{label:'Tuition',amountMinor:97000}];offer.instalments[0].agencyDiscountMinor=1000;
+    const value=request();value.reviewNote='Cannot bypass discount validation';
+    expect(()=>validateDraftSchedule(offer,value)).toThrow('Use one Agency discount');
+    const discount={...value.invoices[0].lines[0],kind:'agency_discount' as const,itemCode:'Agency discount',unitPrice:'-10.00',unitAmountMinor:-1000,amountMinor:-1000};
+    value.invoices[0].lines.push(discount);expect(validateDraftSchedule(offer,value)[0].totalMinor).toBe(96000);
+    discount.amountMinor=-2000;discount.unitPrice='-20.00';expect(()=>validateDraftSchedule(offer,value)).toThrow('Use one Agency discount');
+    discount.amountMinor=-1000;discount.unitPrice='-10.00';value.invoices[0].lines.push(discount);expect(()=>validateDraftSchedule(offer,value)).toThrow('Use one Agency discount');
+    expect(invoiceDraftRequest.safeParse({...value,invoices:[{...value.invoices[0],lines:[{...discount,kind:'tuition'}]}]}).success).toBe(false);
+  });
+  it('retains legacy net tuition only for server-confirmed frozen exports',()=>{
+    const offer=structuredClone(source);offer.instalments[0].components=[{label:'Tuition',amountMinor:97000}];offer.instalments[0].agencyDiscountMinor=1000;
+    const value=request();value.invoices[0].lines[0].unitAmountMinor=96000;value.invoices[0].lines[0].amountMinor=96000;
+    expect(()=>validateDraftSchedule(offer,value)).toThrow('Use one Agency discount');
+    expect(validateDraftSchedule(offer,value,()=>0,undefined,[],[1])[0].totalMinor).toBe(96000);
   });
   it('hides preparation for a completed paired batch without loading catalogues or document evidence',async()=>{
     const before=process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED;process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED='true';
