@@ -20,6 +20,22 @@ import type { XeroInvoiceCreate,XeroInvoiceRecord } from '../../connectors/xero/
 import { publishXeroContact } from './student-xero-contact-projection.js';
 import { projectCaseInvoice } from './student-invoice-projection.js';
 
+// Only a confirmed creation may fill the profile used by the case advisor field.
+// The null predicate also protects a concurrent manual assignment.
+export async function assignCreatedInvoiceAdvisor(db:PoolClient,tenantId:string,caseId:string,batchId:string){
+  const s=caseSchema();
+  const result=await db.query(`UPDATE ${s}.student_operations_students st SET advisor_id=b.advisor_id,updated_at=now()
+    FROM ${s}.student_case_invoice_draft_batches b
+    JOIN ${s}.student_operations_cases c ON c.customer_id=b.customer_id AND c.case_id=b.case_id
+    JOIN ${s}.student_operations_advisor_directory a ON a.customer_id=b.customer_id AND a.advisor_id=b.advisor_id AND a.status='active'
+    WHERE b.customer_id=$1 AND b.case_id=$2 AND b.batch_id=$3
+      AND st.customer_id=b.customer_id AND st.student_id=c.student_id AND st.advisor_id IS NULL
+      AND EXISTS(SELECT 1 FROM ${s}.student_case_xero_invoice_exports e WHERE e.customer_id=b.customer_id AND e.batch_id=b.batch_id AND e.status='created')
+    RETURNING a.name`,[tenantId,caseId,batchId]);
+  if(result.rowCount)await db.query(`UPDATE ${s}.student_operations_cases SET record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2`,[tenantId,caseId]);
+  return result.rows[0]?.name as string|undefined;
+}
+
 class MissingContactProjection extends Error {
   constructor(readonly connectionId:string,readonly contactId:string){super('Contact projection missing');}
 }
@@ -311,12 +327,15 @@ export class StudentCaseInvoiceDraftsService {
   private async confirmCreated(p:Principal,id:string,batchId:string,connectionId:string,contactId:string,snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],receipt:{invoiceId:string;invoiceNumber:string|null;status:string;total:number},verified?:XeroInvoiceRecord){
     const s=caseSchema();
     await this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.cases.authorizedCase(db,p,id,true);
       const updated=await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET status='created',xero_invoice_id=$4,xero_invoice_number=$5,provider_status=$6,completed_at=now(),verified_invoice=$7::jsonb
         WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3 AND status IN ('creating','review_required') RETURNING 1`,[p.tenantId,batchId,invoice.sequence,receipt.invoiceId,receipt.invoiceNumber,receipt.status,verified?JSON.stringify(verified):null]);
       if(!updated.rowCount){
         const existing=(await db.query(`SELECT status,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence])).rows[0];
         if(existing?.status!=='created'||existing.xero_invoice_id!==receipt.invoiceId)throw new ConflictException('Invoice creation receipt requires review.');
       }
+      const assignedAdvisor=await assignCreatedInvoiceAdvisor(db,p.tenantId,id,batchId);
+      if(assignedAdvisor)await this.cases.activity(db,p,id,'case.advisor_assigned',`Advisor assigned from created invoice: ${assignedAdvisor}`);
       await this.cases.activity(db,p,id,'case.xero_invoice_created',`${invoice.invoiceNumber} created as Xero ${receipt.invoiceNumber??receipt.invoiceId}`);
     });
     try{

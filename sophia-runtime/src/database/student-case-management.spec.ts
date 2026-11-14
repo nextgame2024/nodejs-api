@@ -27,7 +27,7 @@ import { StudentDocumentAnalysisService } from '../business-packs/student-operat
 import { StudentDocumentAnalysisWorker } from '../business-packs/student-operations/student-document-analysis.worker.js';
 import { reconcileDocumentChecklist,StudentDocumentChecklistReconciler } from '../business-packs/student-operations/student-document-checklist.js';
 import type { DocumentExtraction } from '../business-packs/student-operations/student-document-analysis.contracts.js';
-import { StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
+import { assignCreatedInvoiceAdvisor, StudentCaseInvoiceDraftsService } from '../business-packs/student-operations/student-case-invoice-drafts.js';
 import {invoiceDraftXeroValue} from '../business-packs/student-operations/student-case-invoice-matching.js';
 import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
 import { StudentOperationsXeroSyncService } from '../business-packs/student-operations/student-operations-xero-sync.service.js';
@@ -1231,6 +1231,27 @@ suite('Case management against disposable PostgreSQL',()=>{
     expect(reopened.pending?.key).toBe('edit-timeout');expect(reopened.pending?.input.reference).toBe('Retry after reopening');
     await edits.update(p,id,connection,invoiceId,reopened.pending!.input,reopened.pending!.key);
     expect(updateInvoice).toHaveBeenCalledTimes(4);expect(live.invoiceReference).toBe('Retry after reopening');
+  });
+  test('confirmed invoice fills an unassigned advisor once without overwriting assignments or crossing tenants',async()=>{
+    const id=String((await service.createStudent(p,{studentName:'Invoice Advisor Student',studentEmail:'invoice-advisor@example.test'},'invoice-advisor-case')).caseId);
+    const advisorId=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'AUTO1','Invoice Advisor','AUTO1 Invoice Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    const batch=randomUUID();
+    await transaction(tenant,async db=>{
+      await db.query(`INSERT INTO sophia_runtime.student_case_invoice_draft_batches(customer_id,case_id,batch_id,advisor_id,advisor_label,snapshot,actor_identity_user_id) VALUES($1,$2,$3,$4,'AUTO1 Invoice Advisor','{}',$5)`,[tenant,id,batch,advisorId,p.identityUserId]);
+      expect(await assignCreatedInvoiceAdvisor(db,tenant,id,batch)).toBeUndefined();
+      await db.query(`INSERT INTO sophia_runtime.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,provider_status,requested_by_identity_user_id,completed_at) VALUES($1,$2,$3,1,$4,$5,$6,'created',$7,'DRAFT',$8,now())`,[tenant,id,batch,connection,invoice,batch.replaceAll('-','').padEnd(64,'0'),randomUUID(),p.identityUserId]);
+    });
+    expect((await service.get(p,id)).advisorId).toBeNull();
+    expect(await transaction(randomUUID(),db=>assignCreatedInvoiceAdvisor(db,tenant,id,batch))).toBeUndefined();
+    const version=(await service.get(p,id)).recordVersion;
+    expect(await transaction(tenant,db=>assignCreatedInvoiceAdvisor(db,tenant,id,batch))).toBe('Invoice Advisor');
+    expect(await service.get(p,id)).toMatchObject({advisorId,advisorName:'Invoice Advisor',recordVersion:version+1});
+    expect(await transaction(tenant,db=>assignCreatedInvoiceAdvisor(db,tenant,id,batch))).toBeUndefined();
+    const other=(await pool.query(`INSERT INTO sophia_runtime.student_operations_advisor_directory(customer_id,code,name,xero_label) VALUES($1,'AUTO2','Existing Advisor','AUTO2 Existing Advisor') RETURNING advisor_id`,[tenant])).rows[0].advisor_id;
+    const studentId=(await service.get(p,id)).studentId;
+    await transaction(tenant,db=>db.query(`UPDATE sophia_runtime.student_operations_students SET advisor_id=$3 WHERE customer_id=$1 AND student_id=$2`,[tenant,studentId,other]));
+    expect(await transaction(tenant,db=>assignCreatedInvoiceAdvisor(db,tenant,id,batch))).toBeUndefined();
+    expect((await service.get(p,id)).advisorId).toBe(other);
   });
   test('manual invoice drafts create independently of an offer and reuse safe export and list refresh',async()=>{
     const old=process.env.XERO_INVOICE_CREATION_ENABLED;process.env.XERO_INVOICE_CREATION_ENABLED='true';

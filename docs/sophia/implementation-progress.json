@@ -3694,13 +3694,27 @@
     "deployment": "Backend health verified ok at df2d10c8cfdc; frontend remains local; no migration required."
   },
   "bundledIftFee20261114": {
-    "status": "validated_ready_for_backend_deployment",
+    "status": "backend_live_frontend_local",
     "behavior": "Recognise the extracted Enrolment Fee + COE + IFT (by sum difference) bundle and split it using the exact explicit fee breakdown. Existing offer reads and invoice preparation normalise enrolment 200 and IFT 25 once, preserving total 995. Ambiguous breakdowns remain unchanged. Invoice filter display renamed Both to All locally.",
     "validation": [
       "21 invoice draft tests passed, including both bundled labels, idempotence, explicit IFT and mismatched breakdown",
       "Runtime build passed",
       "38 protected real-estate tests passed"
     ],
-    "deployment": "Backend only; no migration; frontend remains local."
+    "deployment": "Runtime health verified ok at daa45265491d. Backend only; no migration; frontend remains local."
+  },
+  "invoiceAdvisorAndDiscount20261114": {
+    "status": "advisor_validated_ready_to_deploy_discount_proposal_only",
+    "changes": [
+      "Confirmed TRUST creation and reconciliation fill an unassigned student profile advisor from the saved batch, reflecting on case details. Case lock, null predicate, tenant scope, active directory check and activity audit protect existing assignments. No advisor assignment for saved-only drafts.",
+      "Read-only imported Xero catalogue and invoice audit: TRUST College Discount and Discount - Bogota/Medellin items use 812 BASEXCLUDED. INV-10222 has College Discount -500; INV-9468 has -20. Recommend dedicated Agency discount negative line preserving gross tuition and PTY base; no provider items or invoices changed."
+    ],
+    "validation": [
+      "Disposable PostgreSQL advisor test passed under Runtime app role (no receipt, tenant isolation, assignment, retry and preserve existing advisor)",
+      "21 invoice draft tests passed",
+      "38 protected real-estate tests passed",
+      "Runtime build and diff check passed"
+    ],
+    "deployment": "Backend only; no migration; frontend not deployed."
   }
 }
