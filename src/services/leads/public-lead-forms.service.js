@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import pool from "../../config/db.js";
-import { formsTransaction } from "./lead-forms.service.js";
+import {
+  formsTransaction,
+  publicationsInstalled,
+  requirePublications,
+} from "./lead-forms.service.js";
 import { directory } from "./assistant-settings.service.js";
 import { fail } from "./assistant-settings.contracts.js";
 import {
@@ -32,6 +36,7 @@ export function publicToken(token) {
   }
 }
 async function publication(db, tenant, id) {
+  await requirePublications(db);
   const p = (
     await db.query(
       `SELECT p.* FROM ${s}.lead_form_publications p JOIN ${s}.customers c ON c.customer_id=p.customer_id WHERE p.customer_id=$1 AND p.id=$2 AND p.active AND c.status='active' FOR SHARE OF p`,
@@ -95,6 +100,7 @@ export async function publishForm(actor, company, id, input) {
     actor,
     company,
     async (db, tenant, access) => {
+      await requirePublications(db);
       const row = (
         await db.query(
           `SELECT * FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2 FOR UPDATE`,
@@ -180,6 +186,8 @@ export async function publishForm(actor, company, id, input) {
 export async function publicationStatus(actor, company, id) {
   uuid(id);
   return formsTransaction(actor, company, async (db, tenant) => {
+    if (!(await publicationsInstalled(db)))
+      return { token: null, version: null };
     const row = (
       await db.query(
         `SELECT id,form_version FROM ${s}.lead_form_publications WHERE customer_id=$1 AND form_id=$2 AND active`,
@@ -198,6 +206,7 @@ export async function unpublishForm(actor, company, id) {
     actor,
     company,
     async (db, tenant) => {
+      await requirePublications(db);
       const removed = await db.query(
         `UPDATE ${s}.lead_form_publications SET active=false WHERE customer_id=$1 AND form_id=$2 AND active`,
         [tenant, id],

@@ -42,6 +42,15 @@
         "Angular production build passed outside sandbox after sandbox exit 134; existing budget/CommonJS/primeicons warnings remain"
       ],
       "deployment": "Frontend and backend deployment required; no new migration in this refinement. Existing migration 132 is required. No production changes performed."
+    },
+    "publicationSetupCompatibility": {
+      "updatedOn": "2026-11-15",
+      "change": "Forms list avoids querying the publication table when migration 132 is absent; publication status remains readable and publish/unpublish/public access returns actionable 503 setup errors. Existing tenant authorization and RLS remain enforced.",
+      "verification": [
+        "19 tests passed: NODE_OPTIONS=--experimental-vm-modules jest --runInBand --runTestsByPath tests/bm.leadForms.test.js tests/bm.leadFormsSql.test.js tests/bm.publicLeadFormsSql.test.js with LOCAL_LEAD_FORMS_ADMIN_URL and LOCAL_PUBLIC_FORMS_ADMIN_URL pointing to local disposable PostgreSQL databases",
+        "git diff --check passed"
+      ],
+      "limits": "Live server logs and migration state have not been inspected. Missing publication table is a reproduced failure path, not a confirmed live diagnosis. Backend redeployment required; publishing still requires migration 132. No production migrations or data changes performed."
     }
   },
   "leadForms": {

@@ -421,4 +421,34 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       ).rows[0].answers[0].value,
     ).toBe("Interested in AI");
   });
+  test("missing publication table keeps drafts readable and returns an actionable publishing error", async () => {
+    await pool.query(
+      "ALTER TABLE sophia_runtime.lead_form_publications RENAME TO lead_form_publications_pending",
+    );
+    try {
+      const list = await forms.listForms(owner, company, {});
+      expect(list.items.find((row) => row.id === form.id)).toMatchObject({
+        publicationToken: null,
+        publishedVersion: null,
+      });
+      expect(
+        await publicForms.publicationStatus(owner, company, form.id),
+      ).toEqual({ token: null, version: null });
+      await expect(
+        publicForms.publishForm(owner, company, form.id, {
+          expectedVersion: form.version,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        message: expect.stringContaining("database setup"),
+      });
+      await expect(
+        publicForms.unpublishForm(owner, company, form.id),
+      ).rejects.toMatchObject({ status: 503 });
+    } finally {
+      await pool.query(
+        "ALTER TABLE sophia_runtime.lead_form_publications_pending RENAME TO lead_form_publications",
+      );
+    }
+  });
 });

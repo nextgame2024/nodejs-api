@@ -72,27 +72,13 @@ suite("Lead forms PostgreSQL migration, CRUD and tenant isolation", () => {
         )
       ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
     );
-    await pool.query(
-      `CREATE TABLE sophia_runtime.assistant_leads(customer_id uuid, lead_id uuid, source text CONSTRAINT assistant_leads_source_check CHECK(source IN ('manual','whatsapp')), PRIMARY KEY(customer_id,lead_id));`,
-    );
-    await pool.query(
-      (
-        await readFile(
-          new URL(
-            "../sophia-runtime/src/database/migrations/132_public_lead_forms.sql",
-            import.meta.url,
-          ),
-          "utf8",
-        )
-      ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
-    );
   });
   afterAll(async () => {
     await pool.end();
     if (created) await admin.query(`DROP DATABASE "${dbName}"`);
     await admin.end();
   });
-  test("defaults, type uniqueness, saves, paging, optimistic updates and deletion", async () => {
+  test("without publication migration: defaults, types, saves, paging, updates and deletion", async () => {
     const types = (await api.listTypes("owner", tenant)).items;
     expect(types.map((t) => t.name)).toEqual(["Marketing", "Technical"]);
     const type = await api.createType("owner", tenant, { name: "Discovery" });
