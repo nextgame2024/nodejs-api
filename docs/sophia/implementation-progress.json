@@ -26,7 +26,23 @@
     "limitations": [
       "One calendar per published form",
       "Anonymous request guard is process-local and uses the server-resolved client IP; upstream production abuse controls should account for the deployment proxy topology"
-    ]
+    ],
+    "builderRefinements": {
+      "updatedOn": "2026-11-15",
+      "implemented": [
+        "List publication actions, website link opening a new tab, and republish action for changed drafts",
+        "Rich-text question answers in builder, preview, public submission and saved responses",
+        "Create type in editor header; 80/20 content and sticky toolbar layout with mobile adaptation"
+      ],
+      "verification": [
+        "19 focused ChromeHeadless tests passed, including desktop/mobile light/dark sticky layout and blank rich-text validation",
+        "14 backend form/scheduling tests passed",
+        "9 disposable PostgreSQL tests passed, including publication list state and rich-text validation",
+        "TypeScript app noEmit and git diff --check passed",
+        "Angular production build passed outside sandbox after sandbox exit 134; existing budget/CommonJS/primeicons warnings remain"
+      ],
+      "deployment": "Frontend and backend deployment required; no new migration in this refinement. Existing migration 132 is required. No production changes performed."
+    }
   },
   "leadForms": {
     "updatedOn": "2026-11-15",

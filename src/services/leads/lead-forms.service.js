@@ -113,10 +113,10 @@ export async function listForms(actor, company, query) {
       f.q ? `%${f.q.replace(/[\\%_]/g, "\\$&")}%` : "",
       f.typeId,
     ];
-    const where = `FROM ${s}.lead_forms f JOIN ${s}.lead_form_types t ON t.customer_id=f.customer_id AND t.id=f.type_id WHERE f.customer_id=$1 AND ($2='' OR f.name ILIKE $2) AND ($3::uuid IS NULL OR f.type_id=$3)`;
+    const where = `FROM ${s}.lead_forms f JOIN ${s}.lead_form_types t ON t.customer_id=f.customer_id AND t.id=f.type_id LEFT JOIN ${s}.lead_form_publications p ON p.customer_id=f.customer_id AND p.form_id=f.id AND p.active WHERE f.customer_id=$1 AND ($2='' OR f.name ILIKE $2) AND ($3::uuid IS NULL OR f.type_id=$3)`;
     const result = (
       await db.query(
-        `WITH filtered AS (SELECT f.id,f.name,f.type_id AS "typeId",t.name AS "typeName",f.version,f.updated_at AS "updatedAt",row_number() OVER(ORDER BY ${column} ${f.direction},f.id) AS ordinal ${where}), paged AS (SELECT * FROM filtered ORDER BY ordinal LIMIT $4 OFFSET $5) SELECT (SELECT count(*)::int FROM filtered) AS total,COALESCE((SELECT jsonb_agg(to_jsonb(paged)-'ordinal' ORDER BY ordinal) FROM paged),'[]'::jsonb) AS items`,
+        `WITH filtered AS (SELECT f.id,f.name,f.type_id AS "typeId",t.name AS "typeName",f.version,f.updated_at AS "updatedAt",CASE WHEN p.id IS NOT NULL THEN f.customer_id::text || '.' || p.id::text END AS "publicationToken",p.form_version AS "publishedVersion",row_number() OVER(ORDER BY ${column} ${f.direction},f.id) AS ordinal ${where}), paged AS (SELECT * FROM filtered ORDER BY ordinal LIMIT $4 OFFSET $5) SELECT (SELECT count(*)::int FROM filtered) AS total,COALESCE((SELECT jsonb_agg(to_jsonb(paged)-'ordinal' ORDER BY ordinal) FROM paged),'[]'::jsonb) AS items`,
         [...params, f.limit, (f.page - 1) * f.limit],
       )
     ).rows[0];

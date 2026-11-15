@@ -10,6 +10,7 @@ export const kinds = [
   "list",
   "input",
   "calendar",
+  "richtext",
 ];
 export function formInput(input) {
   if (
@@ -46,7 +47,7 @@ export function formInput(input) {
       `blocks.${i}`,
       b.kind === "description" ? 20000 : 1000,
       b.kind !== "input" &&
-        !["list", "checkboxes", "calendar"].includes(b.kind),
+        !["list", "checkboxes", "calendar", "richtext"].includes(b.kind),
     );
     if (typeof b.required !== "boolean")
       throw fail("Select whether the question is required.");
@@ -65,11 +66,11 @@ export function formInput(input) {
       throw fail("Only lists and checkboxes can contain options.");
     if (
       b.kind === "question" &&
-      !["input", "list", "checkboxes"].includes(input.blocks[i + 1]?.kind)
+      !["input", "list", "checkboxes", "richtext"].includes(
+        input.blocks[i + 1]?.kind,
+      )
     )
-      throw fail(
-        "Place an input, list or checkboxes immediately after each question.",
-      );
+      throw fail("Place an answer field immediately after each question.");
     let calendar;
     if (b.kind === "calendar") {
       const raw = b.calendar;

@@ -256,6 +256,21 @@ export async function publicSlots(token, blockId, q) {
     return { ...result, slots: filterFormSlots(b.calendar, result.slots) };
   });
 }
+export function richAnswerText(value) {
+  return value
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(?:nbsp|ensp|emsp|thinsp|ZeroWidthSpace);/gi, " ")
+    .replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, code) => {
+      const n =
+        code[0].toLowerCase() === "x"
+          ? parseInt(code.slice(1), 16)
+          : Number(code);
+      return n <= 0x10ffff ? String.fromCodePoint(n) : "";
+    })
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .trim();
+}
 export function submissionAnswers(blocks, input) {
   if (
     !input ||
@@ -265,14 +280,14 @@ export function submissionAnswers(blocks, input) {
   )
     throw fail("Check your form answers.");
   const answerBlocks = blocks.filter((b) =>
-    ["input", "list", "checkboxes"].includes(b.kind),
+    ["input", "list", "checkboxes", "richtext"].includes(b.kind),
   );
   if (Object.keys(input).some((id) => !answerBlocks.some((b) => b.id === id)))
     throw fail("The form contains unknown answers.");
   const answers = [];
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
-    if (!["input", "list", "checkboxes"].includes(b.kind)) continue;
+    if (!["input", "list", "checkboxes", "richtext"].includes(b.kind)) continue;
     const question = blocks[i - 1]?.kind === "question" ? blocks[i - 1] : null;
     const raw = input[b.id];
     let value;
@@ -286,20 +301,29 @@ export function submissionAnswers(blocks, input) {
       )
         throw fail("Select valid checkbox options.", 400, [b.id]);
     } else {
-      value = text(raw ?? "", b.id, b.kind === "input" ? 4000 : 200);
+      value = text(
+        raw ?? "",
+        b.id,
+        b.kind === "richtext" ? 20000 : b.kind === "input" ? 4000 : 200,
+      );
       if (b.kind === "list" && value && !b.options.includes(value))
         throw fail("Select a valid list option.", 400, [b.id]);
     }
-    if (question?.required && !value.length)
+    if (
+      question?.required &&
+      !(b.kind === "richtext" ? richAnswerText(value).length : value.length)
+    )
       throw fail("Complete the required questions.", 400, [b.id]);
     answers.push({
       id: b.id,
+      ...(b.kind === "richtext" ? { format: "html" } : {}),
       label:
         question?.text || b.text || (b.kind === "input" ? "Input" : "Options"),
       value,
     });
   }
-  if (Buffer.byteLength(JSON.stringify(answers)) > 180000) throw fail('Your response is too large. Shorten the text answers.');
+  if (Buffer.byteLength(JSON.stringify(answers)) > 180000)
+    throw fail("Your response is too large. Shorten the text answers.");
   return answers;
 }
 export async function submitPublicForm(token, input) {
@@ -452,7 +476,11 @@ export async function submitPublicForm(token, input) {
         (a) =>
           a.label +
           ": " +
-          (Array.isArray(a.value) ? a.value.join(", ") : a.value),
+          (Array.isArray(a.value)
+            ? a.value.join(", ")
+            : a.format === "html"
+              ? richAnswerText(a.value)
+              : a.value),
       )
       .join("\n");
     await db.query(

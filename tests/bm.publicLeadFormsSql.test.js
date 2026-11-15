@@ -157,6 +157,25 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     answers: { [answerBlock.id]: "Education" },
     appointment: { startsAt: slot.startsAt, calendarRevision: 1 },
   });
+  test("validates required rich-text answers and preserves their display format", () => {
+    const blocks = [
+      { id: "q", kind: "question", text: "Goals?", required: true },
+      { id: "a", kind: "richtext", text: "", options: [] },
+    ];
+    for (const value of [
+      "<p><br></p>",
+      "<p>&nbsp;</p>",
+      "<script>fake answer</script>",
+    ])
+      expect(() =>
+        publicForms.submissionAnswers(blocks, { a: value }),
+      ).toThrow();
+    expect(
+      publicForms.submissionAnswers(blocks, {
+        a: "<p><b>Improve service</b></p>",
+      })[0],
+    ).toMatchObject({ format: "html", value: "<p><b>Improve service</b></p>" });
+  });
   test("publishes a snapshot with a stable campaign URL and no advisor identity in public output", async () => {
     await settings.saveSettings(owner, company, {
       expectedRevision: 0,
@@ -227,6 +246,14 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
         })
       ).token,
     ).toBe(token);
+    expect(
+      (await forms.listForms(owner, company, {})).items.find(
+        (row) => row.id === form.id,
+      ),
+    ).toMatchObject({
+      publicationToken: token,
+      publishedVersion: form.version,
+    });
     const published = await publicForms.getPublicForm(token);
     expect(published.blocks[2].calendar.advisorId).toBeUndefined();
     expect(published.businessName).toBe("Example company");
@@ -346,19 +373,52 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       }),
     ).rejects.toMatchObject({ status: 409 });
     await publicForms.unpublishForm(owner, company, form.id);
+    expect(
+      (await forms.listForms(owner, company, {})).items.find(
+        (row) => row.id === form.id,
+      ).publicationToken,
+    ).toBeNull();
     await expect(publicForms.getPublicForm(token)).rejects.toMatchObject({
       status: 404,
     });
   });
-  test('accepts marketing responses without a calendar and retains answers after the form is removed',async()=>{
-    const standalone={id:randomUUID(),kind:'input',text:'Anything else?',required:false,options:[]};
-    const draft=await forms.saveForm(owner,company,randomUUID(),{expectedVersion:0,form:{name:'Marketing campaign',typeId:form.typeId,blocks:[standalone]}});
-    const published=await publicForms.publishForm(owner,company,draft.id,{expectedVersion:1});
-    const result=await publicForms.submitPublicForm(published.token,{requestKey:randomUUID(),formVersion:1,contact:{name:'Campaign lead',email:'campaign@example.test'},answers:{[standalone.id]:'Interested in AI'}});
+  test("accepts marketing responses without a calendar and retains answers after the form is removed", async () => {
+    const standalone = {
+      id: randomUUID(),
+      kind: "input",
+      text: "Anything else?",
+      required: false,
+      options: [],
+    };
+    const draft = await forms.saveForm(owner, company, randomUUID(), {
+      expectedVersion: 0,
+      form: {
+        name: "Marketing campaign",
+        typeId: form.typeId,
+        blocks: [standalone],
+      },
+    });
+    const published = await publicForms.publishForm(owner, company, draft.id, {
+      expectedVersion: 1,
+    });
+    const result = await publicForms.submitPublicForm(published.token, {
+      requestKey: randomUUID(),
+      formVersion: 1,
+      contact: { name: "Campaign lead", email: "campaign@example.test" },
+      answers: { [standalone.id]: "Interested in AI" },
+    });
     expect(result.appointment).toBeNull();
-    await forms.deleteForm(owner,company,draft.id,{expectedVersion:1});
-    await expect(publicForms.getPublicForm(published.token)).rejects.toMatchObject({status:404});
-    expect((await pool.query('SELECT answers FROM sophia_runtime.lead_form_submissions WHERE id=$1',[result.receipt])).rows[0].answers[0].value).toBe('Interested in AI');
+    await forms.deleteForm(owner, company, draft.id, { expectedVersion: 1 });
+    await expect(
+      publicForms.getPublicForm(published.token),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(
+      (
+        await pool.query(
+          "SELECT answers FROM sophia_runtime.lead_form_submissions WHERE id=$1",
+          [result.receipt],
+        )
+      ).rows[0].answers[0].value,
+    ).toBe("Interested in AI");
   });
-
 });
