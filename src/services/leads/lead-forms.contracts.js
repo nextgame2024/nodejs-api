@@ -103,14 +103,17 @@ export function formInput(input) {
         throw fail(
           "Configure the calendar advisor, timezone and weekly hours.",
         );
-      const checked = calendarInput({
-        ...raw,
-        expectedRevision: 0,
-        closedDates: [],
-        slotMinutes: 15,
-        leadTimeMinutes: 0,
-        bookingWindowDays: 180,
-      });
+      const checked = calendarInput(
+        {
+          ...raw,
+          expectedRevision: 0,
+          closedDates: [],
+          slotMinutes: 15,
+          leadTimeMinutes: 0,
+          bookingWindowDays: 180,
+        },
+        7 * 24 * 4,
+      ); // Maximum non-overlapping quarter-hour intervals in a week.
       if (!checked.weeklyHours.length)
         throw fail("Add at least one available day and time.");
       calendar = {

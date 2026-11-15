@@ -33,18 +33,19 @@ function minutes(value, end = false) {
   const [h, m] = value.split(":").map(Number);
   return h * 60 + m;
 }
-export function calendarInput(input) {
+export function calendarInput(input, maxWeeklyIntervals = 28) {
   if (
     !input ||
     !Array.isArray(input.weeklyHours) ||
-    input.weeklyHours.length > 28 ||
+    input.weeklyHours.length > maxWeeklyIntervals ||
     !Array.isArray(input.closedDates) ||
     input.closedDates.length > 100
   )
-    throw fail("Add up to 28 working intervals and 100 closed dates.", 400, [
-      "weeklyHours",
-      "closedDates",
-    ]);
+    throw fail(
+      `Add up to ${maxWeeklyIntervals} working intervals and 100 closed dates.`,
+      400,
+      ["weeklyHours", "closedDates"],
+    );
   if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0)
     throw fail("Reload availability before saving.", 409);
   if (

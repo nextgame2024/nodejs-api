@@ -98,6 +98,15 @@
       "change": "Public form uses only builder fields; removed injected name/email requirement from submission API while retaining backward compatibility with old clients. Without contact metadata, internal lead is named Form response and builder answers remain stored and emailed.",
       "verification": "9 disposable SQL tests passed, including a contact-free response creating a lead, appointment and one notification per configured recipient.",
       "deployment": "Backend validation change prepared for deployment under existing user approval."
+    },
+    "weeklyIntervalCopyFix": {
+      "updatedOn": "2026-11-16",
+      "change": "Raised the form-calendar limit from28 to672 intervals (all quarter-hours in a week) across copy/add validation and the form API. Scheduling defaults remain unchanged. Individual intervals and gaps are preserved; overlap checks remain enforced.",
+      "verification": [
+        "16 backend form/scheduling tests passed, including112 half-hour intervals and rejection of overlaps",
+        "git diff --check passed"
+      ],
+      "deployment": "Backend contract update requires deployment; no database migration."
     }
   },
   "leadForms": {

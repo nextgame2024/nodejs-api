@@ -71,6 +71,41 @@ describe("Lead form contracts", () => {
       formInput(form([block("input", { required: true })])),
     ).toThrow();
   });
+  test("accepts a full week of half-hour form intervals while rejecting overlaps", () => {
+    const time = (m) =>
+      String(Math.floor(m / 60)).padStart(2, "0") +
+      ":" +
+      String(m % 60).padStart(2, "0");
+    const weeklyHours = Array.from({ length: 7 }, (_, day) =>
+      Array.from({ length: 16 }, (_, i) => ({
+        day,
+        start: time(540 + i * 30),
+        end: time(570 + i * 30),
+      })),
+    ).flat();
+    const calendar = {
+      advisorId: randomUUID(),
+      timezone: "Australia/Brisbane",
+      weeklyHours,
+    };
+    expect(
+      formInput(form([block("calendar", { calendar, text: "" })])).blocks[0]
+        .calendar.weeklyHours,
+    ).toHaveLength(112);
+    expect(() =>
+      formInput(
+        form([
+          block("calendar", {
+            calendar: {
+              ...calendar,
+              weeklyHours: [...weeklyHours, weeklyHours[0]],
+            },
+            text: "",
+          }),
+        ]),
+      ),
+    ).toThrow();
+  });
   test("validates calendar availability using Scheduling rules", () => {
     const calendar = {
       advisorId: randomUUID(),
