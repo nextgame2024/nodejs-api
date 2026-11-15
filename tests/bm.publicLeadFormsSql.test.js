@@ -545,6 +545,47 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       ).rows[0].answers[0].value,
     ).toBe("Interested in AI");
   });
+  test("queues a private customer confirmation once from the builder business email", async () => {
+    const block = {
+      id: randomUUID(),
+      kind: "input",
+      text: "What is your business email?",
+      required: false,
+      options: [],
+    };
+    const draft = await forms.saveForm(owner, company, randomUUID(), {
+      expectedVersion: 0,
+      form: {
+        name: "Confirmation",
+        emails: "owner@example.test",
+        typeId: form.typeId,
+        blocks: [block],
+      },
+    });
+    const published = await publicForms.publishForm(owner, company, draft.id, {
+      expectedVersion: 1,
+    });
+    const input = {
+      requestKey: randomUUID(),
+      formVersion: 1,
+      answers: { [block.id]: "Customer@example.test" },
+    };
+    const result = await publicForms.submitPublicForm(published.token, input);
+    await publicForms.submitPublicForm(published.token, input);
+    const rows = (
+      await pool.query(
+        "SELECT recipient,payload FROM sophia_runtime.lead_form_email_outbox WHERE submission_id=$1",
+        [result.receipt],
+      )
+    ).rows;
+    expect(rows).toHaveLength(2);
+    const customer = rows.find((r) => r.recipient === "customer@example.test");
+    expect(customer.payload.confirmationOnly).toBe(true);
+    expect(customer.payload.answers).toBeUndefined();
+    expect(
+      rows.find((r) => r.recipient === "owner@example.test").payload.answers,
+    ).toHaveLength(1);
+  });
   test("queues each notification once and retries delivery without duplicating bookings", async () => {
     const { processFormEmail, formEmailMessage } = await import(
       "../src/services/leads/form-email.service.js"

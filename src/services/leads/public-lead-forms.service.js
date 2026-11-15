@@ -398,6 +398,21 @@ export function submissionAnswers(blocks, input) {
     throw fail("Your response is too large. Shorten the text answers.");
   return answers;
 }
+export function businessEmailRecipient(answers) {
+  // Use the builder's business-email question, never unrelated free-text answers.
+  const candidates = answers.filter((a) =>
+    /\bbusiness\s+e[ -]?mail\b/i.test(a.label),
+  );
+  if (candidates.length !== 1) return null;
+  const value = candidates[0].value;
+  if (
+    typeof value !== "string" ||
+    value.length > 254 ||
+    !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(value.trim())
+  )
+    return null;
+  return value.trim().toLowerCase();
+}
 export async function submitPublicForm(token, input) {
   const key = uuid(input?.requestKey);
   if (input?.website) throw fail("The response could not be accepted.");
@@ -542,14 +557,33 @@ export async function submitPublicForm(token, input) {
         JSON.stringify(result),
       ],
     );
-    if (p.emails) {
-      const payload = { formName: p.name, contact, answers, appointment };
-      for (const recipient of formEmails(p.emails, true).split(", "))
-        await db.query(
-          `INSERT INTO ${s}.lead_form_email_outbox(customer_id,submission_id,recipient,payload) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING`,
-          [tenant, id, recipient, JSON.stringify(payload)],
-        );
-    }
+    const customerEmail = businessEmailRecipient(answers);
+    const recipients = new Set(
+      p.emails
+        ? formEmails(p.emails, true)
+            .split(", ")
+            .map((email) => email.toLowerCase())
+        : [],
+    );
+    const deliveries = [...recipients].map((recipient) => ({
+      recipient,
+      payload: {
+        formName: p.name,
+        answers,
+        appointment,
+        ...(recipient === customerEmail ? { includeConfirmation: true } : {}),
+      },
+    }));
+    if (customerEmail && !recipients.has(customerEmail))
+      deliveries.push({
+        recipient: customerEmail,
+        payload: { formName: p.name, appointment, confirmationOnly: true },
+      });
+    for (const { recipient, payload } of deliveries)
+      await db.query(
+        `INSERT INTO ${s}.lead_form_email_outbox(customer_id,submission_id,recipient,payload) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING`,
+        [tenant, id, recipient, JSON.stringify(payload)],
+      );
     const summary = answers
       .map(
         (a) =>

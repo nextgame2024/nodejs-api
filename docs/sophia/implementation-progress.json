@@ -137,9 +137,23 @@
       ],
       "verification": [
         "26 tests passed: bm.publicLeadFormsSql, bm.leadForms, bm.leadAppointments; regression now loads slots and books using112 form intervals and legacy calendar without minute offsets",
-        "No live booking or email created"
+        "No live booking or email created",
+        "Live public form version 6 availability for 2026-11-16 returned HTTP 200 and 22 slots in Australia/Brisbane; no booking submitted."
       ],
-      "deployment": "Prepared backend deployment and live availability verification under existing user approval."
+      "deployment": "Deployed backend 49c6671627be to Render; health revision verified."
+    },
+    "confirmationEmails": {
+      "updatedOn": "2026-11-16",
+      "implemented": [
+        "Builder business-email answer receives private confirmation via transactional outbox; same recipient receives combined notification without duplicate queue entry",
+        "Toolkit official logo and styled escaped question/answer sections; localized appointment dates; removed hardcoded contact fields",
+        "Public success page uses requested thank-you copy and actual appointment date"
+      ],
+      "verification": [
+        "11 isolated PostgreSQL tests passed; 3 email unit tests passed; 7 public-form ChromeHeadless tests passed",
+        "No live emails or bookings created during verification"
+      ],
+      "deployment": "Prepared backend deployment under existing authorization; frontend changes local"
     }
   },
   "leadForms": {
