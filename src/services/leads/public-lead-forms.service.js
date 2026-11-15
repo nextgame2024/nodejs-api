@@ -100,96 +100,142 @@ export async function publishForm(actor, company, id, input) {
   return formsTransaction(
     actor,
     company,
-    async (db, tenant, access) => {
-      await requirePublications(db);
-      await requireFormEmailSetup(db);
-      const row = (
-        await db.query(
-          `SELECT * FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2 FOR UPDATE`,
-          [tenant, id],
-        )
-      ).rows[0];
-      if (!row || row.version !== expected)
-        throw fail("This form changed. Reload it before publishing.", 409);
-      const emails = formEmails(row.emails, true);
-      const f = formInput({
-        name: row.name,
-        typeId: row.type_id,
-        blocks: row.blocks,
-      });
-      const release = await team(db, tenant);
-      if (f.blocks.filter((b) => b.kind === "calendar").length > 1)
-        throw fail("Use one booking calendar per published form.");
-      for (const b of f.blocks.filter((b) => b.kind === "calendar")) {
-        await advisorAvailable(
-          db,
-          tenant,
-          b.calendar.advisorId,
-          release.configuration,
-        );
-        const c = (
-          await db.query(
-            `SELECT 1 FROM ${s}.lead_advisor_calendars WHERE customer_id=$1 AND advisor_identity=$2`,
-            [tenant, b.calendar.advisorId],
-          )
-        ).rows[0];
-        if (!c)
-          throw fail(
-            "Save this advisor’s availability in Scheduling before publishing.",
-            409,
-          );
-      }
-      const old = (
-        await db.query(
-          `SELECT id,form_version FROM ${s}.lead_form_publications WHERE customer_id=$1 AND form_id=$2 AND active`,
-          [tenant, id],
-        )
-      ).rows[0];
-      if (old?.form_version === expected)
-        return { token: tenant + "." + old.id };
-      // Publishing updates the existing campaign URL; requests lock the published snapshot while submitting.
-      const published = old
-        ? (
-            await db.query(
-              `UPDATE ${s}.lead_form_publications SET form_version=$3,name=$4,blocks=$5::jsonb,business_name=$6,published_by_identity=$7,created_at=now() WHERE customer_id=$1 AND id=$2 RETURNING id`,
-              [
-                tenant,
-                old.id,
-                expected,
-                f.name,
-                JSON.stringify(f.blocks),
-                release.configuration.businessName ?? "",
-                actor,
-              ],
-            )
-          ).rows[0]
-        : (
-            await db.query(
-              `INSERT INTO ${s}.lead_form_publications(customer_id,form_id,form_version,name,blocks,business_name,published_by_identity) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
-              [
-                tenant,
-                id,
-                expected,
-                f.name,
-                JSON.stringify(f.blocks),
-                release.configuration.businessName ?? "",
-                actor,
-              ],
-            )
-          ).rows[0];
-      await db.query(
-        `UPDATE ${s}.lead_form_publications SET emails=$3 WHERE customer_id=$1 AND id=$2`,
-        [tenant, published.id, emails],
-      );
-      await db.query(
-        `INSERT INTO ${s}.lead_forms_audit(customer_id,actor_identity,entity_id,action) VALUES($1,$2,$3,'form_published')`,
-        [tenant, actor, id],
-      );
-      return { token: tenant + "." + published.id };
-    },
+    (db, tenant) => publishFormInTransaction(db, tenant, actor, id, expected),
     true,
   );
 }
+export async function publishFormInTransaction(
+  db,
+  tenant,
+  actor,
+  id,
+  expected,
+) {
+  await requirePublications(db);
+  await requireFormEmailSetup(db);
+  const row = (
+    await db.query(
+      `SELECT * FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2 FOR UPDATE`,
+      [tenant, id],
+    )
+  ).rows[0];
+  if (!row || row.version !== expected)
+    throw fail("This form changed. Reload it before publishing.", 409);
+  const emails = formEmails(row.emails, true);
+  const f = formInput({
+    name: row.name,
+    typeId: row.type_id,
+    blocks: row.blocks,
+  });
+  const release = await team(db, tenant);
+  if (f.blocks.filter((b) => b.kind === "calendar").length > 1)
+    throw fail("Use one booking calendar per published form.");
+  for (const b of f.blocks.filter((b) => b.kind === "calendar")) {
+    await advisorAvailable(
+      db,
+      tenant,
+      b.calendar.advisorId,
+      release.configuration,
+    );
+    const c = (
+      await db.query(
+        `SELECT 1 FROM ${s}.lead_advisor_calendars WHERE customer_id=$1 AND advisor_identity=$2`,
+        [tenant, b.calendar.advisorId],
+      )
+    ).rows[0];
+    if (!c) {
+      const hours = [];
+      for (const h of [...b.calendar.weeklyHours].sort(
+        (a, b) => a.day - b.day || a.start.localeCompare(b.start),
+      )) {
+        const last = hours.at(-1);
+        if (last && last.day === h.day && last.end === h.start)
+          last.end = h.end;
+        else hours.push({ ...h });
+      }
+      if (hours.length > 28)
+        throw fail(
+          "Configure the advisor’s availability in Scheduling: this form has more than 28 separate working periods.",
+          409,
+        );
+      const created = await db.query(
+        `INSERT INTO ${s}.lead_advisor_calendars(customer_id,advisor_identity,timezone,slot_minutes,lead_time_minutes,booking_window_days,weekly_hours,closed_dates,updated_by_identity) VALUES($1,$2,$3,30,60,30,$4::jsonb,'[]'::jsonb,$5) ON CONFLICT DO NOTHING RETURNING revision`,
+        [
+          tenant,
+          b.calendar.advisorId,
+          b.calendar.timezone,
+          JSON.stringify(hours),
+          actor,
+        ],
+      );
+      if (created.rowCount)
+        await db.query(
+          `INSERT INTO ${s}.lead_calendar_audit(customer_id,advisor_identity,revision,actor_identity,configuration) VALUES($1,$2,$3,$4,$5::jsonb)`,
+          [
+            tenant,
+            b.calendar.advisorId,
+            created.rows[0].revision,
+            actor,
+            JSON.stringify({
+              timezone: b.calendar.timezone,
+              slotMinutes: 30,
+              leadTimeMinutes: 60,
+              bookingWindowDays: 30,
+              weeklyHours: hours,
+              closedDates: [],
+            }),
+          ],
+        );
+    }
+  }
+  const old = (
+    await db.query(
+      `SELECT id,form_version FROM ${s}.lead_form_publications WHERE customer_id=$1 AND form_id=$2 AND active`,
+      [tenant, id],
+    )
+  ).rows[0];
+  if (old?.form_version === expected) return { token: tenant + "." + old.id };
+  // Publishing updates the existing campaign URL; requests lock the published snapshot while submitting.
+  const published = old
+    ? (
+        await db.query(
+          `UPDATE ${s}.lead_form_publications SET form_version=$3,name=$4,blocks=$5::jsonb,business_name=$6,published_by_identity=$7,created_at=now() WHERE customer_id=$1 AND id=$2 RETURNING id`,
+          [
+            tenant,
+            old.id,
+            expected,
+            f.name,
+            JSON.stringify(f.blocks),
+            release.configuration.businessName ?? "",
+            actor,
+          ],
+        )
+      ).rows[0]
+    : (
+        await db.query(
+          `INSERT INTO ${s}.lead_form_publications(customer_id,form_id,form_version,name,blocks,business_name,published_by_identity) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
+          [
+            tenant,
+            id,
+            expected,
+            f.name,
+            JSON.stringify(f.blocks),
+            release.configuration.businessName ?? "",
+            actor,
+          ],
+        )
+      ).rows[0];
+  await db.query(
+    `UPDATE ${s}.lead_form_publications SET emails=$3 WHERE customer_id=$1 AND id=$2`,
+    [tenant, published.id, emails],
+  );
+  await db.query(
+    `INSERT INTO ${s}.lead_forms_audit(customer_id,actor_identity,entity_id,action) VALUES($1,$2,$3,'form_published')`,
+    [tenant, actor, id],
+  );
+  return { token: tenant + "." + published.id };
+}
+
 export async function publicationStatus(actor, company, id) {
   uuid(id);
   return formsTransaction(actor, company, async (db, tenant) => {

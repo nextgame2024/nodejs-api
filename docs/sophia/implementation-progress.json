@@ -107,6 +107,20 @@
         "git diff --check passed"
       ],
       "deployment": "Backend contract update requires deployment; no database migration."
+    },
+    "publicationSimplification": {
+      "updatedOn": "2026-11-16",
+      "change": [
+        "Published saves atomically refresh the existing public snapshot and preserve its URL; invalid updates roll back",
+        "One globe link for published forms, visibility-off icon for unpublish",
+        "Initialize missing Scheduling calendar from compacted form hours with defaults30-minute slots,60-minute notice,30-day window; existing calendars unchanged"
+      ],
+      "verification": [
+        "23 backend contract/disposable PostgreSQL tests passed, including missing calendar initialization, stable URL updates and invalid-update rollback",
+        "16 ChromeHeadless forms tests passed including single globe action",
+        "git diff --check passed"
+      ],
+      "deployment": "Prepared for deployment using prior user authorization; no schema changes."
     }
   },
   "leadForms": {

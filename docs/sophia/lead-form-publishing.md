@@ -2,7 +2,7 @@
 
 Deploy frontend and backend together after applying migrations 132 and 133 with the configured owner migration runner (`npm run build` then `npm run migrate` in `sophia-runtime`, using the deployment's runtime database configuration). The current 503 indicates that the publication table is absent. Deploying frontend code alone cannot resolve it. Do not run these migrations against production without authorization.
 
-Edit each form and supply its required comma-separated Emails field (maximum 10 recipients). Save, then use the globe Publish action. The published URL uses the frontend origin and `/forms/:token`; the production host must serve the SPA at that path. Localhost links are development-only. Republishing updates the snapshot at the same URL. Recipient addresses are not included in the public response.
+Edit each form and supply its required comma-separated Emails field (maximum 10 recipients). Save, then use the globe Publish action. The published URL uses the frontend origin and `/forms/:token`; the production host must serve the SPA at that path. Localhost links are development-only. Saving an already-published form automatically updates its snapshot at the same URL in the same transaction. Failed validation rolls back both the edit and the public update. Recipient addresses are not included in the public response.
 
 Send atomically stores the response, lead and optional appointment, and queues one notification per recipient. Bookings appear in Scheduling → Lead appointments for the form's company/advisor. Request retries reuse the receipt and do not create another appointment or notification. Cancel clears the unsent response after confirmation and does not create data.
 
@@ -13,3 +13,5 @@ Use the existing `EMAIL_PROVIDER=ses` with `SES_FROM_EMAIL` (or the existing `SE
 Delivery retries every five minutes, up to five attempts. Monitor unsent rows with attempts >= 5; after correcting provider configuration, an operator can requeue selected failed rows under the normal tenant boundary. Delivery is at-least-once: a process crash after provider acceptance but before committing sent_at can cause a repeated email. Customer submission remains successful even when email delivery needs a retry.
 
 Migrations 132 and 133 were applied to the configured database with user approval on 2026-11-15. No live test publications or test emails were sent. Deploy the API changes to activate its automatic email workflow.
+
+If the selected active advisor has no Scheduling calendar, publishing initializes it from the form hours using Scheduling defaults (30-minute appointments, 60-minute notice, 30-day booking window). Adjacent form intervals are compacted into working periods without changing form slots. Existing Scheduling calendars are never overwritten. If more than 28 separate working periods remain after compaction, configure the advisor calendar in Scheduling first.

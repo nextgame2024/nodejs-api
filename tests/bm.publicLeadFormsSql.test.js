@@ -269,6 +269,89 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       }),
     ).rejects.toMatchObject({ status: 403 });
   });
+  test("initializes missing advisor availability from form hours without overwriting existing calendars", async () => {
+    const time = (m) =>
+      String(Math.floor(m / 60)).padStart(2, "0") +
+      ":" +
+      String(m % 60).padStart(2, "0");
+    const hours = Array.from({ length: 7 }, (_, day) =>
+      Array.from({ length: 16 }, (_, i) => ({
+        day,
+        start: time(540 + i * 30),
+        end: time(570 + i * 30),
+      })),
+    ).flat();
+    const draft = await forms.saveForm(owner, company, randomUUID(), {
+      expectedVersion: 0,
+      form: {
+        name: "New advisor form",
+        typeId: form.typeId,
+        emails: "owner@example.test",
+        blocks: [
+          {
+            ...calendarBlock,
+            id: randomUUID(),
+            calendar: {
+              ...calendarBlock.calendar,
+              advisorId: second,
+              weeklyHours: hours,
+            },
+          },
+        ],
+      },
+    });
+    const published = await publicForms.publishForm(owner, company, draft.id, {
+      expectedVersion: 1,
+    });
+    const calendar = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.lead_advisor_calendars WHERE customer_id=$1 AND advisor_identity=$2",
+        [tenant, second],
+      )
+    ).rows[0];
+    expect(calendar.weekly_hours).toHaveLength(7);
+    expect(calendar.slot_minutes).toBe(30);
+    await forms.saveForm(owner, company, draft.id, {
+      expectedVersion: 1,
+      form: {
+        name: "Updated public form",
+        typeId: form.typeId,
+        emails: "owner@example.test",
+        blocks: draft.blocks,
+      },
+    });
+    expect((await publicForms.getPublicForm(published.token)).name).toBe(
+      "Updated public form",
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT revision FROM sophia_runtime.lead_advisor_calendars WHERE customer_id=$1 AND advisor_identity=$2",
+          [tenant, second],
+        )
+      ).rows[0].revision,
+    ).toBe(1);
+    await expect(
+      forms.saveForm(owner, company, draft.id, {
+        expectedVersion: 2,
+        form: {
+          name: "Invalid update",
+          typeId: form.typeId,
+          emails: "owner@example.test",
+          blocks: [
+            {
+              ...draft.blocks[0],
+              calendar: { ...draft.blocks[0].calendar, advisorId: outsider },
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect((await publicForms.getPublicForm(published.token)).name).toBe(
+      "Updated public form",
+    );
+    expect((await forms.getForm(owner, company, draft.id)).version).toBe(2);
+  });
   test("filters form hours, creates one lead and booking on retry, and exposes responses only to its company", async () => {
     const state = await slots();
     expect(state.slots).toHaveLength(11); // 09:00 through 11:30, quarter-hour starts.
@@ -368,12 +451,12 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
     expect(outcomes.filter((o) => o.status === "rejected")).toHaveLength(1);
   });
-  test("draft edits do not affect published forms, republishing invalidates stale versions, and unpublish revokes the URL", async () => {
+  test("saving published forms updates the same URL, rejects stale versions, and unpublish revokes the URL", async () => {
     form = await forms.saveForm(owner, company, form.id, {
       expectedVersion: form.version,
       form: { name: "New title", typeId: form.typeId, blocks: form.blocks },
     });
-    expect((await publicForms.getPublicForm(token)).name).toBe("Discovery");
+    expect((await publicForms.getPublicForm(token)).name).toBe("New title");
     expect(
       (
         await publicForms.publishForm(owner, company, form.id, {

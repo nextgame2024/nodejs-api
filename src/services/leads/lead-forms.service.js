@@ -212,6 +212,24 @@ export async function saveForm(actor, company, id, input) {
           [tenant, id, f.emails],
         );
       await audit(db, tenant, actor, id, "form_saved");
+      if (await publicationsInstalled(db)) {
+        const active = await db.query(
+          `SELECT id FROM ${s}.lead_form_publications WHERE customer_id=$1 AND form_id=$2 AND active FOR UPDATE`,
+          [tenant, id],
+        );
+        if (active.rowCount) {
+          const { publishFormInTransaction } = await import(
+            "./public-lead-forms.service.js"
+          );
+          await publishFormInTransaction(
+            db,
+            tenant,
+            actor,
+            id,
+            result.rows[0].version,
+          );
+        }
+      }
       return { id, ...f, version: result.rows[0].version };
     },
     true,
