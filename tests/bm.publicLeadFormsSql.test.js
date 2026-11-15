@@ -273,6 +273,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     const state = await slots();
     expect(state.slots).toHaveLength(11); // 09:00 through 11:30, quarter-hour starts.
     const body = response(state.slots[0]);
+    delete body.contact; // Only builder-defined answers are required.
     const [first, retry] = await Promise.all([
       publicForms.submitPublicForm(token, body),
       publicForms.submitPublicForm(token, body),
@@ -303,6 +304,8 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     ).rows[0];
     expect(lead.customer_id).toBe(tenant);
     expect(lead.source).toBe("form");
+    expect(lead.display_name).toBe("Form response");
+    expect(lead.email || "").toBe("");
     expect(lead.assigned_to_identity).toBe(advisor);
     expect(
       (await publicForms.leadSubmissions(owner, company, row.lead_id)).items[0]

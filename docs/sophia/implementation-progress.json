@@ -91,7 +91,13 @@
         "23 backend unit and disposable SQL integration tests passed with fake email sender; no live test messages",
         "git diff --check passed"
       ],
-      "deployment": "User approved pushing master for Render deployment; awaiting push and health revision verification."
+      "deployment": "Pushed backend master commit 043f91d65959 with explicit user approval. Render /api/healthz returned ok:true and revision043f91d65959. Automatic email workflow is deployed. Placeholder changed locally in frontend; no live test email sent."
+    },
+    "builderOnlySubmission": {
+      "updatedOn": "2026-11-15",
+      "change": "Public form uses only builder fields; removed injected name/email requirement from submission API while retaining backward compatibility with old clients. Without contact metadata, internal lead is named Form response and builder answers remain stored and emailed.",
+      "verification": "9 disposable SQL tests passed, including a contact-free response creating a lead, appointment and one notification per configured recipient.",
+      "deployment": "Backend validation change prepared for deployment under existing user approval."
     }
   },
   "leadForms": {

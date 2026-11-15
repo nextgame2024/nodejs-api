@@ -346,12 +346,11 @@ export async function submitPublicForm(token, input) {
   const key = uuid(input?.requestKey);
   if (input?.website) throw fail("The response could not be accepted.");
   const contact = leadInput({
-    displayName: input?.contact?.name,
+    displayName: input?.contact?.name || "Form response",
     email: input?.contact?.email,
     phone: input?.contact?.phone ?? "",
     language: "en",
   });
-  if (!contact.email) throw fail("Enter your email address.", 400, ["email"]);
   return publicRun(token, async (db, tenant, p) => {
     const fingerprint = hash({
       version: input.formVersion,
