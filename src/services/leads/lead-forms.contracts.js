@@ -1,6 +1,7 @@
 import { calendarInput } from "../scheduling/lead-appointments.contracts.js";
 import { fail } from "./assistant-settings.contracts.js";
 import { text, uuid } from "./lead-records.contracts.js";
+export const MAX_FORM_WEEKLY_INTERVALS = 7 * 24 * 4;
 export const kinds = [
   "title",
   "subtitle",
@@ -112,7 +113,7 @@ export function formInput(input) {
           leadTimeMinutes: 0,
           bookingWindowDays: 180,
         },
-        7 * 24 * 4,
+        MAX_FORM_WEEKLY_INTERVALS,
       ); // Maximum non-overlapping quarter-hour intervals in a week.
       if (!checked.weeklyHours.length)
         throw fail("Add at least one available day and time.");

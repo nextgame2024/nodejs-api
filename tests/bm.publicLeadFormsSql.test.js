@@ -351,6 +351,30 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       "Updated public form",
     );
     expect((await forms.getForm(owner, company, draft.id)).version).toBe(2);
+    // Simulate calendars created by the old publisher without derived offsets.
+    await pool.query(
+      `UPDATE sophia_runtime.lead_advisor_calendars SET weekly_hours=(SELECT jsonb_agg(h-'startMinute'-'endMinute') FROM jsonb_array_elements(weekly_hours) h) WHERE customer_id=$1 AND advisor_identity=$2`,
+      [tenant, second],
+    );
+    const availability = await publicForms.publicSlots(
+      published.token,
+      draft.blocks[0].id,
+      { date: nextDate(), timezone: "Australia/Brisbane", formVersion: 2 },
+    );
+    expect(availability.slots.length).toBeGreaterThan(0);
+    const submission = await publicForms.submitPublicForm(published.token, {
+      requestKey: randomUUID(),
+      formVersion: 2,
+      answers: {},
+      appointment: {
+        blockId: draft.blocks[0].id,
+        startsAt: availability.slots[0].startsAt,
+        calendarRevision: availability.calendarRevision,
+      },
+    });
+    expect(submission.appointment.startsAt).toBe(
+      availability.slots[0].startsAt,
+    );
   });
   test("filters form hours, creates one lead and booking on retry, and exposes responses only to its company", async () => {
     const state = await slots();

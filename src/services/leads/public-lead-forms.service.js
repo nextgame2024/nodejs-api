@@ -20,6 +20,7 @@ import {
   date,
   zone,
   bookingInput,
+  calendarInput,
 } from "../scheduling/lead-appointments.contracts.js";
 import {
   authorizedAvailability,
@@ -158,13 +159,22 @@ export async function publishFormInTransaction(
           "Configure the advisor’s availability in Scheduling: this form has more than 28 separate working periods.",
           409,
         );
+      const normalized = calendarInput({
+        expectedRevision: 0,
+        timezone: b.calendar.timezone,
+        slotMinutes: 30,
+        leadTimeMinutes: 60,
+        bookingWindowDays: 30,
+        weeklyHours: hours,
+        closedDates: [],
+      });
       const created = await db.query(
         `INSERT INTO ${s}.lead_advisor_calendars(customer_id,advisor_identity,timezone,slot_minutes,lead_time_minutes,booking_window_days,weekly_hours,closed_dates,updated_by_identity) VALUES($1,$2,$3,30,60,30,$4::jsonb,'[]'::jsonb,$5) ON CONFLICT DO NOTHING RETURNING revision`,
         [
           tenant,
           b.calendar.advisorId,
           b.calendar.timezone,
-          JSON.stringify(hours),
+          JSON.stringify(normalized.weeklyHours),
           actor,
         ],
       );
@@ -181,7 +191,7 @@ export async function publishFormInTransaction(
               slotMinutes: 30,
               leadTimeMinutes: 60,
               bookingWindowDays: 30,
-              weeklyHours: hours,
+              weeklyHours: normalized.weeklyHours,
               closedDates: [],
             }),
           ],

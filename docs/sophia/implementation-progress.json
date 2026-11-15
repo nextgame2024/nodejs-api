@@ -121,6 +121,25 @@
         "git diff --check passed"
       ],
       "deployment": "Prepared for deployment using prior user authorization; no schema changes."
+    },
+    "stalePublicationRepair": {
+      "date": "2026-11-16",
+      "formId": "e0939475-8a0a-4086-8828-7d6df6b85d10",
+      "finding": "Saved version6 contained one calendar; active publication version4 contained none.",
+      "action": "Synchronized this one active publication via publishFormInTransaction under tenant RLS, with version guard6, same-token assertion and audit actor system:public-form-sync. User approved operation.",
+      "verified": "Live public GET returns version6 and one calendar block. No submission, booking or email generated."
+    },
+    "availabilityRepair": {
+      "updatedOn": "2026-11-16",
+      "fix": [
+        "Shared maximum form interval count between form validation and availability/booking filter",
+        "Normalize Scheduling minute offsets on read for calendars initialized by old publisher; new publisher writes normalized values"
+      ],
+      "verification": [
+        "26 tests passed: bm.publicLeadFormsSql, bm.leadForms, bm.leadAppointments; regression now loads slots and books using112 form intervals and legacy calendar without minute offsets",
+        "No live booking or email created"
+      ],
+      "deployment": "Prepared backend deployment and live availability verification under existing user approval."
     }
   },
   "leadForms": {

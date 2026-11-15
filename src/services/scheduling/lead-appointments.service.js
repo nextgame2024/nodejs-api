@@ -48,15 +48,22 @@ async function requireAdvisor(db, company, access, id) {
     );
 }
 async function calendar(db, tenant, id, lock = false) {
-  return (
+  const saved =
     (
       await db.query(
         `SELECT ${calendarFields} FROM ${s}.lead_advisor_calendars WHERE customer_id=$1 AND advisor_identity=$2 ${lock ? "FOR UPDATE" : ""}`,
         [tenant, id],
       )
-    ).rows[0] ?? null
-  );
+    ).rows[0] ?? null;
+  if (!saved) return null;
+  // Normalize derived minute offsets on read, including calendars initialized
+  // by older form publishing code that stored only HH:mm values.
+  return {
+    ...saved,
+    weeklyHours: calendarInput({ ...saved, expectedRevision: 0 }).weeklyHours,
+  };
 }
+
 export async function schedulingContext(actor, company) {
   return run(actor, company, async (db, tenant, access) => ({
     actorId: actor,
