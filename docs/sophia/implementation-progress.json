@@ -151,9 +151,23 @@
       ],
       "verification": [
         "11 isolated PostgreSQL tests passed; 3 email unit tests passed; 7 public-form ChromeHeadless tests passed",
-        "No live emails or bookings created during verification"
+        "No live emails or bookings created during verification",
+        "Frontend TypeScript noEmit and git diff --check passed."
       ],
-      "deployment": "Prepared backend deployment under existing authorization; frontend changes local"
+      "deployment": "Backend c32a2ba25af9 pushed and Render health revision verified; frontend changes local."
+    },
+    "workspaceConsistency": {
+      "updatedOn": "2026-11-16",
+      "changes": [
+        "Requested AI option updated in saved and published form version 7 with stable URL",
+        "Removed lead workspace max-width and excess padding; aligned header typography and chrome with Students, including dark color",
+        "Added Scheduling link explaining that public-form bookings appear in Lead appointments"
+      ],
+      "verification": [
+        "Tenant-isolated production read and normal advisor list service confirm 3 appointments at 09:00,09:30,10:00 Brisbane on Nov16",
+        "25 frontend workspace/scheduling tests passed; TypeScript and diff checks passed"
+      ],
+      "deployment": "Form data updated live; frontend styling/navigation changes local; no backend code change needed"
     }
   },
   "leadForms": {
