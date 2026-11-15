@@ -1,4 +1,33 @@
 {
+  "publicLeadForms": {
+    "updatedOn": "2026-11-15",
+    "status": "implemented_locally_migration_and_deployment_pending",
+    "implemented": [
+      "Restored standalone List, Input and Checkboxes alongside Title, Subtitle, Question and Description",
+      "Calendar block with advisor, timezone and weekly intervals; form hours intersect Scheduling availability and existing appointments",
+      "Publish/unpublish with stable public campaign URL, company-scoped published snapshots and explicit draft/published separation",
+      "Anonymous contact details, validated required answers and atomic lead/submission/appointment creation using the shared Scheduling conflict path",
+      "Public form source labels and full response detail on the lead; retained submissions after form deletion",
+      "Forced tenant RLS, public capability tokens, idempotency, publication audit, safe HTML rendering and bounded anonymous request guard"
+    ],
+    "verification": [
+      "Angular production build passed using Node 22.23.2; existing bundle/style/CommonJS/stylesheet warnings remain",
+      "35 initial Forms/Leads/Scheduling ChromeHeadless tests passed; 18 final Forms/public-page/calendar tests passed (43 distinct browser tests across runs)",
+      "14 backend form and scheduling contract tests passed",
+      "6 isolated local PostgreSQL tests passed: company isolation, publication lifecycle, duplicate retries, concurrent slot conflicts, atomic rollback, marketing submissions and retained responses; disposable database removed",
+      "TypeScript app/spec noEmit checks passed; git diff --check passed"
+    ],
+    "deployment": [
+      "Apply 132_public_lead_forms.sql after 131 using the configured owner migration runner, then deploy backend and frontend together",
+      "Public URLs use the frontend origin; localhost-generated links are development-only. The deployed frontend must route /forms/:token to the SPA and be allowed by backend CORS",
+      "Configure advisor availability in Scheduling and publish the enquiry team before publishing a calendar form",
+      "No production migration, deployment, live publication or outbound messaging performed"
+    ],
+    "limitations": [
+      "One calendar per published form",
+      "Anonymous request guard is process-local and uses the server-resolved client IP; upstream production abuse controls should account for the deployment proxy topology"
+    ]
+  },
   "leadForms": {
     "updatedOn": "2026-11-15",
     "status": "implemented_and_locally_verified_migration_pending",

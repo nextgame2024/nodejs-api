@@ -1,3 +1,4 @@
+import { calendarInput } from "../scheduling/lead-appointments.contracts.js";
 import { fail } from "./assistant-settings.contracts.js";
 import { text, uuid } from "./lead-records.contracts.js";
 export const kinds = [
@@ -8,6 +9,7 @@ export const kinds = [
   "checkboxes",
   "list",
   "input",
+  "calendar",
 ];
 export function formInput(input) {
   if (
@@ -29,7 +31,10 @@ export function formInput(input) {
       !b ||
       !kinds.includes(b.kind) ||
       Object.keys(b).some(
-        (k) => !["id", "kind", "text", "required", "options"].includes(k),
+        (k) =>
+          !["id", "kind", "text", "required", "options", "calendar"].includes(
+            k,
+          ),
       )
     )
       throw fail("Unsupported form block.");
@@ -40,7 +45,8 @@ export function formInput(input) {
       b.text ?? "",
       `blocks.${i}`,
       b.kind === "description" ? 20000 : 1000,
-      b.kind !== "input" && !["list", "checkboxes"].includes(b.kind),
+      b.kind !== "input" &&
+        !["list", "checkboxes", "calendar"].includes(b.kind),
     );
     if (typeof b.required !== "boolean")
       throw fail("Select whether the question is required.");
@@ -64,7 +70,47 @@ export function formInput(input) {
       throw fail(
         "Place an input, list or checkboxes immediately after each question.",
       );
-    return { id, kind: b.kind, text: value, required: b.required, options };
+    let calendar;
+    if (b.kind === "calendar") {
+      const raw = b.calendar;
+      if (
+        !raw ||
+        Object.keys(raw).some(
+          (k) => !["advisorId", "timezone", "weeklyHours"].includes(k),
+        )
+      )
+        throw fail(
+          "Configure the calendar advisor, timezone and weekly hours.",
+        );
+      const checked = calendarInput({
+        ...raw,
+        expectedRevision: 0,
+        closedDates: [],
+        slotMinutes: 15,
+        leadTimeMinutes: 0,
+        bookingWindowDays: 180,
+      });
+      if (!checked.weeklyHours.length)
+        throw fail("Add at least one available day and time.");
+      calendar = {
+        advisorId: uuid(raw.advisorId),
+        timezone: checked.timezone,
+        weeklyHours: checked.weeklyHours.map(({ day, start, end }) => ({
+          day,
+          start,
+          end,
+        })),
+      };
+    } else if (b.calendar !== undefined)
+      throw fail("Only calendar blocks can contain availability.");
+    return {
+      id,
+      kind: b.kind,
+      text: value,
+      required: b.required,
+      options,
+      ...(calendar ? { calendar } : {}),
+    };
   });
   if (Buffer.byteLength(JSON.stringify(blocks)) > 200000)
     throw fail("This form is too large. Shorten its descriptions.");

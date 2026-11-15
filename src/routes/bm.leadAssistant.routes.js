@@ -1,3 +1,5 @@
+import * as publicForms from "../services/leads/public-lead-forms.service.js";
+import { publicFormRateLimit } from "../middlewares/publicFormRateLimit.js";
 import * as forms from "../services/leads/lead-forms.service.js";
 import { retryVoice } from "../services/messaging/voice-api.service.js";
 import {
@@ -186,5 +188,53 @@ router.delete(
   handle((req) =>
     forms.deleteForm(req.user.id, req.user.companyId, req.params.id, req.body),
   ),
+);
+router.post(
+  "/bm/lead-assistant/forms/:id/publish",
+  handle((req) =>
+    publicForms.publishForm(
+      req.user.id,
+      req.user.companyId,
+      req.params.id,
+      req.body,
+    ),
+  ),
+);
+router.get(
+  "/bm/lead-assistant/forms/:id/publication",
+  handle((req) =>
+    publicForms.publicationStatus(
+      req.user.id,
+      req.user.companyId,
+      req.params.id,
+    ),
+  ),
+);
+router.delete(
+  "/bm/lead-assistant/forms/:id/publication",
+  handle((req) =>
+    publicForms.unpublishForm(req.user.id, req.user.companyId, req.params.id),
+  ),
+);
+router.get(
+  "/bm/lead-assistant/leads/:id/form-submissions",
+  handle((req) =>
+    publicForms.leadSubmissions(req.user.id, req.user.companyId, req.params.id),
+  ),
+);
+router.use("/public/forms", publicFormRateLimit);
+router.get(
+  "/public/forms/:token",
+  handle((req) => publicForms.getPublicForm(req.params.token)),
+);
+router.get(
+  "/public/forms/:token/calendars/:blockId/availability",
+  handle((req) =>
+    publicForms.publicSlots(req.params.token, req.params.blockId, req.query),
+  ),
+);
+router.post(
+  "/public/forms/:token/submissions",
+  handle((req) => publicForms.submitPublicForm(req.params.token, req.body)),
 );
 export default router;

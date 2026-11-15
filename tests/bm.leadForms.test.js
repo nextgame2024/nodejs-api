@@ -54,6 +54,29 @@ describe("Lead form contracts", () => {
       formInput(form([block("input", { required: true })])),
     ).toThrow();
   });
+  test("validates calendar availability using Scheduling rules", () => {
+    const calendar = {
+      advisorId: randomUUID(),
+      timezone: "Australia/Brisbane",
+      weeklyHours: [{ day: 1, start: "08:00", end: "17:00" }],
+    };
+    expect(
+      formInput(form([block("calendar", { text: "", calendar })])).blocks[0]
+        .calendar,
+    ).toEqual(calendar);
+    for (const weeklyHours of [
+      [],
+      [{ day: 1, start: "17:00", end: "08:00" }],
+      [{ day: 1, start: "08:07", end: "17:00" }],
+      [...calendar.weeklyHours, { day: 1, start: "09:00", end: "10:00" }],
+    ])
+      expect(() =>
+        formInput(
+          form([block("calendar", { calendar: { ...calendar, weeklyHours } })]),
+        ),
+      ).toThrow();
+    expect(() => formInput(form([block("title", { calendar })]))).toThrow();
+  });
   test("bounds page sizes and allowlists SQL sorting", () => {
     expect(formQuery({ page: "2", limit: "25", sort: "type" }).page).toBe(2);
     for (const q of [

@@ -230,7 +230,7 @@ export async function bookAuthorizedAppointment(
   actor,
   lead,
   b,
-  { origin = "scheduling" } = {},
+  { origin = "scheduling", slotFilter = (values) => values } = {},
 ) {
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
     tenant + ":appointment:" + b.requestKey,
@@ -255,14 +255,14 @@ export async function bookAuthorizedAppointment(
   const c = await calendar(db, tenant, b.advisorId, true);
   if (!c || c.revision !== b.calendarRevision)
     throw fail("Availability changed. Choose a time again.", 409, ["slot"]);
-  const selected = (
+  const selected = slotFilter(
     await slots(
       db,
       tenant,
       c,
       localParts(b.startsAt, b.timezone).date,
       b.timezone,
-    )
+    ),
   ).find((slot) => slot.startsAt === b.startsAt);
   if (!selected)
     throw fail(
