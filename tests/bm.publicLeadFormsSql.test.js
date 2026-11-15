@@ -119,6 +119,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       "121_lead_appointments.sql",
       "131_lead_forms.sql",
       "132_public_lead_forms.sql",
+      "133_lead_form_email_notifications.sql",
     ])
       await pool.query(
         (
@@ -230,6 +231,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       expectedVersion: 0,
       form: {
         name: "Discovery",
+        emails: "owner@example.test, second@example.test",
         typeId: type.id,
         blocks: [questionBlock, answerBlock, calendarBlock],
       },
@@ -257,6 +259,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     const published = await publicForms.getPublicForm(token);
     expect(published.blocks[2].calendar.advisorId).toBeUndefined();
     expect(published.businessName).toBe("Example company");
+    expect(published.emails).toBeUndefined();
     await expect(
       publicForms.getPublicForm(otherTenant + "." + token.split(".")[1]),
     ).rejects.toMatchObject({ status: 404 });
@@ -275,6 +278,16 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       publicForms.submitPublicForm(token, body),
     ]);
     expect(first).toEqual(retry);
+    expect(
+      (
+        await pool.query(
+          "SELECT recipient FROM sophia_runtime.lead_form_email_outbox WHERE submission_id=$1",
+          [first.receipt],
+        )
+      ).rows
+        .map((r) => r.recipient)
+        .sort(),
+    ).toEqual(["owner@example.test", "second@example.test"]);
     expect(first.appointment.startsAt).toBe(state.slots[0].startsAt);
     const row = (
       await pool.query(
@@ -394,6 +407,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       expectedVersion: 0,
       form: {
         name: "Marketing campaign",
+        emails: "marketing@example.test",
         typeId: form.typeId,
         blocks: [standalone],
       },
@@ -420,6 +434,41 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
         )
       ).rows[0].answers[0].value,
     ).toBe("Interested in AI");
+  });
+  test("queues each notification once and retries delivery without duplicating bookings", async () => {
+    const { processFormEmail, formEmailMessage } = await import(
+      "../src/services/leads/form-email.service.js"
+    );
+    const rows = (
+      await pool.query("SELECT * FROM sophia_runtime.lead_form_email_outbox")
+    ).rows;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(
+      new Set(rows.map((r) => r.submission_id + ":" + r.recipient)).size,
+    ).toBe(rows.length);
+    const db = await pool.connect();
+    const send = jest.fn().mockRejectedValueOnce(new Error("temporary"));
+    try {
+      expect(await processFormEmail(db, tenant, send)).toBe("retry");
+      const target = send.mock.calls[0];
+      await pool.query(
+        "UPDATE sophia_runtime.lead_form_email_outbox SET available_at=now()-interval '1 minute' WHERE recipient=$1",
+        [target[0]],
+      );
+      send.mockResolvedValue(undefined);
+      expect(await processFormEmail(db, tenant, send)).toBe("sent");
+      expect(await processFormEmail(db, otherTenant, send)).toBe("idle");
+      const message = formEmailMessage({
+        formName: "Test",
+        contact: { email: "customer@example.test" },
+        answers: [{ label: "Question", value: "<script>unsafe</script>" }],
+        appointment: null,
+      });
+      expect(message.html).not.toContain("<script>");
+      expect(message.html).toContain("Question");
+    } finally {
+      db.release();
+    }
   });
   test("missing publication table keeps drafts readable and returns an actionable publishing error", async () => {
     await pool.query(

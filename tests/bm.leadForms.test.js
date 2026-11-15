@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   formInput,
   formQuery,
+  formEmails,
 } from "../src/services/leads/lead-forms.contracts.js";
 const block = (kind, fields = {}) => ({
   id: randomUUID(),
@@ -18,6 +19,22 @@ const form = (blocks = [block("title")]) => ({
   blocks,
 });
 describe("Lead form contracts", () => {
+  test("normalizes recipients and rejects empty, invalid and excessive emails", () => {
+    expect(
+      formEmails(
+        " Owner@example.test, owner@example.test, next@example.test",
+        true,
+      ),
+    ).toBe("owner@example.test, next@example.test");
+    for (const value of [
+      "",
+      "bad",
+      "a@example.test,",
+      "a@example.test\r\nbcc:other@example.test",
+      Array(11).fill("a@example.test").join(","),
+    ])
+      expect(() => formEmails(value, true)).toThrow();
+  });
   test("supports the discovery form with required questions and ordered response fields", () => {
     const input = form([
       block("title"),

@@ -17,6 +17,19 @@ export async function requirePublications(db) {
       503,
     );
 }
+export async function requireFormEmailSetup(db) {
+  if (
+    !(
+      await db.query(
+        "SELECT to_regclass('sophia_runtime.lead_form_email_outbox') IS NOT NULL AS installed",
+      )
+    ).rows[0].installed
+  )
+    throw fail(
+      "Form notification emails are not available yet. Ask your administrator to finish the public forms database setup.",
+      503,
+    );
+}
 export function formsTransaction(actor, company, work, write = false) {
   return transaction(
     actor,
@@ -149,7 +162,7 @@ export async function getForm(actor, company, id) {
   return formsTransaction(actor, company, async (db, tenant) => {
     const row = (
       await db.query(
-        `SELECT id,name,type_id AS "typeId",blocks,version FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2`,
+        `SELECT id,name,type_id AS "typeId",blocks,version,COALESCE(to_jsonb(lead_forms)->>'emails','') AS emails FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2`,
         [tenant, id],
       )
     ).rows[0];
@@ -166,6 +179,7 @@ export async function saveForm(actor, company, id, input) {
     actor,
     company,
     async (db, tenant) => {
+      if (f.emails) await requireFormEmailSetup(db);
       // Serialize type deletion with form assignment.
       if (
         !(
@@ -191,6 +205,11 @@ export async function saveForm(actor, company, id, input) {
         throw fail(
           "This form changed or was deleted. Reload before saving.",
           409,
+        );
+      if (f.emails)
+        await db.query(
+          `UPDATE ${s}.lead_forms SET emails=$3 WHERE customer_id=$1 AND id=$2`,
+          [tenant, id, f.emails],
         );
       await audit(db, tenant, actor, id, "form_saved");
       return { id, ...f, version: result.rows[0].version };

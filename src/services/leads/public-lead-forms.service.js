@@ -4,6 +4,7 @@ import {
   formsTransaction,
   publicationsInstalled,
   requirePublications,
+  requireFormEmailSetup,
 } from "./lead-forms.service.js";
 import { directory } from "./assistant-settings.service.js";
 import { fail } from "./assistant-settings.contracts.js";
@@ -14,7 +15,7 @@ import {
   hash,
   leadInput,
 } from "./lead-records.contracts.js";
-import { formInput } from "./lead-forms.contracts.js";
+import { formInput, formEmails } from "./lead-forms.contracts.js";
 import {
   date,
   zone,
@@ -101,6 +102,7 @@ export async function publishForm(actor, company, id, input) {
     company,
     async (db, tenant, access) => {
       await requirePublications(db);
+      await requireFormEmailSetup(db);
       const row = (
         await db.query(
           `SELECT * FROM ${s}.lead_forms WHERE customer_id=$1 AND id=$2 FOR UPDATE`,
@@ -109,6 +111,7 @@ export async function publishForm(actor, company, id, input) {
       ).rows[0];
       if (!row || row.version !== expected)
         throw fail("This form changed. Reload it before publishing.", 409);
+      const emails = formEmails(row.emails, true);
       const f = formInput({
         name: row.name,
         typeId: row.type_id,
@@ -174,6 +177,10 @@ export async function publishForm(actor, company, id, input) {
               ],
             )
           ).rows[0];
+      await db.query(
+        `UPDATE ${s}.lead_form_publications SET emails=$3 WHERE customer_id=$1 AND id=$2`,
+        [tenant, published.id, emails],
+      );
       await db.query(
         `INSERT INTO ${s}.lead_forms_audit(customer_id,actor_identity,entity_id,action) VALUES($1,$2,$3,'form_published')`,
         [tenant, actor, id],
@@ -480,6 +487,14 @@ export async function submitPublicForm(token, input) {
         JSON.stringify(result),
       ],
     );
+    if (p.emails) {
+      const payload = { formName: p.name, contact, answers, appointment };
+      for (const recipient of formEmails(p.emails, true).split(", "))
+        await db.query(
+          `INSERT INTO ${s}.lead_form_email_outbox(customer_id,submission_id,recipient,payload) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING`,
+          [tenant, id, recipient, JSON.stringify(payload)],
+        );
+    }
     const summary = answers
       .map(
         (a) =>

@@ -51,6 +51,37 @@
         "git diff --check passed"
       ],
       "limits": "Live server logs and migration state have not been inspected. Missing publication table is a reproduced failure path, not a confirmed live diagnosis. Backend redeployment required; publishing still requires migration 132. No production migrations or data changes performed."
+    },
+    "calendarUsability": {
+      "updatedOn": "2026-11-15",
+      "implemented": [
+        "Automatic up/down placement within clipped scroll panels for form calendar dropdowns",
+        "Wider preview/public forms and clickable selected-day times inside the shared calendar, with read-only selected appointment below",
+        "Copy all intervals from one day to selected destinations, replacing destination hours; validates intervals and enforces existing 28-interval cap"
+      ],
+      "verification": [
+        "28 focused ChromeHeadless tests passed: calendar, shared select, forms builder and public form",
+        "3 calendar tests rerun successfully with added 390px/1100px light/dark layout assertions",
+        "TypeScript app noEmit and git diff --check passed",
+        "Production Angular build passed; existing budget, CommonJS and primeicons stylesheet warnings remain"
+      ],
+      "deployment": "Frontend deployment only; no schema changes or live operations."
+    },
+    "submissionEmailNotifications": {
+      "updatedOn": "2026-11-15",
+      "implemented": [
+        "Required comma-separated Emails field beside name/type, normalized and validated server-side; publishing snapshots recipients privately",
+        "Globe Publish actions, green/white calendar times, removed configured-hours labels and selected-appointment input",
+        "Public Send and Cancel controls, response/appointment persistence retained, one transactional email outbox row per recipient and submission",
+        "SES/SMTP worker with tenant RLS, SKIP LOCKED, bounded retries and documented at-least-once delivery"
+      ],
+      "verification": [
+        "21 backend tests passed including disposable PostgreSQL publication, booking idempotency, recipient privacy, queue retries with a fake sender and tenant isolation",
+        "24 ChromeHeadless tests passed including calendar layout, email validation and Cancel without submission",
+        "git diff --check passed",
+        "Production Angular build passed with existing bundle/style/CommonJS/primeicons warnings"
+      ],
+      "deployment": "Apply existing migration132 and new133 using configured owner runner, deploy frontend/backend, and schedule cron/leadFormEmailCron.js with FORM_EMAIL_TENANT_IDS and existing email-provider settings. See docs/sophia/lead-form-publishing.md. No production migrations or emails performed."
     }
   },
   "leadForms": {

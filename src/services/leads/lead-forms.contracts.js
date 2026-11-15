@@ -12,10 +12,30 @@ export const kinds = [
   "calendar",
   "richtext",
 ];
+export function formEmails(value, required = false) {
+  if (value === undefined || value === "") {
+    if (required)
+      throw fail("Add notification emails before publishing.", 400, ["emails"]);
+    return "";
+  }
+  if (typeof value !== "string" || value.length > 2600)
+    throw fail("Enter valid comma-separated emails.", 400, ["emails"]);
+  const emails = value.split(",").map((v) => v.trim().toLowerCase());
+  if (
+    emails.length > 10 ||
+    emails.some(
+      (v) => v.length > 254 || !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(v),
+    )
+  )
+    throw fail("Enter up to 10 valid comma-separated emails.", 400, ["emails"]);
+  return [...new Set(emails)].join(", ");
+}
 export function formInput(input) {
   if (
     !input ||
-    Object.keys(input).some((k) => !["name", "typeId", "blocks"].includes(k))
+    Object.keys(input).some(
+      (k) => !["name", "typeId", "blocks", "emails"].includes(k),
+    )
   )
     throw fail("The form contains unsupported fields.");
   const name = text(input.name, "name", 160, true),
@@ -115,7 +135,14 @@ export function formInput(input) {
   });
   if (Buffer.byteLength(JSON.stringify(blocks)) > 200000)
     throw fail("This form is too large. Shorten its descriptions.");
-  return { name, typeId, blocks };
+  return {
+    name,
+    typeId,
+    blocks,
+    ...(input.emails === undefined
+      ? {}
+      : { emails: formEmails(input.emails, true) }),
+  };
 }
 export function formQuery(q) {
   const page = Number(q.page ?? 1),
