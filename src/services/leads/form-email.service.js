@@ -52,13 +52,17 @@ export async function sendFormEmail(recipient, payload) {
     if (result.rejected?.length) throw new Error("Recipient was rejected");
     return;
   }
-  if (provider !== "ses" || !process.env.SES_FROM_EMAIL)
+  if (
+    provider !== "ses" ||
+    !(process.env.SES_FROM_EMAIL || process.env.SES_FROM)
+  )
     throw new Error("Email provider is not configured");
   await new SESv2Client({
-    region: process.env.AWS_REGION || "ap-southeast-2",
+    region:
+      process.env.AWS_REGION || process.env.SES_REGION || "ap-southeast-2",
   }).send(
     new SendEmailCommand({
-      FromEmailAddress: process.env.SES_FROM_EMAIL,
+      FromEmailAddress: process.env.SES_FROM_EMAIL || process.env.SES_FROM,
       Destination: { ToAddresses: [recipient] },
       Content: {
         Simple: {

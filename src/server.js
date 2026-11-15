@@ -1,8 +1,9 @@
 import app from "./app.js";
+import { startFormEmailWorkflow } from "./services/leads/form-email-workflow.service.js";
 import { startInspectionWorkflow } from "./services/bm.inspectionWorkflow.service.js";
 import { pingDb } from "./config/db.js";
 import { ensureStartupMigrations } from "./config/startupMigrations.js";
-import { startStudentUserSyncWorker } from './services/bm.studentUserSync.service.js';
+import { startStudentUserSyncWorker } from "./services/bm.studentUserSync.service.js";
 
 const port = Number(process.env.PORT || 3300);
 
@@ -19,6 +20,8 @@ const port = Number(process.env.PORT || 3300);
   app.listen(port, () => {
     console.log(`API listening on :${port}`);
     startInspectionWorkflow();
-    if (process.env.STUDENT_USER_SYNC_EXECUTION_MODE !== 'worker') startStudentUserSyncWorker();
+    startFormEmailWorkflow();
+    if (process.env.STUDENT_USER_SYNC_EXECUTION_MODE !== "worker")
+      startStudentUserSyncWorker();
   });
 })();

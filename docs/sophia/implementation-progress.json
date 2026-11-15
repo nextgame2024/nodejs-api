@@ -82,6 +82,16 @@
         "Production Angular build passed with existing bundle/style/CommonJS/primeicons warnings"
       ],
       "deployment": "Apply existing migration132 and new133 using configured owner runner, deploy frontend/backend, and schedule cron/leadFormEmailCron.js with FORM_EMAIL_TENANT_IDS and existing email-provider settings. See docs/sophia/lead-form-publishing.md. No production migrations or emails performed."
+    },
+    "activation": {
+      "updatedOn": "2026-11-15",
+      "database": "Confirmed missing publication and email outbox tables, then applied migrations132 and133 with user approval using scripts/setup-public-forms.mjs in one owner transaction.",
+      "backend": "Automatic API email workflow reads active tenant registry, then processes deliveries with runtime role and tenant RLS; existing SES_FROM/SES_REGION settings supported.",
+      "verification": [
+        "23 backend unit and disposable SQL integration tests passed with fake email sender; no live test messages",
+        "git diff --check passed"
+      ],
+      "deployment": "User approved pushing master for Render deployment; awaiting push and health revision verification."
     }
   },
   "leadForms": {
