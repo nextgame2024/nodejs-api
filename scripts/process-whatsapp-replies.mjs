@@ -2,6 +2,7 @@ import "dotenv/config";
 import { setTimeout as sleep } from "node:timers/promises";
 import pool from "../src/config/db.js";
 import { channelProfiles } from "../src/services/messaging/channel-profiles.js";
+import { processChannelEvent } from "../src/services/messaging/whatsapp-channel.service.js";
 import {
   generateOne,
   dispatchOne,
@@ -54,6 +55,9 @@ async function lane(work, idleMs = 2000) {
 }
 try {
   await Promise.all([
+    ...(process.env.WHATSAPP_INBOUND_WORKER_ENABLED === "true"
+      ? [lane((p) => processChannelEvent(p))]
+      : []),
     lane((p) => generateOne(p, generateChannelAnswer)),
     lane((p) => expireVoiceAssets(p), 60000),
     lane((p) =>

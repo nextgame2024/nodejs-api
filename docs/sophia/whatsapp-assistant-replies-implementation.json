@@ -1,7 +1,7 @@
 {
   "document": {
     "id": "whatsapp-assistant-replies-implementation",
-    "updatedOn": "2026-11-03",
+    "updatedOn": "2026-11-19",
     "slice": "P1A.3b \u2014 grounded text generation and durable outbound delivery",
     "status": "locally_verified_pending_migration_configuration_and_deployment"
   },
@@ -68,7 +68,7 @@
     ],
     "reasoningNotes": "Use the existing Runtime server-side provider credentials/models and their approved published configuration. No credentials or models are entered in the browser. The server allowlist and published experience binding must agree.",
     "flags": {
-      "WHATSAPP_REPLY_WORKER_ENABLED": "true only on the dedicated reply worker",
+      "WHATSAPP_REPLY_WORKER_ENABLED": "true on the messaging/reply worker; WHATSAPP_INBOUND_WORKER_ENABLED=true adds inbound processing in the same process",
       "WHATSAPP_GENERATION_ENABLED": "true explicitly enables generation; absent/false does not call a model",
       "WHATSAPP_OUTBOUND_ENABLED": "true explicitly enables dispatch, together with profile sendingEnabled=true and a configured token/version",
       "WHATSAPP_AUTOMATION_ENABLED": "true explicitly enables automatic job creation and bot dispatch; absent/false preserves review/human operation"
@@ -77,10 +77,10 @@
   },
   "deployment": [
     "Apply migration 119 through the owner-operated Runtime migration runner after 118. No production migration was executed here.",
-    "Build Runtime so both the new migration and dist/providers/reasoning/channel-reasoner.js are packaged. Deploy backend and frontend together; deploy the new worker alongside the existing inbound worker.",
+    "Build Runtime so both the new migration and dist/providers/reasoning/channel-reasoner.js are packaged. Dockerfile.messaging packages the adapters. Update the existing messaging worker to run inbound, generation and dispatch together; see docs/sophia/messaging-worker-deployment.md.",
     "Prepare and publish approved instructions, source knowledge/grants, an enabled text/voice experience with a supported published reasoning binding, and a tenant agent release through the existing Sophia Admin lifecycle. Unresolved instruction variables are not supported in this channel slice.",
     "Extend the test-number profile and configure deployment secrets/provider settings. Keep external generation/sending/automation off until the intended test setup is approved.",
-    "Start npm run whatsapp:reply-worker with WHATSAPP_REPLY_WORKER_ENABLED=true. Generation and dispatch are separate bounded lanes; enable only the required flags.",
+    "Start npm run whatsapp:messaging-worker with WHATSAPP_REPLY_WORKER_ENABLED=true and WHATSAPP_INBOUND_WORKER_ENABLED=true for consolidated operation. Inbound, generation and dispatch are separate bounded lanes; enable only the required flags. The reply-worker alias remains supported.",
     "In Company \u2192 WhatsApp configure the published agent and Draft for review first. In the inbox take ownership, request a draft and check its sources, wording and language before enabling delivery.",
     "Use a separately authorized test-number pilot to verify real provider payloads, the callback correlation field, status reconciliation, rate limits, answer quality and actual latency. Existing Business App coexistence remains a separate verified onboarding step.",
     "Automatic mode answers eligible new text enquiries. Existing paused or human-owned conversations require Resume Sophia. Changing reply policy puts existing bot conversations back into human attention and invalidates their undispatched jobs.",

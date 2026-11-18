@@ -1,4 +1,15 @@
 {
+  "messagingWorkerConsolidation": {
+    "updatedOn": "2026-11-19",
+    "status": "locally_verified_deployment_pending",
+    "implemented": [
+      "Optional inbound lane in the existing reply worker, preserving reply-only operation",
+      "whatsapp:messaging-worker command and Dockerfile.messaging with compiled Runtime adapters",
+      "Deployment runbook: docs/sophia/messaging-worker-deployment.md"
+    ],
+    "validation": "Runtime build; 15 inbound/outbound/orchestration tests; 38 real-estate regression tests passed.",
+    "pending": "Docker image build, Render deployment, live knowledge-answer and booking tests; real-number Embedded Signup/Coexistence remains separate."
+  },
   "publicLeadForms": {
     "updatedOn": "2026-11-15",
     "status": "implemented_locally_migration_and_deployment_pending",
