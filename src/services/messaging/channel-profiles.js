@@ -1,3 +1,4 @@
+import { publicRealtimeUrl } from "./realtime-invitation.js";
 // Deployment-owned allowlist: customer/number bindings can never be supplied by
 // a webhook or browser. Values are secret references, never browser credentials.
 export function channelProfiles(env = process.env) {
@@ -61,6 +62,7 @@ export function channelProfiles(env = process.env) {
         p.reasoningCredentialRef.length <= 160
           ? p.reasoningCredentialRef
           : null,
+      realtimeUrl: publicRealtimeUrl(p.realtimeUrl),
       qualificationEnabled: p.qualificationEnabled === true,
       followUpEnabled: p.followUpEnabled === true,
       voiceEnabled: p.voiceEnabled === true,

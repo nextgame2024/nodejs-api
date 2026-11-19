@@ -1,3 +1,4 @@
+import { teamAppointmentNextStep } from "../messaging/human-assistance.js";
 import { bookingName, bookingEmail } from "../messaging/customer-preferences.js";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { hash } from "../leads/lead-records.contracts.js";
@@ -123,7 +124,19 @@ export async function bookingCapabilityContext(
     Date.now() + row.bookingWindowDays * 86400000,
     row.timezone,
   );
+  const appointments = (
+    await db.query(
+      `SELECT starts_at,customer_timezone FROM ${s}.lead_appointments
+     WHERE customer_id=$1 AND lead_id=$2 AND status='confirmed' AND starts_at>now()
+     ORDER BY starts_at,appointment_id LIMIT 3`,
+      [profile.customerId, lead.lead_id],
+    )
+  ).rows.map((appointment) => ({
+    startsAt: new Date(appointment.starts_at).toISOString(),
+    timezone: appointment.customer_timezone || row.timezone,
+  }));
   return {
+    appointments,
     advisorId: lead.assigned_to_identity,
     timezone: row.timezone,
     calendarRevision: row.revision,
@@ -151,6 +164,16 @@ export async function createAppointmentOffer(
   );
   if (!context) return null;
   const text = copy(lead.language);
+  if (request?.action === "human_help") {
+    const appointment = context.appointments[0];
+    const when = appointment
+      ? display(appointment.startsAt, appointment.timezone, lead.language)
+      : null;
+    const language = String(lead.language || "en").split("-")[0];
+    const prefix = request.partialAnswer ? "" : language === "es" ? "No tengo esa información confirmada. " : language === "pt" ? "Não tenho essa informação confirmada. " : "I don't have confirmed information on that. ";
+    const body = prefix + teamAppointmentNextStep(lead.language, appointment, when);
+    return { body };
+  }
   if (request?.action === "clarify_date") return { body: text.askDate };
   let day;
   try {

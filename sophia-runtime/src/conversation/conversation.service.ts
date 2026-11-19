@@ -1,3 +1,4 @@
+import { publishedChannelKnowledge } from "../knowledge/published-channel-knowledge.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { runtimeConfig } from "../config/runtime-config.js";
@@ -55,6 +56,7 @@ export class ConversationService {
       Date.now() + config.sessionAccessTtlSeconds * 1000,
     );
     const storeId = config.defaultStoreId;
+    const companyKnowledge = await publishedChannelKnowledge(this.database, process.env.SOPHIA_PUBLIC_KNOWLEDGE_CUSTOMER_ID || customerId, process.env.SOPHIA_PUBLIC_KNOWLEDGE_PROFILE_ID);
     const toolDefinitions = this.tools.listDefinitions();
     const adapter = this.providerSessions.resolveExperience(experience);
     const allocation = await this.providerOperations.begin(customerId, adapter.adapterKey, experience);
@@ -64,7 +66,7 @@ export class ConversationService {
       deviceId: config.defaultDeviceId,
       storeId,
       tools: toolDefinitions,
-      instructions: this.tools.conversationInstructions("legacy"),
+      instructions: [this.tools.conversationInstructions("legacy"), companyKnowledge].filter(Boolean).join("\n\n"),
     });
     let persistedSessionId: string | undefined;
     try {

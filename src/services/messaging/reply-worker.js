@@ -1,3 +1,8 @@
+import { needsTeamAnswer } from "./human-assistance.js";
+import {
+  realtimeInvitationState,
+  invitationCopy,
+} from "./realtime-invitation.js";
 import { followUpEnabled, followUpCopy } from "./follow-up-store.js";
 import {
   publicConversation,
@@ -263,6 +268,7 @@ export async function generateOne(profile, reasoner) {
             timezone: booking.timezone,
             today: booking.today,
             maxDate: booking.maxDate,
+            appointments: booking.appointments,
           }
         : null,
     };
@@ -314,7 +320,8 @@ export async function generateOne(profile, reasoner) {
     result.sourceIds.length === 0 &&
     task.booking &&
     result.booking &&
-    (result.booking.action === "clarify_date" ||
+    (result.booking.action === "human_help" ||
+      result.booking.action === "clarify_date" ||
       (result.booking.action === "availability" &&
         typeof result.booking.date === "string") ||
       result.booking.action === "cancel" ||
@@ -420,6 +427,24 @@ export async function generateOne(profile, reasoner) {
           task.transcript,
         );
       }
+      const needsTeam = accepted && factual && task.booking && needsTeamAnswer(result);
+      if (needsTeam) {
+        const nextStep = await createAppointmentOffer(db, profile, channel, lead, c, job, { action: "human_help", partialAnswer: true });
+        if (nextStep && answer.length + nextStep.body.length + 2 <= 4000) answer += "\n\n" + nextStep.body;
+      }
+      const invitation =
+        accepted && factual && !needsTeam && task.discovery && !job.requested_by_identity
+          ? await realtimeInvitationState(
+              db,
+              profile.customerId,
+              job.conversation_id,
+              job.source_event_id,
+              profile.realtimeUrl,
+            )
+          : { eligible: false };
+      const invite = invitation.eligible && answer.length <= 3400;
+      if (invite)
+        answer += "\n\n" + invitationCopy(lead.language, profile.realtimeUrl);
       await db.query(
         `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,response_kind=$7,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
         [
@@ -429,6 +454,7 @@ export async function generateOne(profile, reasoner) {
           accepted ? answer : null,
           JSON.stringify(accepted && factual ? result.sourceIds : []),
           JSON.stringify({
+            ...(invite ? { engagement: { realtimeOffered: true } } : {}),
             attempts: [
               ...(Array.isArray(job.usage?.attempts) ? job.usage.attempts : []),
               result.usage ?? { measurementStatus: "incomplete" },

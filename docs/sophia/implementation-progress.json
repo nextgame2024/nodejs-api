@@ -4098,7 +4098,7 @@
     }
   },
   "whatsappSilentHandoff20261119": {
-    "status": "verified_release_pending",
+    "status": "deployed_phone_retest_pending",
     "cause": "Pricing question generated needs_human with no outbound acknowledgement, leaving conversation human_requested and later messages unanswered. SIGTERM screenshot belonged to old instance shutdown.",
     "changes": [
       "Ordinary missing-price questions may explain knowledge limits and ask a grounded scope question without inventing prices.",
@@ -4110,6 +4110,31 @@
       "Runtime build and diff checks passed.",
       "Live model check against approved Sophia knowledge returned a grounded pricing explanation without handoff; no WhatsApp message sent by that check."
     ],
-    "deployment": "Backend only. No database migration. User manages frontend commits and pushes going forward."
+    "deployment": "Render API, messaging worker and runtime verified live at ff5e288fd95097dd3a00690ca5ca7e18072d81f9. Backend only; no migration. Current test conversation remains human_requested and requires Resume Sophia; no production ownership changed or WhatsApp messages sent by diagnostic scripts. User controls frontend commits/pushes."
+  },
+  "whatsappRealtimeEngagement20261119": {
+    "status": "verified_pending_backend_deployment",
+    "changes": [
+      "Appointment-aware knowledge gaps: supported partial answers offer human booking help; verified upcoming appointments are acknowledged. Completely unsupported enquiries use a localized booking-help response without silently pausing bot ownership.",
+      "Optional realtime invitation after three question messages, recorded durably once per conversation in reply job metadata. Ignoring or declining never repeats the invitation; WhatsApp continues.",
+      "Runtime loads currently published, granted public company knowledge from an explicitly deployment-authorized source tenant. Session and tool tenant remain unchanged; no lead identity or transcript is shared.",
+      "Local Premium transport no longer sends an interrupt for every user utterance, which could cancel the next answer."
+    ],
+    "verification": [
+      "24 disposable PostgreSQL WhatsApp tests passed, including existing appointment acknowledgement and invitation refusal continuation.",
+      "22 runtime reasoner, public-knowledge, conversation and profile tests passed.",
+      "18 protected real-estate tests passed.",
+      "8 ChromeHeadless transport/client tests passed; frontend TypeScript check and runtime build passed.",
+      "User confirmed Premium can hear and respond after refreshing local frontend.",
+      "Read-only production check loaded approved company knowledge with tenant RLS; no records mutated.",
+      "Initial live pricing check omitted the booking next step; added server-enforced next step on needsTeam/uncertainty, and repeated model check returned needsTeam:true with valid sources. Final 24 SQL tests include partial and fully unsupported booking-aware replies."
+    ],
+    "limits": [
+      "Frontend remains local and uncommitted at user request; public Premium needs that frontend release.",
+      "Realtime shares approved company knowledge, not WhatsApp personal conversation context. Company discovery bookings remain in WhatsApp.",
+      "Question counting detects question punctuation and common EN/ES/PT question phrases; it counts question messages, not multiple questions inside one message.",
+      "No schema migration."
+    ],
+    "deployment": "Render configured with explicit public knowledge source tenant and optional public realtime URL; backend release pending. Existing runtime tool tenant preserved."
   }
 }

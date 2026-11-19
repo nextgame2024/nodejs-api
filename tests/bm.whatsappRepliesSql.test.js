@@ -616,12 +616,10 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(outbox[0].body).toBe(worker.handoffNotice("es"));
     expect(outbox[0].ownership_version).toBe(c.ownership_version);
     // Let any earlier approved reply dispatch first; notice is still sent once.
-    const send = jest
-      .fn()
-      .mockImplementation(async () => ({
-        kind: "accepted",
-        providerMessageId: randomUUID(),
-      }));
+    const send = jest.fn().mockImplementation(async () => ({
+      kind: "accepted",
+      providerMessageId: randomUUID(),
+    }));
     for (let i = 0; i < 4; i++) await worker.dispatchOne(full, send);
     expect(
       (
@@ -855,12 +853,10 @@ suite("WhatsApp replies on PostgreSQL", () => {
     await pool.query(
       "UPDATE sophia_runtime.assistant_message_outbox SET state='cancelled' WHERE state='queued' AND follow_up_request_id IS NULL",
     );
-    const send = jest
-      .fn()
-      .mockResolvedValue({
-        kind: "accepted",
-        providerMessageId: "wamid.follow-up-test",
-      });
+    const send = jest.fn().mockResolvedValue({
+      kind: "accepted",
+      providerMessageId: "wamid.follow-up-test",
+    });
     await worker.dispatchOne(p, send);
     expect(send).toHaveBeenCalledTimes(1);
     await worker.dispatchOne(p, send);
@@ -1090,6 +1086,41 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ).rows[0].count,
     ).toBe(1);
 
+    await inbound("booking-unknown-question", {
+      senderId: sender,
+      body: "What is an unlisted price?",
+    });
+    const unknown = jest.fn(async (context) => {
+      expect(context.bookingContext.appointments).toHaveLength(1);
+      expect(context.bookingContext.appointments[0].timezone).toBe(
+        "Pacific/Auckland",
+      );
+      return {
+        handoff: false,
+        answer: "",
+        sourceIds: [],
+        booking: { action: "human_help" },
+      };
+    });
+    await worker.generateOne(full, unknown);
+    expect(unknown).toHaveBeenCalledTimes(1);
+    const unknownJob = (
+      await pool.query(
+        "SELECT answer,state FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(unknownJob.state).toBe("ready");
+    expect(unknownJob.answer).toContain("tienes una cita");
+    expect(
+      (await api.getLead(owner, company, bookingLead.lead_id)).lead.ownership,
+    ).toBe("bot");
+    await inbound("booking-partial-question", { senderId: sender, body: "What is the exact English course price?" });
+    await worker.generateOne(full, async () => ({ ...(await approved()), answer: "No puedo confirmar el precio exacto.", needsTeam: true }));
+    const partialJob = (await pool.query("SELECT answer,state FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1", [bookingLead.lead_id])).rows[0];
+    expect(partialJob.state).toBe("ready");
+    expect(partialJob.answer).toContain("No puedo confirmar el precio exacto.");
+    expect(partialJob.answer).toContain("tienes una cita");
     const original = (
       await pool.query(
         "SELECT starts_at,version,status FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
@@ -1405,6 +1436,47 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].status,
     ).toBe("cancelled");
+  });
+  test("offers realtime once after three questions and continues WhatsApp after refusal", async () => {
+    const p = {
+      ...full,
+      qualificationEnabled: true,
+      realtimeUrl: "https://example.test/sophia",
+    };
+    const sender = "61455550009";
+    for (const [index, body] of [
+      "What do you do?",
+      "How can you help?",
+      "What services?",
+      "No thanks, stay on WhatsApp",
+      "What else can you do?",
+    ].entries()) {
+      await inbound(`invite-${index}`, { senderId: sender, body }, p);
+      await worker.generateOne(p, approved);
+    }
+    const jobs = (
+      await pool.query(
+        `SELECT j.answer,j.usage,j.state FROM sophia_runtime.assistant_reply_jobs j
+      JOIN sophia_runtime.assistant_channel_contacts c USING(customer_id,lead_id)
+      WHERE c.customer_id=$1 AND c.sender_id=$2 ORDER BY j.created_at`,
+        [tenant, sender],
+      )
+    ).rows;
+    expect(jobs).toHaveLength(5);
+    expect(
+      jobs.filter((j) => j.usage.engagement?.realtimeOffered),
+    ).toHaveLength(1);
+    expect(jobs[0].answer).not.toContain(p.realtimeUrl);
+    expect(jobs[1].answer).not.toContain(p.realtimeUrl);
+    expect(jobs[2].answer).toContain(p.realtimeUrl);
+    expect(jobs[3].answer).not.toContain(p.realtimeUrl);
+    expect(jobs[4].answer).not.toContain(p.realtimeUrl);
+    // New customer messages supersede queued unsent replies, but every turn
+    // was answered and the latest refusal-following answer remains ready.
+    expect(
+      jobs.every((j) => typeof j.answer === "string" && j.answer.length > 0),
+    ).toBe(true);
+    expect(jobs[4].state).toBe("ready");
   });
   test("knowledge retirement between generation and send cancels dispatch", async () => {
     await pool.query(

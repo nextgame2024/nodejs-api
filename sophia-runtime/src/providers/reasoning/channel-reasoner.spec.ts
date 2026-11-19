@@ -31,6 +31,43 @@ function provider(events: ReasoningProviderEvent[]) {
   return { implementation: { open } as ReasoningProvider, open, stream, close };
 }
 describe("Provider-neutral channel answer adapter", () => {
+  it("uses verified appointments and respects staying in WhatsApp", async () => {
+    const p = provider([
+      {
+        type: "text.delta",
+        delta:
+          '{"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"human_help"}}',
+      },
+      { type: "response.completed" },
+    ]);
+    const appointments = [
+      { startsAt: "2026-12-01T00:00:00Z", timezone: "Australia/Brisbane" },
+    ];
+    const result = await generateChannelAnswer(
+      {
+        ...input(),
+        bookingContext: {
+          today: "2026-11-20",
+          maxDate: "2026-12-20",
+          timezone: "Australia/Brisbane",
+          appointments,
+        },
+      },
+      p.implementation,
+    );
+    expect(result.booking.action).toBe("human_help");
+    expect(p.open.mock.calls[0][0].instructions).toContain(
+      "do not propose a duplicate booking",
+    );
+    expect(p.open.mock.calls[0][0].instructions).toContain(
+      "If they decline or ignore an invitation, continue answering here normally",
+    );
+    expect(
+      JSON.parse((p.stream.mock.calls[0][0] as { text: string }).text)
+        .verifiedAppointments,
+    ).toEqual(appointments);
+  });
+
   it("preserves the provider error category without propagating provider content", async () => {
     const p = provider([
       {
