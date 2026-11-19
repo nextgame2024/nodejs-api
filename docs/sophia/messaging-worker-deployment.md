@@ -75,6 +75,12 @@ mobile-app number or new IDs during this pilot.
    customer confirmation before treating booking as live.
 
 If a reply fails, inspect the worker logs and conversation status before retrying.
+After deploying the failure-diagnostics update, search for
+`whatsapp_generation_failed` (job/profile and safe error category) and
+`whatsapp_reply_tick_failed` (operation/profile and safe error category).
+Categories distinguish provider rate limits, incomplete/invalid answers,
+generation timeouts and common database permission/schema failures. Unknown
+exceptions remain `operation_failed`; raw errors and customer content are not logged.
 Do not reset uncertain deliveries to queued. To stop automated replies, disable
 `WHATSAPP_AUTOMATION_ENABLED` on API and worker; disable outbound too if all sending
 must stop. An already-dispatched request cannot be recalled.

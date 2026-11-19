@@ -8,6 +8,7 @@ import {
   dispatchOne,
 } from "../src/services/messaging/reply-worker.js";
 import { sendText } from "../src/adapters/whatsapp/outbound.js";
+import { workerFailureCode } from "../src/services/messaging/worker-diagnostics.js";
 import { generateChannelAnswer } from "../sophia-runtime/dist/providers/reasoning/channel-reasoner.js";
 import {
   transcribeOne,
@@ -29,7 +30,7 @@ for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => abort.abort());
 // Each lane is bounded to one in-flight operation. Slow generation never occupies
 // an interactive HTTP request or prevents another lane from dispatching replies.
-async function lane(work, idleMs = 2000) {
+async function lane(operation, work, idleMs = 2000) {
   while (!abort.signal.aborted) {
     let busy = false;
     for (const p of profiles) {
@@ -37,11 +38,13 @@ async function lane(work, idleMs = 2000) {
       try {
         const result = await work(p);
         busy ||= result.processed;
-      } catch {
+      } catch (error) {
         console.error(
           JSON.stringify({
             event: "whatsapp_reply_tick_failed",
             profileId: p.id,
+            operation,
+            code: workerFailureCode(error),
           }),
         );
       }
@@ -56,11 +59,11 @@ async function lane(work, idleMs = 2000) {
 try {
   await Promise.all([
     ...(process.env.WHATSAPP_INBOUND_WORKER_ENABLED === "true"
-      ? [lane((p) => processChannelEvent(p))]
+      ? [lane("inbound", (p) => processChannelEvent(p))]
       : []),
-    lane((p) => generateOne(p, generateChannelAnswer)),
-    lane((p) => expireVoiceAssets(p), 60000),
-    lane((p) =>
+    lane("generation", (p) => generateOne(p, generateChannelAnswer)),
+    lane("voice_expiry", (p) => expireVoiceAssets(p), 60000),
+    lane("dispatch", (p) =>
       dispatchOne(p, sendText, {
         prepareAudio: (profile, message) =>
           prepareVoiceMedia(profile, message, uploadAudio),
@@ -68,13 +71,13 @@ try {
     ),
     ...(process.env.WHATSAPP_VOICE_ENABLED === "true"
       ? [
-          lane((p) =>
+          lane("transcription", (p) =>
             transcribeOne(p, {
               download: downloadAudio,
               transcribe: transcribeChannelAudio,
             }),
           ),
-          lane((p) => synthesizeOne(p, { synthesize: synthesizeChannelAudio })),
+          lane("synthesis", (p) => synthesizeOne(p, { synthesize: synthesizeChannelAudio })),
         ]
       : []),
   ]);

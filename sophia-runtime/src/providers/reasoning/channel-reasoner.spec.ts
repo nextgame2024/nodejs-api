@@ -31,6 +31,11 @@ function provider(events: ReasoningProviderEvent[]) {
   return { implementation: { open } as ReasoningProvider, open, stream, close };
 }
 describe("Provider-neutral channel answer adapter", () => {
+  it("preserves the provider error category without propagating provider content", async () => {
+    const p = provider([{ type: "response.failed", code: "RATE_LIMITED", safeMessage: "private provider detail", retryable: true }]);
+    await expect(generateChannelAnswer(input(), p.implementation)).rejects.toMatchObject({ code: "RATE_LIMITED", message: "Answer generation failed." });
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
   it("uses the existing reasoning port with no tools/history and separates user/source data from instructions", async () => {
     const p = provider([
       {

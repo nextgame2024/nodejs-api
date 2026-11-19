@@ -6,6 +6,7 @@ import {
 } from "./voice-store.js";
 import { recordAccepted } from "./delivery-store.js";
 import { randomUUID } from "node:crypto";
+import { workerFailureCode } from "./worker-diagnostics.js";
 import { scoped } from "./whatsapp-channel.service.js";
 import {
   schema as s,
@@ -208,7 +209,13 @@ export async function generateOne(profile, reasoner) {
       bookingContext: task.booking,
       signal: AbortSignal.timeout(30000),
     });
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "whatsapp_generation_failed",
+      profileId: profile.id,
+      jobId: task.job.job_id,
+      code: workerFailureCode(error),
+    }));
     result = { handoff: true, answer: "", sourceIds: [], failed: true };
   }
   result ??= { handoff: true, failed: true };

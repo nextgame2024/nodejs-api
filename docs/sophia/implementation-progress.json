@@ -1,4 +1,40 @@
 {
+  "whatsappRenderConfigurationRepair": {
+    "updatedOn": "2026-11-19",
+    "status": "configuration_fix_deployed_user_verified_delivery",
+    "evidence": [
+      "Render plugin is installed but exposes no tools in this conversation; user authorized the official Render CLI browser login",
+      "Earlier worker logs show MODULE_NOT_FOUND for process-whatsapp-inbound.mjs; the existing Docker command had already been corrected to whatsapp:messaging-worker and went live at 00:26 UTC",
+      "Render API inspection found all required automation flags enabled and identical API/worker profiles, but worker lacked SOPHIA_RUNTIME_DATABASE_URL and OPENAI_API_KEY; no environment groups exist",
+      "Runtime configuration requires SOPHIA_RUNTIME_DATABASE_URL before opening the reasoning provider, explaining a deterministic generation failure with the observed worker configuration"
+    ],
+    "changes": [
+      "Copied SOPHIA_RUNTIME_DATABASE_URL and OPENAI_API_KEY from sophia-runtime-api to sophia-messaging-worker in memory without printing or persisting secret values",
+      "Also copied Runtime SOPHIA_RUNTIME_SCHEMA and SOPHIA_RUNTIME_DATABASE_ROLE to preserve the configured database boundary",
+      "Verified required values match and deployed only the worker at its existing cee12b0350eb3d1a146d9153b800cd5b8448d0ab commit: dep-dbv7r8d6e07s73b155t0"
+    ],
+    "deployment": "Render reports dep-dbv7r8d6e07s73b155t0 live at 2026-11-19T04:41:05Z (14:41 Brisbane).",
+    "liveVerification": "User supplied the generated services answer and explicitly confirmed it also arrived in WhatsApp after the configuration fix. This verifies generation and delivery for the tested conversation; it does not establish whether sending was automatic or manually approved, or validate voice/booking flows.",
+    "pending": "Local diagnostic source changes remain undeployed. Existing failed jobs/conversation ownership were not reset. Voice, appointments and automatic-versus-manual sending modes were not independently verified by this test."
+  },
+  "whatsappFailureDiagnostics": {
+    "updatedOn": "2026-11-19",
+    "status": "locally_verified_live_diagnosis_blocked",
+    "implemented": [
+      "Generation failures emit fixed safe error categories and job/profile identifiers instead of silently discarding every exception",
+      "Worker loop failures identify inbound, generation, dispatch or voice operation",
+      "Channel adapter preserves provider error codes without provider messages; logging accepts only fixed allowlisted categories"
+    ],
+    "verification": [
+      "NODE_OPTIONS=--experimental-vm-modules ./node_modules/.bin/jest --runInBand --runTestsByPath tests/bm.whatsappInbound.test.js tests/bm.whatsappOutbound.test.js tests/bm.whatsappMessagingWorker.test.js tests/bm.whatsappDiagnostics.test.js: 4 suites / 16 tests passed outside sandbox after local HTTP listen was blocked inside sandbox",
+      "Runtime npm test -- --runTestsByPath src/providers/reasoning/channel-reasoner.spec.ts: 6 tests passed",
+      "Runtime npm run build: passed",
+      "npm run test:p0:real-estate: 8 suites / 38 tests passed before diagnostic edits",
+      "git diff --check: passed"
+    ],
+    "blocker": "Plugin directory confirms Render installed, but this conversation exposes no Render tools and no local Render CLI was found. No production logs/configuration inspected or deployment performed. Root cause of the live failed/cancelled answers remains unconfirmed.",
+    "next": "Expose the connected Render tools, inspect API and messaging worker configuration and bounded logs, then fix the verified live cause and validate deployment. Diagnostic changes alone do not repair the live messaging failure."
+  },
   "messagingWorkerConsolidation": {
     "updatedOn": "2026-11-19",
     "status": "locally_verified_deployment_pending",

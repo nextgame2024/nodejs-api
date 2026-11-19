@@ -33,9 +33,9 @@ export async function generateChannelAnswer(
     "gemini-reasoning-v1": "env://google-gemini-reasoning",
   };
   if (input.credentialRef !== credentials[input.adapterKey])
-    throw new Error("Unsupported channel credential reference.");
+    throw Object.assign(new Error("Unsupported channel credential reference."), { code: "INVALID_CHANNEL_CREDENTIAL" });
   const factory = providers[input.adapterKey];
-  if (!factory) throw new Error("Unsupported channel reasoning adapter.");
+  if (!factory) throw Object.assign(new Error("Unsupported channel reasoning adapter."), { code: "INVALID_CHANNEL_ADAPTER" });
   const bookingInstructions = input.bookingContext
     ? `A separately authorized appointment boundary is available. Its default timezone is ${input.bookingContext.timezone} and it accepts dates from ${input.bookingContext.today} to ${input.bookingContext.maxDate}. If the customer clearly wants a new appointment but has not provided a date, return {"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"clarify_date"}}. If they clearly request a specific date for a new appointment, resolve relative dates against today and return {"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"availability","date":"YYYY-MM-DD"}}. If they clearly ask to cancel their existing appointment, return {"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"cancel"}}. If they clearly ask to reschedule but have not provided a new date, return {"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"clarify_reschedule_date"}}. If they clearly ask to reschedule to a specific date, resolve relative dates against today and return {"handoff":false,"answer":"","sourceIds":[],"booking":{"action":"reschedule","date":"YYYY-MM-DD"}}. Only when the customer explicitly states another location or timezone, add a valid IANA "timezone" to the booking object; otherwise omit it. Never choose or return an appointment ID, claim a slot is available, or claim an appointment was booked, changed or cancelled; the server selects the single eligible appointment, offers current slots where needed, labels the timezone and requires a separate exact customer confirmation.`
     : "No appointment booking boundary is available. Do not claim availability or create, change or cancel an appointment.";
@@ -68,7 +68,7 @@ export async function generateChannelAnswer(
     )) {
       if (event.type === "text.delta") {
         text += event.delta;
-        if (text.length > 12000) throw new Error("Answer limit exceeded.");
+        if (text.length > 12000) throw Object.assign(new Error("Answer limit exceeded."), { code: "CHANNEL_OUTPUT_LIMIT" });
       }
       if (event.type === "usage")
         usage = {
@@ -76,11 +76,13 @@ export async function generateChannelAnswer(
           adapterKey: input.adapterKey,
           ...event.usage,
         };
-      if (event.type === "tool.call" || event.type === "response.failed")
-        throw new Error("Answer generation failed.");
+      if (event.type === "response.failed")
+        throw Object.assign(new Error("Answer generation failed."), { code: event.code });
+      if (event.type === "tool.call")
+        throw Object.assign(new Error("Unexpected channel tool call."), { code: "UNEXPECTED_TOOL_CALL" });
       if (event.type === "response.completed") completed = true;
     }
-    if (!completed) throw new Error("Incomplete answer.");
+    if (!completed) throw Object.assign(new Error("Incomplete answer."), { code: "INCOMPLETE_RESPONSE" });
     return { ...JSON.parse(text), usage };
   } finally {
     await session.close();
