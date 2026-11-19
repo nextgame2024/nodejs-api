@@ -4168,19 +4168,37 @@
   },
   "whatsappContactAcknowledgementAndReplyFormat": {
     "updatedOn": "2026-11-20",
-    "status": "verified_backend_deploy_pending",
+    "status": "deployed_phone_retest_pending",
     "changes": [
       "Contact-only name/email replies are captured and acknowledged without knowledge-gap generation; booking handlers retain priority.",
       "Automatic replies match latest incoming text/audio; explicit always-voice instructions persist within the conversation until revoked.",
       "Automatic voice answers hold a text fallback; generation/upload failures release it through normal dispatch checks.",
-      "AI voice disclosure occurs once per conversation; automatic voice delivery speaks it in the first audio answer. Existing staff-authored paired replies remain supported."
+      "AI voice disclosure occurs once per conversation; automatic voice delivery speaks it in the first audio answer. Existing staff-authored paired replies remain supported.",
+      "Booking and rescheduling confirmation paths use the same automatic reply format and preserve scheduling guards on audio children."
     ],
     "verification": [
       "67 tests passed across 8 suites, including disposable PostgreSQL voice and reply flows, contact parsing, format preference and protected real-estate tests.",
-      "Automatic spoken contact acknowledgement, text switch, persistent voice preference, synthesis failure fallback and preference revocation verified."
+      "Automatic spoken contact acknowledgement, text switch, persistent voice preference, synthesis failure fallback and preference revocation verified.",
+      "Render API and messaging worker verified live at 8fdb71e814927f70011a2e97b8383cc9432785e0; existing runtime unchanged."
     ],
     "limits": [
-      "Phone retest pending deployment; frontend untouched."
+      "Phone retest pending; frontend untouched."
+    ]
+  },
+  "whatsappContinuousRecovery": {
+    "updatedOn": "2026-11-20",
+    "status": "tested_deployment_pending",
+    "cause": "Affected availability job was marked needs_human after one measured model response; handoffJob changed bot ownership to human_requested and prevented the subsequent booking message from being processed. No worker crash established.",
+    "changes": [
+      "Unanswerable/failed automatic turns retain bot ownership and send a localized recovery prompt through the guarded outbox. Staff takeover, opt-out, closed lead and reply window checks remain enforced.",
+      "Recovery notice is independent of a retired reasoning provider and cannot contain unverified generated facts.",
+      "Narrow undated availability/booking requests recover from rejected model results by asking for the preferred appointment date."
+    ],
+    "verification": [
+      "43 tests passed across SQL reply recovery and three protected real-estate suites; exact availability regression and subsequent-turn continuation tested."
+    ],
+    "production": [
+      "Target conversation still awaits guarded recovery after deployment."
     ]
   }
 }

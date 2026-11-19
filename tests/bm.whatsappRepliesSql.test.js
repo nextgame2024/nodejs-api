@@ -648,7 +648,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ownership: "human",
     });
   });
-  test("automatic handoff sends one localized notice and preserves human ownership", async () => {
+  test("an unanswerable turn sends one recovery notice and keeps the next turn active", async () => {
     await inbound("handoff-notice", {
       senderId: "61455550001",
       body: "English course help",
@@ -670,7 +670,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
         [job.conversation_id],
       )
     ).rows[0];
-    expect(c.ownership).toBe("human_requested");
+    expect(c.ownership).toBe("bot");
     const outbox = (
       await pool.query(
         "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE job_id=$1",
@@ -701,9 +701,17 @@ suite("WhatsApp replies on PostgreSQL", () => {
           [job.conversation_id],
         )
       ).rows[0].ownership,
-    ).toBe("human_requested");
-    expect(worker.handoffNotice("es")).toContain("Tu consulta");
-    expect(worker.handoffNotice("pt")).toContain("Sua pergunta");
+    ).toBe("bot");
+    await inbound("after-recovery", {
+      senderId: "61455550001",
+      body: "English course price",
+    });
+    const nextReason = jest.fn(approved);
+    await worker.generateOne(full, nextReason);
+    expect(nextReason).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 4; i++) await worker.dispatchOne(full, send);
+    expect(worker.handoffNotice("es")).toContain("Sigo aquí");
+    expect(worker.handoffNotice("pt")).toContain("Continuo aqui");
   });
   test("discovery remembers public messages, excludes staff notes, persists evidence and protects follow-up access", async () => {
     const discoveryProfile = { ...full, qualificationEnabled: true };
@@ -978,6 +986,31 @@ suite("WhatsApp replies on PostgreSQL", () => {
     await api.changeOwnership(owner, company, bookingLead.lead_id, {
       expectedVersion: detail.lead.ownershipVersion,
       ownership: "bot",
+    });
+    await inbound("undated-availability", {
+      senderId: sender,
+      body: "Could you show me the available times?",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: true,
+      answer: "",
+      sourceIds: [],
+    }));
+    const recovered = (
+      await pool.query(
+        "SELECT state,answer,response_kind FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(recovered.state).toBe("ready");
+    expect(recovered.response_kind).toBe("appointment");
+    expect(recovered.answer).toContain("fecha");
+    expect(
+      (await api.getLead(owner, company, bookingLead.lead_id)).lead.ownership,
+    ).toBe("bot");
+    await inbound("dated-availability", {
+      senderId: sender,
+      body: "English course appointment in three days",
     });
     const day = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
     expect(
@@ -1587,7 +1620,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       sourceIds: [randomUUID()],
     }));
     let row = (await api.listLeads(owner, company, {})).items.find(
-      (i) => i.displayName === "Example" && i.ownership === "human_requested",
+      (i) => i.displayName === "Example" && i.ownership === "bot",
     );
     expect(row).toBeDefined();
     await pool.query("DELETE FROM sophia_runtime.knowledge_snapshot_grants");
@@ -1712,7 +1745,15 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(job.state).toBe("needs_human");
     expect(
       (await api.getLead(owner, company, job.lead_id)).lead.ownership,
-    ).toBe("human_requested");
+    ).toBe("bot");
+    const send = jest.fn(async () => ({
+      kind: "accepted",
+      providerMessageId: randomUUID(),
+    }));
+    for (let i = 0; i < 8; i++) await worker.dispatchOne(full, send);
+    expect(
+      send.mock.calls.some(([, m]) => m.body === worker.handoffNotice("es")),
+    ).toBe(true);
   });
   test("queued replies are cancelled when the sender loses current authority", async () => {
     await queue();

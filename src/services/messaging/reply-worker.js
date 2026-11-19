@@ -42,10 +42,10 @@ export function handoffNotice(language) {
     .split("-")[0]
     .toLowerCase();
   if (code === "es")
-    return "Tu consulta necesita la revisión de una persona del equipo. He pausado las respuestas automáticas para que puedan ayudarte. No tengo una respuesta confirmada para darte ahora.";
+    return "Lo siento, no pude confirmar esa respuesta ahora. Sigo aquí para ayudarte. ¿Quieres reformular la pregunta o que te ayude a concertar una cita con el equipo?";
   if (code === "pt")
-    return "Sua pergunta precisa ser analisada por uma pessoa da equipe. Pausei as respostas automáticas para que possam ajudar. Não tenho uma resposta confirmada para fornecer agora.";
-  return "Your question needs a team member to review it. I have paused automatic replies so they can help. I do not have a confirmed answer to give you right now.";
+    return "Desculpe, não consegui confirmar essa resposta agora. Continuo aqui para ajudar. Quer reformular a pergunta ou agendar uma conversa com a equipe?";
+  return "Sorry, I couldn't confirm that answer just now. I'm still here to help. Would you like to rephrase your question, or shall I help you arrange a conversation with the team?";
 }
 async function handoffJob(
   db,
@@ -61,7 +61,7 @@ async function handoffJob(
   if (job.requested_by_identity) return;
   const changed = (
     await db.query(
-      `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2 AND ownership='bot' AND ownership_version=$3 RETURNING ownership_version`,
+      `SELECT ownership_version FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND conversation_id=$2 AND ownership='bot' AND ownership_version=$3`,
       [tenant, job.conversation_id, job.ownership_version],
     )
   ).rows[0];
@@ -309,6 +309,22 @@ export async function generateOne(profile, reasoner) {
     result = { handoff: true, answer: "", sourceIds: [], failed: true };
   }
   result ??= { handoff: true, failed: true };
+  if (
+    task.booking &&
+    (!result || result.handoff !== false || result.failed) &&
+    /^(?:could you |can you |please )?(?:show me (?:the )?available times|(?:i )?want to (?:do|make|book) (?:the |an? )?appointment)[?.!]*$/i.test(
+      task.question.trim(),
+    )
+  ) {
+    result = {
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "clarify_date" },
+      usage: result?.usage,
+    };
+  }
+
   const allowed = new Set(task.sources.map((x) => x.id));
   const factual =
     result &&
@@ -699,7 +715,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
         ["needs_human", "failed"].includes(j.state) &&
         !j.requested_by_identity &&
         !m.actor_identity &&
-        c.ownership === "human_requested" &&
+        c.ownership === "bot" &&
         j.source_event_id === latest?.event_id &&
         m.body === handoffNotice(lead.language) &&
         process.env.WHATSAPP_AUTOMATION_ENABLED === "true";
@@ -707,7 +723,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
         (notice || (permitted && j?.state === "ready")) &&
         j?.mode === "automatic" &&
         j.binding_revision === j.revision;
-      if (j)
+      if (j && !notice)
         try {
           const release = await currentRelease(
             db,
