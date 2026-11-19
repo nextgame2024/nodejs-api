@@ -1,4 +1,4 @@
-import { bookingName } from "../messaging/customer-preferences.js";
+import { bookingName, bookingEmail } from "../messaging/customer-preferences.js";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { hash } from "../leads/lead-records.contracts.js";
 import {
@@ -12,6 +12,7 @@ const locale = (language) =>
   ({ es: "es-AU", pt: "pt-BR", en: "en-AU" })[language] ?? "en-AU";
 const messages = {
   en: {
+    askEmail: 'What email address should we use for your booking? Please send a valid email address. Nothing is booked yet.',
     askName: 'What name should we use for your appointment? Reply NAME followed by your name. Nothing is booked yet.',
     askDate: "What date would you prefer for your appointment?",
     range: (a, b, zone) =>
@@ -30,6 +31,7 @@ const messages = {
       `Your appointment is confirmed for ${time} (${zone}). Our team can help if you need to change it.`,
   },
   es: {
+    askEmail: '¿Qué correo electrónico usamos para tu reserva? Envía una dirección de correo válida. La cita aún no está reservada.',
     askName: '¿A qué nombre reservamos la cita? Responde NOMBRE seguido de tu nombre. La cita aún no está reservada.',
     askDate: "¿Qué fecha prefieres para tu cita?",
     range: (a, b, zone) =>
@@ -48,6 +50,7 @@ const messages = {
       `Tu cita está confirmada para ${time} (${zone}). Nuestro equipo puede ayudarte si necesitas cambiarla.`,
   },
   pt: {
+    askEmail: 'Qual e-mail devemos usar para a reserva? Envie um endereço de e-mail válido. A consulta ainda não está reservada.',
     askName: 'Em qual nome devemos reservar? Responda NOME seguido do seu nome. A consulta ainda não está reservada.',
     askDate: "Qual data você prefere para a consulta?",
     range: (a, b, zone) =>
@@ -342,22 +345,43 @@ export async function handleAppointmentConfirmation(
     }
     return false;
   }
+  const identity = (await db.query(`SELECT metadata->>'origin' AS origin FROM ${s}.assistant_lead_events
+    WHERE customer_id=$1 AND conversation_id=$2 AND kind='lead_updated'
+    AND metadata->>'offerId'=$3 AND metadata->>'origin' IN ('customer_booking_name','customer_booking_email')`,
+    [profile.customerId,conversation.conversation_id,offer.offer_id])).rows;
+  const hasName = identity.some(row=>row.origin==='customer_booking_name');
+  const hasEmail = identity.some(row=>row.origin==='customer_booking_email') && !!bookingEmail(lead.email);
   const value = body.trim();
   if (offer.status === "offered") {
     const name = bookingName(value);
+    const email = bookingEmail(value);
     const slot = /^[1-3]$/.test(value) ? offer.slots[Number(value)-1] :
-      name && offer.selected_starts_at ? offer.slots.find(x=>Date.parse(x.startsAt)===Date.parse(offer.selected_starts_at)) : null;
+      (name || email || hasName) && offer.selected_starts_at ? offer.slots.find(x=>Date.parse(x.startsAt)===Date.parse(offer.selected_starts_at)) : null;
     if (!slot) return false;
+    if (!name && !email && !/^[1-3]$/.test(value) && /[?¿\s]/.test(value)) return false;
+    if (/^[1-3]$/.test(value)) {
+      await db.query(`UPDATE ${s}.lead_appointment_offers SET selected_starts_at=$3,updated_at=now() WHERE customer_id=$1 AND offer_id=$2`,[profile.customerId,offer.offer_id,slot.startsAt]);
+    }
     await cancelQueuedOfferMessages(db,profile.customerId,offer.offer_id);
-    if (!name) {
+    if (!name && !hasName) {
       await db.query(`UPDATE ${s}.lead_appointment_offers SET selected_starts_at=$3,updated_at=now() WHERE customer_id=$1 AND offer_id=$2`,[profile.customerId,offer.offer_id,slot.startsAt]);
       await queue(db,profile,channel,lead,conversation,offer.offer_id,text.askName);
       return true;
     }
-    await db.query(`UPDATE ${s}.assistant_leads SET display_name=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[profile.customerId,lead.lead_id,name]);
+    if (name) {
+      await db.query(`UPDATE ${s}.assistant_leads SET display_name=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[profile.customerId,lead.lead_id,name]);
+      await db.query(`INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,kind,body,metadata)
+        VALUES($1,$2,'lead_updated','Booking name supplied by customer',$3::jsonb)`,[profile.customerId,conversation.conversation_id,JSON.stringify({origin:'customer_booking_name',offerId:offer.offer_id})]);
+      lead.display_name=name;
+    }
+    if (!email) {
+      await queue(db,profile,channel,lead,conversation,offer.offer_id,text.askEmail);
+      return true;
+    }
+    await db.query(`UPDATE ${s}.assistant_leads SET email=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[profile.customerId,lead.lead_id,email]);
     await db.query(`INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,kind,body,metadata)
-      VALUES($1,$2,'lead_updated','Booking name supplied by customer',$3::jsonb)`,[profile.customerId,conversation.conversation_id,JSON.stringify({origin:'customer_booking_name',offerId:offer.offer_id})]);
-    lead.display_name=name;
+      VALUES($1,$2,'lead_updated','Booking email supplied by customer',$3::jsonb)`,[profile.customerId,conversation.conversation_id,JSON.stringify({origin:'customer_booking_email',offerId:offer.offer_id})]);
+    lead.email=email;
     const code = String(randomInt(100000, 1000000));
     await db.query(
       `UPDATE ${s}.lead_appointment_offers SET status='awaiting_confirmation',selected_starts_at=$3,confirmation_code_hash=$4,expires_at=now()+interval '15 minutes',updated_at=now()
@@ -385,11 +409,10 @@ export async function handleAppointmentConfirmation(
     return true;
   }
   if (!confirmation) return false;
-  const named = (await db.query(`SELECT 1 FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='lead_updated' AND metadata->>'origin'='customer_booking_name' AND metadata->>'offerId'=$3 LIMIT 1`,[profile.customerId,conversation.conversation_id,offer.offer_id])).rowCount;
-  if (!named) {
+  if (!hasName || !hasEmail) {
     await db.query(`UPDATE ${s}.lead_appointment_offers SET status='offered',confirmation_code_hash=NULL,updated_at=now() WHERE customer_id=$1 AND offer_id=$2`,[profile.customerId,offer.offer_id]);
     await cancelQueuedOfferMessages(db,profile.customerId,offer.offer_id);
-    await queue(db,profile,channel,lead,conversation,offer.offer_id,text.askName);
+    await queue(db,profile,channel,lead,conversation,offer.offer_id,hasName ? text.askEmail : text.askName);
     return true;
   }
   if (

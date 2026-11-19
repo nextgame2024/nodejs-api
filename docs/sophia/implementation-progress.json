@@ -1,7 +1,7 @@
 {
   "whatsappLanguageAndBookingIdentity": {
     "updatedOn": "2026-11-19",
-    "status": "tested_deployment_pending",
+    "status": "deployed_phone_retest_pending",
     "changes": [
       "Explicit language choices persist on scoped lead; numeric selections retain language; recent customer choices recover existing conversations",
       "Booking selection asks for explicit NAME/NOMBRE/NOME, stores customer name with an offer-linked audit event and only then issues confirmation code",
@@ -12,7 +12,9 @@
       "22 disposable PostgreSQL tests passed including Spanish persistence, name before confirmation and requested-time preference",
       "7 channel reasoner tests passed",
       "20 preference and protected real-estate tests passed",
-      "Runtime build passed"
+      "Runtime build passed",
+      "Synthetic configured-provider check returned entirely Spanish answer with approved citations and extracted next Monday 15:00 correctly; no WhatsApp message sent",
+      "Render API, worker and runtime all live at da81645890038975548f6a2a7355789740a4de61"
     ],
     "limits": [
       "Existing confirmed bookings remain unchanged",
@@ -4053,5 +4055,23 @@
     ],
     "catalogue": "Scoped TRUST catalogue refresh completed 2026-11-14T11:36:15Z, Agency discount imported, error_code null. No Xero invoices created or modified.",
     "deployment": "Runtime health verified ok at 16ee90bb342e. Backend only deployed by this task; frontend changes verified locally. No migration required."
+  },
+  "whatsappBookingContactDetails": {
+    "updatedOn": "2026-11-19",
+    "status": "tested_deployment_pending",
+    "implemented": [
+      "Require offer-linked customer-supplied name and valid email before issuing/accepting booking confirmation",
+      "Save name and email to tenant-scoped lead with audit events; English/Spanish/Portuguese prompts",
+      "Previously issued unconfirmed offers must collect missing email before booking"
+    ],
+    "verification": [
+      "22 disposable PostgreSQL tests passed, including missing/invalid email blocking booking and saved email",
+      "21 preferences and protected real-estate regression tests passed",
+      "JavaScript syntax and git diff checks passed"
+    ],
+    "limits": [
+      "Email format validation does not verify mailbox ownership",
+      "No email confirmation delivery added; existing confirmed appointments unchanged"
+    ]
   }
 }

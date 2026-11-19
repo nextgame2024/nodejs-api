@@ -12,3 +12,8 @@ export function bookingName(text) {
   const name = match?.[1]?.trim();
   return name && name.length <= 160 && /^[\p{L}\p{M}][\p{L}\p{M} .’'\-]*$/u.test(name) ? name : null;
 }
+
+export function bookingEmail(text) {
+  const email = text.trim().replace(/^(?:email|e-mail|correo)\s*:\s*/i, '');
+  return email.length <= 320 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) ? email : null;
+}

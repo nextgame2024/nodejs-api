@@ -875,6 +875,12 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect((await pool.query("SELECT language FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].language).toBe('es');
     await inbound("booking-name", {senderId:sender,body:"NOMBRE José Muñoz"});
     expect((await pool.query("SELECT display_name FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].display_name).toBe('José Muñoz');
+    expect((await pool.query("SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].body).toContain('correo');
+    await inbound("booking-invalid-email", {senderId:sender,body:"not-an-email"});
+    expect((await pool.query("SELECT status FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].status).toBe('offered');
+    expect((await pool.query("SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].count).toBe(0);
+    await inbound("booking-email", {senderId:sender,body:"jose@example.com"});
+    expect((await pool.query("SELECT email FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].email).toBe('jose@example.com');
     const confirmation = (
       await pool.query(
         "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",
