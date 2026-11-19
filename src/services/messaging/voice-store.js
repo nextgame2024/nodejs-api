@@ -1,3 +1,4 @@
+import { failJob } from "./voice-recovery.js";
 import { randomUUID } from "node:crypto";
 import {
   schema as s,
@@ -18,12 +19,8 @@ export async function voiceInstalled(db) {
   ).rows[0].ready;
 }
 export async function enqueueVoiceInbound(db, profile, leadId, eventId, isNew) {
-  if (
-    !voiceEnabled(profile) ||
-    !profile.transcriptionAdapter ||
-    !(await voiceInstalled(db))
-  )
-    return false;
+  if (!(await voiceInstalled(db))) return false;
+  const configured = voiceEnabled(profile) && !!profile.transcriptionAdapter;
   const row = (
     await db.query(
       `SELECT b.*,c.conversation_id,c.ownership_version,c.ownership FROM ${s}.assistant_reply_bindings b JOIN ${s}.assistant_channels h USING(customer_id,channel_id) JOIN ${s}.assistant_lead_conversations c ON c.customer_id=h.customer_id AND c.lead_id=$3 WHERE b.customer_id=$1 AND h.profile_id=$2`,
@@ -43,10 +40,13 @@ export async function enqueueVoiceInbound(db, profile, leadId, eventId, isNew) {
         [profile.customerId, leadId],
       )
     ).rows[0];
-    if (c) row.ownership_version = c.ownership_version;
+    if (c) {
+      row.ownership_version = c.ownership_version;
+      row.ownership = "bot";
+    }
   }
-  await db.query(
-    `INSERT INTO ${s}.assistant_voice_jobs(customer_id,channel_id,lead_id,conversation_id,kind,source_event_id,ownership_version,agent_release_id,binding_revision) VALUES($1,$2,$3,$4,'transcribe',$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+  const inserted = await db.query(
+    `INSERT INTO ${s}.assistant_voice_jobs(customer_id,channel_id,lead_id,conversation_id,kind,source_event_id,ownership_version,agent_release_id,binding_revision) VALUES($1,$2,$3,$4,'transcribe',$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING *`,
     [
       profile.customerId,
       row.channel_id,
@@ -58,6 +58,14 @@ export async function enqueueVoiceInbound(db, profile, leadId, eventId, isNew) {
       row.revision,
     ],
   );
+  if (!configured && inserted.rows[0])
+    await failJob(
+      db,
+      profile,
+      inserted.rows[0],
+      "failed",
+      "configuration_required",
+    );
   return true;
 }
 export async function queueVoicePair(db, tenant, messageId) {

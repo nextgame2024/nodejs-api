@@ -1,3 +1,4 @@
+import { firstContactRequest } from "./customer-contact.js";
 import { needsTeamAnswer } from "./human-assistance.js";
 import {
   realtimeInvitationState,
@@ -252,7 +253,13 @@ export async function generateOne(profile, reasoner) {
     return {
       job,
       lease,
-      instructions: [release.content, release.tone].filter(Boolean).join("\n"),
+      instructions: [
+        release.content,
+        release.tone,
+        "Be warm, natural and concise. Acknowledge the customer’s actual question. Use brief greetings and thanks when appropriate, without repeating stock phrases or promising unverified capabilities. Contact collection is handled by the application: do not repeatedly ask for name or email; email is optional, and a confirmed name is required only to book or reschedule.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
       question: e.body,
       transcript,
       discovery: discovery
@@ -427,13 +434,27 @@ export async function generateOne(profile, reasoner) {
           task.transcript,
         );
       }
-      const needsTeam = accepted && factual && task.booking && needsTeamAnswer(result);
+      const needsTeam =
+        accepted && factual && task.booking && needsTeamAnswer(result);
       if (needsTeam) {
-        const nextStep = await createAppointmentOffer(db, profile, channel, lead, c, job, { action: "human_help", partialAnswer: true });
-        if (nextStep && answer.length + nextStep.body.length + 2 <= 4000) answer += "\n\n" + nextStep.body;
+        const nextStep = await createAppointmentOffer(
+          db,
+          profile,
+          channel,
+          lead,
+          c,
+          job,
+          { action: "human_help", partialAnswer: true },
+        );
+        if (nextStep && answer.length + nextStep.body.length + 2 <= 4000)
+          answer += "\n\n" + nextStep.body;
       }
       const invitation =
-        accepted && factual && !needsTeam && task.discovery && !job.requested_by_identity
+        accepted &&
+        factual &&
+        !needsTeam &&
+        task.discovery &&
+        !job.requested_by_identity
           ? await realtimeInvitationState(
               db,
               profile.customerId,
@@ -445,6 +466,13 @@ export async function generateOne(profile, reasoner) {
       const invite = invitation.eligible && answer.length <= 3400;
       if (invite)
         answer += "\n\n" + invitationCopy(lead.language, profile.realtimeUrl);
+      const contactPrompt =
+        accepted && !job.requested_by_identity
+          ? await firstContactRequest(db, profile.customerId, lead, c)
+          : null;
+      const contactRequested =
+        !!contactPrompt && answer.length + contactPrompt.length + 2 <= 4000;
+      if (contactRequested) answer = contactPrompt + "\n\n" + answer;
       await db.query(
         `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,response_kind=$7,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
         [
@@ -454,7 +482,10 @@ export async function generateOne(profile, reasoner) {
           accepted ? answer : null,
           JSON.stringify(accepted && factual ? result.sourceIds : []),
           JSON.stringify({
-            ...(invite ? { engagement: { realtimeOffered: true } } : {}),
+            engagement: {
+              ...(invite ? { realtimeOffered: true } : {}),
+              ...(contactRequested ? { contactRequested: true } : {}),
+            },
             attempts: [
               ...(Array.isArray(job.usage?.attempts) ? job.usage.attempts : []),
               result.usage ?? { measurementStatus: "incomplete" },
@@ -562,7 +593,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     if (m.voice_failure_job_id) {
       const j = (
         await db.query(
-          `SELECT j.state,j.source_event_id FROM ${s}.assistant_voice_jobs j WHERE customer_id=$1 AND voice_job_id=$2`,
+          `SELECT j.state,j.source_event_id,j.agent_release_id FROM ${s}.assistant_voice_jobs j JOIN ${s}.assistant_reply_bindings b ON b.customer_id=j.customer_id AND b.channel_id=j.channel_id AND b.revision=j.binding_revision AND b.agent_release_id=j.agent_release_id AND b.mode='automatic' WHERE j.customer_id=$1 AND j.voice_job_id=$2`,
           [profile.customerId, m.voice_failure_job_id],
         )
       ).rows[0];
@@ -574,9 +605,17 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
       ).rows[0];
       permitted =
         process.env.WHATSAPP_AUTOMATION_ENABLED === "true" &&
-        c.ownership === "human_requested" &&
+        c.ownership === "bot" &&
         j?.state === "failed" &&
         j.source_event_id === latest?.event_id;
+      if (permitted) {
+        try {
+          await currentRelease(db, profile.customerId, j.agent_release_id);
+        } catch (error) {
+          if (error.status !== 409) throw error;
+          permitted = false;
+        }
+      }
     }
     let validationJobId = m.job_id;
     if (m.follow_up_request_id) {

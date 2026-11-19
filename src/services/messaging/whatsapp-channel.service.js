@@ -1,3 +1,4 @@
+import { captureCustomerContact } from "./customer-contact.js";
 import { requestedLanguage } from "./customer-preferences.js";
 import { recordFollowUpConsent } from "./follow-up-store.js";
 import { voiceEnabled, enqueueVoiceInbound } from "./voice-store.js";
@@ -279,12 +280,7 @@ async function applyMessage(db, profile, channel, company, e) {
       `UPDATE ${s}.assistant_channel_contacts SET last_inbound_at=GREATEST(last_inbound_at,$4::timestamptz),opted_out=opted_out OR $5 WHERE customer_id=$1 AND channel_id=$2 AND sender_id=$3`,
       [tenant, channel.channel_id, e.senderId, e.sentAt, stop],
     );
-  const processVoice =
-    !echo &&
-    isCurrent &&
-    e.messageType === "audio" &&
-    !!e.media?.id &&
-    voiceEnabled(profile);
+  const processVoice = !echo && isCurrent && e.messageType === "audio";
   if (
     !echo &&
     isCurrent &&
@@ -318,14 +314,26 @@ async function applyMessage(db, profile, channel, company, e) {
       }),
     ],
   );
-  if (!echo && isCurrent && e.messageType === 'text' && !e.truncated) {
-    const recent = (await db.query(`SELECT body FROM ${s}.assistant_lead_events
+  if (!echo && isCurrent && e.messageType === "text" && !e.truncated) {
+    if (!stop)
+      await captureCustomerContact(db, tenant, lead, conversation, e.body);
+    const recent = (
+      await db.query(
+        `SELECT body FROM ${s}.assistant_lead_events
       WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message'
       AND metadata->>'messageType'='text' AND NOT COALESCE((metadata->>'truncated')::boolean,false)
-      ORDER BY event_id DESC LIMIT 30`,[tenant,conversation.conversation_id])).rows;
-    const language = recent.map(row=>requestedLanguage(row.body)).find(Boolean);
+      ORDER BY event_id DESC LIMIT 30`,
+        [tenant, conversation.conversation_id],
+      )
+    ).rows;
+    const language = recent
+      .map((row) => requestedLanguage(row.body))
+      .find(Boolean);
     if (language && language !== lead.language) {
-      await db.query(`UPDATE ${s}.assistant_leads SET language=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[tenant,lead.lead_id,language]);
+      await db.query(
+        `UPDATE ${s}.assistant_leads SET language=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
+        [tenant, lead.lead_id, language],
+      );
       lead.language = language;
     }
   }
@@ -336,7 +344,16 @@ async function applyMessage(db, profile, channel, company, e) {
       contact.lead_id,
       recorded.rows[0].event_id,
     );
-  if (isCurrent) await recordFollowUpConsent(db,profile,channel,lead,conversation,recorded.rows[0].event_id,echo ? {...e,body:''} : e);
+  if (isCurrent)
+    await recordFollowUpConsent(
+      db,
+      profile,
+      channel,
+      lead,
+      conversation,
+      recorded.rows[0].event_id,
+      echo ? { ...e, body: "" } : e,
+    );
   if (processVoice) {
     const queued = await enqueueVoiceInbound(
       db,

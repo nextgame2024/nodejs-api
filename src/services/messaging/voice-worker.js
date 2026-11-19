@@ -1,3 +1,8 @@
+import { captureCustomerContact } from "./customer-contact.js";
+import { requestedLanguage } from "./customer-preferences.js";
+import { handleAppointmentConfirmation } from "../scheduling/whatsapp-appointment-booking.service.js";
+import { handleAppointmentChangeConfirmation } from "../scheduling/whatsapp-appointment-changes.service.js";
+import { failJob } from "./voice-recovery.js";
 import { randomUUID } from "node:crypto";
 import { scoped, optOut } from "./whatsapp-channel.service.js";
 import {
@@ -105,74 +110,13 @@ async function claim(profile, kind) {
     return { job, lease, content };
   });
 }
-async function failJob(db, profile, job, state, code) {
-  await db.query(
-    `UPDATE ${s}.assistant_voice_jobs SET state=$3,failure_code=$4,completed_at=now() WHERE customer_id=$1 AND voice_job_id=$2`,
-    [profile.customerId, job.voice_job_id, state, code],
-  );
-  if (job.kind === "synthesize")
-    await db.query(
-      `UPDATE ${s}.assistant_message_outbox SET state=$3,safe_code=$4,updated_at=now() WHERE customer_id=$1 AND message_id=$2 AND state IN ('preparing','queued')`,
-      [
-        profile.customerId,
-        job.message_id,
-        state === "cancelled" ? "cancelled" : "failed",
-        code,
-      ],
-    );
-  else {
-    const latest = (
-      await db.query(latestSql, [profile.customerId, job.conversation_id])
-    ).rows[0];
-    if (latest?.event_id === job.source_event_id) {
-      const c = (
-        await db.query(
-          `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2 AND ownership='bot' AND ownership_version=$3 RETURNING ownership_version`,
-          [profile.customerId, job.conversation_id, job.ownership_version],
-        )
-      ).rows[0];
-      if (
-        c &&
-        code === "voice_transcription_failed" &&
-        canDispatch(profile) &&
-        process.env.WHATSAPP_AUTOMATION_ENABLED === "true"
-      ) {
-        const lang = (
-          await db.query(
-            `SELECT language FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2`,
-            [profile.customerId, job.lead_id],
-          )
-        ).rows[0].language;
-        const body =
-          {
-            es: "No pude entender el mensaje de voz. Por favor, envíalo de nuevo o escribe tu pregunta. Nuestro equipo también puede ayudarte.",
-            pt: "Não consegui entender a mensagem de voz. Envie novamente ou escreva sua pergunta. Nossa equipe também pode ajudar.",
-            en: "I could not understand the voice message. Please send it again or type your question. Our team can also help.",
-          }[lang] ??
-          "I could not understand the voice message. Please send it again or type your question. Our team can also help.";
-        await db.query(
-          `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,voice_failure_job_id) VALUES($1,$2,$3,$4,$5,$6,$7,'voice_failure',$7) ON CONFLICT DO NOTHING`,
-          [
-            profile.customerId,
-            job.channel_id,
-            job.lead_id,
-            job.conversation_id,
-            c.ownership_version,
-            body,
-            job.voice_job_id,
-          ],
-        );
-      }
-    }
-  }
-}
 async function finish(profile, task, work) {
   return scoped(
     profile,
-    async (db) => {
+    async (db, channel) => {
       const lead = (
         await db.query(
-          `SELECT stage FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
+          `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
           [profile.customerId, task.job.lead_id],
         )
       ).rows[0];
@@ -219,7 +163,7 @@ async function finish(profile, task, work) {
         await failJob(db, profile, job, "cancelled", "conversation_changed");
         return;
       }
-      await work(db, job, c);
+      await work(db, job, c, lead, channel);
     },
     { requireEnabled: false },
   );
@@ -252,7 +196,7 @@ export async function transcribeOne(
       transcript.length > 4000
     )
       throw new Error("transcript");
-    await finish(profile, task, async (db, job, c) => {
+    await finish(profile, task, async (db, job, c, lead, channel) => {
       const latest = (
         await db.query(latestSql, [profile.customerId, job.conversation_id])
       ).rows[0];
@@ -292,7 +236,40 @@ export async function transcribeOne(
           job.lead_id,
           e.event_id,
         );
-        await enqueueAutomatic(db, profile, job.lead_id, e.event_id, false);
+        const language = requestedLanguage(transcript);
+        if (language && language !== lead.language) {
+          await db.query(
+            `UPDATE ${s}.assistant_leads SET language=$3,record_version=record_version+1 WHERE customer_id=$1 AND lead_id=$2`,
+            [profile.customerId, lead.lead_id, language],
+          );
+          lead.language = language;
+        }
+        await captureCustomerContact(
+          db,
+          profile.customerId,
+          lead,
+          c,
+          transcript,
+        );
+        const handled =
+          (await handleAppointmentChangeConfirmation(
+            db,
+            profile,
+            channel,
+            lead,
+            c,
+            transcript,
+          )) ||
+          (await handleAppointmentConfirmation(
+            db,
+            profile,
+            channel,
+            lead,
+            c,
+            transcript,
+          ));
+        if (!handled)
+          await enqueueAutomatic(db, profile, job.lead_id, e.event_id, false);
       }
       await db.query(
         `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,

@@ -168,6 +168,25 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
     );
   });
+  beforeAll(async () => {
+    for (const name of [
+      "121_lead_appointments.sql",
+      "122_whatsapp_appointment_confirmation.sql",
+      "123_whatsapp_appointment_changes.sql",
+      "135_lead_discovery_assessments.sql",
+    ])
+      await pool.query(
+        (
+          await readFile(
+            new URL(
+              "../sophia-runtime/src/database/migrations/" + name,
+              import.meta.url,
+            ),
+            "utf8",
+          )
+        ).replaceAll("__SOPHIA_RUNTIME_SCHEMA__", "sophia_runtime"),
+      );
+  });
   afterAll(async () => {
     delete process.env.WHATSAPP_INBOUND_PROFILES;
     delete process.env.WHATSAPP_OUTBOUND_ENABLED;
@@ -561,7 +580,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       "UPDATE sophia_runtime.provider_configurations SET status='published' WHERE adapter_key='test-tts'",
     );
   });
-  test("failed automatic transcription asks for text once and hands off safely", async () => {
+  test("failed automatic transcription asks for text once and preserves bot help", async () => {
     process.env.WHATSAPP_AUTOMATION_ENABLED = "true";
     await pool.query(
       "UPDATE sophia_runtime.assistant_reply_bindings SET mode='automatic'",
@@ -590,10 +609,36 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(messages[0]).toContain("escribe tu pregunta");
     expect(
       (await api.getLead(owner, company, lead.leadId)).lead.ownership,
-    ).toBe("human_requested");
+    ).toBe("bot");
     const again = jest.fn();
     await worker.dispatchOne(full, again);
     expect(again).not.toHaveBeenCalled();
+  });
+  test("disabled voice explains text fallback and the next text still receives help", async () => {
+    process.env.WHATSAPP_VOICE_ENABLED = "false";
+    await inbound("disabled-voice", {
+      messageType: "audio",
+      body: "",
+      media: { id: "disabled" },
+    });
+    const sent = [];
+    await worker.dispatchOne(full, async (p, m) => {
+      sent.push(m.body);
+      return { kind: "accepted", providerMessageId: "disabled-fallback" };
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("escribe tu pregunta");
+    expect(
+      (await api.getLead(owner, company, lead.leadId)).lead.ownership,
+    ).toBe("bot");
+    await inbound("text-after-disabled-voice");
+    await worker.generateOne(full, approved);
+    await worker.dispatchOne(full, async (p, m) => {
+      sent.push(m.body);
+      return { kind: "accepted", providerMessageId: "text-recovered" };
+    });
+    expect(sent[1]).toContain("AUD 100");
+    process.env.WHATSAPP_VOICE_ENABLED = "true";
   });
   test("a new automatic voice enquiry uses the grounded text-answer path and creates both formats", async () => {
     await inbound("automatic-voice", {
@@ -623,7 +668,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       )
     ).rows;
     expect(messages).toHaveLength(2);
-    expect(messages.find((m) => m.format === "audio").body).toBe(
+    expect(messages.find((m) => m.format === "audio").body).toContain(
       "The English course costs AUD 100.",
     );
     const d = await api.getLead(owner, company, other);

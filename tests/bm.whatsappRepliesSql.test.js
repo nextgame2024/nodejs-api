@@ -583,6 +583,38 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ).rowCount,
     ).toBe(1);
   });
+  test("asks missing contact details once, and continues after the customer skips them", async () => {
+    const senderId = "61488880000";
+    await inbound("contact-initial", { senderId });
+    await worker.generateOne(full, approved);
+    const first = (
+      await pool.query(
+        "SELECT j.answer,j.usage,j.lead_id FROM sophia_runtime.assistant_reply_jobs j JOIN sophia_runtime.assistant_channel_contacts t USING(customer_id,lead_id) WHERE t.sender_id=$1 ORDER BY j.created_at DESC LIMIT 1",
+        [senderId],
+      )
+    ).rows[0];
+    expect(first.usage.engagement.contactRequested).toBe(true);
+    expect(first.answer).toContain("nombre y correo");
+    await inbound("contact-skipped", {
+      senderId,
+      body: "Tell me more about the English course price",
+    });
+    await worker.generateOne(full, approved);
+    const second = (
+      await pool.query(
+        "SELECT answer,usage FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [first.lead_id],
+      )
+    ).rows[0];
+    expect(second.answer).toContain("AUD 100");
+    expect(second.usage.engagement.contactRequested).toBeUndefined();
+    expect(second.answer).not.toContain("nombre y correo");
+    const d = await api.getLead(owner, company, first.lead_id);
+    await api.changeOwnership(owner, company, first.lead_id, {
+      expectedVersion: d.lead.ownershipVersion,
+      ownership: "human",
+    });
+  });
   test("automatic handoff sends one localized notice and preserves human ownership", async () => {
     await inbound("handoff-notice", {
       senderId: "61455550001",
@@ -900,6 +932,15 @@ suite("WhatsApp replies on PostgreSQL", () => {
       expectedVersion: detail.lead.version,
       lead: input(advisor),
     });
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_leads SET email='' WHERE lead_id=$1",
+      [bookingLead.lead_id],
+    );
+    // Simulate a legacy provider label, not a staff/customer-confirmed name.
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_lead_events SET metadata=metadata-'factsSource' WHERE conversation_id=(SELECT conversation_id FROM sophia_runtime.assistant_lead_conversations WHERE lead_id=$1) AND kind='lead_updated'",
+      [bookingLead.lead_id],
+    );
     detail = await api.getLead(owner, company, bookingLead.lead_id);
     await api.changeOwnership(owner, company, bookingLead.lead_id, {
       expectedVersion: detail.lead.ownershipVersion,
@@ -982,18 +1023,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].display_name,
     ).toBe("José Muñoz");
-    expect(
-      (
-        await pool.query(
-          "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
-          [bookingLead.lead_id],
-        )
-      ).rows[0].body,
-    ).toContain("correo");
-    await inbound("booking-invalid-email", {
-      senderId: sender,
-      body: "not-an-email",
-    });
+    // Name alone permits confirmation; email remains optional.
     expect(
       (
         await pool.query(
@@ -1001,19 +1031,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
           [bookingLead.lead_id],
         )
       ).rows[0].status,
-    ).toBe("offered");
-    expect(
-      (
-        await pool.query(
-          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
-          [bookingLead.lead_id],
-        )
-      ).rows[0].count,
-    ).toBe(0);
-    await inbound("booking-email", {
-      senderId: sender,
-      body: "jose@example.com",
-    });
+    ).toBe("awaiting_confirmation");
     expect(
       (
         await pool.query(
@@ -1021,7 +1039,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
           [bookingLead.lead_id],
         )
       ).rows[0].email,
-    ).toBe("jose@example.com");
+    ).toBeFalsy();
     const confirmation = (
       await pool.query(
         "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",
@@ -1115,12 +1133,25 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(
       (await api.getLead(owner, company, bookingLead.lead_id)).lead.ownership,
     ).toBe("bot");
-    await inbound("booking-partial-question", { senderId: sender, body: "What is the exact English course price?" });
-    await worker.generateOne(full, async () => ({ ...(await approved()), answer: "No puedo confirmar el precio exacto.", needsTeam: true }));
-    const partialJob = (await pool.query("SELECT answer,state FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1", [bookingLead.lead_id])).rows[0];
+    await inbound("booking-partial-question", {
+      senderId: sender,
+      body: "What is the exact English course price?",
+    });
+    await worker.generateOne(full, async () => ({
+      ...(await approved()),
+      answer: "No puedo confirmar el precio exacto.",
+      needsTeam: true,
+    }));
+    const partialJob = (
+      await pool.query(
+        "SELECT answer,state FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
     expect(partialJob.state).toBe("ready");
     expect(partialJob.answer).toContain("No puedo confirmar el precio exacto.");
-    expect(partialJob.answer).toContain("tienes una cita");
+    expect(partialJob.answer).toContain("otra pregunta");
+    expect(partialJob.answer).not.toContain("tienes una cita");
     const original = (
       await pool.query(
         "SELECT starts_at,version,status FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
@@ -1156,7 +1187,33 @@ suite("WhatsApp replies on PostgreSQL", () => {
       appointment_id: saved.appointment_id,
       expected_version: 1,
     });
+    // Legacy bookings may have no confirmed name. A reschedule must repair it.
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_lead_events SET metadata=metadata-'origin' WHERE conversation_id=(SELECT conversation_id FROM sophia_runtime.assistant_lead_conversations WHERE lead_id=$1) AND kind='lead_updated'",
+      [bookingLead.lead_id],
+    );
     await inbound("reschedule-selection", { senderId: sender, body: "1" });
+    expect(
+      (
+        await pool.query(
+          "SELECT status FROM sophia_runtime.lead_appointment_change_requests WHERE request_id=$1",
+          [change.request_id],
+        )
+      ).rows[0].status,
+    ).toBe("offered");
+    expect(
+      (
+        await pool.query(
+          "SELECT version FROM sophia_runtime.lead_appointments WHERE appointment_id=$1",
+          [saved.appointment_id],
+        )
+      ).rows[0].version,
+    ).toBe(1);
+    await inbound("reschedule-name", {
+      senderId: sender,
+      body: "Me llamo José Muñoz",
+    });
+
     const rescheduleConfirmation = (
       await pool.query(
         "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE appointment_change_request_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",

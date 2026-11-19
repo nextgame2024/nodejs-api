@@ -1,3 +1,9 @@
+import {
+  customerContact,
+  contactRequest,
+  captureCustomerContact,
+} from "../messaging/customer-contact.js";
+import { bookingName } from "../messaging/customer-preferences.js";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { hash } from "../leads/lead-records.contracts.js";
 import {
@@ -411,9 +417,56 @@ export async function handleAppointmentChangeConfirmation(
     return false;
   }
   const value = body.trim();
+  const name = bookingName(value);
+  if (name)
+    await captureCustomerContact(
+      db,
+      profile.customerId,
+      lead,
+      conversation,
+      value,
+    );
+  const { hasName } = await customerContact(
+    db,
+    profile.customerId,
+    lead,
+    conversation,
+  );
+  if (
+    request.action === "reschedule" &&
+    !hasName &&
+    (confirmation || /^[1-3]$/.test(value))
+  ) {
+    const slot = /^[1-3]$/.test(value)
+      ? request.slots[Number(value) - 1]
+      : null;
+    if (!confirmation && !slot) return false;
+    await db.query(
+      `UPDATE ${s}.lead_appointment_change_requests SET status='offered',
+      selected_starts_at=COALESCE($3,selected_starts_at),confirmation_code_hash=NULL,updated_at=now()
+      WHERE customer_id=$1 AND request_id=$2`,
+      [profile.customerId, request.request_id, slot?.startsAt ?? null],
+    );
+    await cancelQueued(db, profile.customerId, request.request_id);
+    await queue(
+      db,
+      profile,
+      channel,
+      lead,
+      conversation,
+      request.request_id,
+      contactRequest(lead.language, {}, true),
+    );
+    return true;
+  }
   if (request.status === "offered") {
-    if (!/^[1-3]$/.test(value)) return false;
-    const slot = request.slots[Number(value) - 1];
+    if (!/^[1-3]$/.test(value) && !name) return false;
+    const slot = /^[1-3]$/.test(value)
+      ? request.slots[Number(value) - 1]
+      : request.slots.find(
+          (x) =>
+            Date.parse(x.startsAt) === Date.parse(request.selected_starts_at),
+        );
     if (!slot) return false;
     const code = String(randomInt(100000, 1000000));
     await db.query(
