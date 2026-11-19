@@ -4076,7 +4076,7 @@
     ]
   },
   "unifiedScheduling20261119": {
-    "status": "verified_locally_release_pending",
+    "status": "api_live_frontend_pushed",
     "implemented": [
       "One Scheduling calendar for existing project bookings and confirmed WhatsApp/form appointments; legacy appointments route redirects to Scheduling.",
       "Project/Appointment radio selection; projects must exist; new-contact appointment creates name/email contact and reserves advisor slot in one authorized transaction.",
@@ -4088,8 +4088,28 @@
       "22 backend tests passed including disposable PostgreSQL tenant/assignment isolation, idempotency and slot-conflict rollback.",
       "18 protected real-estate tests passed.",
       "Desktop 1280 and mobile 390 calendar/detail checks passed in light/dark themes using synthetic data.",
-      "Production frontend build passed; final release build pending."
+      "Final production frontend build passed; existing CommonJS and primeicons stylesheet warnings remain.",
+      "Calendar, appointment details and new-contact booking form verified at 390 and 1600 pixels in light/dark themes, including dialog contrast."
     ],
-    "migration": "None. Deploy API before frontend. Existing appointments are preserved; missing historical contact details display Not provided."
+    "migration": "None. Deploy API before frontend. Existing appointments are preserved; missing historical contact details display Not provided.",
+    "deployment": {
+      "backend": "fe64d924c2a8ff7c40e34ea30aec18713cc1160a live on Render API and messaging worker",
+      "frontend": "1ea88dd pushed to main; public asset verification pending"
+    }
+  },
+  "whatsappSilentHandoff20261119": {
+    "status": "verified_release_pending",
+    "cause": "Pricing question generated needs_human with no outbound acknowledgement, leaving conversation human_requested and later messages unanswered. SIGTERM screenshot belonged to old instance shutdown.",
+    "changes": [
+      "Ordinary missing-price questions may explain knowledge limits and ask a grounded scope question without inventing prices.",
+      "Automatic handoffs queue a deterministic localized notice after the ownership transition; dispatch rechecks current ownership, binding, release, source event, opt-out and reply window. Manual drafts do not send notices."
+    ],
+    "verification": [
+      "23 PostgreSQL WhatsApp tests passed, including one localized handoff notice with human ownership preserved.",
+      "7 channel reasoner tests and 18 protected real-estate tests passed.",
+      "Runtime build and diff checks passed.",
+      "Live model check against approved Sophia knowledge returned a grounded pricing explanation without handoff; no WhatsApp message sent by that check."
+    ],
+    "deployment": "Backend only. No database migration. User manages frontend commits and pushes going forward."
   }
 }

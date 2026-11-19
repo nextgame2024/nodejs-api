@@ -583,6 +583,65 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ).rowCount,
     ).toBe(1);
   });
+  test("automatic handoff sends one localized notice and preserves human ownership", async () => {
+    await inbound("handoff-notice", {
+      senderId: "61455550001",
+      body: "English course help",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: true,
+      answer: "",
+      sourceIds: [],
+    }));
+    const job = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.assistant_reply_jobs ORDER BY created_at DESC LIMIT 1",
+      )
+    ).rows[0];
+    expect(job.state).toBe("needs_human");
+    const c = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.assistant_lead_conversations WHERE conversation_id=$1",
+        [job.conversation_id],
+      )
+    ).rows[0];
+    expect(c.ownership).toBe("human_requested");
+    const outbox = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE job_id=$1",
+        [job.job_id],
+      )
+    ).rows;
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].body).toBe(worker.handoffNotice("es"));
+    expect(outbox[0].ownership_version).toBe(c.ownership_version);
+    // Let any earlier approved reply dispatch first; notice is still sent once.
+    const send = jest
+      .fn()
+      .mockImplementation(async () => ({
+        kind: "accepted",
+        providerMessageId: randomUUID(),
+      }));
+    for (let i = 0; i < 4; i++) await worker.dispatchOne(full, send);
+    expect(
+      (
+        await pool.query(
+          "SELECT state FROM sophia_runtime.assistant_message_outbox WHERE job_id=$1",
+          [job.job_id],
+        )
+      ).rows[0].state,
+    ).toBe("accepted");
+    expect(
+      (
+        await pool.query(
+          "SELECT ownership FROM sophia_runtime.assistant_lead_conversations WHERE conversation_id=$1",
+          [job.conversation_id],
+        )
+      ).rows[0].ownership,
+    ).toBe("human_requested");
+    expect(worker.handoffNotice("es")).toContain("Tu consulta");
+    expect(worker.handoffNotice("pt")).toContain("Sua pergunta");
+  });
   test("discovery remembers public messages, excludes staff notes, persists evidence and protects follow-up access", async () => {
     const discoveryProfile = { ...full, qualificationEnabled: true };
     const sender = "61477776666";
@@ -784,20 +843,35 @@ suite("WhatsApp replies on PostgreSQL", () => {
       ).rowCount,
     ).toBe(0);
   });
-  test("an eligible explicitly requested reminder is delivered once through the normal transport",async()=>{
-    const p={...full,qualificationEnabled:true,followUpEnabled:true};
-    const sender='61477775555';
-    await inbound('follow-deliver',{senderId:sender,body:'FOLLOW UP'},p);
-    await worker.generateOne(p,approved);
-    await pool.query("UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute' WHERE state='scheduled'");
+  test("an eligible explicitly requested reminder is delivered once through the normal transport", async () => {
+    const p = { ...full, qualificationEnabled: true, followUpEnabled: true };
+    const sender = "61477775555";
+    await inbound("follow-deliver", { senderId: sender, body: "FOLLOW UP" }, p);
+    await worker.generateOne(p, approved);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute' WHERE state='scheduled'",
+    );
     await worker.queueFollowUpOne(p);
-    await pool.query("UPDATE sophia_runtime.assistant_message_outbox SET state='cancelled' WHERE state='queued' AND follow_up_request_id IS NULL");
-    const send=jest.fn().mockResolvedValue({kind:'accepted',providerMessageId:'wamid.follow-up-test'});
-    await worker.dispatchOne(p,send);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_message_outbox SET state='cancelled' WHERE state='queued' AND follow_up_request_id IS NULL",
+    );
+    const send = jest
+      .fn()
+      .mockResolvedValue({
+        kind: "accepted",
+        providerMessageId: "wamid.follow-up-test",
+      });
+    await worker.dispatchOne(p, send);
     expect(send).toHaveBeenCalledTimes(1);
-    await worker.dispatchOne(p,send);
+    await worker.dispatchOne(p, send);
     expect(send).toHaveBeenCalledTimes(1);
-    expect((await pool.query("SELECT state FROM sophia_runtime.assistant_message_outbox WHERE provider_message_id='wamid.follow-up-test'")).rows[0].state).toBe('accepted');
+    expect(
+      (
+        await pool.query(
+          "SELECT state FROM sophia_runtime.assistant_message_outbox WHERE provider_message_id='wamid.follow-up-test'",
+        )
+      ).rows[0].state,
+    ).toBe("accepted");
   });
   test("offers assigned-advisor slots and books only after the customer's exact confirmation", async () => {
     process.env.WHATSAPP_BOOKING_ENABLED = "true";
@@ -865,22 +939,93 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].response_kind,
     ).toBe("appointment");
-    const offeredSlots=(await pool.query("SELECT slots FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].slots;
-    expect(new Intl.DateTimeFormat('en-GB',{timeZone:'Pacific/Auckland',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(offeredSlots[0].startsAt))).toBe('13:00');
-    await inbound("language-choice", {senderId:sender,body:"Quiero hablar en español"});
+    const offeredSlots = (
+      await pool.query(
+        "SELECT slots FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0].slots;
+    expect(
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Pacific/Auckland",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date(offeredSlots[0].startsAt)),
+    ).toBe("13:00");
+    await inbound("language-choice", {
+      senderId: sender,
+      body: "Quiero hablar en español",
+    });
     await inbound("booking-selection", { senderId: sender, body: "1" });
-    const namePrompt=(await pool.query("SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].body;
+    const namePrompt = (
+      await pool.query(
+        "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0].body;
     expect(namePrompt).toContain("NOMBRE");
     expect(namePrompt).not.toMatch(/CONFIRM \d{6}/);
-    expect((await pool.query("SELECT language FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].language).toBe('es');
-    await inbound("booking-name", {senderId:sender,body:"NOMBRE José Muñoz"});
-    expect((await pool.query("SELECT display_name FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].display_name).toBe('José Muñoz');
-    expect((await pool.query("SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].body).toContain('correo');
-    await inbound("booking-invalid-email", {senderId:sender,body:"not-an-email"});
-    expect((await pool.query("SELECT status FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].status).toBe('offered');
-    expect((await pool.query("SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].count).toBe(0);
-    await inbound("booking-email", {senderId:sender,body:"jose@example.com"});
-    expect((await pool.query("SELECT email FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].email).toBe('jose@example.com');
+    expect(
+      (
+        await pool.query(
+          "SELECT language FROM sophia_runtime.assistant_leads WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].language,
+    ).toBe("es");
+    await inbound("booking-name", {
+      senderId: sender,
+      body: "NOMBRE José Muñoz",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT display_name FROM sophia_runtime.assistant_leads WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].display_name,
+    ).toBe("José Muñoz");
+    expect(
+      (
+        await pool.query(
+          "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].body,
+    ).toContain("correo");
+    await inbound("booking-invalid-email", {
+      senderId: sender,
+      body: "not-an-email",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT status FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].status,
+    ).toBe("offered");
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM sophia_runtime.lead_appointments WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
+    await inbound("booking-email", {
+      senderId: sender,
+      body: "jose@example.com",
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT email FROM sophia_runtime.assistant_leads WHERE lead_id=$1",
+          [bookingLead.lead_id],
+        )
+      ).rows[0].email,
+    ).toBe("jose@example.com");
     const confirmation = (
       await pool.query(
         "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",

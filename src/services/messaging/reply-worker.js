@@ -30,16 +30,49 @@ import {
   createAppointmentOffer,
 } from "../scheduling/whatsapp-appointment-booking.service.js";
 import { createAppointmentChangeRequest } from "../scheduling/whatsapp-appointment-changes.service.js";
-async function handoffJob(db, tenant, job, state = "needs_human") {
+export function handoffNotice(language) {
+  const code = String(language || "en")
+    .split("-")[0]
+    .toLowerCase();
+  if (code === "es")
+    return "Tu consulta necesita la revisión de una persona del equipo. He pausado las respuestas automáticas para que puedan ayudarte. No tengo una respuesta confirmada para darte ahora.";
+  if (code === "pt")
+    return "Sua pergunta precisa ser analisada por uma pessoa da equipe. Pausei as respostas automáticas para que possam ajudar. Não tenho uma resposta confirmada para fornecer agora.";
+  return "Your question needs a team member to review it. I have paused automatic replies so they can help. I do not have a confirmed answer to give you right now.";
+}
+async function handoffJob(
+  db,
+  tenant,
+  job,
+  state = "needs_human",
+  language = "en",
+) {
   await db.query(
     `UPDATE ${s}.assistant_reply_jobs SET state=$3,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
     [tenant, job.job_id, state],
   );
-  if (!job.requested_by_identity)
+  if (job.requested_by_identity) return;
+  const changed = (
     await db.query(
-      `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2 AND ownership='bot' AND ownership_version=$3`,
+      `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2 AND ownership='bot' AND ownership_version=$3 RETURNING ownership_version`,
       [tenant, job.conversation_id, job.ownership_version],
-    );
+    )
+  ).rows[0];
+  if (!changed || process.env.WHATSAPP_AUTOMATION_ENABLED !== "true") return;
+  const body = handoffNotice(language);
+  await db.query(
+    `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,job_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7) ON CONFLICT DO NOTHING`,
+    [
+      tenant,
+      job.channel_id,
+      job.lead_id,
+      job.conversation_id,
+      changed.ownership_version,
+      body,
+      job.job_id,
+      hash({ kind: "handoff_notice", body }),
+    ],
+  );
 }
 // Dependency-injected reasoning and transport ports: no concrete model in services.
 export async function generateOne(profile, reasoner) {
@@ -127,7 +160,7 @@ export async function generateOne(profile, reasoner) {
       return null;
     }
     if (job.attempts >= 2) {
-      await handoffJob(db, profile.customerId, job, "failed");
+      await handoffJob(db, profile.customerId, job, "failed", lead.language);
       return null;
     }
     let release;
@@ -139,11 +172,23 @@ export async function generateOne(profile, reasoner) {
       );
     } catch (e) {
       if (e.status !== 409) throw e;
-      await handoffJob(db, profile.customerId, job);
+      await handoffJob(
+        db,
+        profile.customerId,
+        job,
+        "needs_human",
+        lead.language,
+      );
       return null;
     }
     if (!(await providerAllowed(db, profile.customerId, release, profile))) {
-      await handoffJob(db, profile.customerId, job);
+      await handoffJob(
+        db,
+        profile.customerId,
+        job,
+        "needs_human",
+        lead.language,
+      );
       return null;
     }
     const booking = await bookingCapabilityContext(
@@ -185,12 +230,13 @@ export async function generateOne(profile, reasoner) {
       )
     ).rows;
     if (!sources.length && !booking) {
-      await handoffJob(db, profile.customerId, job);
-      if (!job.requested_by_identity)
-        await db.query(
-          `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2`,
-          [profile.customerId, c.conversation_id],
-        );
+      await handoffJob(
+        db,
+        profile.customerId,
+        job,
+        "needs_human",
+        lead.language,
+      );
       return null;
     }
     const lease = randomUUID();
@@ -391,10 +437,13 @@ export async function generateOne(profile, reasoner) {
           accepted && booking ? "appointment" : "grounded_answer",
         ],
       );
-      if (!accepted && !job.requested_by_identity)
-        await db.query(
-          `UPDATE ${s}.assistant_lead_conversations SET ownership='human_requested',ownership_version=ownership_version+1 WHERE customer_id=$1 AND conversation_id=$2`,
-          [profile.customerId, c.conversation_id],
+      if (!accepted)
+        await handoffJob(
+          db,
+          profile.customerId,
+          job,
+          result.failed ? "failed" : "needs_human",
+          lead.language,
         );
       if (
         accepted &&
@@ -536,14 +585,31 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     if (validationJobId) {
       const j = (
         await db.query(
-          `SELECT j.state,b.mode,j.agent_release_id,j.sources,j.response_kind,j.binding_revision,b.revision FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.job_id=$2`,
+          `SELECT j.state,j.source_event_id,j.requested_by_identity,b.mode,j.agent_release_id,j.sources,j.response_kind,j.binding_revision,b.revision FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.job_id=$2`,
           [profile.customerId, validationJobId],
         )
       ).rows[0];
+      const latest =
+        j && ["needs_human", "failed"].includes(j.state)
+          ? (
+              await db.query(
+                `SELECT event_id FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message' ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,COALESCE((metadata->>'transcriptOf')::bigint,event_id) DESC,event_id DESC LIMIT 1`,
+                [profile.customerId, m.conversation_id],
+              )
+            ).rows[0]
+          : null;
+      const notice =
+        j &&
+        ["needs_human", "failed"].includes(j.state) &&
+        !j.requested_by_identity &&
+        !m.actor_identity &&
+        c.ownership === "human_requested" &&
+        j.source_event_id === latest?.event_id &&
+        m.body === handoffNotice(lead.language) &&
+        process.env.WHATSAPP_AUTOMATION_ENABLED === "true";
       permitted =
-        permitted &&
-        j?.state === "ready" &&
-        j.mode === "automatic" &&
+        (notice || (permitted && j?.state === "ready")) &&
+        j?.mode === "automatic" &&
         j.binding_revision === j.revision;
       if (j)
         try {
@@ -555,7 +621,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
           permitted =
             permitted &&
             (await providerAllowed(db, profile.customerId, release, profile));
-          if (permitted && j.response_kind === "grounded_answer")
+          if (permitted && !notice && j.response_kind === "grounded_answer")
             permitted = await sourcesAvailable(
               db,
               profile.customerId,
