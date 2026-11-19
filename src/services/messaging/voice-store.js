@@ -116,6 +116,18 @@ export async function queueVoicePair(db, tenant, messageId) {
     ],
   );
   if (!inserted.rowCount) return;
+  // Preserve scheduling guards on the audio child as well as the fallback.
+  for (const field of [
+    "appointment_offer_id",
+    "appointment_change_request_id",
+    "follow_up_request_id",
+  ]) {
+    if (m[field])
+      await db.query(
+        `UPDATE ${s}.assistant_message_outbox SET ${field}=$3 WHERE customer_id=$1 AND message_id=$2`,
+        [tenant, id, m[field]],
+      );
+  }
   await db.query(
     `INSERT INTO ${s}.assistant_voice_jobs(customer_id,channel_id,lead_id,conversation_id,kind,message_id,ownership_version,agent_release_id,binding_revision) VALUES($1,$2,$3,$4,'synthesize',$5,$6,$7,$8)`,
     [

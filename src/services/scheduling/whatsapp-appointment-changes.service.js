@@ -1,3 +1,4 @@
+import { queueVoicePair } from "../messaging/voice-store.js";
 import {
   customerContact,
   contactRequest,
@@ -277,9 +278,9 @@ async function queue(
   body,
 ) {
   const requestKey = randomUUID();
-  await db.query(
+  const queued = await db.query(
     `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,appointment_change_request_id,body,request_key,request_hash)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING message_id`,
     [
       profile.customerId,
       channel.channel_id,
@@ -292,12 +293,12 @@ async function queue(
       hash({ body }),
     ],
   );
+  await queueVoicePair(db, profile.customerId, queued.rows[0].message_id);
 }
-
 async function cancelQueued(db, tenant, requestId) {
   await db.query(
     `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='newer_message',updated_at=now()
-     WHERE customer_id=$1 AND appointment_change_request_id=$2 AND state='queued'`,
+     WHERE customer_id=$1 AND appointment_change_request_id=$2 AND state IN ('queued','preparing')`,
     [tenant, requestId],
   );
 }
