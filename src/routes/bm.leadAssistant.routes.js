@@ -9,6 +9,7 @@ import {
   draftReply,
 } from "../services/messaging/reply-api.service.js";
 import { Router } from "express";
+import { whatsappSignup } from "../services/messaging/whatsapp-signup.service.js";
 import { authRequired } from "../middlewares/authJwt.js";
 import * as settings from "../services/leads/assistant-settings.service.js";
 import * as leads from "../services/leads/lead-records.service.js";
@@ -18,6 +19,10 @@ import {
 } from "../services/messaging/whatsapp-channel.service.js";
 const router = Router();
 router.use("/bm/lead-assistant", authRequired);
+router.use('/bm/lead-assistant/whatsapp-signup', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 const handle = (fn) => async (req, res) => {
   try {
     res.json(await fn(req));
@@ -35,6 +40,10 @@ const handle = (fn) => async (req, res) => {
     });
   }
 };
+router.get('/bm/lead-assistant/whatsapp-signup', handle(req => whatsappSignup.status(req.user.id, req.user.companyId)));
+router.post('/bm/lead-assistant/whatsapp-signup/start', handle(req => whatsappSignup.start(req.user.id, req.user.companyId)));
+router.post('/bm/lead-assistant/whatsapp-signup/exchange', handle(req => whatsappSignup.exchange(req.user.id, req.user.companyId, req.body)));
+router.post('/bm/lead-assistant/whatsapp-signup/complete', handle(req => whatsappSignup.complete(req.user.id, req.user.companyId, req.body)));
 router.get(
   "/bm/lead-assistant/settings",
   handle((req) => settings.getSettings(req.user.id, req.user.companyId)),

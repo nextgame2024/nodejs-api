@@ -1,4 +1,39 @@
 {
+  "whatsappEmbeddedSignupAuthorization": {
+    "updatedOn": "2026-11-19",
+    "status": "authorization_prototype_locally_verified_activation_not_implemented",
+    "scope": "Sophia AI own +61400388532; not Open for Australia. Meta app 1107965912211301 and owner-supplied signup configuration 1141808901544273.",
+    "implemented": [
+      "Company WhatsApp staged signup component using Meta JavaScript SDK and strict origin/event filtering; handles session event and authorization callback in either order",
+      "Manager-authorized tenant/actor-bound 15-minute one-use attempt; server-side code exchange; AES-256-GCM encrypted temporary token with tenant/attempt AAD",
+      "Meta account phone membership verification against server-configured expected number and is_on_biz_app/CLOUD_API status; verified status explicitly pending activation",
+      "Migration 134 with forced tenant RLS and runtime-role grants; no browser secrets, tenant claims, phone-ID authority or signup response caching",
+      "Deployment and owner-domain instructions in docs/sophia/whatsapp-embedded-signup.md"
+    ],
+    "verification": [
+      "5 backend authorization tests passed",
+      "3 disposable localhost PostgreSQL tests passed: migration/lifecycle, cross-tenant denial, expiration and ciphertext cleanup; temporary cluster stopped",
+      "14 ChromeHeadless signup/connection tests passed; origin validation, callback ordering, teardown and theme/layout assertions",
+      "Frontend application and spec TypeScript noEmit checks passed",
+      "Angular production build passed using Node 22.23.2 and dummy Maps setting; existing budget/CommonJS/stylesheet warnings remain",
+      "38 protected real-estate regression tests passed",
+      "git diff --check and JavaScript syntax checks passed"
+    ],
+    "limits": [
+      "No deployment, production migration, Meta authorization, subscription or real-number activation performed in this implementation",
+      "Meta app review pending in owner screenshot; owner must configure frontend SDK allowlist",
+      "Live subscription and durable contacts/history synchronization within Meta deadline are not implemented; keep WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false",
+      "Temporary credential ciphertext is cleared on failed verification, expired-status refresh or next attempt, not by a background cleanup worker",
+      "Promotion into live deployment-owned profiles, lifecycle revocation handling and genuine app-echo/human-takeover pilot remain required"
+    ],
+    "ownerProvidedOrigins": [
+      "http://localhost:4200",
+      "https://nodejs-api-hft7.onrender.com",
+      "https://main.d9s1kjhti1xid.amplifyapp.com",
+      "https://sophiaai.com.au",
+      "https://www.sophiaai.com.au"
+    ]
+  },
   "whatsappRenderConfigurationRepair": {
     "updatedOn": "2026-11-19",
     "status": "configuration_fix_deployed_user_verified_delivery",
