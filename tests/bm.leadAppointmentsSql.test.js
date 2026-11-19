@@ -273,6 +273,7 @@ suite("Lead appointments and advisor calendars on PostgreSQL", () => {
     expect(Object.keys(lookup.lead).sort()).toEqual([
       "assignedTo",
       "displayName",
+      "email",
       "leadId",
       "stage",
     ]);
@@ -377,6 +378,74 @@ suite("Lead appointments and advisor calendars on PostgreSQL", () => {
         )
       ).rows[0].n,
     ).toBe(3);
+  });
+  test("creates a contact and appointment atomically without a project, scopes access and replays safely", async () => {
+    const date = new Date(Date.now() + 8 * 86400000).toISOString().slice(0, 10);
+    const slots = (await available(advisor, { date })).slots;
+    const body = {
+      ...book(lead.leadId, slots[0]),
+      contact: {
+        displayName: "New appointment contact",
+        email: "new@example.test",
+      },
+    };
+    delete body.leadId;
+    const [a, b] = await Promise.all([
+      appointments.bookNewContactAppointment(owner, company, body),
+      appointments.bookNewContactAppointment(owner, company, body),
+    ]);
+    expect(a.appointment.id).toBe(b.appointment.id);
+    expect(a.appointment.leadEmail).toBe("new@example.test");
+    expect(a.appointment.leadName).toBe("New appointment contact");
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM sophia_runtime.assistant_leads WHERE request_key=$1",
+          [body.requestKey],
+        )
+      ).rows[0].n,
+    ).toBe(1);
+    await expect(
+      appointments.bookNewContactAppointment(owner, company, {
+        ...body,
+        contact: { ...body.contact, email: "different@example.test" },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    const failedKey = randomUUID();
+    await expect(
+      appointments.bookNewContactAppointment(owner, company, {
+        ...body,
+        requestKey: failedKey,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM sophia_runtime.assistant_leads WHERE request_key=$1",
+          [failedKey],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    await expect(
+      appointments.bookNewContactAppointment(second, company, {
+        ...body,
+        startsAt: slots[3].startsAt,
+        requestKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      appointments.bookNewContactAppointment(outsider, otherCompany, {
+        ...body,
+        requestKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      appointments.bookNewContactAppointment(owner, company, {
+        ...body,
+        contact: { displayName: "Contact", email: "" },
+        requestKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
   });
   test("competing bookings with different request keys commit at most one reservation", async () => {
     const third = (

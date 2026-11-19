@@ -4058,7 +4058,7 @@
   },
   "whatsappBookingContactDetails": {
     "updatedOn": "2026-11-19",
-    "status": "tested_deployment_pending",
+    "status": "deployed_phone_retest_pending",
     "implemented": [
       "Require offer-linked customer-supplied name and valid email before issuing/accepting booking confirmation",
       "Save name and email to tenant-scoped lead with audit events; English/Spanish/Portuguese prompts",
@@ -4067,11 +4067,29 @@
     "verification": [
       "22 disposable PostgreSQL tests passed, including missing/invalid email blocking booking and saved email",
       "21 preferences and protected real-estate regression tests passed",
-      "JavaScript syntax and git diff checks passed"
+      "JavaScript syntax and git diff checks passed",
+      "Render API and messaging worker live at 7fb4d140d4be1e66d6e212414598788c7ba13fb5"
     ],
     "limits": [
       "Email format validation does not verify mailbox ownership",
       "No email confirmation delivery added; existing confirmed appointments unchanged"
     ]
+  },
+  "unifiedScheduling20261119": {
+    "status": "verified_locally_release_pending",
+    "implemented": [
+      "One Scheduling calendar for existing project bookings and confirmed WhatsApp/form appointments; legacy appointments route redirects to Scheduling.",
+      "Project/Appointment radio selection; projects must exist; new-contact appointment creates name/email contact and reserves advisor slot in one authorized transaction.",
+      "Appointment details display contact name, email, assessment and notes, with existing reschedule/cancel and advisor-availability controls.",
+      "Calendar fetches all pages within visible date range with bounded paging, cancellation, deduplication and explicit errors."
+    ],
+    "verification": [
+      "18 scheduling ChromeHeadless tests passed, including unified calendar and project-free new-contact creation.",
+      "22 backend tests passed including disposable PostgreSQL tenant/assignment isolation, idempotency and slot-conflict rollback.",
+      "18 protected real-estate tests passed.",
+      "Desktop 1280 and mobile 390 calendar/detail checks passed in light/dark themes using synthetic data.",
+      "Production frontend build passed; final release build pending."
+    ],
+    "migration": "None. Deploy API before frontend. Existing appointments are preserved; missing historical contact details display Not provided."
   }
 }

@@ -80,6 +80,17 @@ router.get(
   ),
 );
 router.post(
+  "/bm/schedule/leads/appointments/new-contact",
+  authRequired,
+  bookingHandler((req) =>
+    appointments.bookNewContactAppointment(
+      req.user.id,
+      req.user.companyId,
+      req.body,
+    ),
+  ),
+);
+router.post(
   "/bm/schedule/leads/appointments",
   authRequired,
   bookingHandler((req) =>

@@ -187,95 +187,99 @@ export async function olderEvents(actor, company, id, before) {
   });
 }
 export async function createLead(actor, company, input) {
+  return run(actor, company, (db, tenant, access) =>
+    createLeadInTransaction(db, tenant, access, actor, company, input),
+  );
+}
+// Reuses lead validation, access checks and audit inside an authorized booking transaction.
+export async function createLeadInTransaction(
+  db,
+  tenant,
+  access,
+  actor,
+  company,
+  input,
+) {
   const key = uuid(input?.requestKey);
-  return run(actor, company, async (db, tenant, access) => {
-    if (!access.published)
-      throw fail("Publish assistant Settings before creating leads.", 409);
-    const config = access.published.configuration;
-    const supplied = input?.lead;
-    let defaultAssignee = actor;
-    if (access.canManageLeads) {
-      const staff = await team(db, company, access);
-      defaultAssignee =
-        [config.enquiryOwnerId, config.fallbackOwnerId].find((id) =>
-          staff.some((u) => u.id === id),
-        ) ?? null;
-    }
-    const c = leadInput({
-      ...supplied,
-      language: supplied?.language ?? config.defaultLanguage,
-      assignedTo:
-        supplied && Object.hasOwn(supplied, "assignedTo")
-          ? supplied.assignedTo
-          : defaultAssignee,
-    });
-    if (c.stage !== "new")
-      throw fail("Create a new lead before updating its stage.");
-    if (!access.published.configuration.languages.includes(c.language))
-      throw fail("Select a language enabled in Settings.", 400, ["language"]);
-    if (!access.canManageLeads && c.assignedTo !== actor)
-      throw fail("You can only create leads assigned to yourself.", 403);
-    await eligibleAssignee(db, company, access, c.assignedTo);
-    const fingerprint = hash(c);
-    const inserted = (
-      await db.query(
-        `INSERT INTO ${s}.assistant_leads(customer_id,display_name,email,phone,language,interest,location,timeframe,assigned_to_identity,settings_release_id,request_key,request_hash,created_by_identity)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(customer_id,request_key) DO NOTHING RETURNING lead_id`,
-        [
-          tenant,
-          c.displayName,
-          c.email,
-          c.phone,
-          c.language,
-          c.interest,
-          c.location,
-          c.timeframe,
-          c.assignedTo,
-          access.published.release_id,
-          key,
-          fingerprint,
-          actor,
-        ],
-      )
-    ).rows[0];
-    if (!inserted) {
-      const old = (
-        await db.query(
-          `SELECT lead_id,request_hash,created_by_identity FROM ${s}.assistant_leads WHERE customer_id=$1 AND request_key=$2`,
-          [tenant, key],
-        )
-      ).rows[0];
-      if (
-        !old ||
-        old.request_hash !== fingerprint ||
-        old.created_by_identity !== actor
-      )
-        throw fail(
-          "This submission key was already used. Start a new lead.",
-          409,
-        );
-      return detail(db, tenant, access, old.lead_id);
-    }
-    const conversation = (
-      await db.query(
-        `INSERT INTO ${s}.assistant_lead_conversations(customer_id,lead_id) VALUES($1,$2) RETURNING conversation_id`,
-        [tenant, inserted.lead_id],
-      )
-    ).rows[0];
-    await event(
-      db,
-      tenant,
-      conversation.conversation_id,
-      actor,
-      "lead_created",
-      {
-        source: "manual",
-        factsSource: "staff_entry",
-        settingsReleaseId: access.published.release_id,
-      },
-    );
-    return detail(db, tenant, access, inserted.lead_id);
+  if (!access.published)
+    throw fail("Publish assistant Settings before creating leads.", 409);
+  const config = access.published.configuration;
+  const supplied = input?.lead;
+  let defaultAssignee = actor;
+  if (access.canManageLeads) {
+    const staff = await team(db, company, access);
+    defaultAssignee =
+      [config.enquiryOwnerId, config.fallbackOwnerId].find((id) =>
+        staff.some((u) => u.id === id),
+      ) ?? null;
+  }
+  const c = leadInput({
+    ...supplied,
+    language: supplied?.language ?? config.defaultLanguage,
+    assignedTo:
+      supplied && Object.hasOwn(supplied, "assignedTo")
+        ? supplied.assignedTo
+        : defaultAssignee,
   });
+  if (c.stage !== "new")
+    throw fail("Create a new lead before updating its stage.");
+  if (!access.published.configuration.languages.includes(c.language))
+    throw fail("Select a language enabled in Settings.", 400, ["language"]);
+  if (!access.canManageLeads && c.assignedTo !== actor)
+    throw fail("You can only create leads assigned to yourself.", 403);
+  await eligibleAssignee(db, company, access, c.assignedTo);
+  const fingerprint = hash(c);
+  const inserted = (
+    await db.query(
+      `INSERT INTO ${s}.assistant_leads(customer_id,display_name,email,phone,language,interest,location,timeframe,assigned_to_identity,settings_release_id,request_key,request_hash,created_by_identity)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(customer_id,request_key) DO NOTHING RETURNING lead_id`,
+      [
+        tenant,
+        c.displayName,
+        c.email,
+        c.phone,
+        c.language,
+        c.interest,
+        c.location,
+        c.timeframe,
+        c.assignedTo,
+        access.published.release_id,
+        key,
+        fingerprint,
+        actor,
+      ],
+    )
+  ).rows[0];
+  if (!inserted) {
+    const old = (
+      await db.query(
+        `SELECT lead_id,request_hash,created_by_identity FROM ${s}.assistant_leads WHERE customer_id=$1 AND request_key=$2`,
+        [tenant, key],
+      )
+    ).rows[0];
+    if (
+      !old ||
+      old.request_hash !== fingerprint ||
+      old.created_by_identity !== actor
+    )
+      throw fail(
+        "This submission key was already used. Start a new lead.",
+        409,
+      );
+    return detail(db, tenant, access, old.lead_id);
+  }
+  const conversation = (
+    await db.query(
+      `INSERT INTO ${s}.assistant_lead_conversations(customer_id,lead_id) VALUES($1,$2) RETURNING conversation_id`,
+      [tenant, inserted.lead_id],
+    )
+  ).rows[0];
+  await event(db, tenant, conversation.conversation_id, actor, "lead_created", {
+    source: "manual",
+    factsSource: "staff_entry",
+    settingsReleaseId: access.published.release_id,
+  });
+  return detail(db, tenant, access, inserted.lead_id);
 }
 export async function updateLead(actor, company, id, input) {
   uuid(id);

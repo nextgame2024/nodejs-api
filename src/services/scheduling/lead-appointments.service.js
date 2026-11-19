@@ -1,7 +1,10 @@
 import { transaction, directory } from "../leads/assistant-settings.service.js";
-import { requiredLead } from "../leads/lead-records.service.js";
+import {
+  requiredLead,
+  createLeadInTransaction,
+} from "../leads/lead-records.service.js";
 import { fail } from "../leads/assistant-settings.contracts.js";
-import { hash } from "../leads/lead-records.contracts.js";
+import { hash, text } from "../leads/lead-records.contracts.js";
 import {
   date,
   zone,
@@ -12,7 +15,7 @@ import {
 } from "./lead-appointments.contracts.js";
 import { localParts, filterSlots } from "./lead-appointments.slots.js";
 const s = "sophia_runtime";
-const fields = `a.appointment_id AS id,a.lead_id AS "leadId",l.display_name AS "leadName",a.advisor_identity AS "advisorId",a.starts_at AS "startsAt",a.ends_at AS "endsAt",a.customer_timezone AS timezone,a.description,a.status,a.version,a.calendar_revision AS "calendarRevision"`;
+const fields = `a.appointment_id AS id,a.lead_id AS "leadId",l.display_name AS "leadName",l.email AS "leadEmail",a.advisor_identity AS "advisorId",a.starts_at AS "startsAt",a.ends_at AS "endsAt",a.customer_timezone AS timezone,a.description,a.status,a.version,a.calendar_revision AS "calendarRevision"`;
 const calendarFields = `advisor_identity AS "advisorId",timezone,slot_minutes AS "slotMinutes",lead_time_minutes AS "leadTimeMinutes",booking_window_days AS "bookingWindowDays",weekly_hours AS "weeklyHours",closed_dates AS "closedDates",revision`;
 async function run(actor, company, fn) {
   return transaction(
@@ -80,6 +83,7 @@ export async function bookingLead(actor, company, id) {
       lead: {
         leadId: l.lead_id,
         displayName: l.display_name,
+        email: l.email,
         assignedTo: l.assigned_to_identity,
         stage: l.stage,
       },
@@ -217,6 +221,29 @@ export async function listAppointments(actor, company, query) {
         [...args, q.limit, (q.page - 1) * q.limit],
       )
     ).rows[0];
+    // Only enrich already-authorized rows; do not expose unrelated lead assessments.
+    if (
+      row.items.length &&
+      (
+        await db.query(
+          "SELECT to_regclass('sophia_runtime.assistant_lead_assessments') IS NOT NULL AS ready",
+        )
+      ).rows[0].ready
+    ) {
+      const assessments = (
+        await db.query(
+          `SELECT lead_id,assessment FROM ${s}.assistant_lead_assessments WHERE customer_id=$1 AND lead_id=ANY($2::uuid[])`,
+          [tenant, row.items.map((item) => item.leadId)],
+        )
+      ).rows;
+      const byLead = new Map(
+        assessments.map((item) => [item.lead_id, item.assessment]),
+      );
+      row.items = row.items.map((item) => ({
+        ...item,
+        assessment: byLead.get(item.leadId) ?? null,
+      }));
+    }
     return { ...row, page: q.page, limit: q.limit };
   });
 }
@@ -495,5 +522,40 @@ export async function mutateAppointment(actor, company, action, id, input) {
       await requireAdvisor(db, company, access, b.advisorId);
     }
     return changeAuthorizedAppointment(db, tenant, actor, lead, action, id, b);
+  });
+}
+
+// Creates the contact and appointment atomically: slot conflicts roll back both.
+export async function bookNewContactAppointment(actor, company, input) {
+  const requestKey = uuid(input?.requestKey);
+  const displayName = text(
+    input?.contact?.displayName,
+    "displayName",
+    160,
+    true,
+  );
+  const email = text(input?.contact?.email, "email", 320, true);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    throw fail("Enter a valid email.", 400, ["email"]);
+  const advisorId = uuid(input?.advisorId);
+  return run(actor, company, async (db, tenant, access) => {
+    await requireAdvisor(db, company, access, advisorId);
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+      tenant + ":new-contact-appointment:" + requestKey,
+    ]);
+    const result = await createLeadInTransaction(
+      db,
+      tenant,
+      access,
+      actor,
+      company,
+      {
+        requestKey,
+        lead: { displayName, email, assignedTo: advisorId },
+      },
+    );
+    const b = bookingInput({ ...input, leadId: result.lead.leadId }, "book");
+    const lead = await requiredLead(db, tenant, access, b.leadId, true);
+    return bookAuthorizedAppointment(db, tenant, actor, lead, b);
   });
 }
