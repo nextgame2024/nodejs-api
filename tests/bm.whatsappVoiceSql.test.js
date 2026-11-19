@@ -555,7 +555,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(
       (
         await pool.query(
-          "SELECT count(*)::int n FROM sophia_runtime.assistant_message_outbox WHERE body='Cancelled answer' AND state='cancelled'",
+          "SELECT count(*)::int n FROM sophia_runtime.assistant_message_outbox WHERE body='Cancelled answer' AND format='audio' AND state='cancelled'",
         )
       ).rows[0].n,
     ).toBe(1);
@@ -711,7 +711,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
     ).rows;
     expect(row.map((r) => r.body)).toEqual(["Newer question"]);
   });
-  test("persists maximum-length text plus the AI voice disclosure after acceptance", async () => {
+  test("does not repeat an already-delivered voice disclosure on later replies", async () => {
     await takeover();
     await queue(randomUUID(), "X".repeat(4000));
     await worker.dispatchOne(full, async () => ({
@@ -723,8 +723,94 @@ suite("WhatsApp replies on PostgreSQL", () => {
         "SELECT body FROM sophia_runtime.assistant_lead_events WHERE metadata->>'messageId'='max-length-text'",
       )
     ).rows[0];
-    expect(row.body.length).toBeGreaterThan(4000);
+    expect(row.body.length).toBe(4000);
+    const notices = (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND format='text' AND state IN ('accepted','delivered','read') AND body LIKE '%generada por IA.'",
+        [lead.leadId],
+      )
+    ).rows[0].n;
+    expect(notices).toBe(1);
     expect(row.body.length).toBeLessThanOrEqual(4096);
+  });
+  test("automatic contact acknowledgements match voice/text and voice failures recover as text", async () => {
+    process.env.WHATSAPP_AUTOMATION_ENABLED = "true";
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_reply_bindings SET mode='automatic'",
+    );
+    const d = await api.getLead(owner, company, lead.leadId);
+    await api.changeOwnership(owner, company, lead.leadId, {
+      expectedVersion: d.lead.ownershipVersion,
+      ownership: "bot",
+    });
+    await inbound("spoken-contact", {
+      messageType: "audio",
+      body: "",
+      media: { id: "contact-audio" },
+    });
+    await voice.transcribeOne(full, {
+      download: async () => ({
+        bytes: Buffer.alloc(10),
+        mimeType: "audio/ogg",
+      }),
+      decode: async () => Buffer.alloc(4800, 1),
+      transcribe: async () => "José Muñoz, jose@example.com",
+    });
+    const before = jest.fn();
+    await worker.dispatchOne(full, before);
+    expect(before).not.toHaveBeenCalled();
+    await voice.synthesizeOne(full, synth);
+    const sent = [];
+    await worker.dispatchOne(
+      full,
+      async (p, m) => {
+        sent.push(m);
+        return { kind: "accepted", providerMessageId: "contact-audio-reply" };
+      },
+      { prepareAudio: async () => "contact-media" },
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0].mediaId).toBe("contact-media");
+    expect(sent[0].body).toContain("guardé tus datos");
+    await worker.dispatchOne(full, before);
+    expect(before).not.toHaveBeenCalled();
+    await inbound("typed-contact", { body: "José Muñoz, jose@example.com" });
+    await worker.dispatchOne(full, async (p, m) => {
+      sent.push(m);
+      return { kind: "accepted", providerMessageId: "contact-text-reply" };
+    });
+    expect(sent).toHaveLength(2);
+    expect(sent[1].mediaId).toBeUndefined();
+    expect((await voice.synthesizeOne(full, synth)).processed).toBe(false);
+    // Persist a customer instruction, then a later text-only contact response.
+    await inbound("voice-preference", { body: "Please always reply by voice" });
+    await inbound("typed-contact-voice-preferred", {
+      body: "José Muñoz, jose@example.com",
+    });
+    await voice.synthesizeOne(full, {
+      ...synth,
+      synthesize: async () => {
+        throw Error("synthesis unavailable");
+      },
+    });
+    await worker.dispatchOne(full, async (p, m) => {
+      sent.push(m);
+      return { kind: "accepted", providerMessageId: "contact-fallback" };
+    });
+    expect(sent).toHaveLength(3);
+    expect(sent[2].mediaId).toBeUndefined();
+    expect(sent[2].body).toContain("guardé tus datos");
+    await inbound("voice-preference-off", { body: "Please respond by text" });
+    await inbound("typed-contact-again", {
+      body: "José Muñoz, jose@example.com",
+    });
+    expect((await voice.synthesizeOne(full, synth)).processed).toBe(false);
+    await worker.dispatchOne(full, async (p, m) => {
+      sent.push(m);
+      return { kind: "accepted", providerMessageId: "contact-text-again" };
+    });
+    expect(sent).toHaveLength(4);
+    expect(sent[3].mediaId).toBeUndefined();
   });
   test("spoken opt out pauses automation", async () => {
     await inbound("voice-stop", {

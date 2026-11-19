@@ -6,7 +6,7 @@ export async function failJob(db, profile, job, state, code) {
     `UPDATE ${s}.assistant_voice_jobs SET state=$3,failure_code=$4,completed_at=now() WHERE customer_id=$1 AND voice_job_id=$2`,
     [profile.customerId, job.voice_job_id, state, code],
   );
-  if (job.kind === "synthesize")
+  if (job.kind === "synthesize") {
     await db.query(
       `UPDATE ${s}.assistant_message_outbox SET state=$3,safe_code=$4,updated_at=now() WHERE customer_id=$1 AND message_id=$2 AND state IN ('preparing','queued')`,
       [
@@ -16,7 +16,9 @@ export async function failJob(db, profile, job, state, code) {
         code,
       ],
     );
-  else {
+    if (state === "failed")
+      await releaseVoiceFallback(db, profile.customerId, job.message_id);
+  } else {
     const latest = (
       await db.query(latestSql, [profile.customerId, job.conversation_id])
     ).rows[0];
@@ -61,4 +63,12 @@ export async function failJob(db, profile, job, state, code) {
       }
     }
   }
+}
+
+export async function releaseVoiceFallback(db, tenant, audioId) {
+  await db.query(
+    `UPDATE ${s}.assistant_message_outbox p SET state='queued',safe_code=NULL,updated_at=now()
+    FROM ${s}.assistant_message_outbox a WHERE a.customer_id=$1 AND a.message_id=$2 AND p.customer_id=a.customer_id AND p.message_id=a.parent_message_id AND p.state='preparing' AND p.safe_code='voice_text_fallback'`,
+    [tenant, audioId],
+  );
 }

@@ -1,3 +1,4 @@
+import { releaseVoiceFallback } from "./voice-recovery.js";
 import { firstContactRequest } from "./customer-contact.js";
 import { needsTeamAnswer } from "./human-assistance.js";
 import {
@@ -556,7 +557,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     const voice = await voiceInstalled(db);
     const candidate = (
       await db.query(
-        `SELECT o.* FROM ${s}.assistant_message_outbox o WHERE customer_id=$1 AND channel_id=$2 AND state='queued' AND available_at<=now() ${voice ? `AND (format='text' OR (${voiceEnabled(profile) ? "true" : "false"} AND EXISTS(SELECT 1 FROM sophia_runtime.assistant_message_outbox parent WHERE parent.customer_id=o.customer_id AND parent.message_id=o.parent_message_id AND parent.state IN ('accepted','delivered','read'))))` : ""} ORDER BY created_at LIMIT 1`,
+        `SELECT o.* FROM ${s}.assistant_message_outbox o WHERE customer_id=$1 AND channel_id=$2 AND state='queued' AND available_at<=now() ${voice ? `AND (format='text' OR (${voiceEnabled(profile) ? "true" : "false"} AND EXISTS(SELECT 1 FROM sophia_runtime.assistant_message_outbox parent WHERE parent.customer_id=o.customer_id AND parent.message_id=o.parent_message_id AND (parent.state IN ('accepted','delivered','read') OR (parent.state='preparing' AND parent.safe_code='voice_text_fallback')))))` : ""} ORDER BY created_at LIMIT 1`,
         [profile.customerId, channel.channel_id],
       )
     ).rows[0];
@@ -590,6 +591,36 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
       ? c.ownership === "human" && c.human_owner_identity === m.actor_identity
       : process.env.WHATSAPP_AUTOMATION_ENABLED === "true" &&
         c.ownership === "bot";
+    if (m.request_hash?.startsWith("contact_ack:")) {
+      const [, eventId, revision] = m.request_hash.split(":");
+      const eligible = (
+        await db.query(
+          `SELECT b.agent_release_id FROM ${s}.assistant_reply_bindings b
+        WHERE b.customer_id=$1 AND b.channel_id=$2 AND b.mode='automatic' AND b.revision=$3
+        AND $4::bigint=(SELECT event_id FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$5 AND kind='inbound_message'
+          ORDER BY COALESCE((metadata->>'sentAt')::timestamptz,created_at) DESC,COALESCE((metadata->>'transcriptOf')::bigint,event_id) DESC,event_id DESC LIMIT 1)`,
+          [
+            profile.customerId,
+            m.channel_id,
+            Number(revision),
+            eventId,
+            m.conversation_id,
+          ],
+        )
+      ).rows[0];
+      permitted = permitted && !!eligible;
+      if (permitted)
+        try {
+          await currentRelease(
+            db,
+            profile.customerId,
+            eligible.agent_release_id,
+          );
+        } catch (error) {
+          if (error.status !== 409) throw error;
+          permitted = false;
+        }
+    }
     if (m.voice_failure_job_id) {
       const j = (
         await db.query(
@@ -798,6 +829,7 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
           `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='configuration_required' WHERE customer_id=$1 AND message_id=$2`,
           [profile.customerId, m.message_id],
         );
+        await releaseVoiceFallback(db, profile.customerId, m.message_id);
         return null;
       }
     }
@@ -857,6 +889,13 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
           result.kind === "retry" ? result.seconds : 0,
         ],
       );
+      if (m.format === "audio" && state === "failed")
+        await releaseVoiceFallback(db, profile.customerId, m.message_id);
+      if (m.format === "audio" && state === "accepted")
+        await db.query(
+          `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='voice_delivered' WHERE customer_id=$1 AND message_id=$2 AND state='preparing' AND safe_code='voice_text_fallback'`,
+          [profile.customerId, m.parent_message_id],
+        );
       if (state === "accepted")
         await recordAccepted(
           db,

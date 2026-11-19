@@ -1,3 +1,4 @@
+import { acknowledgeContact } from "./contact-acknowledgement.js";
 import { captureCustomerContact } from "./customer-contact.js";
 import { requestedLanguage } from "./customer-preferences.js";
 import { handleAppointmentConfirmation } from "../scheduling/whatsapp-appointment-booking.service.js";
@@ -268,7 +269,18 @@ export async function transcribeOne(
             c,
             transcript,
           ));
-        if (!handled)
+        if (
+          !handled &&
+          !(await acknowledgeContact(
+            db,
+            profile,
+            channel,
+            lead,
+            c,
+            transcript,
+            e.event_id,
+          ))
+        )
           await enqueueAutomatic(db, profile, job.lead_id, e.event_id, false);
       }
       await db.query(

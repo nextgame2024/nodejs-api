@@ -609,6 +609,39 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(second.answer).toContain("AUD 100");
     expect(second.usage.engagement.contactRequested).toBeUndefined();
     expect(second.answer).not.toContain("nombre y correo");
+    await inbound("contact-supplied", {
+      senderId,
+      body: "José Muñoz, jose@example.com",
+    });
+    const contactLead = (
+      await pool.query(
+        "SELECT display_name,email FROM sophia_runtime.assistant_leads WHERE lead_id=$1",
+        [first.lead_id],
+      )
+    ).rows[0];
+    expect(contactLead).toMatchObject({
+      display_name: "José Muñoz",
+      email: "jose@example.com",
+    });
+    const ack = (
+      await pool.query(
+        "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND request_hash LIKE 'contact_ack:%'",
+        [first.lead_id],
+      )
+    ).rows[0];
+    expect(ack.body).toContain("guardé tus datos");
+    const reasoner = jest.fn(approved);
+    await worker.generateOne(full, reasoner);
+    expect(reasoner).not.toHaveBeenCalled();
+    const sent = [];
+    // Earlier tests can leave other queued messages; target acknowledgement is
+    // checked directly and the normal dispatch validates its latest-event guard.
+    for (let i = 0; i < 4; i++)
+      await worker.dispatchOne(full, async (p, m) => {
+        sent.push(m.body);
+        return { kind: "accepted", providerMessageId: randomUUID() };
+      });
+    expect(sent.some((body) => body.includes("guardé tus datos"))).toBe(true);
     const d = await api.getLead(owner, company, first.lead_id);
     await api.changeOwnership(owner, company, first.lead_id, {
       expectedVersion: d.lead.ownershipVersion,

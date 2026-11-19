@@ -49,3 +49,23 @@ test("booking email accepts addresses and rejects malformed or oversized input",
   ])
     expect(bookingEmail(text)).toBeNull();
 });
+
+test("contact replies accept name/email in either order without swallowing unrelated questions", () => {
+  for (const text of [
+    "José Muñoz, jose@example.com",
+    "jose@example.com\nJosé Muñoz",
+    "My name is José Muñoz and my email is jose@example.com",
+    "Nombre: José Muñoz\nCorreo: jose@example.com",
+  ]) {
+    expect(bookingName(text)).toBe("José Muñoz");
+    expect(bookingEmail(text)).toBe("jose@example.com");
+  }
+  for (const text of [
+    "What is the price? jose@example.com",
+    "I need help jose@example.com",
+    "Please book a meeting jose@example.com",
+  ]) {
+    expect(bookingName(text)).toBeNull();
+    expect(bookingEmail(text)).toBeNull();
+  }
+});

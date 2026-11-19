@@ -36,27 +36,44 @@ export function requestedLanguage(text) {
     portuguese: "pt",
   }[matches[0][1]];
 }
-export function bookingName(text) {
-  const match =
+// Parse contact-only replies, never treat a question or business request as a name.
+export function contactDetails(text) {
+  const value = String(text).trim();
+  if (!value || value.length > 600 || /[?¿<>]/u.test(value)) return null;
+  const addresses = value.match(/[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+/gu) || [];
+  if (addresses.length > 1) return null;
+  const email = addresses[0]?.replace(/[.!]+$/, "") || null;
+  if (email && email.length > 320) return null;
+  let rest = email ? value.replace(addresses[0], "") : value;
+  rest = rest
+    .replace(
+      /\b(?:and my email is|my email is|my email|email address|email|e-mail|correo electrónico|correo|meu email)\s*:?\s*/giu,
+      " ",
+    )
+    .replace(/^[\s,;:.]+|[\s,;:.]+$/gu, "");
+  const explicit =
     /^(?:name|nombre|nome|my name is|me llamo|mi nombre es|meu nome é)\s*:?\s+(.+)$/iu.exec(
-      text.trim(),
+      rest,
     );
-  const name = match?.[1]
-    ?.split(/[,;\n]|\s+(?:and my email is|email|correo|e-mail)\s*:?\s+/iu)[0]
-    ?.trim();
-  return name &&
-    name.length <= 160 &&
-    /^[\p{L}\p{M}][\p{L}\p{M} .’'\-]*$/u.test(name)
-    ? name
-    : null;
+  let name = explicit?.[1] || (email ? rest : "");
+  name = name.replace(/^[\s,;:.]+|[\s,;:.]+$/gu, "").trim();
+  if (
+    name &&
+    ((!explicit && name.length < 2) ||
+      !/^[\p{L}\p{M}][\p{L}\p{M} .’'\-]*$/u.test(name) ||
+      name.length > 160 ||
+      name.split(/\s+/).length > 8 ||
+      /\b(?:want|need|help|price|pricing|book|booking|thanks|thank|don't|not|quiero|necesito|precio|gracias|obrigado)\b/iu.test(
+        name,
+      ))
+  )
+    return null;
+  if (!name && !email) return null;
+  return { name: name || null, email };
 }
-
+export function bookingName(text) {
+  return contactDetails(text)?.name || null;
+}
 export function bookingEmail(text) {
-  const value = text.trim();
-  const email = bookingName(value)
-    ? value.match(/[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+/u)?.[0] || ""
-    : value.replace(/^(?:email|e-mail|correo)\s*:\s*/i, "");
-  return email.length <= 320 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email)
-    ? email
-    : null;
+  return contactDetails(text)?.email || null;
 }

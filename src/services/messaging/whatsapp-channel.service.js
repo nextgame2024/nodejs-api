@@ -1,3 +1,4 @@
+import { acknowledgeContact } from "./contact-acknowledgement.js";
 import { captureCustomerContact } from "./customer-contact.js";
 import { requestedLanguage } from "./customer-preferences.js";
 import { recordFollowUpConsent } from "./follow-up-store.js";
@@ -396,7 +397,17 @@ async function applyMessage(db, profile, channel, company, e) {
     !stop &&
     e.messageType === "text" &&
     !e.truncated &&
-    !bookingHandled
+    !bookingHandled &&
+    !(await acknowledgeContact(
+      db,
+      profile,
+      channel,
+      lead,
+      conversation,
+      e.body,
+      recorded.rows[0].event_id,
+      isNew,
+    ))
   )
     await enqueueAutomatic(
       db,
