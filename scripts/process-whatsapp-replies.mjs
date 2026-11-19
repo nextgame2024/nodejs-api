@@ -5,6 +5,7 @@ import { channelProfiles } from "../src/services/messaging/channel-profiles.js";
 import { processChannelEvent } from "../src/services/messaging/whatsapp-channel.service.js";
 import {
   generateOne,
+  queueFollowUpOne,
   dispatchOne,
 } from "../src/services/messaging/reply-worker.js";
 import { sendText } from "../src/adapters/whatsapp/outbound.js";
@@ -61,6 +62,7 @@ try {
     ...(process.env.WHATSAPP_INBOUND_WORKER_ENABLED === "true"
       ? [lane("inbound", (p) => processChannelEvent(p))]
       : []),
+    lane("follow_up", (p) => queueFollowUpOne(p), 60000),
     lane("generation", (p) => generateOne(p, generateChannelAnswer)),
     lane("voice_expiry", (p) => expireVoiceAssets(p), 60000),
     lane("dispatch", (p) =>

@@ -61,6 +61,8 @@ export function channelProfiles(env = process.env) {
         p.reasoningCredentialRef.length <= 160
           ? p.reasoningCredentialRef
           : null,
+      qualificationEnabled: p.qualificationEnabled === true,
+      followUpEnabled: p.followUpEnabled === true,
       voiceEnabled: p.voiceEnabled === true,
       mediaKeyEnv: /^WHATSAPP_[A-Z0-9_]+$/.test(p.mediaKeyEnv ?? "")
         ? p.mediaKeyEnv

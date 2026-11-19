@@ -1,4 +1,32 @@
 {
+  "whatsappDiscoveryAndFollowUp": {
+    "updatedOn": "2026-11-19",
+    "status": "migration_and_calendar_published_deployment_pending",
+    "scope": "Sophia Ai own-company profile only; existing test transport, real-number activation separate",
+    "implemented": [
+      "Bounded public conversation context and granted knowledge fallback for discovery",
+      "Customer-quoted initial assessment, deterministic readiness priority and staff follow-up controls",
+      "Explicit one-time FOLLOW UP consent, two-hour reminder through guarded outbox; no outside-window templates",
+      "Existing confirmed booking boundary with owner-approved Brisbane calendar hours"
+    ],
+    "verification": [
+      "22 disposable PostgreSQL reply/booking/discovery/reminder tests passed",
+      "13 focused discovery/inbound/worker tests passed",
+      "7 provider-neutral reasoner tests passed",
+      "18 ChromeHeadless inbox tests passed",
+      "Angular production build and TypeScript app check passed; existing build warnings remain",
+      "Desktop 1280 and mobile 390, light/dark CDP layout checks passed with synthetic backend responses",
+      "38 protected real-estate regression tests passed",
+      "Migration135 applied to production ledger; tables retain forced tenant RLS",
+      "Owner-approved advisor calendar published under scoped runtime role with audit; 60-minute lead time and 30-day horizon",
+      "Two synthetic requests against configured provider answered from valid approved sources and classified booking date correctly; no WhatsApp send"
+    ],
+    "pending": [
+      "Profile flags and API/worker/frontend deployment verification",
+      "Owner phone end-to-end validation after deployment",
+      "Real-number Coexistence activation remains pending"
+    ]
+  },
   "whatsappEmbeddedSignupAuthorization": {
     "updatedOn": "2026-11-19",
     "status": "authorization_prototype_locally_verified_activation_not_implemented",

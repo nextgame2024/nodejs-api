@@ -1,3 +1,4 @@
+import { recordFollowUpConsent } from "./follow-up-store.js";
 import { voiceEnabled, enqueueVoiceInbound } from "./voice-store.js";
 import { reconcileDelivery } from "./delivery-store.js";
 import {
@@ -323,6 +324,7 @@ async function applyMessage(db, profile, channel, company, e) {
       contact.lead_id,
       recorded.rows[0].event_id,
     );
+  if (isCurrent) await recordFollowUpConsent(db,profile,channel,lead,conversation,recorded.rows[0].event_id,echo ? {...e,body:''} : e);
   if (processVoice) {
     const queued = await enqueueVoiceInbound(
       db,

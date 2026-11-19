@@ -1,3 +1,10 @@
+import { followUpEnabled, followUpCopy } from "./follow-up-store.js";
+import {
+  publicConversation,
+  readDiscovery,
+  saveDiscovery,
+  discoveryInstalled,
+} from "../leads/lead-discovery.service.js";
 import {
   queueVoicePair,
   voiceInstalled,
@@ -146,6 +153,17 @@ export async function generateOne(profile, reasoner) {
       lead,
       c,
     );
+    const transcript = await publicConversation(
+      db,
+      profile.customerId,
+      c.conversation_id,
+      e.event_id,
+    );
+    const discovery =
+      profile.qualificationEnabled === true && (await discoveryInstalled(db));
+    const priorDiscovery = discovery
+      ? await readDiscovery(db, profile.customerId, lead.lead_id)
+      : null;
     const config = release.manifest.configuration;
     const words = [
       ...new Set(e.body.toLowerCase().match(/[\p{L}\p{N}]{3,40}/gu) ?? []),
@@ -155,13 +173,14 @@ export async function generateOne(profile, reasoner) {
         `SELECT x.knowledge_snapshot_id AS id,d.title,left(d.document_text,3000) AS content FROM ${s}.knowledge_snapshots x JOIN ${s}.knowledge_source_revisions r ON r.knowledge_revision_id=x.knowledge_revision_id AND r.customer_id=x.customer_id JOIN ${s}.knowledge_sources k ON k.knowledge_source_id=r.knowledge_source_id AND k.customer_id=x.customer_id JOIN ${s}.knowledge_index_documents d ON d.knowledge_snapshot_id=x.knowledge_snapshot_id AND d.customer_id=x.customer_id
   WHERE x.customer_id=$1 AND x.status='published' AND r.status='published' AND r.ingestion_status='ready' AND k.status='active' AND r.knowledge_revision_id=ANY($2::uuid[])
   AND EXISTS(SELECT 1 FROM ${s}.knowledge_snapshot_grants g JOIN ${s}.capability_bindings b ON b.capability_binding_id=g.capability_binding_id WHERE g.customer_id=x.customer_id AND g.knowledge_snapshot_id=x.knowledge_snapshot_id AND b.enabled AND b.business_profile_version_id=$3 AND g.capability_binding_id=ANY($4::uuid[]))
-  AND d.search_vector @@ websearch_to_tsquery('simple',$5) ORDER BY ts_rank_cd(d.search_vector,websearch_to_tsquery('simple',$5)) DESC,x.knowledge_snapshot_id LIMIT 5`,
+  AND ($6::boolean OR d.search_vector @@ websearch_to_tsquery('simple',$5)) ORDER BY ts_rank_cd(d.search_vector,websearch_to_tsquery('simple',$5)) DESC,x.knowledge_snapshot_id LIMIT 5`,
         [
           profile.customerId,
           config.knowledgeRevisionIds,
           config.businessProfileVersionId,
           config.capabilityBindingIds,
           words.join(" OR "),
+          discovery,
         ],
       )
     ).rows;
@@ -184,6 +203,13 @@ export async function generateOne(profile, reasoner) {
       lease,
       instructions: [release.content, release.tone].filter(Boolean).join("\n"),
       question: e.body,
+      transcript,
+      discovery: discovery
+        ? {
+            facts: priorDiscovery?.facts ?? {},
+            followUpEnabled: followUpEnabled(profile),
+          }
+        : null,
       language: lead.language,
       sources,
       booking: booking
@@ -207,15 +233,19 @@ export async function generateOne(profile, reasoner) {
       language: task.language,
       sources: task.sources,
       bookingContext: task.booking,
+      transcript: task.transcript,
+      discoveryContext: task.discovery,
       signal: AbortSignal.timeout(30000),
     });
   } catch (error) {
-    console.error(JSON.stringify({
-      event: "whatsapp_generation_failed",
-      profileId: profile.id,
-      jobId: task.job.job_id,
-      code: workerFailureCode(error),
-    }));
+    console.error(
+      JSON.stringify({
+        event: "whatsapp_generation_failed",
+        profileId: profile.id,
+        jobId: task.job.job_id,
+        code: workerFailureCode(error),
+      }),
+    );
     result = { handoff: true, answer: "", sourceIds: [], failed: true };
   }
   result ??= { handoff: true, failed: true };
@@ -333,6 +363,16 @@ export async function generateOne(profile, reasoner) {
         appointmentOfferId = offered?.appointmentOfferId ?? null;
         appointmentChangeRequestId =
           offered?.appointmentChangeRequestId ?? null;
+      }
+      if (accepted && task.discovery && !job.requested_by_identity) {
+        await saveDiscovery(
+          db,
+          profile.customerId,
+          lead,
+          job,
+          result.discoveryFacts,
+          task.transcript,
+        );
       }
       await db.query(
         `UPDATE ${s}.assistant_reply_jobs SET state=$3,answer=$4,sources=$5::jsonb,usage=$6::jsonb,response_kind=$7,completed_at=now() WHERE customer_id=$1 AND job_id=$2`,
@@ -463,11 +503,41 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
         j?.state === "failed" &&
         j.source_event_id === latest?.event_id;
     }
-    if (m.job_id) {
+    let validationJobId = m.job_id;
+    if (m.follow_up_request_id) {
+      const request = (
+        await db.query(
+          `SELECT state,ownership_version,reply_job_id FROM ${s}.assistant_follow_up_requests WHERE customer_id=$1 AND request_id=$2`,
+          [profile.customerId, m.follow_up_request_id],
+        )
+      ).rows[0];
+      validationJobId = request?.reply_job_id;
+      permitted =
+        permitted &&
+        !!validationJobId &&
+        followUpEnabled(profile) &&
+        request?.state === "queued" &&
+        request.ownership_version === c.ownership_version;
+      if (
+        permitted &&
+        (
+          await db.query(
+            "SELECT to_regclass('sophia_runtime.lead_appointments') IS NOT NULL AS installed",
+          )
+        ).rows[0].installed
+      )
+        permitted = !(
+          await db.query(
+            `SELECT 1 FROM ${s}.lead_appointments WHERE customer_id=$1 AND lead_id=$2 AND status='confirmed' AND starts_at>now() LIMIT 1`,
+            [profile.customerId, m.lead_id],
+          )
+        ).rowCount;
+    }
+    if (validationJobId) {
       const j = (
         await db.query(
           `SELECT j.state,b.mode,j.agent_release_id,j.sources,j.response_kind,j.binding_revision,b.revision FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id) WHERE j.customer_id=$1 AND j.job_id=$2`,
-          [profile.customerId, m.job_id],
+          [profile.customerId, validationJobId],
         )
       ).rows[0];
       permitted =
@@ -667,4 +737,96 @@ export async function dispatchOne(profile, send, { prepareAudio } = {}) {
     { requireEnabled: false },
   );
   return { processed: true };
+}
+
+// Schedule through the same outbox and dispatch checks as ordinary automatic replies.
+export async function queueFollowUpOne(profile) {
+  if (!followUpEnabled(profile) || !canDispatch(profile))
+    return { processed: false };
+  return scoped(profile, async (db, channel) => {
+    if (!(await discoveryInstalled(db))) return { processed: false };
+    const candidate = (
+      await db.query(
+        `SELECT * FROM ${s}.assistant_follow_up_requests WHERE customer_id=$1 AND channel_id=$2 AND state='scheduled' AND due_at<=now() ORDER BY due_at LIMIT 1`,
+        [profile.customerId, channel.channel_id],
+      )
+    ).rows[0];
+    if (!candidate) return { processed: false };
+    const lead = (
+      await db.query(
+        `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2 FOR UPDATE`,
+        [profile.customerId, candidate.lead_id],
+      )
+    ).rows[0];
+    const c = (
+      await db.query(
+        `SELECT * FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND conversation_id=$2 FOR UPDATE`,
+        [profile.customerId, candidate.conversation_id],
+      )
+    ).rows[0];
+    const request = (
+      await db.query(
+        `SELECT * FROM ${s}.assistant_follow_up_requests WHERE customer_id=$1 AND request_id=$2 AND state='scheduled' FOR UPDATE SKIP LOCKED`,
+        [profile.customerId, candidate.request_id],
+      )
+    ).rows[0];
+    if (!request) return { processed: false };
+    const contact = (
+      await db.query(
+        `SELECT *,last_inbound_at>now()-interval '24 hours' AND last_inbound_at<=now() AS window_open FROM ${s}.assistant_channel_contacts WHERE customer_id=$1 AND lead_id=$2`,
+        [profile.customerId, lead.lead_id],
+      )
+    ).rows[0];
+    const job = (
+      await db.query(
+        `SELECT j.job_id FROM ${s}.assistant_reply_jobs j JOIN ${s}.assistant_reply_bindings b USING(customer_id,channel_id,agent_release_id)
+      WHERE j.customer_id=$1 AND j.lead_id=$2 AND j.source_event_id=$3 AND j.state='ready' AND j.requested_by_identity IS NULL
+      AND b.mode='automatic' AND j.binding_revision=b.revision AND j.ownership_version=$4 LIMIT 1`,
+        [
+          profile.customerId,
+          lead.lead_id,
+          request.consent_event_id,
+          c.ownership_version,
+        ],
+      )
+    ).rows[0];
+    const assessment = await readDiscovery(
+      db,
+      profile.customerId,
+      lead.lead_id,
+    );
+    const allowed =
+      lead.stage !== "closed" &&
+      c.ownership === "bot" &&
+      c.ownership_version === request.ownership_version &&
+      contact?.window_open &&
+      !contact.opted_out &&
+      job &&
+      (!assessment || assessment.followUpStatus === "pending");
+    if (allowed)
+      await db.query(
+        `INSERT INTO ${s}.assistant_message_outbox(customer_id,channel_id,lead_id,conversation_id,ownership_version,body,request_key,request_hash,follow_up_request_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$7) ON CONFLICT DO NOTHING`,
+        [
+          profile.customerId,
+          channel.channel_id,
+          lead.lead_id,
+          c.conversation_id,
+          c.ownership_version,
+          followUpCopy(lead.language),
+          request.request_id,
+          hash({ followUp: request.request_id }),
+        ],
+      );
+    await db.query(
+      `UPDATE ${s}.assistant_follow_up_requests SET state=$3,reply_job_id=$4 WHERE customer_id=$1 AND request_id=$2`,
+      [
+        profile.customerId,
+        request.request_id,
+        allowed ? "queued" : "cancelled",
+        job?.job_id ?? null,
+      ],
+    );
+    return { processed: true };
+  });
 }

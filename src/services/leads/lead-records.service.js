@@ -1,3 +1,4 @@
+import { readDiscovery } from "./lead-discovery.service.js";
 import {
   replyState,
   automationTarget,
@@ -83,6 +84,7 @@ export async function detail(db, tenant, access, id) {
     lead: row,
     ...(await events(db, tenant, row.conversationId)),
     reply: await replyState(db, tenant, access, id),
+    discovery: await readDiscovery(db, tenant, id),
   };
 }
 async function event(db, tenant, conversationId, actor, kind, metadata = {}) {
@@ -450,6 +452,61 @@ export async function changeOwnership(actor, company, id, input) {
       previousOwnership: c.ownership,
       ownership,
       previousOwner: c.human_owner_identity,
+    });
+    return detail(db, tenant, access, id);
+  });
+}
+
+export async function updateFollowUp(actor, company, id, input) {
+  uuid(id, "leadId");
+  if (
+    !input ||
+    !Number.isInteger(input.expectedRevision) ||
+    input.expectedRevision < 1 ||
+    !["pending", "completed", "dismissed"].includes(input.status)
+  )
+    throw fail("Choose a valid follow-up action.", 400);
+  const due = input.dueAt == null ? null : new Date(input.dueAt);
+  if (
+    due &&
+    (!Number.isFinite(due.getTime()) ||
+      due.getTime() < Date.now() ||
+      due.getTime() > Date.now() + 366 * 86400000)
+  )
+    throw fail("Choose a future follow-up date within one year.", 400);
+  return run(actor, company, async (db, tenant, access) => {
+    const lead = await requiredLead(db, tenant, access, id, true);
+    if (lead.stage === "closed" && input.status === "pending")
+      throw fail("Reopen the lead before scheduling follow-up.", 409);
+    const current = await readDiscovery(db, tenant, id);
+    if (!current || current.revision !== input.expectedRevision)
+      throw fail("The assessment changed. Refresh and try again.", 409);
+    await db.query(
+      `UPDATE ${s}.assistant_lead_assessments SET follow_up_status=$3,
+      follow_up_due_at=COALESCE($4::timestamptz,follow_up_due_at),follow_up_updated_by=$5,revision=revision+1,updated_at=now()
+      WHERE customer_id=$1 AND lead_id=$2`,
+      [tenant, id, input.status, due?.toISOString() ?? null, actor],
+    );
+    if (input.status !== "pending") {
+      await db.query(
+        `UPDATE ${s}.assistant_follow_up_requests SET state='cancelled' WHERE customer_id=$1 AND lead_id=$2 AND state IN ('scheduled','queued')`,
+        [tenant, id],
+      );
+      await db.query(
+        `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='staff_follow_up_closed',updated_at=now() WHERE customer_id=$1 AND lead_id=$2 AND follow_up_request_id IS NOT NULL AND state='queued'`,
+        [tenant, id],
+      );
+    }
+    const c = (
+      await db.query(
+        `SELECT conversation_id FROM ${s}.assistant_lead_conversations WHERE customer_id=$1 AND lead_id=$2`,
+        [tenant, id],
+      )
+    ).rows[0];
+    await event(db, tenant, c.conversation_id, actor, "lead_updated", {
+      changes: ["followUp"],
+      followUpStatus: input.status,
+      followUpDueAt: due?.toISOString() ?? current.followUpDueAt,
     });
     return detail(db, tenant, access, id);
   });

@@ -160,6 +160,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       "121_lead_appointments.sql",
       "122_whatsapp_appointment_confirmation.sql",
       "123_whatsapp_appointment_changes.sql",
+      "135_lead_discovery_assessments.sql",
     ])
       await pool.query(
         (
@@ -208,8 +209,8 @@ suite("WhatsApp replies on PostgreSQL", () => {
     reasoningCredentialRef: "env://test",
   };
   const full = { ...profile, ready: true, accessToken: "local-test-token" };
-  const inbound = async (id, extra = {}) => {
-    await channel.receiveEvents(full, [
+  const inbound = async (id, extra = {}, activeProfile = full) => {
+    await channel.receiveEvents(activeProfile, [
       {
         key: "message:" + id,
         kind: "inbound",
@@ -222,7 +223,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
         ...extra,
       },
     ]);
-    await channel.processChannelEvent(full);
+    await channel.processChannelEvent(activeProfile);
   };
   const takeover = async () => {
     const d = await api.getLead(owner, company, lead.leadId);
@@ -581,6 +582,222 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rowCount,
     ).toBe(1);
+  });
+  test("discovery remembers public messages, excludes staff notes, persists evidence and protects follow-up access", async () => {
+    const discoveryProfile = { ...full, qualificationEnabled: true };
+    const sender = "61477776666";
+    await inbound("discovery-first", {
+      senderId: sender,
+      body: "We run a plumbing business and lose customer enquiries.",
+    });
+    const reason = jest.fn(async (task) => {
+      const e = task.transcript.at(-1);
+      return {
+        ...(await approved()),
+        discoveryFacts: [
+          { field: "business", quote: "plumbing business", eventId: e.id },
+          { field: "need", quote: "lose customer enquiries", eventId: e.id },
+          { field: "outcome", quote: "invented outcome", eventId: e.id },
+        ],
+      };
+    });
+    await worker.generateOne(discoveryProfile, reason);
+    expect(reason).toHaveBeenCalledTimes(1);
+    expect(reason.mock.calls[0][0].sources[0].id).toBe(snapshot); // short/no-match fallback stays granted
+    const id = (
+      await pool.query(
+        "SELECT lead_id FROM sophia_runtime.assistant_channel_contacts WHERE sender_id=$1",
+        [sender],
+      )
+    ).rows[0].lead_id;
+    let d = await api.getLead(owner, company, id);
+    expect(d.discovery.assessment.score).toBe(45);
+    expect(d.discovery.facts.outcome).toBeUndefined();
+    await api.addNote(owner, company, id, {
+      requestKey: randomUUID(),
+      body: "PRIVATE STAFF NOTE: never send to provider",
+    });
+    await inbound("discovery-second", {
+      senderId: sender,
+      body: "We want faster responses. Next month.",
+    });
+    const secondReason = jest.fn(async (task) => {
+      const e = task.transcript.at(-1);
+      return {
+        ...(await approved()),
+        discoveryFacts: [
+          { field: "outcome", quote: "faster responses", eventId: e.id },
+          { field: "timeframe", quote: "Next month", eventId: e.id },
+        ],
+      };
+    });
+    await worker.generateOne(discoveryProfile, secondReason);
+    const task = secondReason.mock.calls[0][0];
+    expect(task.transcript.map((x) => x.text).join(" ")).toContain(
+      "plumbing business",
+    );
+    expect(JSON.stringify(task)).not.toContain("PRIVATE STAFF NOTE");
+    expect(task.discoveryContext.facts.need.quote).toBe(
+      "lose customer enquiries",
+    );
+    d = await api.getLead(owner, company, id);
+    expect(d.discovery.assessment.score).toBe(80);
+    expect(d.discovery.assessment.priority).toBe("high");
+    const change = {
+      expectedRevision: d.discovery.revision,
+      status: "completed",
+    };
+    await expect(
+      api.updateFollowUp(outsider, otherCompany, id, change),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      api.updateFollowUp(advisor, company, id, change),
+    ).rejects.toMatchObject({ status: 404 });
+    d = await api.updateFollowUp(owner, company, id, change);
+    expect(d.discovery.followUpStatus).toBe("completed");
+    await expect(
+      api.updateFollowUp(owner, company, id, change),
+    ).rejects.toMatchObject({ status: 409 });
+    await inbound("discovery-third", {
+      senderId: sender,
+      body: "We use spreadsheets",
+    });
+    await worker.generateOne(discoveryProfile, async (task) => ({
+      ...(await approved()),
+      discoveryFacts: [
+        {
+          field: "systems",
+          quote: "spreadsheets",
+          eventId: task.transcript.at(-1).id,
+        },
+      ],
+    }));
+    d = await api.getLead(owner, company, id);
+    expect(d.discovery.followUpStatus).toBe("completed");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE sophia_runtime_app");
+      await client.query("SELECT set_config('sophia.tenant_id',$1,true)", [
+        otherTenant,
+      ]);
+      expect(
+        (
+          await client.query(
+            "SELECT * FROM sophia_runtime.assistant_lead_assessments",
+          )
+        ).rows,
+      ).toHaveLength(0);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+  test("explicit one-time reminders are idempotent, cancel on a new message and never send outside the reply window", async () => {
+    const p = { ...full, qualificationEnabled: true, followUpEnabled: true };
+    const sender = "61477775555";
+    await inbound("follow-start", { senderId: sender }, p);
+    await worker.generateOne(p, approved);
+    await inbound("follow-yes", { senderId: sender, body: "yes" }, p);
+    expect(
+      (
+        await pool.query(
+          "SELECT * FROM sophia_runtime.assistant_follow_up_requests",
+        )
+      ).rowCount,
+    ).toBe(0);
+    await worker.generateOne(p, approved);
+    await inbound("follow-consent", { senderId: sender, body: "FOLLOW UP" }, p);
+    await worker.generateOne(p, approved);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute'",
+    );
+    expect(await worker.queueFollowUpOne(p)).toEqual({ processed: true });
+    expect(await worker.queueFollowUpOne(p)).toEqual({ processed: false });
+    expect(
+      (
+        await pool.query(
+          "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE follow_up_request_id IS NOT NULL",
+        )
+      ).rowCount,
+    ).toBe(1);
+    await inbound(
+      "follow-cancel",
+      { senderId: sender, body: "Actually I have another question" },
+      p,
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT state FROM sophia_runtime.assistant_message_outbox WHERE follow_up_request_id IS NOT NULL",
+        )
+      ).rows[0].state,
+    ).toBe("cancelled");
+    await worker.generateOne(p, approved);
+    await inbound(
+      "follow-consent-expiry",
+      { senderId: sender, body: "FOLLOW UP" },
+      p,
+    );
+    await worker.generateOne(p, approved);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute' WHERE state='scheduled'",
+    );
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_channel_contacts SET last_inbound_at=now()-interval '25 hours' WHERE sender_id=$1",
+      [sender],
+    );
+    expect(await worker.queueFollowUpOne(p)).toEqual({ processed: true });
+    expect(
+      (
+        await pool.query(
+          "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE follow_up_request_id IS NOT NULL",
+        )
+      ).rowCount,
+    ).toBe(1);
+    // Dispatch independently rechecks the window after a reminder was queued.
+    await inbound(
+      "follow-consent-dispatch",
+      { senderId: sender, body: "FOLLOW UP" },
+      p,
+    );
+    await worker.generateOne(p, approved);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute' WHERE state='scheduled'",
+    );
+    await worker.queueFollowUpOne(p);
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_message_outbox SET state='cancelled' WHERE state='queued' AND follow_up_request_id IS NULL",
+    );
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_channel_contacts SET last_inbound_at=now()-interval '25 hours' WHERE sender_id=$1",
+      [sender],
+    );
+    const send = jest.fn();
+    await worker.dispatchOne(p, send);
+    expect(send).not.toHaveBeenCalled();
+    expect(
+      (
+        await pool.query(
+          "SELECT * FROM sophia_runtime.assistant_message_outbox WHERE follow_up_request_id IS NOT NULL AND state='queued'",
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
+  test("an eligible explicitly requested reminder is delivered once through the normal transport",async()=>{
+    const p={...full,qualificationEnabled:true,followUpEnabled:true};
+    const sender='61477775555';
+    await inbound('follow-deliver',{senderId:sender,body:'FOLLOW UP'},p);
+    await worker.generateOne(p,approved);
+    await pool.query("UPDATE sophia_runtime.assistant_follow_up_requests SET due_at=now()-interval '1 minute' WHERE state='scheduled'");
+    await worker.queueFollowUpOne(p);
+    await pool.query("UPDATE sophia_runtime.assistant_message_outbox SET state='cancelled' WHERE state='queued' AND follow_up_request_id IS NULL");
+    const send=jest.fn().mockResolvedValue({kind:'accepted',providerMessageId:'wamid.follow-up-test'});
+    await worker.dispatchOne(p,send);
+    expect(send).toHaveBeenCalledTimes(1);
+    await worker.dispatchOne(p,send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect((await pool.query("SELECT state FROM sophia_runtime.assistant_message_outbox WHERE provider_message_id='wamid.follow-up-test'")).rows[0].state).toBe('accepted');
   });
   test("offers assigned-advisor slots and books only after the customer's exact confirmation", async () => {
     process.env.WHATSAPP_BOOKING_ENABLED = "true";

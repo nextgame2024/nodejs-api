@@ -246,4 +246,8 @@ router.post(
   "/public/forms/:token/submissions",
   handle((req) => publicForms.submitPublicForm(req.params.token, req.body)),
 );
+router.put(
+  "/bm/lead-assistant/leads/:leadId/follow-up",
+  handle(req => leads.updateFollowUp(req.user.id, req.user.companyId, req.params.leadId, req.body)),
+);
 export default router;

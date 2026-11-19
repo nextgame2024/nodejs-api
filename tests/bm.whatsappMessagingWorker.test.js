@@ -32,7 +32,7 @@ for (const inboundEnabled of [true, false]) {
       channelProfiles: () => [{ id: 'sophia_ai', ready: true }, { id: 'unready', ready: false }],
     }));
     jest.unstable_mockModule('../src/services/messaging/whatsapp-channel.service.js', () => ({ processChannelEvent: inbound }));
-    jest.unstable_mockModule('../src/services/messaging/reply-worker.js', () => ({ generateOne: generate, dispatchOne: dispatch }));
+    jest.unstable_mockModule('../src/services/messaging/reply-worker.js', () => ({ generateOne: generate, dispatchOne: dispatch, queueFollowUpOne: noop }));
     jest.unstable_mockModule('../src/adapters/whatsapp/outbound.js', () => ({ sendText: noop }));
     jest.unstable_mockModule('../sophia-runtime/dist/providers/reasoning/channel-reasoner.js', () => ({ generateChannelAnswer: noop }));
     jest.unstable_mockModule('../src/services/messaging/voice-worker.js', () => ({ transcribeOne: noop, synthesizeOne: noop, expireVoiceAssets: noop, prepareVoiceMedia: noop }));
