@@ -845,6 +845,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
           action: "availability",
           date: day,
           timezone: "Pacific/Auckland",
+          time: "13:00",
         },
       })),
     ).toEqual({ processed: true });
@@ -864,7 +865,16 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].response_kind,
     ).toBe("appointment");
+    const offeredSlots=(await pool.query("SELECT slots FROM sophia_runtime.lead_appointment_offers WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].slots;
+    expect(new Intl.DateTimeFormat('en-GB',{timeZone:'Pacific/Auckland',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(offeredSlots[0].startsAt))).toBe('13:00');
+    await inbound("language-choice", {senderId:sender,body:"Quiero hablar en español"});
     await inbound("booking-selection", { senderId: sender, body: "1" });
+    const namePrompt=(await pool.query("SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",[bookingLead.lead_id])).rows[0].body;
+    expect(namePrompt).toContain("NOMBRE");
+    expect(namePrompt).not.toMatch(/CONFIRM \d{6}/);
+    expect((await pool.query("SELECT language FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].language).toBe('es');
+    await inbound("booking-name", {senderId:sender,body:"NOMBRE José Muñoz"});
+    expect((await pool.query("SELECT display_name FROM sophia_runtime.assistant_leads WHERE lead_id=$1",[bookingLead.lead_id])).rows[0].display_name).toBe('José Muñoz');
     const confirmation = (
       await pool.query(
         "SELECT body FROM sophia_runtime.assistant_message_outbox WHERE lead_id=$1 AND body ILIKE '%CONFIRM %' ORDER BY created_at DESC LIMIT 1",

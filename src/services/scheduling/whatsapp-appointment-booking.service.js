@@ -1,3 +1,4 @@
+import { bookingName } from "../messaging/customer-preferences.js";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { hash } from "../leads/lead-records.contracts.js";
 import {
@@ -11,6 +12,7 @@ const locale = (language) =>
   ({ es: "es-AU", pt: "pt-BR", en: "en-AU" })[language] ?? "en-AU";
 const messages = {
   en: {
+    askName: 'What name should we use for your appointment? Reply NAME followed by your name. Nothing is booked yet.',
     askDate: "What date would you prefer for your appointment?",
     range: (a, b, zone) =>
       `Please choose a date from ${a} to ${b}. Appointment times use ${zone}.`,
@@ -28,6 +30,7 @@ const messages = {
       `Your appointment is confirmed for ${time} (${zone}). Our team can help if you need to change it.`,
   },
   es: {
+    askName: '¿A qué nombre reservamos la cita? Responde NOMBRE seguido de tu nombre. La cita aún no está reservada.',
     askDate: "¿Qué fecha prefieres para tu cita?",
     range: (a, b, zone) =>
       `Elige una fecha entre ${a} y ${b}. Los horarios de las citas usan ${zone}.`,
@@ -45,6 +48,7 @@ const messages = {
       `Tu cita está confirmada para ${time} (${zone}). Nuestro equipo puede ayudarte si necesitas cambiarla.`,
   },
   pt: {
+    askName: 'Em qual nome devemos reservar? Responda NOME seguido do seu nome. A consulta ainda não está reservada.',
     askDate: "Qual data você prefere para a consulta?",
     range: (a, b, zone) =>
       `Escolha uma data entre ${a} e ${b}. Os horários usam ${zone}.`,
@@ -174,7 +178,10 @@ export async function createAppointmentOffer(
     day,
     customerTimezone,
   );
-  const slots = available.slots.slice(0, 3);
+  const preferred = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(request?.time ?? '');
+  const minute = preferred ? Number(preferred[1])*60+Number(preferred[2]) : null;
+  const slots = [...available.slots].sort((a,b)=> minute === null ? 0 :
+    Math.abs(localParts(a.startsAt,customerTimezone).minute-minute)-Math.abs(localParts(b.startsAt,customerTimezone).minute-minute)).slice(0,3);
   if (!slots.length) return { body: text.none(day, customerTimezone) };
   await db.query(
     `UPDATE ${s}.assistant_message_outbox SET state='cancelled',safe_code='newer_message',updated_at=now()
@@ -337,9 +344,20 @@ export async function handleAppointmentConfirmation(
   }
   const value = body.trim();
   if (offer.status === "offered") {
-    if (!/^[1-3]$/.test(value)) return false;
-    const slot = offer.slots[Number(value) - 1];
+    const name = bookingName(value);
+    const slot = /^[1-3]$/.test(value) ? offer.slots[Number(value)-1] :
+      name && offer.selected_starts_at ? offer.slots.find(x=>Date.parse(x.startsAt)===Date.parse(offer.selected_starts_at)) : null;
     if (!slot) return false;
+    await cancelQueuedOfferMessages(db,profile.customerId,offer.offer_id);
+    if (!name) {
+      await db.query(`UPDATE ${s}.lead_appointment_offers SET selected_starts_at=$3,updated_at=now() WHERE customer_id=$1 AND offer_id=$2`,[profile.customerId,offer.offer_id,slot.startsAt]);
+      await queue(db,profile,channel,lead,conversation,offer.offer_id,text.askName);
+      return true;
+    }
+    await db.query(`UPDATE ${s}.assistant_leads SET display_name=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[profile.customerId,lead.lead_id,name]);
+    await db.query(`INSERT INTO ${s}.assistant_lead_events(customer_id,conversation_id,kind,body,metadata)
+      VALUES($1,$2,'lead_updated','Booking name supplied by customer',$3::jsonb)`,[profile.customerId,conversation.conversation_id,JSON.stringify({origin:'customer_booking_name',offerId:offer.offer_id})]);
+    lead.display_name=name;
     const code = String(randomInt(100000, 1000000));
     await db.query(
       `UPDATE ${s}.lead_appointment_offers SET status='awaiting_confirmation',selected_starts_at=$3,confirmation_code_hash=$4,expires_at=now()+interval '15 minutes',updated_at=now()
@@ -367,6 +385,13 @@ export async function handleAppointmentConfirmation(
     return true;
   }
   if (!confirmation) return false;
+  const named = (await db.query(`SELECT 1 FROM ${s}.assistant_lead_events WHERE customer_id=$1 AND conversation_id=$2 AND kind='lead_updated' AND metadata->>'origin'='customer_booking_name' AND metadata->>'offerId'=$3 LIMIT 1`,[profile.customerId,conversation.conversation_id,offer.offer_id])).rowCount;
+  if (!named) {
+    await db.query(`UPDATE ${s}.lead_appointment_offers SET status='offered',confirmation_code_hash=NULL,updated_at=now() WHERE customer_id=$1 AND offer_id=$2`,[profile.customerId,offer.offer_id]);
+    await cancelQueuedOfferMessages(db,profile.customerId,offer.offer_id);
+    await queue(db,profile,channel,lead,conversation,offer.offer_id,text.askName);
+    return true;
+  }
   if (
     codeHash(profile.customerId, offer.offer_id, confirmation[1]) !==
     offer.confirmation_code_hash

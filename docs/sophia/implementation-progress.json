@@ -1,7 +1,27 @@
 {
+  "whatsappLanguageAndBookingIdentity": {
+    "updatedOn": "2026-11-19",
+    "status": "tested_deployment_pending",
+    "changes": [
+      "Explicit language choices persist on scoped lead; numeric selections retain language; recent customer choices recover existing conversations",
+      "Booking selection asks for explicit NAME/NOMBRE/NOME, stores customer name with an offer-linked audit event and only then issues confirmation code",
+      "Requested booking time is extracted as HH:mm and current available slots ordered by proximity",
+      "Reasoner instructed to use the persisted language throughout and explain privacy in customer-facing wording"
+    ],
+    "verification": [
+      "22 disposable PostgreSQL tests passed including Spanish persistence, name before confirmation and requested-time preference",
+      "7 channel reasoner tests passed",
+      "20 preference and protected real-estate tests passed",
+      "Runtime build passed"
+    ],
+    "limits": [
+      "Existing confirmed bookings remain unchanged",
+      "New phone test required after deployment"
+    ]
+  },
   "whatsappDiscoveryAndFollowUp": {
     "updatedOn": "2026-11-19",
-    "status": "migration_and_calendar_published_deployment_pending",
+    "status": "deployed_core_phone_flow_verified",
     "scope": "Sophia Ai own-company profile only; existing test transport, real-number activation separate",
     "implemented": [
       "Bounded public conversation context and granted knowledge fallback for discovery",
@@ -19,11 +39,14 @@
       "38 protected real-estate regression tests passed",
       "Migration135 applied to production ledger; tables retain forced tenant RLS",
       "Owner-approved advisor calendar published under scoped runtime role with audit; 60-minute lead time and 30-day horizon",
-      "Two synthetic requests against configured provider answered from valid approved sources and classified booking date correctly; no WhatsApp send"
+      "Two synthetic requests against configured provider answered from valid approved sources and classified booking date correctly; no WhatsApp send",
+      "Render API, messaging worker and runtime live at 2c7ca4e8f69675760cd4bb77612a8c37f5b9ac13; recent deployment logs contain no WhatsApp tick failures or startup module errors",
+      "Frontend cf0f30b pushed; custom domain and Amplify origin serve verified production build main-5IRWKSJJ.js",
+      "Read-only production check confirms qualification/follow-up/booking enabled, requested calendar hours and forced RLS on both new tables",
+      "Owner phone test and read-only records confirm service discovery, assessment 45/100, read delivery receipts and a confirmed 20 November 2026 09:15 Brisbane appointment; language and missing-name defects identified"
     ],
     "pending": [
-      "Profile flags and API/worker/frontend deployment verification",
-      "Owner phone end-to-end validation after deployment",
+      "Live consented reminder delivery validation",
       "Real-number Coexistence activation remains pending"
     ]
   },

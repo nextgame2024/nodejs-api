@@ -1,3 +1,4 @@
+import { requestedLanguage } from "./customer-preferences.js";
 import { recordFollowUpConsent } from "./follow-up-store.js";
 import { voiceEnabled, enqueueVoiceInbound } from "./voice-store.js";
 import { reconcileDelivery } from "./delivery-store.js";
@@ -317,6 +318,17 @@ async function applyMessage(db, profile, channel, company, e) {
       }),
     ],
   );
+  if (!echo && isCurrent && e.messageType === 'text' && !e.truncated) {
+    const recent = (await db.query(`SELECT body FROM ${s}.assistant_lead_events
+      WHERE customer_id=$1 AND conversation_id=$2 AND kind='inbound_message'
+      AND metadata->>'messageType'='text' AND NOT COALESCE((metadata->>'truncated')::boolean,false)
+      ORDER BY event_id DESC LIMIT 30`,[tenant,conversation.conversation_id])).rows;
+    const language = recent.map(row=>requestedLanguage(row.body)).find(Boolean);
+    if (language && language !== lead.language) {
+      await db.query(`UPDATE ${s}.assistant_leads SET language=$3,record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,[tenant,lead.lead_id,language]);
+      lead.language = language;
+    }
+  }
   if (!echo && isCurrent)
     await invalidateOlderReplies(
       db,
