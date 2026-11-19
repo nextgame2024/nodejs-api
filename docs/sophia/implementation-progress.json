@@ -4113,7 +4113,7 @@
     "deployment": "Render API, messaging worker and runtime verified live at ff5e288fd95097dd3a00690ca5ca7e18072d81f9. Backend only; no migration. Current test conversation remains human_requested and requires Resume Sophia; no production ownership changed or WhatsApp messages sent by diagnostic scripts. User controls frontend commits/pushes."
   },
   "whatsappRealtimeEngagement20261119": {
-    "status": "verified_pending_backend_deployment",
+    "status": "backend_live_frontend_local",
     "changes": [
       "Appointment-aware knowledge gaps: supported partial answers offer human booking help; verified upcoming appointments are acknowledged. Completely unsupported enquiries use a localized booking-help response without silently pausing bot ownership.",
       "Optional realtime invitation after three question messages, recorded durably once per conversation in reply job metadata. Ignoring or declining never repeats the invitation; WhatsApp continues.",
@@ -4127,7 +4127,8 @@
       "8 ChromeHeadless transport/client tests passed; frontend TypeScript check and runtime build passed.",
       "User confirmed Premium can hear and respond after refreshing local frontend.",
       "Read-only production check loaded approved company knowledge with tenant RLS; no records mutated.",
-      "Initial live pricing check omitted the booking next step; added server-enforced next step on needsTeam/uncertainty, and repeated model check returned needsTeam:true with valid sources. Final 24 SQL tests include partial and fully unsupported booking-aware replies."
+      "Initial live pricing check omitted the booking next step; added server-enforced next step on needsTeam/uncertainty, and repeated model check returned needsTeam:true with valid sources. Final 24 SQL tests include partial and fully unsupported booking-aware replies.",
+      "Live deployed Premium session started successfully with public knowledge configured and was immediately closed. No WhatsApp test messages or customer bookings sent/created."
     ],
     "limits": [
       "Frontend remains local and uncommitted at user request; public Premium needs that frontend release.",
@@ -4135,6 +4136,7 @@
       "Question counting detects question punctuation and common EN/ES/PT question phrases; it counts question messages, not multiple questions inside one message.",
       "No schema migration."
     ],
-    "deployment": "Render configured with explicit public knowledge source tenant and optional public realtime URL; backend release pending. Existing runtime tool tenant preserved."
+    "deployment": "Render API, worker and runtime verified live at 3f4eb44bf99669485ed2f6800510a6a04bac3213. Runtime health ok. Public knowledge source tenant and once-only invitation configured. Frontend left local and uncommitted for the user to publish.",
+    "providerReference": "https://docs.tavus.io/sections/event-schemas/conversation-interrupt"
   }
 }
