@@ -1008,6 +1008,24 @@ suite("WhatsApp replies on PostgreSQL", () => {
     expect(
       (await api.getLead(owner, company, bookingLead.lead_id)).lead.ownership,
     ).toBe("bot");
+    await inbound("explicit-booking-after-recovery", {
+      senderId: sender,
+      body: "I want to do the appointment",
+    });
+    await worker.generateOne(full, async () => ({
+      handoff: false,
+      answer: "",
+      sourceIds: [],
+      booking: { action: "human_help" },
+    }));
+    const nextBooking = (
+      await pool.query(
+        "SELECT answer,response_kind FROM sophia_runtime.assistant_reply_jobs WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 1",
+        [bookingLead.lead_id],
+      )
+    ).rows[0];
+    expect(nextBooking.response_kind).toBe("appointment");
+    expect(nextBooking.answer).toContain("fecha");
     await inbound("dated-availability", {
       senderId: sender,
       body: "English course appointment in three days",

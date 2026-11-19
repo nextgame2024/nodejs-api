@@ -311,7 +311,6 @@ export async function generateOne(profile, reasoner) {
   result ??= { handoff: true, failed: true };
   if (
     task.booking &&
-    (!result || result.handoff !== false || result.failed) &&
     /^(?:could you |can you |please )?(?:show me (?:the )?available times|(?:i )?want to (?:do|make|book) (?:the |an? )?appointment)[?.!]*$/i.test(
       task.question.trim(),
     )
