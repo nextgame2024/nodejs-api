@@ -57,3 +57,25 @@ test("only an unambiguous valid business email answer is a confirmation recipien
   ])
     expect(businessEmailRecipient(answers)).toBeNull();
 });
+
+test("booking email reuses branding and includes friendly preparation button and timezone", () => {
+  const m = formEmailMessage({
+    bookingConfirmation: true,
+    confirmationOnly: true,
+    name: "Alex <script>",
+    language: "en",
+    appointment,
+    preparationUrl: "https://sophiaai.com.au/forms/meeting-preparation",
+  });
+  expect(m.subject).toBe("Your appointment is confirmed — Sophia AI");
+  expect(m.html).toContain('alt="Sophia AI"');
+  expect(m.html).toContain("Prepare for our meeting");
+  expect(m.html).toContain(
+    'href="https://sophiaai.com.au/forms/meeting-preparation"',
+  );
+  expect(m.html).not.toContain("<script>");
+  expect(m.text).toContain(
+    "Monday, 16 November 2026 at 9:00 am (Australia/Brisbane)",
+  );
+  expect(m.text).toContain("Before we meet");
+});

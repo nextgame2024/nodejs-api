@@ -4187,7 +4187,7 @@
   },
   "whatsappContinuousRecovery": {
     "updatedOn": "2026-11-20",
-    "status": "tested_deployment_pending",
+    "status": "deployed_customer_recovered",
     "cause": "Affected availability job was marked needs_human after one measured model response; handoffJob changed bot ownership to human_requested and prevented the subsequent booking message from being processed. No worker crash established.",
     "changes": [
       "Unanswerable/failed automatic turns retain bot ownership and send a localized recovery prompt through the guarded outbox. Staff takeover, opt-out, closed lead and reply window checks remain enforced.",
@@ -4198,7 +4198,29 @@
       "43 tests passed across SQL reply recovery and three protected real-estate suites; exact availability regression and subsequent-turn continuation tested."
     ],
     "production": [
-      "Target conversation still awaits guarded recovery after deployment."
+      "Render API and messaging worker verified live at d7ecfa876ed5cc11066503dd8e16536dc2cc161a.",
+      "Restored only affected auto-paused conversation through normal ownership service with version checks; ownership now bot.",
+      "Resumed model reply still offered booking instead of asking for a date during rollout. Sent a single corrective date prompt via booking service and guarded, idempotent outbox after verifying latest customer event and ownership. Meta confirmed delivered.",
+      "Next live customer turn remains to be observed; no frontend changes."
+    ]
+  },
+  "appointmentPreparationConfirmation": {
+    "updatedOn": "2026-11-20",
+    "status": "tested_deployment_pending",
+    "changes": [
+      "Copied published business discovery questions into a Sophia AI preparation form, removing the booking calendar and booking instructions.",
+      "Tenant-configured friendly public alias /forms/meeting-preparation uses existing public form RLS and publication checks.",
+      "Booking and rescheduling confirmations include the preparation link; voice replies retain clickable text.",
+      "Customer-provided email queues a branded confirmation for future confirmed appointments, including when supplied after booking.",
+      "Tenant-isolated durable email outbox deduplicates appointment versions/recipients, retries delivery and cancels stale notifications."
+    ],
+    "verification": [
+      "55 tests passed across 8 suites: SQL booking/email delivery, tenant isolation, contact capture, templates and protected real-estate behavior.",
+      "Migration 136 applied in production; API SES sender and credentials configured."
+    ],
+    "limits": [
+      "No frontend changes committed or pushed.",
+      "Real customer email delivery remains to be checked after deployment."
     ]
   }
 }

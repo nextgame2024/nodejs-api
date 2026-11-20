@@ -1,3 +1,4 @@
+import { meetingInvitation } from "./meeting-preparation.js";
 import { queueVoicePair } from "../messaging/voice-store.js";
 import {
   customerContact,
@@ -383,7 +384,7 @@ export async function handleAppointmentConfirmation(
           lead.language,
         ),
         confirmed.customer_timezone,
-      ),
+      ) + (await meetingInvitation(db, profile.customerId, lead)),
     );
     return true;
   }
@@ -596,7 +597,7 @@ export async function handleAppointmentConfirmation(
           lead.language,
         ),
         offer.customer_timezone,
-      ),
+      ) + (await meetingInvitation(db, profile.customerId, lead)),
     );
   } catch (error) {
     if (error?.status !== 409) throw error;

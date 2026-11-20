@@ -2,6 +2,7 @@ import { jest, describe, test, expect, afterEach } from "@jest/globals";
 jest.unstable_mockModule("../src/config/db.js", () => ({ default: {} }));
 jest.unstable_mockModule("../src/services/leads/form-email.service.js", () => ({
   processFormEmail: jest.fn(),
+  sendFormEmail: jest.fn(),
 }));
 const { startFormEmailWorkflow } = await import(
   "../src/services/leads/form-email-workflow.service.js"
@@ -21,9 +22,18 @@ describe("Form email workflow", () => {
     };
     const database = { connect: jest.fn().mockResolvedValue(db) },
       deliver = jest.fn().mockResolvedValue("sent");
-    const stop = startFormEmailWorkflow({ database, deliver });
+    const deliverAppointment = jest.fn().mockResolvedValue("idle");
+    const stop = startFormEmailWorkflow({
+      database,
+      deliver,
+      deliverAppointment,
+    });
     await jest.advanceTimersByTimeAsync(0);
     expect(deliver.mock.calls.map((c) => c[1])).toEqual([
+      "tenant-a",
+      "tenant-b",
+    ]);
+    expect(deliverAppointment.mock.calls.map((c) => c[1])).toEqual([
       "tenant-a",
       "tenant-b",
     ]);

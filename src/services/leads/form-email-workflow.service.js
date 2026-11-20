@@ -1,3 +1,4 @@
+import { processAppointmentEmail } from "../scheduling/appointment-email.service.js";
 import pool from "../../config/db.js";
 import { processFormEmail } from "./form-email.service.js";
 // The connection's owner role reads only the tenant registry. Delivery data is
@@ -5,6 +6,7 @@ import { processFormEmail } from "./form-email.service.js";
 export function startFormEmailWorkflow({
   database = pool,
   deliver = processFormEmail,
+  deliverAppointment = processAppointmentEmail,
   logger = console,
   intervalMs = 15000,
 } = {}) {
@@ -29,6 +31,7 @@ export function startFormEmailWorkflow({
       for (const tenant of tenants) {
         if (stopped) break;
         await deliver(db, tenant.customer_id);
+        await deliverAppointment(db, tenant.customer_id);
         cursor = tenant.customer_id;
       }
       if (tenants.length < 50) cursor = null;

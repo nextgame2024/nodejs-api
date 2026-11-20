@@ -1,3 +1,4 @@
+import { queueAppointmentEmails } from "./appointment-email.service.js";
 import { transaction, directory } from "../leads/assistant-settings.service.js";
 import {
   requiredLead,
@@ -364,6 +365,7 @@ export async function bookAuthorizedAppointment(
     `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
     [tenant, b.leadId],
   );
+  await queueAppointmentEmails(db, tenant, lead);
   return result;
 }
 export async function changeAuthorizedAppointment(
@@ -503,6 +505,13 @@ export async function changeAuthorizedAppointment(
     `UPDATE ${s}.assistant_leads SET updated_at=now() WHERE customer_id=$1 AND lead_id=$2`,
     [tenant, b.leadId],
   );
+  const emailLead = (
+    await db.query(
+      `SELECT * FROM ${s}.assistant_leads WHERE customer_id=$1 AND lead_id=$2`,
+      [tenant, b.leadId],
+    )
+  ).rows[0];
+  await queueAppointmentEmails(db, tenant, emailLead);
   return result;
 }
 // Shared booking operations do not know about WhatsApp, AI vendors or external

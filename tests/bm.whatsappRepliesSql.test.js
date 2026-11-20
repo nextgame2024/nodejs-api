@@ -161,6 +161,7 @@ suite("WhatsApp replies on PostgreSQL", () => {
       "122_whatsapp_appointment_confirmation.sql",
       "123_whatsapp_appointment_changes.sql",
       "135_lead_discovery_assessments.sql",
+      "136_appointment_confirmation_emails.sql",
     ])
       await pool.query(
         (
@@ -1577,6 +1578,100 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rows[0].status,
     ).toBe("cancelled");
+  });
+  test("confirmed email queues one appointment email, retries and skips obsolete confirmations", async () => {
+    const { queueAppointmentEmails, processAppointmentEmail } = await import(
+      "../src/services/scheduling/appointment-email.service.js"
+    );
+    const { captureCustomerContact } = await import(
+      "../src/services/messaging/customer-contact.js"
+    );
+    const { meetingInvitation } = await import(
+      "../src/services/scheduling/meeting-preparation.js"
+    );
+    process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
+      [tenant]: {
+        slug: "meeting-preparation",
+        origin: "https://sophiaai.com.au",
+        publicToken: tenant + "." + randomUUID(),
+      },
+    });
+    const a = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.lead_appointments WHERE status='confirmed' AND starts_at>now() LIMIT 1",
+      )
+    ).rows[0];
+    expect(a).toBeDefined();
+    const l = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.assistant_leads WHERE lead_id=$1",
+        [a.lead_id],
+      )
+    ).rows[0];
+    const c = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.assistant_lead_conversations WHERE lead_id=$1",
+        [a.lead_id],
+      )
+    ).rows[0];
+    await queueAppointmentEmails(pool, tenant, l);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int n FROM sophia_runtime.appointment_email_outbox",
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    await captureCustomerContact(
+      pool,
+      tenant,
+      l,
+      c,
+      "Alex Taylor, alex@example.com",
+    );
+    await queueAppointmentEmails(pool, tenant, l);
+    const pending = (
+      await pool.query("SELECT * FROM sophia_runtime.appointment_email_outbox")
+    ).rows;
+    expect(pending).toHaveLength(1);
+    expect(pending[0].payload.preparationUrl).toBe(
+      "https://sophiaai.com.au/forms/meeting-preparation",
+    );
+    expect(await meetingInvitation(pool, tenant, l)).toContain(
+      "/forms/meeting-preparation",
+    );
+    const db = await pool.connect();
+    try {
+      expect(await processAppointmentEmail(db, otherTenant, jest.fn())).toBe(
+        "idle",
+      );
+      expect(
+        await processAppointmentEmail(db, tenant, async () => {
+          throw Error("temporary");
+        }),
+      ).toBe("retry");
+      await pool.query(
+        "UPDATE sophia_runtime.appointment_email_outbox SET available_at=now()",
+      );
+      const send = jest.fn(async () => {});
+      expect(await processAppointmentEmail(db, tenant, send)).toBe("sent");
+      expect(await processAppointmentEmail(db, tenant, send)).toBe("idle");
+      expect(send).toHaveBeenCalledTimes(1);
+      await pool.query(
+        "UPDATE sophia_runtime.lead_appointments SET version=version+1 WHERE appointment_id=$1",
+        [a.appointment_id],
+      );
+      await queueAppointmentEmails(pool, tenant, l);
+      await pool.query(
+        "UPDATE sophia_runtime.lead_appointments SET status='cancelled',version=version+1 WHERE appointment_id=$1",
+        [a.appointment_id],
+      );
+      expect(await processAppointmentEmail(db, tenant, send)).toBe("cancelled");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      db.release();
+      delete process.env.APPOINTMENT_PREPARATION_FORMS;
+    }
   });
   test("offers realtime once after three questions and continues WhatsApp after refusal", async () => {
     const p = {

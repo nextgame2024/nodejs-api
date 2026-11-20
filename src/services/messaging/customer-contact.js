@@ -1,3 +1,5 @@
+import { emailFingerprint } from "../scheduling/meeting-preparation.js";
+import { queueAppointmentEmails } from "../scheduling/appointment-email.service.js";
 import { bookingName, bookingEmail } from "./customer-preferences.js";
 const s = "sophia_runtime";
 
@@ -49,11 +51,15 @@ export async function captureCustomerContact(
       conversation.conversation_id,
       JSON.stringify({
         origin: name ? "customer_contact_name" : "customer_contact_email",
+        ...(email ? { confirmedEmailHash: emailFingerprint(email) } : {}),
       }),
     ],
   );
   if (name) lead.display_name = name;
-  if (email) lead.email = email;
+  if (email) {
+    lead.email = email;
+    await queueAppointmentEmails(db, tenant, lead);
+  }
 }
 
 export function contactRequest(language, contact, mandatory = false) {

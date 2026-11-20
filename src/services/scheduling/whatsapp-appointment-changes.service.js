@@ -1,3 +1,4 @@
+import { meetingInvitation } from "./meeting-preparation.js";
 import { queueVoicePair } from "../messaging/voice-store.js";
 import {
   customerContact,
@@ -573,7 +574,7 @@ export async function handleAppointmentChangeConfirmation(
               lead.language,
             ),
             request.customer_timezone,
-          ),
+          ) + (await meetingInvitation(db, profile.customerId, lead)),
     );
   } catch (error) {
     if (![404, 409].includes(error?.status)) throw error;

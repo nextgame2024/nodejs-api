@@ -9,43 +9,90 @@ const escape = (value) =>
     .replaceAll('"', "&quot;");
 const LOGO_URL =
   "https://files-nodejs-api.s3.ap-southeast-2.amazonaws.com/public/company-logos/1776856137438-cjet9pj1u6u.png";
-export function appointmentEmailLabel(appointment) {
+export function appointmentEmailLabel(appointment, language = "en") {
+  const locale = { en: "en-AU", es: "es", pt: "pt-BR" }[language] || "en-AU";
   const timezone = appointment.timezone;
-  const date = new Intl.DateTimeFormat("en-AU", {
+  const date = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     day: "numeric",
     month: "long",
     year: "numeric",
   }).format(new Date(appointment.startsAt));
-  const time = new Intl.DateTimeFormat("en-AU", {
+  const time = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   }).format(new Date(appointment.startsAt));
-  const weekday = new Intl.DateTimeFormat("en-AU", {
+  const weekday = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     weekday: "long",
   }).format(new Date(appointment.startsAt));
-  return `${weekday}, ${date} at ${time} (${timezone})`;
+  const at = { es: "a las", pt: "às" }[language] || "at";
+  return `${weekday}, ${date} ${at} ${time} (${timezone})`;
 }
 export function formEmailMessage(payload) {
   const confirmation = payload.confirmationOnly || payload.includeConfirmation;
-  const title = confirmation
-    ? "Thank you for telling us about your business!"
-    : "New form response";
+  const booking = payload.bookingConfirmation === true;
+  const words = {
+    en: {
+      title: "Your appointment is confirmed",
+      greeting: `Hi ${payload.name || "there"},`,
+      intro:
+        "Thanks for booking a conversation with Sophia AI. We look forward to learning more about your business.",
+      prepare:
+        "Before we meet, please complete this short form. It will help us understand your priorities and make our meeting more useful for you.",
+      button: "Prepare for our meeting",
+      close: "Thank you—we look forward to speaking with you!",
+    },
+    es: {
+      title: "Tu cita está confirmada",
+      greeting: `Hola ${payload.name || ""},`,
+      intro:
+        "Gracias por reservar una conversación con Sophia AI. Nos encantará conocer mejor tu negocio.",
+      prepare:
+        "Antes de reunirnos, completa este breve formulario. Nos ayudará a entender tus prioridades y aprovechar mejor la reunión.",
+      button: "Preparar nuestra reunión",
+      close: "¡Gracias! Nos vemos pronto.",
+    },
+    pt: {
+      title: "Sua reunião está confirmada",
+      greeting: `Olá ${payload.name || ""},`,
+      intro:
+        "Obrigado por agendar uma conversa com a Sophia AI. Queremos conhecer melhor seu negócio.",
+      prepare:
+        "Antes da reunião, preencha este breve formulário para entendermos suas prioridades e aproveitarmos melhor nosso tempo juntos.",
+      button: "Preparar nossa reunião",
+      close: "Obrigado! Até breve.",
+    },
+  }[payload.language] || {
+    title: "Your appointment is confirmed",
+    greeting: `Hi ${payload.name || "there"},`,
+    intro: "Thanks for booking a conversation with Sophia AI.",
+    prepare:
+      "Please complete this short form before we meet so we can understand your business and priorities.",
+    button: "Prepare for our meeting",
+    close: "We look forward to speaking with you!",
+  };
+  const title = booking
+    ? words.title
+    : confirmation
+      ? "Thank you for telling us about your business!"
+      : "New form response";
   const appointment = payload.appointment
-    ? appointmentEmailLabel(payload.appointment)
+    ? appointmentEmailLabel(payload.appointment, payload.language)
     : null;
-  const paragraphs = confirmation
-    ? [
-        ...(appointment
-          ? [`Your appointment is confirmed for ${appointment}.`]
-          : []),
-        "Our team will review your answers to better understand your needs and identify relevant opportunities before we meet.",
-        "We look forward to speaking with you.",
-      ]
-    : [];
+  const paragraphs = booking
+    ? [words.greeting, words.intro, words.prepare, words.close]
+    : confirmation
+      ? [
+          ...(appointment
+            ? [`Your appointment is confirmed for ${appointment}.`]
+            : []),
+          "Our team will review your answers to better understand your needs and identify relevant opportunities before we meet.",
+          "We look forward to speaking with you.",
+        ]
+      : [];
   const answers = payload.confirmationOnly
     ? []
     : (payload.answers || []).map((a) => ({
@@ -57,7 +104,13 @@ export function formEmailMessage(payload) {
             : String(a.value ?? ""),
       }));
   const appointmentHtml = appointment
-    ? `<div style="padding:20px;background:#e9faf6;border-left:4px solid #0aa58f;border-radius:8px;margin:22px 0;color:#123e37;">${confirmation ? "Your appointment is confirmed for" : "Appointment"}<br><strong>${escape(appointment)}</strong></div>`
+    ? `<div style="padding:20px;background:#e9faf6;border-left:4px solid #0aa58f;border-radius:8px;margin:22px 0;color:#123e37;">${booking ? escape(words.title) : confirmation ? "Your appointment is confirmed for" : "Appointment"}<br><strong>${escape(appointment)}</strong></div>`
+    : "";
+  const preparationUrl = booking ? new URL(payload.preparationUrl) : null;
+  if (preparationUrl && preparationUrl.protocol !== "https:")
+    throw new Error("Invalid preparation link");
+  const button = preparationUrl
+    ? `<p style="margin:24px 0;"><a href="${escape(preparationUrl.href)}" style="display:inline-block;background:#0aa58f;color:#ffffff;text-decoration:none;font-weight:bold;padding:14px 22px;border-radius:8px;">${escape(words.button)}</a></p>`
     : "";
   const body = `${appointmentHtml}${
     confirmation
@@ -68,16 +121,20 @@ export function formEmailMessage(payload) {
           )
           .join("")
       : ""
-  }${answers.map((a) => `<div style="padding:20px 0;border-bottom:1px solid #e2e8f0;"><p style="margin:0 0 8px;font-size:14px;font-weight:bold;color:#475569;">${escape(a.label)}</p><div style="white-space:pre-wrap;line-height:1.7;color:#0f172a;">${escape(a.value)}</div></div>`).join("")}`;
+  }${button}${answers.map((a) => `<div style="padding:20px 0;border-bottom:1px solid #e2e8f0;"><p style="margin:0 0 8px;font-size:14px;font-weight:bold;color:#475569;">${escape(a.label)}</p><div style="white-space:pre-wrap;line-height:1.7;color:#0f172a;">${escape(a.value)}</div></div>`).join("")}`;
   return {
-    subject:
-      `${confirmation ? "Thank you for your response" : "New form response"}: ${payload.formName}`.replace(
-        /[\r\n]/g,
-        " ",
-      ),
+    subject: booking
+      ? `${words.title} — Sophia AI`
+      : `${confirmation ? "Thank you for your response" : "New form response"}: ${payload.formName}`.replace(
+          /[\r\n]/g,
+          " ",
+        ),
     text: [
       title,
       ...paragraphs,
+      ...(booking
+        ? [appointment, `${words.button}: ${preparationUrl.href}`]
+        : []),
       ...(!confirmation && appointment ? [`Appointment: ${appointment}`] : []),
       ...answers.map((a) => `${a.label}\n${a.value}`),
     ].join("\n\n"),

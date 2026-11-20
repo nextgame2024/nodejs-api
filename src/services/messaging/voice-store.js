@@ -1,3 +1,4 @@
+import { preparationConfigs } from "../scheduling/meeting-preparation.js";
 import { replyFormat } from "./reply-format.js";
 import { failJob } from "./voice-recovery.js";
 import { randomUUID } from "node:crypto";
@@ -162,11 +163,15 @@ export async function queueVoicePair(db, tenant, messageId) {
       )
     ).rows.length > 0;
   if (automatic) {
+    const preparationUrl = preparationConfigs()[tenant]?.url;
+    const hasClickableForm = preparationUrl && m.body.includes(preparationUrl);
+    // Keep booking details with a form link clickable alongside the audio.
     // Hold the text answer for recovery; only the audio is dispatched normally.
-    await db.query(
-      `UPDATE ${s}.assistant_message_outbox SET state='preparing',safe_code='voice_text_fallback' WHERE customer_id=$1 AND message_id=$2`,
-      [tenant, m.message_id],
-    );
+    if (!hasClickableForm)
+      await db.query(
+        `UPDATE ${s}.assistant_message_outbox SET state='preparing',safe_code='voice_text_fallback' WHERE customer_id=$1 AND message_id=$2`,
+        [tenant, m.message_id],
+      );
     if (!disclosed) {
       const notice =
         {
