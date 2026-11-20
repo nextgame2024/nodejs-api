@@ -256,7 +256,7 @@ describe("Official WhatsApp receive boundary", () => {
     await request(app)
       .post("/webhooks/whatsapp/test_number")
       .type("json")
-      .send("x".repeat(270000))
+      .send("x".repeat(2100000))
       .expect(413);
     expect(receive).not.toHaveBeenCalled();
   });

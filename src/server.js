@@ -1,3 +1,4 @@
+import {startCoexistenceWorkflow} from './services/messaging/whatsapp-coexistence.service.js';
 import app from "./app.js";
 import { startFormEmailWorkflow } from "./services/leads/form-email-workflow.service.js";
 import { startInspectionWorkflow } from "./services/bm.inspectionWorkflow.service.js";
@@ -21,6 +22,7 @@ const port = Number(process.env.PORT || 3300);
     console.log(`API listening on :${port}`);
     startInspectionWorkflow();
     startFormEmailWorkflow();
+    startCoexistenceWorkflow();
     if (process.env.STUDENT_USER_SYNC_EXECUTION_MODE !== "worker")
       startStudentUserSyncWorker();
   });

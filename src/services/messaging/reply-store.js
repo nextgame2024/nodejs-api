@@ -1,6 +1,6 @@
 import { voiceState } from "./voice-store.js";
 import { fail } from "../leads/assistant-settings.contracts.js";
-import { channelProfiles } from "./channel-profiles.js";
+import { resolvedProfiles } from "./channel-profiles.js";
 export const schema = "sophia_runtime";
 export async function installed(db) {
   if (
@@ -63,7 +63,7 @@ export async function replyState(db, tenant, access, leadId) {
     )
   ).rows[0];
   if (!c) return null;
-  const p = channelProfiles().find(
+  const p = (await resolvedProfiles(db, tenant)).find(
     (p) => p.customerId === tenant && p.id === c.profile_id,
   );
   const windowEndsAt = c.last_inbound_at
@@ -229,7 +229,7 @@ export async function automationTarget(db, tenant, leadId) {
     )
   ).rows[0];
   if (!row) return null;
-  const profile = channelProfiles().find(
+  const profile = (await resolvedProfiles(db, tenant)).find(
     (p) => p.customerId === tenant && p.id === row.profile_id,
   );
   if (!canDispatch(profile)) return null;

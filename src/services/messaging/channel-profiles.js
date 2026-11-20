@@ -88,3 +88,78 @@ export function channelProfiles(env = process.env) {
     };
   });
 }
+
+// Only the deployment-configured tenant/base profile may resolve a persisted
+// coexistence credential. Caller-supplied tenant/phone mappings are never used.
+export async function resolvedProfiles(db, tenant, env = process.env) {
+  const profiles = channelProfiles(env);
+  if (env.WHATSAPP_COEXISTENCE_ACTIVATION_ENABLED !== "true") return profiles;
+  const customer = env.WHATSAPP_SIGNUP_CUSTOMER_ID;
+  if (tenant && tenant !== customer) return profiles;
+  const base = profiles.find(
+    (p) =>
+      p.customerId === customer && p.id === env.WHATSAPP_SIGNUP_BASE_PROFILE,
+  );
+  if (!base) return profiles;
+  const ready = (
+    await db.query(
+      "SELECT to_regclass('sophia_runtime.whatsapp_connections') IS NOT NULL AS ready",
+    )
+  ).rows[0]?.ready;
+  if (!ready) return profiles;
+  const row = (
+    await db.query(
+      "SELECT * FROM sophia_runtime.whatsapp_connections WHERE customer_id=$1",
+      [customer],
+    )
+  ).rows[0];
+  if (!row) return profiles;
+  const { unseal } = await import("./whatsapp-credentials.js");
+  const token = row.encrypted_token
+    ? unseal(
+        row.encrypted_token,
+        Buffer.from(env.WHATSAPP_SIGNUP_ENCRYPTION_KEY, "base64"),
+        `${customer}:${row.profile_id}`,
+      )
+    : null;
+  if (
+    profiles.some(
+      (p) => p.phoneNumberId === row.phone_number_id || p.id === row.profile_id,
+    )
+  )
+    throw Error("Conflicting WhatsApp profile");
+  return [
+    ...profiles,
+    {
+      ...base,
+      id: row.profile_id,
+      label: "Sophia AI business number",
+      phoneNumberId: row.phone_number_id,
+      businessAccountId: row.business_account_id,
+      accessToken: token,
+      sendingEnabled: row.state === "ready",
+      coexistence: true,
+    },
+  ];
+}
+export async function workerProfiles(env = process.env) {
+  if (env.WHATSAPP_COEXISTENCE_ACTIVATION_ENABLED !== "true")
+    return channelProfiles(env);
+  const { default: pool } = await import("../../config/db.js");
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query("SET LOCAL ROLE sophia_runtime_app");
+    await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [
+      env.WHATSAPP_SIGNUP_CUSTOMER_ID,
+    ]);
+    const p = await resolvedProfiles(db, env.WHATSAPP_SIGNUP_CUSTOMER_ID, env);
+    await db.query("COMMIT");
+    return p;
+  } catch (e) {
+    await db.query("ROLLBACK");
+    throw e;
+  } finally {
+    db.release();
+  }
+}

@@ -1,3 +1,4 @@
+import { attachImportedHistory } from "./whatsapp-coexistence.service.js";
 import { acknowledgeContact } from "./contact-acknowledgement.js";
 import { captureCustomerContact } from "./customer-contact.js";
 import { requestedLanguage } from "./customer-preferences.js";
@@ -13,7 +14,7 @@ import pool from "../../config/db.js";
 import { randomUUID } from "node:crypto";
 import { transaction, directory } from "../leads/assistant-settings.service.js";
 import { fail, revision } from "../leads/assistant-settings.contracts.js";
-import { channelProfiles } from "./channel-profiles.js";
+import { resolvedProfiles } from "./channel-profiles.js";
 import { handleAppointmentConfirmation } from "../scheduling/whatsapp-appointment-booking.service.js";
 import { handleAppointmentChangeConfirmation } from "../scheduling/whatsapp-appointment-changes.service.js";
 const s = "sophia_runtime";
@@ -39,7 +40,8 @@ export async function channelStatus(actor, company) {
         [tenant],
       )
     ).rows;
-    const profiles = channelProfiles()
+    const resolved = await resolvedProfiles(db, tenant);
+    const profiles = resolved
       .filter((p) => p.customerId === tenant)
       .map((p) => ({ id: p.id, label: p.label, ready: p.ready }));
     const health = (
@@ -52,9 +54,7 @@ export async function channelStatus(actor, company) {
       profiles,
       channels,
       health,
-      mode: channelProfiles().some(
-        (p) => p.customerId === tenant && canDispatch(p),
-      )
+      mode: resolved.some((p) => p.customerId === tenant && canDispatch(p))
         ? "replies_available"
         : "receive_only",
     };
@@ -72,7 +72,7 @@ export async function configureChannel(actor, company, input) {
     throw fail("Select a valid receiving connection.");
   return transaction(actor, company, async (db, tenant) => {
     await installed(db);
-    const p = channelProfiles().find(
+    const p = (await resolvedProfiles(db, tenant)).find(
       (p) => p.customerId === tenant && p.id === input.profileId,
     );
     if (!p || (!p.ready && input.enabled))
@@ -252,6 +252,8 @@ async function applyMessage(db, profile, channel, company, e) {
     );
     contact = { lead_id: id };
   }
+  if (isNew && profile.coexistence)
+    await attachImportedHistory(db, tenant, channel.channel_id, e.senderId);
   const isCurrent =
     !contact.last_inbound_at ||
     new Date(e.sentAt).getTime() >= new Date(contact.last_inbound_at).getTime();

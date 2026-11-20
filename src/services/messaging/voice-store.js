@@ -8,7 +8,7 @@ import {
   currentRelease,
   capabilityAllowed,
 } from "./reply-store.js";
-import { channelProfiles } from "./channel-profiles.js";
+import { resolvedProfiles } from "./channel-profiles.js";
 export const voiceEnabled = (p) =>
   process.env.WHATSAPP_VOICE_ENABLED === "true" &&
   p?.voiceEnabled === true &&
@@ -78,7 +78,7 @@ export async function queueVoicePair(db, tenant, messageId) {
       [tenant, messageId],
     )
   ).rows[0];
-  const profile = channelProfiles().find(
+  const profile = (await resolvedProfiles(db, tenant)).find(
     (p) => p.customerId === tenant && p.id === m?.profile_id,
   );
   if (!voiceEnabled(profile) || !(await voiceInstalled(db))) return;

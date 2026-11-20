@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { setTimeout as sleep } from "node:timers/promises";
 import pool from "../src/config/db.js";
-import { channelProfiles } from "../src/services/messaging/channel-profiles.js";
+import { workerProfiles } from "../src/services/messaging/channel-profiles.js";
 import { processChannelEvent } from "../src/services/messaging/whatsapp-channel.service.js";
 import {
   generateOne,
@@ -24,8 +24,8 @@ import {
 } from "../sophia-runtime/dist/providers/speech/channel-speech.js";
 if (process.env.WHATSAPP_REPLY_WORKER_ENABLED !== "true")
   throw new Error("WhatsApp reply worker is disabled.");
-const profiles = channelProfiles().filter((p) => p.ready);
-if (!profiles.length) throw new Error("No ready reply profiles.");
+const initialProfiles = (await workerProfiles()).filter((p) => p.ready);
+if (!initialProfiles.length) throw new Error("No ready reply profiles.");
 const abort = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => abort.abort());
@@ -34,7 +34,17 @@ for (const signal of ["SIGINT", "SIGTERM"])
 async function lane(operation, work, idleMs = 2000) {
   while (!abort.signal.aborted) {
     let busy = false;
-    for (const p of profiles) {
+    let profiles;
+    try {
+      profiles = await workerProfiles();
+    } catch {
+      console.error(
+        JSON.stringify({ event: "whatsapp_profile_refresh_failed" }),
+      );
+      await sleep(idleMs, undefined, { signal: abort.signal }).catch(() => {});
+      continue;
+    }
+    for (const p of profiles.filter((p) => p.ready)) {
       if (abort.signal.aborted) break;
       try {
         const result = await work(p);
@@ -79,7 +89,9 @@ try {
               transcribe: transcribeChannelAudio,
             }),
           ),
-          lane("synthesis", (p) => synthesizeOne(p, { synthesize: synthesizeChannelAudio })),
+          lane("synthesis", (p) =>
+            synthesizeOne(p, { synthesize: synthesizeChannelAudio }),
+          ),
         ]
       : []),
   ]);

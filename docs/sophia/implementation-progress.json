@@ -4206,7 +4206,7 @@
   },
   "appointmentPreparationConfirmation": {
     "updatedOn": "2026-11-20",
-    "status": "tested_deployment_pending",
+    "status": "deployed_customer_email_test_pending",
     "changes": [
       "Copied published business discovery questions into a Sophia AI preparation form, removing the booking calendar and booking instructions.",
       "Tenant-configured friendly public alias /forms/meeting-preparation uses existing public form RLS and publication checks.",
@@ -4216,11 +4216,37 @@
     ],
     "verification": [
       "55 tests passed across 8 suites: SQL booking/email delivery, tenant isolation, contact capture, templates and protected real-estate behavior.",
-      "Migration 136 applied in production; API SES sender and credentials configured."
+      "Migration 136 applied in production; API SES sender and credentials configured.",
+      "15 additional PostgreSQL voice regression tests passed (70 tests across 9 suites total).",
+      "Render API, worker and runtime verified live at 96a8ea0c2c18e4718c557eab87ea73a7125d88bc.",
+      "Public API alias returns HTTP 200, Sophia Ai business, preparation form and no calendar; website friendly route returns HTTP 200."
     ],
     "limits": [
       "No frontend changes committed or pushed.",
       "Real customer email delivery remains to be checked after deployment."
+    ]
+  },
+  "whatsappCoexistenceActivation": {
+    "updatedOn": "2026-11-20",
+    "status": "tested_deployment_pending",
+    "changes": [
+      "Durable tenant-scoped coexistence credential, subscription and one-shot synchronization workflow; separate real-number profile preserves the test connection.",
+      "Signed history, contacts and lifecycle routing on the existing app callback and per-account override. Encrypted receipt queue, deduplication, 500-record checkpoints and archive-to-timeline import without historical automation.",
+      "Ready state requires accepted sync requests and completed/declined history. New approved reply binding starts in review mode. Disconnection disables the channel and removes its credential.",
+      "Frontend connection card exposes progress, unavailable configuration and manual status refresh; changes remain local for owner push."
+    ],
+    "verification": [
+      "61 backend tests passed across 7 suites, including SQL activation, RLS, duplicate callbacks, uncertain operations and protected real-estate regressions.",
+      "Additional bounded history batch/declined sharing regression passed in the SQL suite.",
+      "14 Angular ChromeHeadless connection tests passed, including narrow/desktop and light/dark status rendering.",
+      "Meta app callback read verified active; coexistence subscription fields need adding after deployment.",
+      "Owner screenshot confirms Embedded Signup configuration 1141808901544273 includes Cloud API and both WhatsApp permissions.",
+      "15 PostgreSQL voice regression tests passed. Frontend application/spec TypeScript checks passed.",
+      "Production migrations 134 and 137 applied; all five new tables verified FORCE RLS. API/worker activation settings configured with signup held disabled."
+    ],
+    "remaining": [
+      "Production deployment and final webhook configuration verification.",
+      "Owner phone authorization and controlled real-number pilot; automatic replies remain review-only initially."
     ]
   }
 }

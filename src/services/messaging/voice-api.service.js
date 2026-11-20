@@ -4,7 +4,7 @@ import { uuid } from "../leads/lead-records.contracts.js";
 import { fail } from "../leads/assistant-settings.contracts.js";
 import { schema as s } from "./reply-store.js";
 import { voiceEnabled, voiceState } from "./voice-store.js";
-import { channelProfiles } from "./channel-profiles.js";
+import { resolvedProfiles } from "./channel-profiles.js";
 export async function retryVoice(actor, company, leadId, jobId) {
   uuid(leadId);
   uuid(jobId);
@@ -27,7 +27,7 @@ export async function retryVoice(actor, company, leadId, jobId) {
           [tenant, jobId],
         )
       ).rows[0];
-      const profile = channelProfiles().find(
+      const profile = (await resolvedProfiles(db, tenant)).find(
         (p) => p.customerId === tenant && p.id === job.profile_id,
       );
       if (!voiceEnabled(profile))

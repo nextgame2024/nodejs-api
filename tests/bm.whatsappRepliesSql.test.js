@@ -162,6 +162,8 @@ suite("WhatsApp replies on PostgreSQL", () => {
       "123_whatsapp_appointment_changes.sql",
       "135_lead_discovery_assessments.sql",
       "136_appointment_confirmation_emails.sql",
+      "134_whatsapp_signup_authorization.sql",
+      "137_whatsapp_coexistence.sql",
     ])
       await pool.query(
         (
@@ -1896,5 +1898,285 @@ suite("WhatsApp replies on PostgreSQL", () => {
         )
       ).rowCount,
     ).toBe(0);
+  });
+  test("activates a separate coexistence channel with durable one-shot sync and forced RLS", async () => {
+    const co = await import(
+      "../src/services/messaging/whatsapp-coexistence.service.js"
+    );
+    const { resolvedProfiles } = await import(
+      "../src/services/messaging/channel-profiles.js"
+    );
+    const env = {
+      ...process.env,
+      WHATSAPP_SIGNUP_CUSTOMER_ID: tenant,
+      WHATSAPP_SIGNUP_BASE_PROFILE: profile.id,
+      WHATSAPP_COEXISTENCE_ACTIVATION_ENABLED: "true",
+      WHATSAPP_SIGNUP_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64"),
+      WHATSAPP_SIGNUP_API_ORIGIN: "https://api.example.test",
+      WHATSAPP_TEST_SECRET: "test-secret-12345678",
+      WHATSAPP_TEST_VERIFY: "verify-token-12345678",
+      WHATSAPP_INBOUND_PROFILES: JSON.stringify([profile]),
+    };
+    const scope = (work) => co.connectionScope(work, env, pool);
+    await scope((db) =>
+      co.stageConnection(
+        db,
+        tenant,
+        owner,
+        { id: "999999", display_phone_number: "+61 400 388 532" },
+        "987654",
+        "secret-real-token",
+        env,
+      ),
+    );
+    let ps = await scope((db) => resolvedProfiles(db, tenant, env));
+    expect(ps).toHaveLength(2);
+    expect(ps[1].sendingEnabled).toBe(false);
+    const send = jest.fn(async (url, init) => ({
+      ok: true,
+      json: async () =>
+        url.endsWith("subscribed_apps")
+          ? { success: true }
+          : { request_id: JSON.parse(init.body).sync_type + "-id" },
+    }));
+    for (let i = 0; i < 3; i++)
+      await co.activationTick({ env, scope, fetcher: send });
+    await co.activationTick({ env, scope, fetcher: send });
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls.map(([u]) => u)).toEqual([
+      "https://graph.facebook.com/v25.0/987654/subscribed_apps",
+      "https://graph.facebook.com/v25.0/999999/smb_app_data",
+      "https://graph.facebook.com/v25.0/999999/smb_app_data",
+    ]);
+    let row = (
+      await scope((db) =>
+        db.query("SELECT * FROM sophia_runtime.whatsapp_connections"),
+      )
+    ).rows[0];
+    expect(row.state).toBe("syncing");
+    expect(JSON.stringify(row)).not.toContain("secret-real-token");
+    const p = ps[1];
+    const h = {
+      field: "history",
+      value: {
+        history: [
+          {
+            metadata: { phase: 2, chunk_order: 1, progress: 100 },
+            threads: [
+              {
+                id: "61412345678",
+                messages: [
+                  {
+                    id: "historic-1",
+                    from: "61412345678",
+                    timestamp: String(Math.floor(Date.now() / 1000) - 3600),
+                    type: "text",
+                    text: { body: "Old question" },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+    await co.captureSync(p, [h, h], env);
+    await co.processSyncReceipt({ env, scope });
+    await co.processSyncReceipt({ env, scope });
+    row = (
+      await scope((db) =>
+        db.query("SELECT * FROM sophia_runtime.whatsapp_connections"),
+      )
+    ).rows[0];
+    expect(row.state).toBe("ready");
+    expect(row.history_progress).toBe(100);
+    const archive = await scope((db) =>
+      db.query("SELECT * FROM sophia_runtime.whatsapp_imported_messages"),
+    );
+    expect(archive.rowCount).toBe(1);
+    expect(archive.rows[0].body).toBe("Old question");
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT count(*)::int AS n FROM sophia_runtime.whatsapp_sync_receipts",
+          ),
+        )
+      ).rows[0].n,
+    ).toBe(1);
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT mode FROM sophia_runtime.assistant_reply_bindings b JOIN sophia_runtime.assistant_channels h USING(customer_id,channel_id) WHERE profile_id=$1",
+            [profile.id + "_real"],
+          ),
+        )
+      ).rows[0].mode,
+    ).toBe("review");
+    ps = await scope((db) => resolvedProfiles(db, tenant, env));
+    expect(ps[1].accessToken).toBe("secret-real-token");
+    expect(ps[1].sendingEnabled).toBe(true);
+    const foreign = { ...env, WHATSAPP_SIGNUP_CUSTOMER_ID: randomUUID() };
+    expect(
+      (
+        await co.connectionScope(
+          (db) => db.query("SELECT * FROM sophia_runtime.whatsapp_connections"),
+          foreign,
+          pool,
+        )
+      ).rowCount,
+    ).toBe(0);
+    await expect(
+      co.connectionScope(
+        (db) =>
+          db.query(
+            "UPDATE sophia_runtime.whatsapp_connections SET state='ready' WHERE customer_id=$1",
+            [tenant],
+          ),
+        foreign,
+        pool,
+      ),
+    ).resolves.toMatchObject({ rowCount: 0 });
+
+    // Large history deliveries resume in bounded batches, never generating replies.
+    await scope((db) =>
+      db.query(
+        "UPDATE sophia_runtime.whatsapp_connections SET state='syncing',history_progress=0",
+      ),
+    );
+    const jobsBefore = (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM sophia_runtime.assistant_reply_jobs",
+      )
+    ).rows[0].n;
+    const bulk = {
+      field: "history",
+      value: {
+        history: [
+          {
+            metadata: { progress: 100, phase: 2, chunk_order: 2 },
+            threads: [
+              {
+                id: "61412345678",
+                messages: Array.from({ length: 501 }, (_, i) => ({
+                  id: "bulk-" + i,
+                  from: "61412345678",
+                  timestamp: String(Math.floor(Date.now() / 1000) - 7200 + i),
+                  type: "text",
+                  text: { body: "Archived " + i },
+                })),
+              },
+            ],
+          },
+        ],
+      },
+    };
+    await co.captureSync(p, [bulk], env);
+    await co.processSyncReceipt({ env, scope });
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT state,history_progress FROM sophia_runtime.whatsapp_connections",
+          ),
+        )
+      ).rows[0],
+    ).toMatchObject({ state: "syncing", history_progress: 0 });
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT count(*)::int AS n FROM sophia_runtime.whatsapp_imported_messages",
+          ),
+        )
+      ).rows[0].n,
+    ).toBe(501);
+    await co.processSyncReceipt({ env, scope });
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT count(*)::int AS n FROM sophia_runtime.whatsapp_imported_messages",
+          ),
+        )
+      ).rows[0].n,
+    ).toBe(502);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM sophia_runtime.assistant_reply_jobs",
+        )
+      ).rows[0].n,
+    ).toBe(jobsBefore);
+    await scope((db) =>
+      db.query(
+        "UPDATE sophia_runtime.whatsapp_connections SET state='syncing',history_progress=0",
+      ),
+    );
+    await co.captureSync(
+      p,
+      [
+        {
+          field: "history",
+          value: { history: [{ errors: [{ code: 2593109 }] }] },
+        },
+      ],
+      env,
+    );
+    await co.processSyncReceipt({ env, scope });
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT state,history_declined FROM sophia_runtime.whatsapp_connections",
+          ),
+        )
+      ).rows[0],
+    ).toMatchObject({ state: "ready", history_declined: true });
+    // A lost one-shot response is never replayed automatically.
+    await scope((db) =>
+      db.query(
+        "UPDATE sophia_runtime.whatsapp_connections SET state='activating',step='contacts',operation_state='pending'",
+      ),
+    );
+    const uncertain = jest.fn(async () => {
+      throw Error("timeout after acceptance");
+    });
+    await co.activationTick({ env, scope, fetcher: uncertain });
+    await co.activationTick({ env, scope, fetcher: uncertain });
+    expect(uncertain).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT state,operation_state FROM sophia_runtime.whatsapp_connections",
+          ),
+        )
+      ).rows[0],
+    ).toEqual({ state: "attention", operation_state: "uncertain" });
+    await co.captureSync(
+      p,
+      [{ field: "account_update", value: { event: "PARTNER_REMOVED" } }],
+      env,
+    );
+    row = (
+      await scope((db) =>
+        db.query(
+          "SELECT state,encrypted_token FROM sophia_runtime.whatsapp_connections",
+        ),
+      )
+    ).rows[0];
+    expect(row).toEqual({ state: "disconnected", encrypted_token: null });
+    expect(
+      (
+        await scope((db) =>
+          db.query(
+            "SELECT enabled FROM sophia_runtime.assistant_channels WHERE profile_id=$1",
+            [profile.id + "_real"],
+          ),
+        )
+      ).rows[0].enabled,
+    ).toBe(false);
   });
 });

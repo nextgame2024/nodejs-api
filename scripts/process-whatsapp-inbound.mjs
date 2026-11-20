@@ -1,12 +1,13 @@
 import "dotenv/config";
 import { setTimeout as sleep } from "node:timers/promises";
 import pool from "../src/config/db.js";
-import { channelProfiles } from "../src/services/messaging/channel-profiles.js";
+import { workerProfiles } from "../src/services/messaging/channel-profiles.js";
 import { processChannelEvent } from "../src/services/messaging/whatsapp-channel.service.js";
 if (process.env.WHATSAPP_INBOUND_WORKER_ENABLED !== "true")
   throw new Error("WhatsApp inbound worker is disabled.");
-const profiles = channelProfiles().filter((p) => p.ready);
-if (!profiles.length) throw new Error("No ready WhatsApp inbound profiles.");
+const initialProfiles = (await workerProfiles()).filter((p) => p.ready);
+if (!initialProfiles.length)
+  throw new Error("No ready WhatsApp inbound profiles.");
 const abort = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => abort.abort());
@@ -15,7 +16,17 @@ for (const signal of ["SIGINT", "SIGTERM"])
 try {
   while (!abort.signal.aborted) {
     let busy = false;
-    for (const profile of profiles) {
+    let profiles;
+    try {
+      profiles = await workerProfiles();
+    } catch {
+      console.error(
+        JSON.stringify({ event: "whatsapp_profile_refresh_failed" }),
+      );
+      await sleep(2000, undefined, { signal: abort.signal }).catch(() => {});
+      continue;
+    }
+    for (const profile of profiles.filter((p) => p.ready)) {
       if (abort.signal.aborted) break;
       try {
         const result = await processChannelEvent(profile);
