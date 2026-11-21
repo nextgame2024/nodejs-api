@@ -44,6 +44,30 @@ export function preparationConfigs(env = process.env) {
 }
 export const emailFingerprint = (email) =>
   createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex");
+// Only include an existing booking in mail to its recorded address, never in
+// the anonymous form response. Do not guess when an address has two bookings.
+export async function preparationAppointmentForEmail(
+  db,
+  tenant,
+  publicationId,
+  email,
+) {
+  if (
+    !email ||
+    preparationConfigs()[tenant]?.publicToken !== `${tenant}.${publicationId}`
+  )
+    return null;
+  const { rows } = await db.query(
+    `SELECT a.starts_at AS "startsAt",a.ends_at AS "endsAt",a.customer_timezone AS timezone
+     FROM sophia_runtime.lead_appointments a
+     JOIN sophia_runtime.assistant_leads l USING(customer_id,lead_id)
+     WHERE a.customer_id=$1 AND lower(trim(l.email))=$2
+       AND a.status='confirmed' AND a.starts_at>now()
+     ORDER BY a.starts_at LIMIT 2`,
+    [tenant, email.trim().toLowerCase()],
+  );
+  return rows.length === 1 ? rows[0] : null;
+}
 export async function confirmedEmail(db, tenant, lead) {
   if (!lead.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email))
     return false;

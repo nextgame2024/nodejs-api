@@ -1,5 +1,8 @@
-import { test, expect, afterEach } from "@jest/globals";
-import { preparationConfigs } from "../src/services/scheduling/meeting-preparation.js";
+import { test, expect, afterEach, jest } from "@jest/globals";
+import {
+  preparationConfigs,
+  preparationAppointmentForEmail,
+} from "../src/services/scheduling/meeting-preparation.js";
 process.env.DATABASE_URL ||= "postgresql://127.0.0.1/postgres";
 const { publicToken } = await import(
   "../src/services/leads/public-lead-forms.service.js"
@@ -7,6 +10,57 @@ const { publicToken } = await import(
 const tenant = "11111111-1111-4111-8111-111111111111",
   publication = "22222222-2222-4222-8222-222222222222";
 afterEach(() => delete process.env.APPOINTMENT_PREPARATION_FORMS);
+test("preparation email includes only one upcoming booking matched within the configured tenant and form", async () => {
+  process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
+    [tenant]: {
+      slug: "prepare-for-your-meeting",
+      origin: "https://sophiaai.com.au",
+      publicToken: tenant + "." + publication,
+    },
+  });
+  const appointment = {
+    startsAt: "2026-12-01T00:00:00Z",
+    endsAt: "2026-12-01T00:30:00Z",
+    timezone: "Australia/Brisbane",
+  };
+  const db = { query: jest.fn().mockResolvedValue({ rows: [appointment] }) };
+  expect(
+    await preparationAppointmentForEmail(
+      db,
+      tenant,
+      publication,
+      "PERSON@example.com",
+    ),
+  ).toEqual(appointment);
+  expect(db.query.mock.calls[0][1]).toEqual([tenant, "person@example.com"]);
+  expect(db.query.mock.calls[0][0]).toContain(
+    "a.status='confirmed' AND a.starts_at>now()",
+  );
+  db.query.mockClear();
+  expect(
+    await preparationAppointmentForEmail(
+      db,
+      tenant,
+      "other-form",
+      "person@example.com",
+    ),
+  ).toBeNull();
+  expect(
+    await preparationAppointmentForEmail(db, tenant, publication, null),
+  ).toBeNull();
+  expect(db.query).not.toHaveBeenCalled();
+  for (const rows of [[], [appointment, appointment]]) {
+    db.query.mockResolvedValue({ rows });
+    expect(
+      await preparationAppointmentForEmail(
+        db,
+        tenant,
+        publication,
+        "person@example.com",
+      ),
+    ).toBeNull();
+  }
+});
 test("friendly alias resolves to the published form token and preserves ordinary tokens", () => {
   process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
     [tenant]: {

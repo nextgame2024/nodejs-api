@@ -1,4 +1,7 @@
-import { preparationConfigs } from "../scheduling/meeting-preparation.js";
+import {
+  preparationConfigs,
+  preparationAppointmentForEmail,
+} from "../scheduling/meeting-preparation.js";
 import { randomUUID } from "node:crypto";
 import pool from "../../config/db.js";
 import {
@@ -454,6 +457,14 @@ export async function submitPublicForm(token, input) {
     if (input.formVersion !== p.form_version)
       throw fail("This form changed. Reload the page before submitting.", 409);
     const answers = submissionAnswers(p.blocks, input.answers);
+    const customerEmail = businessEmailRecipient(answers);
+    const nameAnswer = answers.filter((a) =>
+      /^what is your name\?$/i.test(a.label),
+    );
+    const answeredName =
+      nameAnswer.length === 1 && typeof nameAnswer[0].value === "string"
+        ? nameAnswer[0].value.trim().slice(0, 160)
+        : "";
     const release = await team(db, tenant);
     const calendar = p.blocks.find((b) => b.kind === "calendar");
     if (calendar && !input.appointment)
@@ -479,8 +490,10 @@ export async function submitPublicForm(token, input) {
       [
         tenant,
         leadId,
-        contact.displayName,
-        contact.email,
+        input?.contact?.name
+          ? contact.displayName
+          : answeredName || contact.displayName,
+        contact.email || customerEmail || "",
         contact.phone,
         release.configuration.defaultLanguage ?? "en",
         p.name,
@@ -562,7 +575,9 @@ export async function submitPublicForm(token, input) {
         JSON.stringify(result),
       ],
     );
-    const customerEmail = businessEmailRecipient(answers);
+    const emailAppointment =
+      appointment ||
+      (await preparationAppointmentForEmail(db, tenant, p.id, customerEmail));
     const recipients = new Set(
       p.emails
         ? formEmails(p.emails, true)
@@ -575,14 +590,18 @@ export async function submitPublicForm(token, input) {
       payload: {
         formName: p.name,
         answers,
-        appointment,
+        appointment: emailAppointment,
         ...(recipient === customerEmail ? { includeConfirmation: true } : {}),
       },
     }));
     if (customerEmail && !recipients.has(customerEmail))
       deliveries.push({
         recipient: customerEmail,
-        payload: { formName: p.name, appointment, confirmationOnly: true },
+        payload: {
+          formName: p.name,
+          appointment: emailAppointment,
+          confirmationOnly: true,
+        },
       });
     for (const { recipient, payload } of deliveries)
       await db.query(

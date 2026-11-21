@@ -621,6 +621,96 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       db.release();
     }
   });
+  test("preparation confirms an existing booking only by email without creating another appointment", async () => {
+    const existing = (
+      await pool.query(
+        "SELECT * FROM sophia_runtime.lead_appointments WHERE customer_id=$1 AND status='confirmed' AND starts_at>now() LIMIT 1",
+        [tenant],
+      )
+    ).rows[0];
+    await pool.query(
+      "UPDATE sophia_runtime.assistant_leads SET email='prep@example.test' WHERE customer_id=$1 AND lead_id=$2",
+      [tenant, existing.lead_id],
+    );
+    const emailBlock = {
+      id: randomUUID(),
+      kind: "input",
+      text: "What is your business email?",
+      options: [],
+      required: false,
+    };
+    const nameBlock = {
+      id: randomUUID(),
+      kind: "input",
+      text: "What is your name?",
+      options: [],
+      required: false,
+    };
+    const draft = await forms.saveForm(owner, company, randomUUID(), {
+      expectedVersion: 0,
+      form: {
+        name: "Preparation",
+        typeId: form.typeId,
+        emails: "owner@example.test",
+        blocks: [nameBlock, emailBlock],
+      },
+    });
+    const published = await publicForms.publishForm(owner, company, draft.id, {
+      expectedVersion: 1,
+    });
+    process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
+      [tenant]: {
+        slug: "prepare",
+        origin: "https://sophiaai.com.au",
+        publicToken: published.token,
+      },
+    });
+    try {
+      const count = (
+        await pool.query(
+          "SELECT count(*) FROM sophia_runtime.lead_appointments",
+        )
+      ).rows[0].count;
+      const result = await publicForms.submitPublicForm(published.token, {
+        requestKey: randomUUID(),
+        formVersion: 1,
+        answers: {
+          [emailBlock.id]: "prep@example.test",
+          [nameBlock.id]: "Alex",
+        },
+      });
+      expect(result.appointment).toBeNull();
+      const queued = (
+        await pool.query(
+          "SELECT payload FROM sophia_runtime.lead_form_email_outbox WHERE submission_id=$1 AND recipient='prep@example.test'",
+          [result.receipt],
+        )
+      ).rows[0].payload;
+      expect(new Date(queued.appointment.startsAt).toISOString()).toBe(
+        existing.starts_at.toISOString(),
+      );
+      expect(queued.confirmationOnly).toBe(true);
+      expect(
+        (
+          await pool.query(
+            "SELECT count(*) FROM sophia_runtime.lead_appointments",
+          )
+        ).rows[0].count,
+      ).toBe(count);
+      const lead = (
+        await pool.query(
+          "SELECT l.display_name,l.email FROM sophia_runtime.assistant_leads l JOIN sophia_runtime.lead_form_submissions f USING(customer_id,lead_id) WHERE f.id=$1",
+          [result.receipt],
+        )
+      ).rows[0];
+      expect(lead).toEqual({
+        display_name: "Alex",
+        email: "prep@example.test",
+      });
+    } finally {
+      delete process.env.APPOINTMENT_PREPARATION_FORMS;
+    }
+  });
   test("missing publication table keeps drafts readable and returns an actionable publishing error", async () => {
     await pool.query(
       "ALTER TABLE sophia_runtime.lead_form_publications RENAME TO lead_form_publications_pending",
