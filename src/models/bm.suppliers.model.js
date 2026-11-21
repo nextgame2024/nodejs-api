@@ -5,6 +5,7 @@ const SUPPLIER_SELECT = `
   company_id AS "companyId",
   user_id AS "userId",
   supplier_name AS "supplierName",
+  supplier_type AS "supplierType",
   address,
   email,
   cel,
@@ -15,7 +16,21 @@ const SUPPLIER_SELECT = `
   updatedat AS "updatedAt"
 `;
 
-export async function listSuppliers(companyId, { q, status, limit, offset }) {
+export const supplierSortColumns = {
+  name: "LOWER(supplier_name)",
+  email: "LOWER(email)",
+  mobile: "cel",
+  type: "supplier_type",
+  status: "status",
+};
+export async function listSuppliers(
+  companyId,
+  { q, status, limit, offset, sort, direction },
+) {
+  const order = Object.hasOwn(supplierSortColumns, sort)
+    ? supplierSortColumns[sort]
+    : supplierSortColumns.name;
+  const orderDirection = direction === "desc" ? "DESC" : "ASC";
   const params = [companyId];
   let i = 2;
   const where = [`company_id = $1`];
@@ -26,7 +41,7 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
   }
   if (q) {
     where.push(
-      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i})`
+      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i} OR supplier_type ILIKE $${i})`,
     );
     params.push(`%${q}%`);
     i++;
@@ -66,10 +81,10 @@ export async function listSuppliers(companyId, { q, status, limit, offset }) {
       ) AS "hasProjects"
     FROM bm_suppliers
     WHERE ${where.join(" AND ")}
-    ORDER BY (status = 'archived') ASC, LOWER(supplier_name) ASC NULLS LAST, createdat DESC
+    ORDER BY ${order} ${orderDirection} NULLS LAST, supplier_id ASC
     LIMIT $${i++} OFFSET $${i}
     `,
-    params
+    params,
   );
 
   return rows;
@@ -86,7 +101,7 @@ export async function countSuppliers(companyId, { q, status }) {
   }
   if (q) {
     where.push(
-      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i})`
+      `(supplier_name ILIKE $${i} OR email ILIKE $${i} OR cel ILIKE $${i} OR tel ILIKE $${i} OR status::text ILIKE $${i} OR supplier_type ILIKE $${i})`,
     );
     params.push(`%${q}%`);
     i++;
@@ -96,7 +111,7 @@ export async function countSuppliers(companyId, { q, status }) {
     `SELECT COUNT(*)::int AS total
      FROM bm_suppliers
      WHERE ${where.join(" AND ")}`,
-    params
+    params,
   );
 
   return rows[0]?.total ?? 0;
@@ -108,7 +123,7 @@ export async function getSupplier(companyId, supplierId) {
      FROM bm_suppliers
      WHERE company_id = $1 AND supplier_id = $2
      LIMIT 1`,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
   return rows[0];
 }
@@ -116,7 +131,7 @@ export async function getSupplier(companyId, supplierId) {
 export async function supplierExists(companyId, supplierId) {
   const { rows } = await pool.query(
     `SELECT 1 FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2 LIMIT 1`,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
   return rows.length > 0;
 }
@@ -124,9 +139,9 @@ export async function supplierExists(companyId, supplierId) {
 export async function createSupplier(companyId, userId, payload) {
   const { rows } = await pool.query(
     `INSERT INTO bm_suppliers (
-        supplier_id, company_id, user_id, supplier_name, address, email, cel, tel, notes
+        supplier_id, company_id, user_id, supplier_name, address, email, cel, tel, notes, supplier_type, status
      ) VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
      )
      RETURNING ${SUPPLIER_SELECT}`,
     [
@@ -138,7 +153,9 @@ export async function createSupplier(companyId, userId, payload) {
       payload.cel ?? null,
       payload.tel ?? null,
       payload.notes ?? null,
-    ]
+      payload.supplier_type ?? "services",
+      payload.status ?? "active",
+    ],
   );
   return rows[0];
 }
@@ -150,6 +167,7 @@ export async function updateSupplier(companyId, supplierId, payload) {
 
   const map = {
     supplier_name: "supplier_name",
+    supplier_type: "supplier_type",
     address: "address",
     email: "email",
     cel: "cel",
@@ -174,7 +192,7 @@ export async function updateSupplier(companyId, supplierId, payload) {
      SET ${sets.join(", ")}
      WHERE company_id = $1 AND supplier_id = $2
      RETURNING ${SUPPLIER_SELECT}`,
-    params
+    params,
   );
   return rows[0];
 }
@@ -184,7 +202,7 @@ export async function archiveSupplier(companyId, supplierId) {
     `UPDATE bm_suppliers
      SET status = 'archived', updatedat = NOW()
      WHERE company_id = $1 AND supplier_id = $2`,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
   return res.rowCount > 0;
 }
@@ -215,7 +233,7 @@ export async function supplierHasRelations(companyId, supplierId) {
       )
     ) AS "hasRelations"
     `,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
 
   return rows[0]?.hasRelations ?? false;
@@ -224,7 +242,7 @@ export async function supplierHasRelations(companyId, supplierId) {
 export async function deleteSupplier(companyId, supplierId) {
   const res = await pool.query(
     `DELETE FROM bm_suppliers WHERE company_id = $1 AND supplier_id = $2`,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
   return res.rowCount > 0;
 }
@@ -254,7 +272,11 @@ const CONTACT_RETURNING = `
   createdat AS "createdAt"
 `;
 
-export async function listSupplierContacts(companyId, supplierId, { limit, offset }) {
+export async function listSupplierContacts(
+  companyId,
+  supplierId,
+  { limit, offset },
+) {
   const { rows } = await pool.query(
     `
     SELECT ${CONTACT_SELECT}
@@ -264,7 +286,7 @@ export async function listSupplierContacts(companyId, supplierId, { limit, offse
     ORDER BY c.name ASC NULLS LAST, c.createdat DESC
     LIMIT $3 OFFSET $4
     `,
-    [companyId, supplierId, limit, offset]
+    [companyId, supplierId, limit, offset],
   );
   return rows;
 }
@@ -277,7 +299,7 @@ export async function countSupplierContacts(companyId, supplierId) {
     JOIN bm_suppliers s ON s.supplier_id = c.supplier_id
     WHERE s.company_id = $1 AND c.supplier_id = $2
     `,
-    [companyId, supplierId]
+    [companyId, supplierId],
   );
   return rows[0]?.total ?? 0;
 }
@@ -300,7 +322,7 @@ export async function createSupplierContact(companyId, supplierId, payload) {
       payload.email ?? null,
       payload.cel ?? null,
       payload.tel ?? null,
-    ]
+    ],
   );
   return rows[0] || null;
 }
@@ -309,7 +331,7 @@ export async function updateSupplierContact(
   companyId,
   supplierId,
   contactId,
-  payload
+  payload,
 ) {
   const sets = [];
   const params = [companyId, supplierId, contactId];
@@ -339,7 +361,7 @@ export async function updateSupplierContact(
       WHERE s.company_id = $1 AND c.supplier_id = $2 AND c.id = $3
       LIMIT 1
       `,
-      [companyId, supplierId, contactId]
+      [companyId, supplierId, contactId],
     );
     return rows[0] || null;
   }
@@ -355,7 +377,7 @@ export async function updateSupplierContact(
       AND c.id = $3
     RETURNING ${CONTACT_SELECT}
     `,
-    params
+    params,
   );
 
   return rows[0] || null;
@@ -371,7 +393,7 @@ export async function deleteSupplierContact(companyId, supplierId, contactId) {
       AND c.supplier_id = $2
       AND c.id = $3
     `,
-    [companyId, supplierId, contactId]
+    [companyId, supplierId, contactId],
   );
   return res.rowCount > 0;
 }
@@ -394,7 +416,7 @@ const SUPPLIER_MATERIAL_SELECT = `
 export async function listSupplierMaterials(
   companyId,
   supplierId,
-  { q, limit, offset }
+  { q, limit, offset },
 ) {
   const params = [companyId, supplierId];
   let i = 3;
@@ -406,7 +428,7 @@ export async function listSupplierMaterials(
 
   if (q) {
     where.push(
-      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`
+      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`,
     );
     params.push(`%${q}%`);
     i++;
@@ -424,12 +446,16 @@ export async function listSupplierMaterials(
     ORDER BY sm.createdat DESC
     LIMIT $${i++} OFFSET $${i}
     `,
-    params
+    params,
   );
   return rows;
 }
 
-export async function countSupplierMaterials(companyId, supplierId, { q } = {}) {
+export async function countSupplierMaterials(
+  companyId,
+  supplierId,
+  { q } = {},
+) {
   const params = [companyId, supplierId];
   let i = 3;
   const where = [
@@ -440,7 +466,7 @@ export async function countSupplierMaterials(companyId, supplierId, { q } = {}) 
 
   if (q) {
     where.push(
-      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`
+      `(m.material_name ILIKE $${i} OR COALESCE(m.unit, '') ILIKE $${i} OR COALESCE(sm.supplier_sku, '') ILIKE $${i})`,
     );
     params.push(`%${q}%`);
     i++;
@@ -454,7 +480,7 @@ export async function countSupplierMaterials(companyId, supplierId, { q } = {}) 
     JOIN bm_materials m ON m.material_id = sm.material_id
     WHERE ${where.join(" AND ")}
     `,
-    params
+    params,
   );
   return rows[0]?.total ?? 0;
 }
@@ -497,7 +523,7 @@ export async function addSupplierMaterial(companyId, supplierId, payload) {
       payload.lead_time_days ?? null,
       payload.unit_cost ?? payload.unit_cost_override ?? null,
       payload.sell_cost ?? null,
-    ]
+    ],
   );
 
   return rows[0] || null;
@@ -507,10 +533,11 @@ export async function updateSupplierMaterial(
   companyId,
   supplierId,
   materialId,
-  payload
+  payload,
 ) {
   const normalized =
-    payload?.unit_cost === undefined && payload?.unit_cost_override !== undefined
+    payload?.unit_cost === undefined &&
+    payload?.unit_cost_override !== undefined
       ? { ...payload, unit_cost: payload.unit_cost_override }
       : payload;
 
@@ -542,7 +569,7 @@ export async function updateSupplierMaterial(
       WHERE s.company_id = $1 AND sm.supplier_id = $2 AND sm.material_id = $3 AND m.company_id = $1
       LIMIT 1
       `,
-      [companyId, supplierId, materialId]
+      [companyId, supplierId, materialId],
     );
     return rows[0] || null;
   }
@@ -571,7 +598,7 @@ export async function updateSupplierMaterial(
       m.unit AS "unit",
       sm.createdat AS "createdAt"
     `,
-    params
+    params,
   );
 
   return rows[0] || null;
@@ -580,7 +607,7 @@ export async function updateSupplierMaterial(
 export async function removeSupplierMaterial(
   companyId,
   supplierId,
-  materialId
+  materialId,
 ) {
   const res = await pool.query(
     `
@@ -593,7 +620,7 @@ export async function removeSupplierMaterial(
       AND sm.supplier_id = $2
       AND sm.material_id = $3
     `,
-    [companyId, supplierId, materialId]
+    [companyId, supplierId, materialId],
   );
   return res.rowCount > 0;
 }

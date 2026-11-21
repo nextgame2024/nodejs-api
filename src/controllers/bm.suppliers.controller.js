@@ -3,11 +3,13 @@ import * as service from "../services/bm.suppliers.service.js";
 
 export const listSuppliers = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
-  const { q, status, page = "1", limit = "20" } = req.query;
+  const { q, status, sort, direction, page = "1", limit = "25" } = req.query;
 
   const result = await service.listSuppliers(companyId, {
     q,
     status,
+    sort,
+    direction,
     page: Number(page),
     limit: Number(limit),
   });
@@ -85,7 +87,7 @@ export const createSupplierContact = asyncHandler(async (req, res) => {
   const contact = await service.createSupplierContact(
     companyId,
     supplierId,
-    payload
+    payload,
   );
   if (!contact) return res.status(404).json({ error: "Supplier not found" });
 
@@ -101,7 +103,7 @@ export const updateSupplierContact = asyncHandler(async (req, res) => {
     companyId,
     supplierId,
     contactId,
-    payload
+    payload,
   );
   if (!contact) return res.status(404).json({ error: "Contact not found" });
 
@@ -115,7 +117,7 @@ export const deleteSupplierContact = asyncHandler(async (req, res) => {
   const ok = await service.deleteSupplierContact(
     companyId,
     supplierId,
-    contactId
+    contactId,
   );
   if (!ok) return res.status(404).json({ error: "Contact not found" });
 
@@ -166,7 +168,7 @@ export const updateSupplierMaterial = asyncHandler(async (req, res) => {
     companyId,
     supplierId,
     materialId,
-    payload
+    payload,
   );
   if (!row)
     return res
@@ -183,7 +185,7 @@ export const removeSupplierMaterial = asyncHandler(async (req, res) => {
   const ok = await service.removeSupplierMaterial(
     companyId,
     supplierId,
-    materialId
+    materialId,
   );
   if (!ok)
     return res
