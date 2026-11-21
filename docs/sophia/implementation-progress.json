@@ -54,7 +54,7 @@
   },
   "whatsappEmbeddedSignupAuthorization": {
     "updatedOn": "2026-11-19",
-    "status": "authorization_prototype_locally_verified_activation_not_implemented",
+    "status": "superseded_by_whatsappCoexistenceActivation",
     "scope": "Sophia AI own +61400388532; not Open for Australia. Meta app 1107965912211301 and owner-supplied signup configuration 1141808901544273.",
     "implemented": [
       "Company WhatsApp staged signup component using Meta JavaScript SDK and strict origin/event filtering; handles session event and authorization callback in either order",
@@ -73,11 +73,7 @@
       "git diff --check and JavaScript syntax checks passed"
     ],
     "limits": [
-      "No deployment, production migration, Meta authorization, subscription or real-number activation performed in this implementation",
-      "Meta app review pending in owner screenshot; owner must configure frontend SDK allowlist",
-      "Live subscription and durable contacts/history synchronization within Meta deadline are not implemented; keep WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false",
-      "Temporary credential ciphertext is cleared on failed verification, expired-status refresh or next attempt, not by a background cleanup worker",
-      "Promotion into live deployment-owned profiles, lifecycle revocation handling and genuine app-echo/human-takeover pilot remain required"
+      "Historical prototype scope completed by the 20 November 2026 coexistence activation implementation; see whatsappCoexistenceActivation for current deployment state and remaining live pilot."
     ],
     "ownerProvidedOrigins": [
       "http://localhost:4200",
@@ -4228,7 +4224,7 @@
   },
   "whatsappCoexistenceActivation": {
     "updatedOn": "2026-11-20",
-    "status": "tested_deployment_pending",
+    "status": "deployed_meta_coexistence_eligibility_rejected",
     "changes": [
       "Durable tenant-scoped coexistence credential, subscription and one-shot synchronization workflow; separate real-number profile preserves the test connection.",
       "Signed history, contacts and lifecycle routing on the existing app callback and per-account override. Encrypted receipt queue, deduplication, 500-record checkpoints and archive-to-timeline import without historical automation.",
@@ -4242,11 +4238,42 @@
       "Meta app callback read verified active; coexistence subscription fields need adding after deployment.",
       "Owner screenshot confirms Embedded Signup configuration 1141808901544273 includes Cloud API and both WhatsApp permissions.",
       "15 PostgreSQL voice regression tests passed. Frontend application/spec TypeScript checks passed.",
-      "Production migrations 134 and 137 applied; all five new tables verified FORCE RLS. API/worker activation settings configured with signup held disabled."
+      "Production migrations 134 and 137 applied; all five new tables verified FORCE RLS. API/worker activation settings configured with signup held disabled.",
+      "Render API/worker/runtime verified live at 35bb648618708d52bdc2d7022cf83914e60ad71f before enabling signup; final configuration deployments requested.",
+      "Meta subscription update confirmed history, smb_app_state_sync and smb_message_echoes, preserving the existing callback and all prior fields. Existing callback HTTP 200 and challenge verified.",
+      "Production scoped signup service returns available=true for the authorized Sophia AI company; no real-number connection exists until owner authorizes.",
+      "Final signup-enabled Render deployments verified live on API and worker at 35bb648618708d52bdc2d7022cf83914e60ad71f; runtime remains live at the same commit.",
+      "Owner attempt failed in Meta popup with error 3441107: partner app not set up to connect WhatsApp Business app numbers. Session 01a1f7f7-b949-77b7-8a52-c7c804ec9210.",
+      "Public production bundle chunk-NGJILHH5.js verified to pass extras.featureType=whatsapp_business_app_onboarding and sessionInfoVersion=3.",
+      "Scoped production check: latest signup remains started; no authorization or whatsapp_connections row exists. No real-number activation occurred."
     ],
     "remaining": [
-      "Production deployment and final webhook configuration verification.",
-      "Owner phone authorization and controlled real-number pilot; automatic replies remain review-only initially."
+      "Confirm Tech Provider onboarding/App Review status and obtain Meta coexistence eligibility. Standard own-business API access does not establish eligibility to preserve an existing Business app number through coexistence.",
+      "Complete review demonstrations with the working Meta test number; retry existing-number signup only after the Meta prerequisite is resolved.",
+      "Owner phone authorization and controlled real-number pilot remain pending. Frontend status changes remain local for owner commit/push."
     ]
+  },
+  "advertisingAndPreparationForms": {
+    "updatedOn": "2026-11-21",
+    "status": "published_and_deployed",
+    "changes": [
+      "Original published form renamed Sophia AI discovery meeting with updated copy and existing Brisbane 30-minute advisor calendar; original publication token and meeting-preparation alias preserved",
+      "Copied current questions to Sophia AI pre-meeting questionnaire without calendar; prepare-for-your-meeting alias used by future WhatsApp and appointment emails",
+      "Both forms queue customer confirmation and team notification emails through existing styled email workflow; preparation email includes a unique upcoming confirmed booking matched by same tenant/email, never exposed in anonymous HTTP response",
+      "Form answers supply lead name and business email when separate contact fields are absent"
+    ],
+    "verification": [
+      "22 focused tests passed including disposable local PostgreSQL public-form booking/email/idempotency/isolation scenarios",
+      "38 protected real-estate regression tests passed",
+      "Production GET verified both friendly aliases and original long URL; original has one calendar and preparation copy none",
+      "Production availability GET returned 35 available 30-minute slots for 23 November 2026",
+      "Production API email provider configured as SES; no real booking or customer email generated during validation",
+      "Render API and WhatsApp worker live at e9cc35a73e3a55d85611d201ce91f2363444a418"
+    ],
+    "limits": [
+      "Preparation email omits appointment date if email does not match exactly one upcoming confirmed booking",
+      "Actual email inbox delivery from a new submission not tested in production"
+    ],
+    "backendCommit": "e9cc35a"
   }
 }

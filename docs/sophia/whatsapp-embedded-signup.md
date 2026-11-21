@@ -97,3 +97,15 @@ Cloud API registration flow.
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/override
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/version-4
+
+## Owner pilot result — 20 November 2026
+
+Meta rejected the first real-number signup attempt with error `3441107`:
+"This partner's app isn't set up yet to connect WhatsApp Business app numbers."
+The deployed public bundle was inspected and sends the documented
+`featureType: whatsapp_business_app_onboarding`. The signup row stayed `started`;
+Meta returned no authorization and no real connection was created. Do not confuse
+own-business Cloud API access with coexistence eligibility. The owner must check
+Tech Provider onboarding and App Review/Advanced Access status. Meta's Tech
+Provider guide permits the existing test number/API Setup to demonstrate sending
+and WhatsApp Manager to demonstrate template creation for review.
