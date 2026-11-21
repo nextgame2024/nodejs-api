@@ -41,3 +41,43 @@ test("rejects unsafe alias configuration", () => {
     }),
   ).toThrow();
 });
+test("advertised alias retains the original form while new invitations use the copy", () => {
+  const copy = "33333333-3333-4333-8333-333333333333";
+  const config = {
+    [tenant]: {
+      slug: "prepare-for-your-meeting",
+      origin: "https://sophiaai.com.au",
+      publicToken: tenant + "." + copy,
+      aliases: [
+        {
+          slug: "meeting-preparation",
+          publicToken: tenant + "." + publication,
+        },
+      ],
+    },
+  };
+  process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify(config);
+  expect(publicToken("meeting-preparation")).toEqual({
+    tenant,
+    id: publication,
+  });
+  expect(publicToken("prepare-for-your-meeting")).toEqual({ tenant, id: copy });
+  expect(preparationConfigs()[tenant].url).toBe(
+    "https://sophiaai.com.au/forms/prepare-for-your-meeting",
+  );
+  for (const alias of [
+    {
+      slug: "prepare-for-your-meeting",
+      publicToken: tenant + "." + publication,
+    },
+    { slug: "../invalid", publicToken: tenant + "." + publication },
+    { slug: "another-form", publicToken: copy + "." + publication },
+  ]) {
+    config[tenant].aliases = [alias];
+    expect(() =>
+      preparationConfigs({
+        APPOINTMENT_PREPARATION_FORMS: JSON.stringify(config),
+      }),
+    ).toThrow();
+  }
+});

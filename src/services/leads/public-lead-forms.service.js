@@ -31,8 +31,9 @@ import { filterFormSlots } from "./lead-form-bookings.service.js";
 const s = "sophia_runtime";
 export function publicToken(token) {
   token =
-    Object.values(preparationConfigs()).find((p) => p.slug === token)
-      ?.publicToken ?? token;
+    Object.values(preparationConfigs())
+      .flatMap((p) => [p, ...(p.aliases ?? [])])
+      .find((p) => p.slug === token)?.publicToken ?? token;
   const parts = typeof token === "string" ? token.split(".") : [];
   if (parts.length !== 2) throw fail("Form not found.", 404);
   try {

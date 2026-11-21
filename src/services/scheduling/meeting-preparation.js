@@ -23,6 +23,21 @@ export function preparationConfigs(env = process.env) {
     )
       throw Error("Invalid appointment preparation origin");
     slugs.add(p.slug);
+    // Keep advertised URLs stable when the post-booking questionnaire changes.
+    const aliases = p.aliases ?? [];
+    if (!Array.isArray(aliases))
+      throw Error("Invalid appointment preparation aliases");
+    for (const alias of aliases) {
+      if (
+        !/^[a-z][a-z0-9-]{2,60}$/.test(alias?.slug || "") ||
+        !/^[a-f0-9-]{36}\.[a-f0-9-]{36}$/i.test(alias?.publicToken || "") ||
+        alias.publicToken.split(".")[0].toLowerCase() !==
+          tenant.toLowerCase() ||
+        slugs.has(alias.slug)
+      )
+        throw Error("Invalid appointment preparation alias");
+      slugs.add(alias.slug);
+    }
     result[tenant] = { ...p, url: origin.origin + "/forms/" + p.slug };
   }
   return result;
