@@ -53,7 +53,7 @@ describe('College mapping decisions',()=>{
   function service(options:{role?:string;revision?:number;missingCollege?:boolean}={}){
     const query=jest.fn(async(sql:string,_args?:unknown[])=>{
       if(sql.includes('SELECT c.xero_connection_id'))return {rows:options.role==='trust'?[]:[{xero_connection_id:connection}]};
-      if(sql.includes('SELECT college_id FROM'))return {rows:options.missingCollege?[]:[{college_id:college}]};
+      if(sql.includes('SELECT id AS college_id FROM'))return {rows:options.missingCollege?[]:[{college_id:college}]};
       if(sql.includes('SELECT college_id,classification,revision'))return {rows:options.revision?[{college_id:college,classification:'college',revision:options.revision}]:[]};
       if(sql.includes('RETURNING college_id'))return {rows:[{college_id:college,classification:'college',revision:(options.revision??0)+1}]};
       return {rows:[{}]};
