@@ -256,6 +256,20 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       publicationToken: token,
       publishedVersion: form.version,
     });
+    process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
+      [token.split('.')[0]]: {
+        slug: 'prepare-for-meeting', origin: 'https://example.test',
+        publicToken: token.split('.')[0] + '.' + randomUUID(),
+        aliases: [{ slug: 'discovery-meeting', publicToken: token }],
+      },
+    });
+    try {
+      const rows = (await forms.listForms(owner, company, {})).items;
+      expect(rows.find((row) => row.id === form.id).friendlyUrl)
+        .toBe('https://example.test/forms/discovery-meeting');
+    } finally {
+      delete process.env.APPOINTMENT_PREPARATION_FORMS;
+    }
     const published = await publicForms.getPublicForm(token);
     expect(published.blocks[2].calendar.advisorId).toBeUndefined();
     expect(published.businessName).toBe("Example company");

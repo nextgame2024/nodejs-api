@@ -1,3 +1,4 @@
+import { preparationConfigs } from "../scheduling/meeting-preparation.js";
 import { transaction } from "./assistant-settings.service.js";
 import { fail } from "./assistant-settings.contracts.js";
 import { uuid, version, text } from "./lead-records.contracts.js";
@@ -154,6 +155,17 @@ export async function listForms(actor, company, query) {
         [...params, f.limit, (f.page - 1) * f.limit],
       )
     ).rows[0];
+    const config = preparationConfigs()[tenant];
+    const links = new Map(
+      config ? [config, ...(config.aliases ?? [])].map((alias) => [
+        alias.publicToken,
+        new URL(`/forms/${alias.slug}`, config.origin).href,
+      ]) : [],
+    );
+    result.items = result.items.map((row) => ({
+      ...row,
+      friendlyUrl: row.publicationToken ? links.get(row.publicationToken) ?? null : null,
+    }));
     return result;
   });
 }
