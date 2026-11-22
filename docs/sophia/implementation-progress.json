@@ -4278,10 +4278,19 @@
   },
   "ptyInvoiceProjectionHotfix": {
     "updatedOn": "2026-11-22",
-    "status": "verified_pending_deployment",
+    "status": "backend_deployed_frontend_local",
     "cause": "Ambiguous customer_id in PTY case-link JOIN USING caused invoice list failure; sync status cleared shared UI error",
-    "verification": ["28 focused backend tests passed", "Runtime build and read-only production query verified", "Production PTY register 7343 transactions; TRUST 7852; 81 college mappings present; no new PTY student links in audit", "Frontend TypeScript passed; browser test build stalled and stopped"],
-    "changes": ["Explicit tenant, connection and invoice join preserves college mapping", "Separate invoice error state with retry; frontend remains local"]
+    "verification": [
+      "28 focused backend tests passed",
+      "Runtime build and read-only production query verified",
+      "Production PTY register 7343 transactions; TRUST 7852; 81 college mappings present; no new PTY student links in audit",
+      "Frontend TypeScript and Angular template compilation passed; browser test build stalled and stopped",
+      "Render API, worker and runtime live at 759809782a1e1f5fb8f0fe41ab618a6560c37f46; runtime health ok=true revision 759809782a1e"
+    ],
+    "changes": [
+      "Explicit tenant, connection and invoice join preserves college mapping",
+      "Separate invoice error state with retry; frontend remains local"
+    ]
   },
   "ptyStudentContactAndInvoiceLinks": {
     "updatedOn": "2026-11-22",
@@ -4310,6 +4319,31 @@
       "Production schema migrated; no production student/invoice links changed by validation",
       "Frontend changes remain local and uncommitted",
       "Visual desktop/mobile/light/dark verification remains pending"
+    ]
+  },
+  "ptyCollegeStudentBulkLink": {
+    "updatedOn": "2026-11-22",
+    "status": "production_completed",
+    "scope": "Existing visible college-linked PTY transactions for Open for Australia only",
+    "result": {
+      "eligible": 4951,
+      "linked": 4658,
+      "students": 623,
+      "manualReview": 293
+    },
+    "matching": "Unique exact normalized full-name match after coded prefixes; exactly one existing case; no conflicting student assignment",
+    "verification": [
+      "Atomic transaction under sophia_runtime_app tenant boundary",
+      "Before/after hashes equal for invoice data excluding student_id/updated_at, all college mappings and all non-PTY invoice rows",
+      "Read-only service projection: PTY 7343, TRUST 7852; first PTY page has 24 college and student linked transactions",
+      "Repeat preview: 293 candidates, zero unique matches; no duplicate work",
+      "INV-8283 linked to Fabian Ernesto Bohorquez Ramirez STD-276 existing case",
+      "Nightly invoice upsert preserves student_id; separate case links survive provider refresh; automatic matching skips already linked invoices"
+    ],
+    "limits": [
+      "293 unmatched or ambiguous references require manual linking",
+      "Nightly job not manually triggered; verified persistence logic by inspection",
+      "No frontend push or new deployment required for this data operation"
     ]
   }
 }
