@@ -4275,5 +4275,31 @@
       "Actual email inbox delivery from a new submission not tested in production"
     ],
     "backendCommit": "e9cc35a"
+  },
+  "ptyStudentContactAndInvoiceLinks": {
+    "updatedOn": "2026-11-22",
+    "status": "migration_and_deployment_in_progress",
+    "changes": [
+      "College/Supplier/Student review dropdown with student search and creation",
+      "Unique normalized student-name matching for coded contacts and invoice references; repeated prefixes removed; ambiguous matches remain manual",
+      "Separate student case invoice links preserve college/supplier recipients and persist across Xero refreshes",
+      "PTY Match students and manual Link student dialog with explicit case choice when multiple cases exist"
+    ],
+    "verification": [
+      "30 focused backend tests passed",
+      "Runtime build passed",
+      "Migration 139 and actual invoice linking verified in a rolled-back transaction under sophia_runtime_app: case link, idempotency, recipient preservation and tenant isolation passed",
+      "Frontend Angular compiler passed during initial implementation; final recheck stalled and was stopped",
+      "Angular browser test runner crashed in esbuild; bounded-worker retry stalled during build and was stopped",
+      "git diff --check passed in both repositories",
+      "Final backend typecheck and repeat of 30 focused tests passed",
+      "Final frontend TypeScript check passed: tsc -p tsconfig.app.json --noEmit"
+    ],
+    "limits": [
+      "Production migration 139 applied successfully using the migration-owner connection on 2026-11-22",
+      "Production schema migrated; no production student/invoice links changed by validation",
+      "Frontend changes remain local and uncommitted",
+      "Visual desktop/mobile/light/dark verification remains pending"
+    ]
   }
 }

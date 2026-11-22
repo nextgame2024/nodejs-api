@@ -122,6 +122,17 @@ export class StudentOperationsXeroController {
     return this.collegeMatching.resolve(this.authorize(request),connectionId,contactId,body);
   }
 
+  @Get('connections/:connectionId/student-link-options')
+  studentLinkOptions(@Req() request:WorkspaceRequest,@Param('connectionId') connectionId:string){return this.collegeMatching.studentOptions(this.authorize(request),connectionId);}
+
+  @Post('connections/:connectionId/invoices/:invoiceId/student-link')
+  @HttpCode(200)
+  linkInvoiceStudent(@Req() request:WorkspaceRequest,@Param('connectionId') connectionId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown){return this.collegeMatching.linkStudent(this.authorize(request),connectionId,invoiceId,body);}
+
+  @Post('connections/:connectionId/match-students')
+  @HttpCode(200)
+  matchStudents(@Req() request:WorkspaceRequest,@Param('connectionId') connectionId:string){return this.collegeMatching.matchStudents(this.authorize(request),connectionId);}
+
   @Post("connections/:connectionId/student-role/operating")
   @HttpCode(200)
   configureOperating(@Req() request: WorkspaceRequest, @Param("connectionId") connectionId: string) {

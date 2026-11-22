@@ -9,6 +9,7 @@ import { runtimeConfig } from "../../config/runtime-config.js";
 import { DatabaseService } from "../../database/database.service.js";
 import type { StudentOperationsWorkspacePrincipal } from "./student-operations-workspace.service.js";
 import { addDatabaseTimings, elapsedMs, logStudentOperationsTiming } from "./student-operations-timing.js";
+import { autoMatchStudentInvoices } from './student-invoice-matching.js';
 import { autoMatchCollegeContacts } from './student-college-auto-matching.js';
 
 const CandidateQuerySchema = z.object({
@@ -582,9 +583,15 @@ export class StudentOperationsXeroSyncService {
     const mappings=await db.query<{xero_contact_id:string;college_id:string|null;college_name:string|null;classification:string}>(`SELECT m.xero_contact_id,m.college_id,d.college_name,m.classification
       FROM ${schema}.student_college_xero_contact_links m LEFT JOIN ${schema}.student_operations_college_directory d ON d.customer_id=m.customer_id AND d.college_id=m.college_id
       WHERE m.customer_id=$1 AND m.xero_connection_id=$2 AND m.xero_contact_id=ANY($3::uuid[])`,[tenantId,connectionId,rows.map(row=>row.xero_contact_id)]);
+    const studentLinks=(await db.query(`SELECT i.xero_invoice_id,d.user_id,d.name,d.email,d.student_reference,l.case_id
+      FROM ${schema}.student_operations_xero_invoices i
+      LEFT JOIN ${schema}.student_invoice_link_directory d ON d.customer_id=i.customer_id AND d.student_reference=i.student_id
+      LEFT JOIN ${schema}.student_operations_case_invoice_links l USING(customer_id,xero_connection_id,xero_invoice_id)
+      WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=ANY($3::uuid[])`,[tenantId,connectionId,rows.map(row=>row.xero_invoice_id)])).rows;
+    const byStudent=new Map(studentLinks.map(row=>[row.xero_invoice_id,row]));
     const byContact=new Map(mappings.rows.map(row=>[row.xero_contact_id,row]));
-    return rows.map(row=>{const mapping=byContact.get(row.xero_contact_id);return {...invoiceProjection(row),organisationRole:'operating' as const,
-      contactName:row.legal_name,studentName:row.invoice_reference??'',studentEmail:null,suggestedStudentReference:null,studentId:null,
+    return rows.map(row=>{const mapping=byContact.get(row.xero_contact_id),student=byStudent.get(row.xero_invoice_id);return {...invoiceProjection(row),organisationRole:'operating' as const,
+      contactName:row.legal_name,studentName:student?.name??row.invoice_reference??'',studentEmail:student?.email??null,suggestedStudentReference:student?.student_reference??null,studentId:row.student_id,linkedStudentUserId:student?.user_id??null,linkedCaseId:student?.case_id??null,
       collegeName:mapping?.college_name??null,collegeId:mapping?.college_id??null,matchingStatus:mapping?.classification??'unresolved'};});
   }
 
@@ -900,6 +907,8 @@ export class StudentOperationsXeroSyncService {
           WHERE customer_id=$1 AND xero_connection_id=$2`,
         [tenantId, run.xero_connection_id, run.mode,process.env.XERO_SYNC_EXECUTION_MODE === 'worker'],
       );
+      // Match against this completed run so removed provider records are excluded.
+      await autoMatchStudentInvoices(db,tenantId,run.xero_connection_id);
     });
   }
 
