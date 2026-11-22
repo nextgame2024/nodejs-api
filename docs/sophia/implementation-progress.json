@@ -4276,9 +4276,16 @@
     ],
     "backendCommit": "e9cc35a"
   },
+  "ptyInvoiceProjectionHotfix": {
+    "updatedOn": "2026-11-22",
+    "status": "verified_pending_deployment",
+    "cause": "Ambiguous customer_id in PTY case-link JOIN USING caused invoice list failure; sync status cleared shared UI error",
+    "verification": ["28 focused backend tests passed", "Runtime build and read-only production query verified", "Production PTY register 7343 transactions; TRUST 7852; 81 college mappings present; no new PTY student links in audit", "Frontend TypeScript passed; browser test build stalled and stopped"],
+    "changes": ["Explicit tenant, connection and invoice join preserves college mapping", "Separate invoice error state with retry; frontend remains local"]
+  },
   "ptyStudentContactAndInvoiceLinks": {
     "updatedOn": "2026-11-22",
-    "status": "migration_and_deployment_in_progress",
+    "status": "backend_deployed_frontend_local",
     "changes": [
       "College/Supplier/Student review dropdown with student search and creation",
       "Unique normalized student-name matching for coded contacts and invoice references; repeated prefixes removed; ambiguous matches remain manual",
@@ -4293,7 +4300,10 @@
       "Angular browser test runner crashed in esbuild; bounded-worker retry stalled during build and was stopped",
       "git diff --check passed in both repositories",
       "Final backend typecheck and repeat of 30 focused tests passed",
-      "Final frontend TypeScript check passed: tsc -p tsconfig.app.json --noEmit"
+      "Final frontend TypeScript check passed: tsc -p tsconfig.app.json --noEmit",
+      "Production migration 139 applied successfully using owner connection; runtime permissions unchanged",
+      "Render API, runtime and worker verified live at 262c7f319d4a72c65c891d488b9be006164747b0",
+      "Production runtime /api/runtime/healthz returned ok=true and revision 262c7f319d4a"
     ],
     "limits": [
       "Production migration 139 applied successfully using the migration-owner connection on 2026-11-22",

@@ -42,6 +42,26 @@ describe('PTY organisation isolation',()=>{
     const result=await service.invoices(tenant,connection,{});
     expect(result.invoices[0]).toMatchObject({reference:'S15 Andres Student',contactName:'Australian College PTY contact',collegeName:mapped?'Australian College':null,studentId:null,matchingStatus:mapped?'college':'unresolved'});
   });
+  it('adds a student case link without replacing the PTY college recipient',async()=>{
+    const query=jest.fn(async(sql:string,args?:unknown[])=>{
+      if(sql.includes('SELECT organisation_role'))return {rows:[{organisation_role:'operating'}]};
+      if(sql.includes('SELECT m.xero_contact_id'))return {rows:[{xero_contact_id:contact,college_id:college,college_name:'College',classification:'college'}]};
+      if(sql.includes('d.user_id'))return {rows:[{xero_invoice_id:college,user_id:'student-user',name:'Student',email:'student@example.test',student_reference:'student-ref',case_id:'case'}]};
+      return {rows:[]};
+    });
+    const service=new StudentOperationsXeroSyncService(database(query),{} as never);
+    const result=await (service as any).financialProjection({query},tenant,connection,[{xero_invoice_id:college,xero_contact_id:contact,invoice_status:'DRAFT',student_id:'student-ref',legal_name:'College recipient',invoice_reference:'S15 Student'}]);
+    expect(result[0]).toMatchObject({contactName:'College recipient',collegeId:college,collegeName:'College',studentName:'Student',linkedStudentUserId:'student-user',linkedCaseId:'case'});
+    expect(query.mock.calls.every(([,args])=>args?.[0]===tenant&&args?.[1]===connection)).toBe(true);
+    expect(query.mock.calls.every(([sql])=>sql.trim().startsWith('SELECT'))).toBe(true);
+  });
+  it('keeps TRUST projection independent of PTY student and college matching',async()=>{
+    const query=jest.fn(async()=>({rows:[{organisation_role:'trust'}]}));
+    const service=new StudentOperationsXeroSyncService(database(query),{} as never);
+    const result=await (service as any).financialProjection({query},tenant,connection,[{invoice_status:'DRAFT',legal_name:'Trust Student',student_id:'student-ref'}]);
+    expect(result[0]).toMatchObject({organisationRole:'trust',contactName:'Trust Student'});
+    expect(query).toHaveBeenCalledTimes(1);
+  });
   it('denies PTY configuration to an operations role before service access',()=>{
     const configureOrganisation=jest.fn();const controller=new StudentOperationsXeroController({} as never,{configureOrganisation} as never,{} as never);
     expect(()=>controller.configureOperating({studentOperationsPrincipal:{tenantId:tenant,role:'operations'} as never},connection)).toThrow(ForbiddenException);

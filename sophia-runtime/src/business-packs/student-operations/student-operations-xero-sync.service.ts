@@ -586,12 +586,12 @@ export class StudentOperationsXeroSyncService {
     const studentLinks=(await db.query(`SELECT i.xero_invoice_id,d.user_id,d.name,d.email,d.student_reference,l.case_id
       FROM ${schema}.student_operations_xero_invoices i
       LEFT JOIN ${schema}.student_invoice_link_directory d ON d.customer_id=i.customer_id AND d.student_reference=i.student_id
-      LEFT JOIN ${schema}.student_operations_case_invoice_links l USING(customer_id,xero_connection_id,xero_invoice_id)
+      LEFT JOIN ${schema}.student_operations_case_invoice_links l ON l.customer_id=i.customer_id AND l.xero_connection_id=i.xero_connection_id AND l.xero_invoice_id=i.xero_invoice_id
       WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=ANY($3::uuid[])`,[tenantId,connectionId,rows.map(row=>row.xero_invoice_id)])).rows;
     const byStudent=new Map(studentLinks.map(row=>[row.xero_invoice_id,row]));
     const byContact=new Map(mappings.rows.map(row=>[row.xero_contact_id,row]));
     return rows.map(row=>{const mapping=byContact.get(row.xero_contact_id),student=byStudent.get(row.xero_invoice_id);return {...invoiceProjection(row),organisationRole:'operating' as const,
-      contactName:row.legal_name,studentName:student?.name??row.invoice_reference??'',studentEmail:student?.email??null,suggestedStudentReference:student?.student_reference??null,studentId:row.student_id,linkedStudentUserId:student?.user_id??null,linkedCaseId:student?.case_id??null,
+      contactName:row.legal_name,studentName:student?.name??row.invoice_reference??'',studentEmail:student?.email??null,suggestedStudentReference:student?.student_reference??null,studentId:row.student_id??null,linkedStudentUserId:student?.user_id??null,linkedCaseId:student?.case_id??null,
       collegeName:mapping?.college_name??null,collegeId:mapping?.college_id??null,matchingStatus:mapping?.classification??'unresolved'};});
   }
 
