@@ -199,6 +199,28 @@ describe("StudentOperationsXeroSyncService", () => {
     })).rejects.toThrow("Invalid Xero invoice query.");
   });
 
+  it("filters supplier invoices by confirmed tenant/contact/connection mappings before paging", async () => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => ({
+      rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{ exists: 1 }] : [],
+      rowCount: sql.includes("FROM sophia_runtime.xero_connections") ? 1 : 0,
+    }));
+    const database = {tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) => work({query}))};
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+    const supplierId="88888888-8888-4888-8888-888888888888";
+    await service.invoices(tenantId,connectionId,{supplierId,page:2,limit:25,sort:'paid',direction:'asc'});
+    const [sql,params]=query.mock.calls.find(([sql])=>sql.includes('SELECT i.xero_invoice_id'))!;
+    expect(sql).toContain('supplier_link.customer_id=i.customer_id');
+    expect(sql).toContain('supplier_link.xero_connection_id=i.xero_connection_id');
+    expect(sql).toContain('supplier_link.xero_contact_id=i.xero_contact_id');
+    expect(sql).toContain("supplier_link.classification='supplier'");
+    expect(sql).toContain('supplier_link.supplier_id=$3::uuid');
+    expect(sql).toContain('ORDER BY i.amount_paid ASC NULLS LAST, i.xero_invoice_id ASC');
+    expect(params).toEqual([tenantId,connectionId,supplierId,25,25]);
+    const calls=database.tenantReadTransaction.mock.calls.length;
+    await expect(service.invoices(tenantId,connectionId,{supplierId:'invalid'})).rejects.toThrow('Invalid Xero invoice query.');
+    expect(database.tenantReadTransaction).toHaveBeenCalledTimes(calls);
+  });
+
   it("lists distinct payment tracks from the tenant's current invoice register", async () => {
     const query = jest.fn(async (sql: string) => ({
       rows: sql.includes("FROM sophia_runtime.xero_connections")

@@ -34,6 +34,7 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
+  supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   q: z.string().trim().max(100).optional(),
@@ -393,7 +394,7 @@ export class StudentOperationsXeroSyncService {
   async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string) {
     const parsed = InvoiceQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
-    const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction } = parsed.data;
+    const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction, supplierId } = parsed.data;
     const schema = runtimeConfig().schema;
     const startedAt = performance.now();
     const durations: Record<string, number | undefined> = {};
@@ -406,6 +407,17 @@ export class StudentOperationsXeroSyncService {
       durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
+      if (supplierId) {
+        params.push(supplierId);
+        filters.push(`AND EXISTS (
+          SELECT 1 FROM ${schema}.student_college_xero_contact_links supplier_link
+          WHERE supplier_link.customer_id=i.customer_id
+            AND supplier_link.xero_connection_id=i.xero_connection_id
+            AND supplier_link.xero_contact_id=i.xero_contact_id
+            AND supplier_link.classification='supplier'
+            AND supplier_link.supplier_id=$${params.length}::uuid
+        )`);
+      }
       if (q) {
         params.push(`%${q}%`);
         const position = params.length;
