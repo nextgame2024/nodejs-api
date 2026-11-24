@@ -17,7 +17,8 @@ import {commissionContext,type CommissionContext} from './student-commission-rul
 import {commissionTuitionItemCode} from './student-commission-items.js';
 import {commissionAmount,commissionPricing,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
 
-const selection=z.object({context:commissionContext.optional(),expectedCalculationHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),sequence:z.number().int().positive(),itemId:z.uuid().optional(),typeOfSaleOptionId:z.uuid().optional()}).strict();
+const previewAmount=z.number().int().min(0).max(1_000_000_000);
+const selection=z.object({expectedPreview:z.object({tuitionMinor:previewAmount,commissionMinor:previewAmount,subtotalMinor:previewAmount,taxMinor:previewAmount,totalMinor:previewAmount}).strict().optional(),context:commissionContext.optional(),expectedCalculationHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),sequence:z.number().int().positive(),itemId:z.uuid().optional(),typeOfSaleOptionId:z.uuid().optional()}).strict();
 const prepare=z.object({batchRevision:z.number().int().positive(),selections:z.array(selection).min(1).max(200)}).strict();
 const create=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 type Calculation=ReturnType<typeof commissionAmount>;
@@ -67,7 +68,7 @@ export class StudentCommissionInvoicesService{
    // Send the selectable items once; the full catalogue and mapping identifiers
    // remain server-side. Tab changes reuse this local response.
    const itemAccounts=new Set(o.items.map(i=>i.accountCode));
-   return {advanced:o.advanced,requiredContext:o.advanced?{classification:o.rules.some(r=>r.classification),location:o.rules.some(r=>r.location),program:o.rules.some(r=>r.program),city:o.rules.some(r=>(r.configuration as any)?.city),enrolmentDate:o.rules.some(r=>(r.configuration as any)?.dateBasis),trimester:o.rules.some(r=>(r.configuration as any)?.rateMethod==='trimester'),courseMonth:o.rules.some(r=>(r.configuration as any)?.rateMethod==='first_month'),isBulk:o.rules.some(r=>(r.configuration as any)?.nonBulkOnly)}:null,typeOfSaleOptions:o.saleOptions.map(v=>({value:v.trackingOptionId,label:v.name})),defaultTypeOfSaleOptionId:o.defaultSaleOption?.trackingOptionId??null,typeOfSaleIssue:o.typeOfSaleIssue,accounts:o.catalogue?.accounts.filter(a=>itemAccounts.has(a.code))??[],available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule!.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
+   return {previewRules:o.advanced?o.rules.map(r=>({rule_id:r.rule_id,active:r.active,classification:r.classification,location:r.location,program:r.program,configuration:r.configuration})):undefined,taxRates:o.catalogue?.taxRates,trackingCategories:o.catalogue?.trackingCategories,advanced:o.advanced,requiredContext:o.advanced?{classification:o.rules.some(r=>r.classification),location:o.rules.some(r=>r.location),program:o.rules.some(r=>r.program),city:o.rules.some(r=>(r.configuration as any)?.city),enrolmentDate:o.rules.some(r=>(r.configuration as any)?.dateBasis),trimester:o.rules.some(r=>(r.configuration as any)?.rateMethod==='trimester'),courseMonth:o.rules.some(r=>(r.configuration as any)?.rateMethod==='first_month'),isBulk:o.rules.some(r=>(r.configuration as any)?.nonBulkOnly)}:null,typeOfSaleOptions:o.saleOptions.map(v=>({value:v.trackingOptionId,label:v.name})),defaultTypeOfSaleOptionId:o.defaultSaleOption?.trackingOptionId??null,typeOfSaleIssue:o.typeOfSaleIssue,accounts:o.catalogue?.accounts.filter(a=>itemAccounts.has(a.code))??[],available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule!.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
   });
  }
  private async batch(db:PoolClient,p:Principal,id:string,batchId:string,lock=false){
@@ -112,6 +113,10 @@ export class StudentCommissionInvoicesService{
     if(frozen&&frozen.status!=='not_attempted')continue;
     if(o.advanced){
      const snapshot=buildCommissionV2({rules:o.rules,context:selected.context??{},invoice,batch:b.snapshot,catalogue:o.catalogue,connectionId:o.catalogue.connectionId,catalogueRevision:o.catalogue.revision,contactId:o.mapping.xero_contact_id,mappingRevision:o.mapping.revision,collegeId:o.collegeId,collegeName:o.collegeName,brandingThemeId:o.theme.brandingThemeId,typeOfSaleOptionId:selected.typeOfSaleOptionId});
+     if(selected.expectedPreview){
+      const actual={tuitionMinor:snapshot.calculation.tuitionMinor,commissionMinor:snapshot.calculation.commissionMinor,subtotalMinor:snapshot.calculation.subtotalMinor,taxMinor:snapshot.taxMinor,totalMinor:snapshot.totalMinor};
+      if(Object.entries(selected.expectedPreview).some(([key,value])=>actual[key as keyof typeof actual]!==value))throw new ConflictException('The PTY amounts differ from the preview. Reload the commission settings and review the calculation before saving.');
+     }
      if(selected.expectedCalculationHash&&selected.expectedCalculationHash!==commissionHash(snapshot))throw new ConflictException('The PTY calculation changed. Save the drafts and review the new amounts before creating invoices.');
      await db.query(`INSERT INTO ${s}.student_commission_drafts(customer_id,case_id,batch_id,sequence,source_hash,snapshot,prepared_by) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)
       ON CONFLICT(customer_id,batch_id,sequence) DO UPDATE SET source_hash=EXCLUDED.source_hash,snapshot=EXCLUDED.snapshot,prepared_by=EXCLUDED.prepared_by,prepared_at=now(),revision=student_commission_drafts.revision+1`,[p.tenantId,id,batchId,selected.sequence,commissionHash(sourceValue(b.snapshot,invoice)),JSON.stringify(snapshot),p.identityUserId]);

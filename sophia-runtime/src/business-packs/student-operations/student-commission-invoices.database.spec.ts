@@ -271,6 +271,15 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   expect(results.flatMap(r=>r.results).some(r=>r.status==='created')).toBe(true);expect(createInvoice).toHaveBeenCalledTimes(1);
   expect(createInvoice.mock.calls[0][0].lines[1].itemCode).toBe('CASH BACK');
  });
+ it('validates the browser preview before saving and never persists mismatched amounts',async()=>{
+  await configureV2();
+  const expectedPreview={tuitionMinor:10000,commissionMinor:3000,subtotalMinor:5273,taxMinor:527,totalMinor:5800};
+  await expect(service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,expectedPreview:{...expectedPreview,totalMinor:5799}}]})).rejects.toThrow('differ from the preview');
+  expect((await service.list(p,caseId,batchId)).items).toHaveLength(0);
+  await service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,expectedPreview}]});
+  expect((await service.list(p,caseId,batchId)).items[0].snapshot.totalMinor).toBe(5800);expect(createInvoice).not.toHaveBeenCalled();
+  const options=await service.options(p,caseId,collegeId);expect(options.previewRules?.[0].configuration).toBeDefined();expect(options.taxRates?.length).toBeGreaterThan(0);
+ });
  it('does not save a v2 calculation that changed after user review',async()=>{
   await configureV2();await prepareAll();const prior=(await service.list(p,caseId,batchId)).items[0];
   await pool.query(`UPDATE public.bm_college_commission_rules SET configuration=jsonb_set(configuration,'{rateNumerator}','4') WHERE company_id=$1`,[tenant]);

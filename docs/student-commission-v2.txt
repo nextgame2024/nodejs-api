@@ -29,9 +29,12 @@ non-bulk methods require an explicit non-bulk confirmation. Program and other
 unavailable course facts are entered and reviewed by the operator. Classification
 and location inferred from TRUST item codes must agree with entered values.
 
-In Prepare invoices, choose the PTY tab, complete required course facts, then
-Calculate and save drafts. The server returns all revenue lines, tax and totals.
-Review all lines and confirm before creating. Changing tuition, dates, advisor,
+In Prepare invoices, choose the PTY tab and complete required course facts. The
+browser immediately previews revenue lines, exact-rate calculations, tax and
+totals without saving. Missing inputs display Awaiting calculation, not zero.
+Save drafts independently recalculates on the server and compares the reviewed
+preview amounts; a mismatch stops PTY persistence and requires a fresh review.
+Review the verified drafts and confirm before creating. Changing tuition, dates, advisor,
 sale type, college or course facts invalidates review. Creation revalidates rule,
 catalogue, recipient and calculation snapshots and verifies the matching TRUST
 invoice. Missing mappings block creation. Each source TRUST invoice can have
@@ -118,3 +121,8 @@ Runtime and frontend production builds passed. Frontend build reports bundle/CSS
 budget, CommonJS optimization and missing primeicons stylesheet warnings; these
 warnings did not fail compilation. Both repository diff whitespace checks passed.
 The disposable PostgreSQL test server was stopped after validation.
+
+25 November 2026: restored immediate browser calculation from tenant-scoped
+rule/catalogue options, with backend preview comparison before saving. No schema
+change or operational data migration. Validation: 91 browser tests and 59 runtime
+tests passed, including preview mismatch rollback and mobile/dark rendering.
