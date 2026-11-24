@@ -100,7 +100,7 @@ for (const method of ['post','put','delete']) {
         if (typeof token !== 'string' || !Number.isFinite(Date.parse(token))) return bad(res,'Reload the rule before archiving.');
         value = { expected_updated_at: token };
       } else value = validateCommission(body(req,'rule'),method === 'put');
-      const rule = await saveCommission(req.user.companyId,req.params.collegeId,req.params.ruleId,value,method === 'delete');
+      const rule = await saveCommission(req.user.companyId,req.params.collegeId,req.params.ruleId,value,method === 'delete',String(req.user.userId ?? req.user.id ?? 'authenticated-manager'));
       if (!rule) return notFound(res);
       return method === 'delete' ? res.status(204).send() : res.status(method === 'post' ? 201 : 200).json({rule});
     } catch (error) {

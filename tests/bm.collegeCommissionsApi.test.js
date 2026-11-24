@@ -62,10 +62,10 @@ describe('College commission API rules',()=>{
     expect(await saveCommission('company','college','old',edit)).toEqual({ruleId:'new'});
     expect(db.query.mock.calls[1][0]).toContain('FOR UPDATE');expect(db.query.mock.calls[1][1]).toEqual(['company','college']);
     const archived=db.query.mock.calls.find(([sql])=>sql.startsWith('UPDATE'));
-    expect(archived[1]).toEqual(['company','college','old']);
+    expect(archived[1]).toEqual(['company','college','old',null]);
     const inserted=db.query.mock.calls.find(([sql])=>sql.includes('INSERT'));
     expect(inserted[1].slice(0,2)).toEqual(['company','college']);
-    expect(inserted[1].slice(-2)).toEqual(['12.30','0.00']);
+    expect(inserted[1].slice(12,14)).toEqual(['12.30','0.00']);
     expect(db.query.mock.calls.at(-1)[0]).toBe('COMMIT');expect(db.release).toHaveBeenCalled();
   });
   test('stale edits roll back before any rule write',async()=>{

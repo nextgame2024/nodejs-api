@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {BadRequestException} from '@nestjs/common';
 import {pricedLineMinor,scaled4} from '../../connectors/xero/xero-sales-catalogue.js';
 
-export type CommissionRule={rule_id:string;college_id:string;commission_basis_points:number;calculation_method:string;rounding_decimal_places:number;
+export type CommissionRule={configuration?:unknown;rule_id:string;college_id:string;commission_basis_points:number;calculation_method:string;rounding_decimal_places:number;
   cashback_status:string;bonus_status:string;classification:string|null;location:string|null;program:string|null;application_conditions:string|null;active:boolean;updatedat:Date|string};
 export function commissionRuleIssue(rules:CommissionRule[]):string|null{
   const active=rules.filter(r=>r.active);

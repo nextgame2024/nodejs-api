@@ -1,0 +1,43 @@
+import {describe,test,expect,beforeAll,afterAll} from '@jest/globals';
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import pg from 'pg';
+import {columns,planCommissionV2,importCommissionV2,rollbackCommissionV2} from '../scripts/import-college-commissions-v2.mjs';
+const url=process.env.PTY_IMPORT_TEST_DATABASE_URL;
+const company='11111111-1111-4111-8111-111111111111',college='22222222-2222-4222-8222-222222222222',outside='33333333-3333-4333-8333-333333333333';
+(url?describe:describe.skip)('Versioned import with isolated PostgreSQL',()=>{
+ let db,folder;
+ beforeAll(async()=>{
+  const parsed=new URL(url);if(!['localhost','127.0.0.1'].includes(parsed.hostname)||parsed.pathname!=='/sophia_pty_import_validation')throw new Error('Use only the disposable local import database.');
+  db=new pg.Client({connectionString:url});await db.connect();folder=await mkdtemp(tmpdir()+'/pty-import-test-');
+  await db.query(`CREATE TABLE IF NOT EXISTS public.bm_company(company_id uuid PRIMARY KEY);
+   CREATE TABLE IF NOT EXISTS public.bm_colleges(company_id uuid,college_id uuid PRIMARY KEY,college_name text,status text,UNIQUE(company_id,college_id));
+   CREATE SCHEMA IF NOT EXISTS import_validation;CREATE TABLE IF NOT EXISTS import_validation.customers(customer_id uuid,external_company_id text,status text);
+   DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sophia_runtime_app') THEN CREATE ROLE sophia_runtime_app NOLOGIN NOBYPASSRLS;END IF;END $$;`);
+  await db.query(await readFile(new URL('../scripts/sql/bm_college_commissions.sql',import.meta.url),'utf8'));
+  await db.query('ALTER TABLE public.bm_college_commission_rules DROP CONSTRAINT IF EXISTS bm_commission_configuration_version');
+  await db.query((await readFile(new URL('../sophia-runtime/src/database/migrations/140_student_commission_rule_configuration.sql',import.meta.url),'utf8')).replaceAll('__SOPHIA_RUNTIME_SCHEMA__','import_validation'));
+  await db.query('TRUNCATE public.bm_company,public.bm_colleges,public.bm_college_commission_rules,public.bm_college_commission_imports CASCADE');
+  await db.query('INSERT INTO public.bm_company VALUES($1)',[company]);
+  await db.query("INSERT INTO public.bm_colleges(company_id,college_id,college_name,status) VALUES($1,$2,'Fixture College','active'),($1,$3,'Untouched College','active')",[company,college,outside]);
+  await db.query("INSERT INTO public.bm_college_commission_rules(company_id,college_id,commission_basis_points,calculation_description,cashback_status,bonus_status) VALUES($1,$2,2000,'Old rate','not_applicable','not_applicable'),($1,$3,2000,'Outside rate','not_applicable','not_applicable')",[company,college,outside]);
+ });
+ afterAll(async()=>{if(db)await db.end();if(folder)await rm(folder,{recursive:true,force:true});});
+ test('backs up, replaces, repeats without duplicates, guards concurrent changes, and rolls back without deleting history',async()=>{
+  const row={acronym:'FIX',college:`${college} - Fixture College`,comissionRate:'30%',comissionFormula:'commission_net=ROUND(tuition_amount*0.30,2)',cashbackFormula:'cashback_net=0',bonus:'bonus_net=0;support_net=0'};
+  const csv=[columns,columns.map(c=>row[c]??'')].map(r=>r.map(v=>'"'+v.replaceAll('"','""')+'"').join(',')).join('\n');
+  const plan=planCommissionV2(csv),preview=await importCommissionV2(db,plan,company);
+  expect(preview).toMatchObject({create:1,archive:1,retain:0,unrelatedRulesRetained:1});
+  const outsideBefore=(await db.query('SELECT * FROM public.bm_college_commission_rules WHERE college_id=$1',[outside])).rows;
+  const applied=await importCommissionV2(db,plan,company,{apply:true,backupPath:folder+'/backup.json',expectedDigest:preview.previewDigest});expect(applied.mode).toBe('applied');
+  const repeat=await importCommissionV2(db,plan,company);expect(repeat).toMatchObject({create:0,archive:0,retain:1});
+  await expect(importCommissionV2(db,plan,company,{apply:true,backupPath:folder+'/stale.json',expectedDigest:preview.previewDigest})).rejects.toThrow('changed since preview');
+  await importCommissionV2(db,plan,company,{apply:true,backupPath:folder+'/repeat.json',expectedDigest:repeat.previewDigest});
+  const backup=JSON.parse(await readFile(folder+'/backup.json','utf8'));
+  expect(await rollbackCommissionV2(db,backup)).toMatchObject({archive:1,restore:1});
+  const altered=structuredClone(backup);altered.after[0].changed_by='changed';await expect(rollbackCommissionV2(db,altered,{apply:true})).rejects.toThrow('changed after import');
+  expect(await rollbackCommissionV2(db,backup,{apply:true})).toMatchObject({mode:'rolled_back',archive:1,restore:1});
+  const rules=(await db.query('SELECT * FROM public.bm_college_commission_rules WHERE college_id=$1',[college])).rows;expect(rules).toHaveLength(2);expect(rules.find(r=>r.active).commission_basis_points).toBe(2000);
+  expect((await db.query('SELECT * FROM public.bm_college_commission_rules WHERE college_id=$1',[outside])).rows).toEqual(outsideBefore);
+ });
+});

@@ -30,15 +30,16 @@ function invoice(value:XeroInvoiceCreate,id:string):XeroInvoiceRecord{return {in
 suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  let pool:pg.Pool,service:StudentCommissionInvoicesService;
  let changedTrust=false,providerFailure=false,live=0,maxLive=0;
+ let concurrencyGate:Promise<void>|null=null,releaseConcurrency:(()=>void)|undefined;
  const createInvoice=jest.fn(async(value:XeroInvoiceCreate,_key:string)=>{
-  live++;maxLive=Math.max(maxLive,live);await new Promise(r=>setTimeout(r,10));live--;
+  live++;maxLive=Math.max(maxLive,live);if(concurrencyGate){if(live===3)releaseConcurrency?.();await concurrencyGate;}await new Promise(r=>setTimeout(r,10));live--;
   if(providerFailure)throw new BadGatewayException('Provider outcome uncertain');
   return {invoiceId:randomUUID(),invoiceNumber:'PTY-1',status:'DRAFT',total:Number(value.lines[0].unitAmount)*1.1};
  });
  const session=jest.fn(async(_tenant:string,_connection:string,role:string)=>role==='operating'?{createInvoice}:{invoiceById:async(id:string)=>{
   const value=invoiceDraftXeroValue(snapshot,snapshot.invoices[0],contactId),record=invoice(value,id);if(changedTrust)record.total=999;return record;
  }});
- const oldSchema=process.env.SOPHIA_RUNTIME_SCHEMA,oldFlag=process.env.XERO_INVOICE_CREATION_ENABLED;
+ const oldUrl=process.env.SOPHIA_RUNTIME_DATABASE_URL,oldSchema=process.env.SOPHIA_RUNTIME_SCHEMA,oldFlag=process.env.XERO_INVOICE_CREATION_ENABLED;
  async function tx<T>(tenantId:string,work:(db:pg.PoolClient)=>Promise<T>):Promise<T>{
   const db=await pool.connect();try{await db.query('BEGIN');await db.query('SET LOCAL ROLE sophia_runtime_app');await db.query("SELECT set_config('sophia.tenant_id',$1,true)",[tenantId]);const result=await work(db);await db.query('COMMIT');return result;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
  }
@@ -46,7 +47,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  async function trustReceipts(count=1,first=1){for(let sequence=first;sequence<first+count;sequence++)await pool.query(`INSERT INTO ${schema}.student_case_xero_invoice_exports(customer_id,case_id,batch_id,sequence,xero_connection_id,xero_contact_id,provider_key,status,xero_invoice_id,completed_at,requested_by_identity_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,'created',$8,now(),'actor')`,[tenant,caseId,batchId,sequence,trustId,contactId,String(sequence).padStart(64,'0'),randomUUID()]);}
  beforeAll(async()=>{
   const parsed=new URL(url!);if(!['127.0.0.1','localhost'].includes(parsed.hostname)||parsed.pathname!=='/sophia_pty_validation')throw new Error('Use only the disposable local sophia_pty_validation database.');
-  pool=new pg.Pool({connectionString:url,max:6});process.env.SOPHIA_RUNTIME_SCHEMA=schema;process.env.XERO_INVOICE_CREATION_ENABLED='true';
+  pool=new pg.Pool({connectionString:url,max:6});process.env.SOPHIA_RUNTIME_DATABASE_URL=url;process.env.SOPHIA_RUNTIME_SCHEMA=schema;process.env.XERO_INVOICE_CREATION_ENABLED='true';
   await pool.query(`CREATE SCHEMA ${schema}; DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sophia_runtime_app') THEN CREATE ROLE sophia_runtime_app NOLOGIN NOBYPASSRLS; END IF; END $$;
     GRANT USAGE ON SCHEMA ${schema} TO sophia_runtime_app;
     CREATE TABLE ${schema}.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
@@ -67,6 +68,13 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   // The actual worker function body is used, preserving its lease/window SQL.
   const worker=sql('080_student_sync_worker_pipeline.sql');await pool.query(worker.slice(worker.indexOf('CREATE FUNCTION '+schema+'.student_operations_automatic_window')));
   await pool.query(sql('100_student_xero_invoice_exports.sql'));await pool.query(sql('127_student_pty_foundation.sql'));await pool.query(sql('128_student_commission_invoices.sql'));await pool.query(sql('129_student_college_matching_aliases.sql'));
+  await pool.query('ALTER TABLE public.bm_college_commission_rules DROP CONSTRAINT IF EXISTS bm_commission_configuration_version');
+  await pool.query(sql('140_student_commission_rule_configuration.sql'));
+  // Contact review has evolved since the original PTY fixtures; these narrow fixtures keep its list contract current.
+  await pool.query(`ALTER TABLE ${schema}.student_college_xero_contact_links ADD COLUMN supplier_id uuid, ADD COLUMN student_user_id uuid;
+    CREATE VIEW ${schema}.student_contact_review_directory AS SELECT customer_id,college_id AS id,college_name AS name,'college'::text AS kind,'active'::text AS status,NULL::text AS trading_name,NULL::text AS acronym FROM ${schema}.student_operations_college_directory WHERE customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid;
+    CREATE VIEW ${schema}.student_invoice_link_directory AS SELECT NULL::uuid AS customer_id,NULL::uuid AS user_id,NULL::text AS name,NULL::text AS email,NULL::text AS student_reference WHERE false;
+    GRANT SELECT ON ${schema}.student_contact_review_directory,${schema}.student_invoice_link_directory TO sophia_runtime_app;`);
   for(const table of ['customers','xero_connections','student_operations_xero_sync_configurations','student_operations_xero_contacts','student_operations_college_directory','student_case_invoice_draft_batches','student_case_offers','student_xero_sales_catalogues','student_operations_xero_invoices','student_operations_xero_sync_runs'])await pool.query(`ALTER TABLE ${schema}.${table} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${schema}.${table} FORCE ROW LEVEL SECURITY; CREATE POLICY tenant_scope ON ${schema}.${table} USING(customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid) WITH CHECK(customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid);`);
   const cases={authorizedCase:async(db:pg.PoolClient,principal:{tenantId:string},id:string)=>{const found=await db.query(`SELECT 1 FROM ${schema}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2`,[principal.tenantId,id]);if(!found.rowCount)throw new ForbiddenException();return {lifecycle_status:'pre_sale'};},activity:async()=>{}};
   service=new StudentCommissionInvoicesService({tenantTransaction:tx,tenantReadTransaction:tx} as never,cases as never,{invoiceCreationSession:session} as never);
@@ -87,9 +95,9 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await pool.query(`INSERT INTO ${schema}.student_case_invoice_draft_batches VALUES($1,$2,$3,NULL,1,$4)`,[tenant,caseId,batchId,JSON.stringify(snapshot)]);
   const catalogue={trackingCategories:[{trackingCategoryId:trustId,name:'Type of Sale',options:[{trackingOptionId:itemId,name:'Instalment'},{trackingOptionId:batchId,name:'Marketing'}]}],items:[{itemId,code:'TUITION',name:'Commission',accountCode:'200',taxType:'OUTPUT'}],accounts:[{code:'200',name:'Sales Commissions',taxType:'OUTPUT'}],taxRates:[{name:'GST on Income',taxType:'OUTPUT',rate:'10'}],brandingThemes:[{brandingThemeId:itemId,name:'PTY Open for Australia Account'}]};
   await pool.query(`INSERT INTO ${schema}.student_xero_sales_catalogues(customer_id,xero_connection_id,snapshot,revision,last_synced_at,error_code,next_attempt_at) VALUES($1,$2,$3,1,now(),NULL,now()+interval '1 day')`,[tenant,ptyId,JSON.stringify(catalogue)]);
-  changedTrust=providerFailure=false;live=maxLive=0;createInvoice.mockClear();session.mockClear();
+  changedTrust=providerFailure=false;live=maxLive=0;concurrencyGate=null;releaseConcurrency=undefined;createInvoice.mockClear();session.mockClear();
  });
- afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);await pool.end();}if(oldSchema===undefined)delete process.env.SOPHIA_RUNTIME_SCHEMA;else process.env.SOPHIA_RUNTIME_SCHEMA=oldSchema;if(oldFlag===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldFlag;});
+ afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);await pool.end();}if(oldUrl===undefined)delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;if(oldSchema===undefined)delete process.env.SOPHIA_RUNTIME_SCHEMA;else process.env.SOPHIA_RUNTIME_SCHEMA=oldSchema;if(oldFlag===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldFlag;});
  it('separates archived/imported contacts from pending active sales and keeps empty-page totals',async()=>{
   const run=randomUUID(),oldRun=randomUUID(),pending=randomUUID(),archived=randomUUID(),supplier=randomUUID(),deletedOnly=randomUUID(),otherCustomer=randomUUID();
   await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,xero_connection_id,status,mode,created_at)
@@ -237,12 +245,52 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   expect((await tx(other,db=>db.query(`SELECT * FROM ${schema}.student_commission_exports`))).rowCount).toBe(0);
  });
  it('uses at most three workers and one session per organisation in a bulk request',async()=>{
-  await prepareAll(7);await trustReceipts(7);const r=await service.create(p,caseId,batchId,{sequences:[1,2,3,4,5,6,7],confirmed:true});
+  await prepareAll(7);await trustReceipts(7);concurrencyGate=new Promise<void>(resolve=>{releaseConcurrency=resolve;});const r=await service.create(p,caseId,batchId,{sequences:[1,2,3,4,5,6,7],confirmed:true});
   expect(r.created).toBe(7);expect(maxLive).toBeLessThanOrEqual(3);expect(maxLive).toBeGreaterThan(1);expect(session).toHaveBeenCalledTimes(2);expect(r.results.map(i=>i.sequence)).toEqual([1,2,3,4,5,6,7]);
  });
  it('blocks changed catalogue revisions and rules',async()=>{
   await prepareAll();await trustReceipts();await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET revision=2`);
   const r=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(r.results[0].status).toBe('not_attempted');expect(createInvoice).not.toHaveBeenCalled();
+ });
+ async function configureV2(cashback=true){
+  const configuration={version:2,state:'ready',blockedReason:null,city:null,effectiveFrom:null,effectiveTo:null,dateBasis:null,rateNumerator:3,rateDenominator:10,rateMethod:'fixed',laterRateNumerator:0,nonBulkOnly:false,cashback:{mode:cashback?'enrolment_gross':'none',amountMinor:0}};
+  await pool.query('UPDATE public.bm_college_commission_rules SET configuration=$1 WHERE company_id=$2',[JSON.stringify(configuration),tenant]);
+  const catalogue=(await pool.query(`SELECT snapshot FROM ${schema}.student_xero_sales_catalogues`)).rows[0].snapshot;
+  catalogue.items.push({itemId:contactId,code:'CASH BACK',name:'Cashback',accountCode:'200',taxType:'OUTPUT'});
+  catalogue.trackingCategories[0].options.push({trackingOptionId:contactId,name:'Cash Back'});
+  await pool.query(`UPDATE ${schema}.student_xero_sales_catalogues SET snapshot=$1`,[JSON.stringify(catalogue)]);
+  return configuration;
+ }
+ it('prepares and creates v2 cashback once with frozen source-line lineage',async()=>{
+  await configureV2();await prepareAll();await trustReceipts();
+  const row=(await service.list(p,caseId,batchId)).items[0];
+  expect(row.snapshot).toMatchObject({schemaVersion:2,totalMinor:5800});
+  expect(row.snapshot.value.lines).toHaveLength(2);expect(row.snapshot.calculation.components[1]).toMatchObject({sourceLineIndexes:[1],amountMinor:2273});
+  expect(row.calculationHash).toMatch(/^[a-f0-9]{64}$/);
+  const results=await Promise.all([service.create(p,caseId,batchId,{sequences:[1],confirmed:true}),service.create(p,caseId,batchId,{sequences:[1],confirmed:true})]);
+  expect(results.flatMap(r=>r.results).some(r=>r.status==='created')).toBe(true);expect(createInvoice).toHaveBeenCalledTimes(1);
+  expect(createInvoice.mock.calls[0][0].lines[1].itemCode).toBe('CASH BACK');
+ });
+ it('does not save a v2 calculation that changed after user review',async()=>{
+  await configureV2();await prepareAll();const prior=(await service.list(p,caseId,batchId)).items[0];
+  await pool.query(`UPDATE public.bm_college_commission_rules SET configuration=jsonb_set(configuration,'{rateNumerator}','4') WHERE company_id=$1`,[tenant]);
+  await expect(service.prepare(p,caseId,batchId,{batchRevision:1,selections:[{sequence:1,expectedCalculationHash:prior.calculationHash}]})).rejects.toThrow('calculation changed');
+  expect((await service.list(p,caseId,batchId)).items[0].calculationHash).toBe(prior.calculationHash);
+ });
+ it('rejects a newly added competing rule and never creates a stale v2 invoice',async()=>{
+  const cfg=await configureV2();await prepareAll();await trustReceipts();
+  await pool.query(`INSERT INTO public.bm_college_commission_rules(rule_id,company_id,college_id,classification,commission_basis_points,calculation_method,rounding_decimal_places,cashback_status,bonus_status,active,configuration) VALUES($1,$2,$3,'VET',3000,'tuition_fee_percentage',2,'not_applicable','not_applicable',true,$4)`,[randomUUID(),tenant,collegeId,JSON.stringify(cfg)]);
+  const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(result.results[0].status).toBe('not_attempted');expect(createInvoice).not.toHaveBeenCalled();
+ });
+ it('holds v2 timeouts without retrying the cashback',async()=>{
+  await configureV2();await prepareAll();await trustReceipts();providerFailure=true;
+  expect((await service.create(p,caseId,batchId,{sequences:[1],confirmed:true})).results[0].status).toBe('review_required');
+  await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});expect(createInvoice).toHaveBeenCalledTimes(1);
+ });
+ it('records zero-revenue results without provider invoices',async()=>{
+  const cfg=await configureV2(false);cfg.rateNumerator=0;await pool.query('UPDATE public.bm_college_commission_rules SET configuration=$1 WHERE company_id=$2',[JSON.stringify(cfg),tenant]);
+  await prepareAll();const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});
+  expect(result.results[0].status).toBe('no_revenue');expect(createInvoice).not.toHaveBeenCalled();expect((await service.list(p,caseId,batchId)).items[0].snapshot.noRevenue).toBe(true);
  });
  it('denies unauthorized financial access before database work',async()=>{await expect(service.options({...p as object,role:'advisor'} as never,caseId,collegeId)).rejects.toThrow();});
  it('auto-matches a numbered college name with one immutable audit event and no repeated writes',async()=>{

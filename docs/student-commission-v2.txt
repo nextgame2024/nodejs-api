@@ -1,0 +1,120 @@
+PTY COMMISSIONS — VERSION 2
+Approved source: colleges_comparisson_final_matches_F.csv
+Source SHA-256: 3d1d397fb28971093ad1ce550ff3d31cb228fb711f2c0eaa0a04ba48fb9e1cbe
+
+Scope and workflow
+139 source records describe 120 colleges. The reviewed import supports 116
+records and keeps 23 records explicitly blocked, including their source formulas
+and actionable reason. The companion colleges_commission_blocked_F.csv preserves
+the original 12 columns and adds reason as its final column. Resolving those
+records requires contractual evidence/mappings and a reviewed import update;
+editing a displayed percentage does not unblock their missing benefits.
+
+Use invoiced tuition BEFORE agency discounts, not payments received. Separate
+agency-discount, enrolment, materials and other-fee lines do not reduce or enlarge
+the commission base. Legacy inline-discount snapshots use their recorded gross
+tuition base. Exact rational rates (e.g. 7/22) are retained; displayed 31.82% is
+not used as an approximation. Calculate cents with integer half-up rounding once
+per instalment. Compute each eligible enrolment cashback separately, then apply
+that PTY item's cached tax rate. Cashback is positive revenue, never a tuition
+deduction. Fixed NET cashback and enrolment/1.10 are distinct methods.
+
+Selectors use AND semantics; blank means unrestricted. A strictly narrower rule
+wins over its general fallback. Missing facts, incomparable overlaps and matching
+blocked rules stop preparation. Macallan uses the original enrolment date:
+through 2025-03-31 = 30%; from 2025-04-01 inclusive = 40%. Kent VET and HE remain
+separate. KOI has one unrestricted 20% rule. JMC trimester rates are 20%, 20%,
+15%, 15%, then zero. First-month methods require an explicit course-month number;
+non-bulk methods require an explicit non-bulk confirmation. Program and other
+unavailable course facts are entered and reviewed by the operator. Classification
+and location inferred from TRUST item codes must agree with entered values.
+
+In Prepare invoices, choose the PTY tab, complete required course facts, then
+Calculate and save drafts. The server returns all revenue lines, tax and totals.
+Review all lines and confirm before creating. Changing tuition, dates, advisor,
+sale type, college or course facts invalidates review. Creation revalidates rule,
+catalogue, recipient and calculation snapshots and verifies the matching TRUST
+invoice. Missing mappings block creation. Each source TRUST invoice can have
+only one PTY export; existing timeout/reconciliation safeguards remain in force.
+A legitimate zero result is recorded as no revenue and sends no empty invoice.
+
+The tuition item must match one PTY catalogue item. Cashback uses CASH BACK and
+its Cash Back sale option. Account and tax come from that item's current local
+catalogue. No provider calls are made for ordinary previews. If the active PTY
+catalogue has no Sales Representative category, the preview explicitly warns
+that advisor tracking cannot be sent. If it has that category, an unambiguous
+advisor match is mandatory. Source rule, exact rate, input context, source-line
+indices, item IDs and calculation hash remain in the saved invoice snapshot.
+
+Unconfirmed bonus/promotional/materials scenarios are blocked in this release;
+no guessed bonus or material-support line is generated. Historical one-time
+benefit consumption must be resolved before enabling those scenarios. Existing
+created exports are not recalculated or rewritten.
+
+Configuration and release
+Deploy the backend API, Sophia Runtime and frontend together. Migration
+140_student_commission_rule_configuration.sql adds nullable typed configuration
+and audit actor fields, extends the active condition index for city/date ranges,
+and updates the tenant-filtered runtime view. Existing legacy rows remain valid.
+Run migrations using the configured owner. Normal runtime reads continue through
+sophia_runtime_app and tenant transactions; no BYPASSRLS access is introduced.
+The college editor supports exact gross-derived rates, date ranges, course-month
+and trimester methods, non-bulk eligibility and the supported cashback methods.
+
+Import operations (run from backend; never put credentials in shell history)
+1. With DATABASE_URL supplied by the approved environment, preview:
+   node --env-file=.env scripts/import-college-commissions-v2.mjs \
+     --input=/path/to/reviewed.csv --company-id=<company UUID>
+2. Inspect create/archive/retain/blocked counts and source hash. Apply using the
+   returned previewDigest, a NEW backup filename, and the identical input:
+   node --env-file=.env scripts/import-college-commissions-v2.mjs \
+     --input=/path/to/reviewed.csv --company-id=<company UUID> --apply \
+     --expected-digest=<previewDigest> --backup=/secure/path/backup.json
+3. Preview again. An unchanged source returns create=0, archive=0, retain=139
+   for this release. New versions archive prior rows instead of deleting them.
+
+The importer locks parent colleges in stable order, checks all IDs and company
+scope, and refuses stale previews. It writes a private backup of prior rules,
+import records and expected post-import rules before commit. College information,
+contacts, invoices and other companies are not changed.
+
+Rollback
+Preview: node --env-file=.env scripts/import-college-commissions-v2.mjs \
+  --rollback=/secure/path/backup.json
+Apply the same command with --apply only after inspecting its counts.
+Rollback refuses if any scoped rule changed since the import. It archives newly
+imported active versions and reactivates previous ones, preserving audit history.
+It does not rewrite invoices or delete import history. Keep migration 140 in
+place when rolling back data; the additive schema is compatible with old rows.
+Do not drop its columns while version-2 snapshots or application code use them.
+
+Validation
+Automated coverage includes exact-rate rounding, discount exclusion, cashback,
+Kent/KOI selection, Macallan boundaries, trimester and first-month calculations,
+missing/ambiguous facts, item/tax/advisor mappings and zero revenue. Real isolated
+PostgreSQL tests exercise migrations, RLS, stale calculations, duplicates,
+timeouts, at most three provider workers and transactional import/rollback.
+Provider calls in all financial tests are mocks. Browser tests cover multi-line
+PTY previews, stale review, blocked rules and responsive light/dark UI at 390px
+and 1440px. Production Xero invoices are never created by this migration.
+
+Runtime test database: STUDENT_PTY_TEST_DATABASE_URL must point to localhost
+sophia_pty_validation. Import test database: PTY_IMPORT_TEST_DATABASE_URL must
+point to localhost sophia_pty_import_validation. These are disposable fixtures,
+never operational databases. API tests also need a local test HTTP listener.
+Frontend tests/build require the installed supported Node version (20.19.1).
+
+Execution evidence — 24 November 2026
+Applied migration 140 and imported F.csv for the approved company. Created 139
+versions; archived 69 prior active versions. Read-back under the runtime role:
+120 colleges, 116 ready rules, 23 blocked rules. An unrelated tenant saw 0 rules.
+Repeat preview: create=0, archive=0, retain=139. Guarded rollback preview:
+archive=139, restore=69. Backups use filesystem mode 0600 in workspace exports.
+No live Xero provider writes occurred. No code was published or deployed.
+
+Successful validation: 26 backend tests (including database import/rollback),
+87 runtime tests (including 38 PostgreSQL integration tests), 100 browser tests.
+Runtime and frontend production builds passed. Frontend build reports bundle/CSS
+budget, CommonJS optimization and missing primeicons stylesheet warnings; these
+warnings did not fail compilation. Both repository diff whitespace checks passed.
+The disposable PostgreSQL test server was stopped after validation.

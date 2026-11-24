@@ -12,26 +12,18 @@ import {hasStudentOperationsPermission} from './student-operations-policy.js';
 import {invoiceSnapshot,xeroPreflightFailure,type InvoiceSnapshot} from './student-case-invoice-drafts.js';
 import {invoiceDraftXeroValue,matchesXeroInvoice,exactXeroInvoiceMatches} from './student-case-invoice-matching.js';
 import {readSalesCatalogue} from './student-xero-sales-catalogue.js';
+import {buildCommissionV2,commissionSourceLines} from './student-commission-invoice-v2.js';
+import {commissionContext,type CommissionContext} from './student-commission-rules.js';
 import {commissionTuitionItemCode} from './student-commission-items.js';
 import {commissionAmount,commissionPricing,commissionHash,commissionRuleIssue,type CommissionRule} from './student-commission-calculation.js';
 
-const selection=z.object({sequence:z.number().int().positive(),itemId:z.uuid().optional(),typeOfSaleOptionId:z.uuid().optional()}).strict();
+const selection=z.object({context:commissionContext.optional(),expectedCalculationHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),sequence:z.number().int().positive(),itemId:z.uuid().optional(),typeOfSaleOptionId:z.uuid().optional()}).strict();
 const prepare=z.object({batchRevision:z.number().int().positive(),selections:z.array(selection).min(1).max(200)}).strict();
 const create=z.object({sequences:z.array(z.number().int().positive()).min(1).max(200),confirmed:z.literal(true)}).strict();
 type Calculation=ReturnType<typeof commissionAmount>;
-type Snapshot={connectionId:string;contactId:string;mappingRevision:number;collegeId:string;collegeName:string;catalogueRevision:number;rule:CommissionRule;
+type Snapshot={schemaVersion?:2;context?:CommissionContext;ruleSetHash?:string;noRevenue?:boolean;connectionId:string;contactId:string;mappingRevision:number;collegeId:string;collegeName:string;catalogueRevision:number;rule:CommissionRule;
  calculation:Calculation;taxMinor:number;totalMinor:number;value:XeroInvoiceCreate};
 type Result={sequence:number;status:string;invoiceId?:string;invoiceNumber?:string|null;message?:string;errorCode?:string};
-function commissionSourceLines(invoice:InvoiceSnapshot['invoices'][number]){
- const lines=invoice.lines.map(l=>({...l,kind:l.kind,amountMinor:l.amountMinor}));
- if(typeof invoice.commissionTuitionMinor==='number'){
-  const tuition=lines.filter(l=>l.kind==='tuition');
-  // The approved full tuition is independent of the agency's TRUST discount.
-  if(tuition.length===1)tuition[0].amountMinor=invoice.commissionTuitionMinor;
-  else if(tuition.length>1){const total=tuition.reduce((n,l)=>n+Number(l.amountMinor),0);tuition[0].amountMinor=Number(tuition[0].amountMinor)+invoice.commissionTuitionMinor-total;}
- }
- return lines;
-}
 const sourceValue=(s:InvoiceSnapshot,i:InvoiceSnapshot['invoices'][number])=>({studentName:s.studentName,currency:s.currency,collegeId:s.collegeId,collegeName:i.collegeName??s.collegeName,connectionId:s.catalogueConnectionId,invoice:i});
 
 @Injectable()
@@ -55,7 +47,9 @@ export class StudentCommissionInvoicesService{
   // A single explicit human confirmation chooses the new-invoice recipient.
   // Multiple human confirmations still require review; no name guess chooses it.
   const mapping=confirmed.length===1?confirmed[0]:confirmed.length===0&&mappings.length===1?mappings[0]:null;
-  const issue=!college?'Select an available college.':commissionRuleIssue(rules)??(!catalogue?'The PTY catalogue is waiting for background import.':!mapping?'Confirm one active PTY invoice recipient for this college in Sync colleges.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
+  const advanced=rules.length>0&&rules.every(r=>r.configuration!=null);
+  const ruleIssue=advanced?(rules.every(r=>(r.configuration as {state:string}).state==='blocked')?String((rules[0].configuration as {blockedReason:string}).blockedReason):null):commissionRuleIssue(rules);
+  const issue=!college?'Select an available college.':ruleIssue??(!catalogue?'The PTY catalogue is waiting for background import.':!mapping?'Confirm one active PTY invoice recipient for this college in Sync colleges.':taxes.length!==1?'Configure one active GST on Income tax rate in PTY.':themes.length!==1?'Configure the PTY Open for Australia Account branding theme and refresh the catalogue.':null);
   const categories=catalogue?.trackingCategories?.filter(c=>c.name.trim().toLowerCase()==='type of sale')??[];
   const saleCategory=categories.length===1?categories[0]:null;
   const saleOptions=saleCategory?.options??[];
@@ -63,7 +57,7 @@ export class StudentCommissionInvoicesService{
   const defaultSaleOption=defaults.length===1?defaults[0]:null;
   const typeOfSaleIssue=catalogue?.trackingCategories===undefined?'Type of Sale options are waiting for background import.':!saleCategory?'Configure one active PTY Type of Sale category.':!saleOptions.length?'No active PTY Type of Sale options are available.':null;
   const items=catalogue?.items.filter(i=>i.accountCode&&catalogue.accounts.some(a=>a.code===i.accountCode))??[];
-  return {available:true,issue,collegeId,collegeName:college?.college_name??null,rule:!commissionRuleIssue(rules)?rules[0]:null,catalogue,items,saleCategory,saleOptions,defaultSaleOption,typeOfSaleIssue,tax:taxes.length===1?taxes[0]:null,theme:themes.length===1?themes[0]:null,mapping};
+  return {advanced,rules,available:true,issue,collegeId,collegeName:college?.college_name??null,rule:!commissionRuleIssue(rules)?rules[0]:null,catalogue,items,saleCategory,saleOptions,defaultSaleOption,typeOfSaleIssue,tax:taxes.length===1?taxes[0]:null,theme:themes.length===1?themes[0]:null,mapping};
  }
  async options(p:Principal,id:string,collegeId:string){
   this.authorize(p);if(!z.uuid().safeParse(collegeId).success)throw new BadRequestException('Select a college.');
@@ -73,7 +67,7 @@ export class StudentCommissionInvoicesService{
    // Send the selectable items once; the full catalogue and mapping identifiers
    // remain server-side. Tab changes reuse this local response.
    const itemAccounts=new Set(o.items.map(i=>i.accountCode));
-   return {typeOfSaleOptions:o.saleOptions.map(v=>({value:v.trackingOptionId,label:v.name})),defaultTypeOfSaleOptionId:o.defaultSaleOption?.trackingOptionId??null,typeOfSaleIssue:o.typeOfSaleIssue,accounts:o.catalogue?.accounts.filter(a=>itemAccounts.has(a.code))??[],available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
+   return {advanced:o.advanced,requiredContext:o.advanced?{classification:o.rules.some(r=>r.classification),location:o.rules.some(r=>r.location),program:o.rules.some(r=>r.program),city:o.rules.some(r=>(r.configuration as any)?.city),enrolmentDate:o.rules.some(r=>(r.configuration as any)?.dateBasis),trimester:o.rules.some(r=>(r.configuration as any)?.rateMethod==='trimester'),courseMonth:o.rules.some(r=>(r.configuration as any)?.rateMethod==='first_month'),isBulk:o.rules.some(r=>(r.configuration as any)?.nonBulkOnly)}:null,typeOfSaleOptions:o.saleOptions.map(v=>({value:v.trackingOptionId,label:v.name})),defaultTypeOfSaleOptionId:o.defaultSaleOption?.trackingOptionId??null,typeOfSaleIssue:o.typeOfSaleIssue,accounts:o.catalogue?.accounts.filter(a=>itemAccounts.has(a.code))??[],available:o.available,issue:o.issue,collegeId:o.collegeId,collegeName:o.collegeName,rule:o.rule?{rule_id:o.rule.rule_id,commission_basis_points:o.rule!.commission_basis_points,application_conditions:o.rule.application_conditions}:null,items:o.items,tax:o.tax};
   });
  }
  private async batch(db:PoolClient,p:Principal,id:string,batchId:string,lock=false){
@@ -94,7 +88,7 @@ export class StudentCommissionInvoicesService{
     LEFT JOIN ${caseSchema()}.student_operations_xero_invoices i ON i.customer_id=e.customer_id AND i.xero_connection_id=e.xero_connection_id AND i.xero_invoice_id=e.xero_invoice_id
     LEFT JOIN ${caseSchema()}.student_operations_xero_invoices t ON t.customer_id=e.customer_id AND t.xero_connection_id=e.trust_connection_id AND t.xero_invoice_id=e.trust_invoice_id
     WHERE d.customer_id=$1 AND d.case_id=$2 AND d.batch_id=$3 ORDER BY d.sequence`,[p.tenantId,id,batchId])).rows;
-   return {items:rows.map(row=>{const source=b.snapshot.invoices.find(i=>i.sequence===row.sequence);return {...row,stale:!source||commissionHash(sourceValue(b.snapshot,source))!==row.sourceHash,
+   return {items:rows.map(row=>{const source=b.snapshot.invoices.find(i=>i.sequence===row.sequence);return {...row,calculationHash:commissionHash(row.snapshot),stale:!source||commissionHash(sourceValue(b.snapshot,source))!==row.sourceHash,
     adjustmentRequired:Boolean(row.status==='created'&&(!source||['VOIDED','DELETED'].includes(row.trustStatus)||row.trustTotal!=null&&Math.round(Number(row.trustTotal)*100)!==source.totalMinor))};})};
   });
  }
@@ -107,7 +101,7 @@ export class StudentCommissionInvoicesService{
    if(b.revision!==v.data.batchRevision||b.offer_id&&!b.is_current)throw new ConflictException('The TRUST drafts changed. Reload before preparing PTY.');
    if(!b.snapshot.collegeId)throw new BadRequestException('Select a college on the TRUST invoice.');
    const o=await this.optionsIn(db,p,b.snapshot.collegeId);
-   if(o.issue||!o.rule||!o.catalogue||!o.tax||!o.theme||!o.mapping)throw new ConflictException(o.issue??'PTY settings are incomplete.');
+   if(o.issue||!o.advanced&&!o.rule||!o.catalogue||!o.tax||!o.theme||!o.mapping)throw new ConflictException(o.issue??'PTY settings are incomplete.');
    const itemsByCode=new Map<string,typeof o.items>();
    for(const item of o.items){const code=item.code.trim().toLowerCase();itemsByCode.set(code,[...(itemsByCode.get(code)??[]),item]);}
    for(const selected of v.data.selections){
@@ -116,6 +110,13 @@ export class StudentCommissionInvoicesService{
     if(invoice.collegeName!==undefined&&invoice.collegeName!==o.collegeName)throw new ConflictException('This TRUST invoice belongs to a different college. Review its original college before preparing commission.');
     const frozen=(await db.query(`SELECT status FROM ${s}.student_commission_exports WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,selected.sequence])).rows[0];
     if(frozen&&frozen.status!=='not_attempted')continue;
+    if(o.advanced){
+     const snapshot=buildCommissionV2({rules:o.rules,context:selected.context??{},invoice,batch:b.snapshot,catalogue:o.catalogue,connectionId:o.catalogue.connectionId,catalogueRevision:o.catalogue.revision,contactId:o.mapping.xero_contact_id,mappingRevision:o.mapping.revision,collegeId:o.collegeId,collegeName:o.collegeName,brandingThemeId:o.theme.brandingThemeId,typeOfSaleOptionId:selected.typeOfSaleOptionId});
+     if(selected.expectedCalculationHash&&selected.expectedCalculationHash!==commissionHash(snapshot))throw new ConflictException('The PTY calculation changed. Save the drafts and review the new amounts before creating invoices.');
+     await db.query(`INSERT INTO ${s}.student_commission_drafts(customer_id,case_id,batch_id,sequence,source_hash,snapshot,prepared_by) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)
+      ON CONFLICT(customer_id,batch_id,sequence) DO UPDATE SET source_hash=EXCLUDED.source_hash,snapshot=EXCLUDED.snapshot,prepared_by=EXCLUDED.prepared_by,prepared_at=now(),revision=student_commission_drafts.revision+1`,[p.tenantId,id,batchId,selected.sequence,commissionHash(sourceValue(b.snapshot,invoice)),JSON.stringify(snapshot),p.identityUserId]);
+     continue;
+    }
     const commissionLines=commissionSourceLines(invoice);
     let code:string;try{code=commissionTuitionItemCode(commissionLines);}catch(error){throw new BadRequestException((error as Error).message);}
     const matches=itemsByCode.get(code)??[];
@@ -123,7 +124,7 @@ export class StudentCommissionInvoicesService{
     const item=matches[0];
     if(!item.accountCode)throw new BadRequestException('The matching PTY item needs a sales account.');
     if(selected.itemId&&selected.itemId!==item.itemId)throw new BadRequestException('The PTY item must match the corresponding TRUST tuition item. Reload the invoice preview.');
-    const calculation=commissionAmount(commissionLines,o.rule.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
+    const calculation=commissionAmount(commissionLines,o.rule!.commission_basis_points),taxMinor=lineTaxMinor(calculation.commissionMinor,o.tax.rate!);
     const pricing=commissionPricing(commissionLines,calculation.commissionMinor);
     const saleOptionId=selected.typeOfSaleOptionId??(typeof invoice.typeOfSaleOptionId==='string'?invoice.typeOfSaleOptionId:undefined);
     const saleOption=saleOptionId?o.saleOptions.find(option=>option.trackingOptionId===saleOptionId):o.defaultSaleOption;
@@ -133,7 +134,7 @@ export class StudentCommissionInvoicesService{
     const saleTracking=saleOption&&o.saleCategory?{name:o.saleCategory.name,option:saleOption.name,trackingCategoryId:o.saleCategory.trackingCategoryId,trackingOptionId:saleOption.trackingOptionId}:{name:'Type of Sale',option:'Instalment'};
     const value:XeroInvoiceCreate={contactId:o.mapping.xero_contact_id,date:invoice.issueDate,dueDate:invoice.dueDate,reference:b.snapshot.studentName,currencyCode:b.snapshot.currency,brandingThemeId:o.theme.brandingThemeId,
      lines:[{description:`Student Name: ${b.snapshot.studentName}\nCommission for INV-${invoice.sequence}\n${invoice.lines.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`.slice(0,4000),quantity:pricing.quantity,unitAmount:pricing.unitAmount,itemCode:item.code,accountCode:item.accountCode,taxType:o.tax.taxType,tracking:[saleTracking]}]};
-    const snapshot:Snapshot={connectionId:o.catalogue.connectionId,contactId:o.mapping.xero_contact_id,mappingRevision:o.mapping.revision,collegeId:o.collegeId,collegeName:o.collegeName,catalogueRevision:o.catalogue.revision,rule:o.rule,calculation,taxMinor,totalMinor:calculation.commissionMinor+taxMinor,value};
+    const snapshot:Snapshot={connectionId:o.catalogue.connectionId,contactId:o.mapping.xero_contact_id,mappingRevision:o.mapping.revision,collegeId:o.collegeId,collegeName:o.collegeName,catalogueRevision:o.catalogue.revision,rule:o.rule!,calculation,taxMinor,totalMinor:calculation.commissionMinor+taxMinor,value};
     await db.query(`INSERT INTO ${s}.student_commission_drafts(customer_id,case_id,batch_id,sequence,source_hash,snapshot,prepared_by) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)
      ON CONFLICT(customer_id,batch_id,sequence) DO UPDATE SET source_hash=EXCLUDED.source_hash,snapshot=EXCLUDED.snapshot,prepared_by=EXCLUDED.prepared_by,prepared_at=now(),revision=student_commission_drafts.revision+1`,[p.tenantId,id,batchId,selected.sequence,commissionHash(sourceValue(b.snapshot,invoice)),JSON.stringify(snapshot),p.identityUserId]);
    }
@@ -175,6 +176,14 @@ export class StudentCommissionInvoicesService{
      if(e&&e.status!=='not_attempted')return {existing:e.status};
      const source=b.snapshot.invoices.find(i=>i.sequence===sequence),snapshot=d.snapshot as Snapshot;
      if(!source||commissionHash(sourceValue(b.snapshot,source))!==d.source_hash)throw new ConflictException('The TRUST draft changed. Prepare the PTY calculation again.');
+     if(snapshot.schemaVersion===2){
+      if(!current||current.issue||!current.catalogue||!current.theme||!current.mapping)throw new ConflictException('Review the PTY configuration before creating invoices.');
+      const saleId=snapshot.value.lines.find(l=>l.itemCode?.trim().toLowerCase()!=='cash back')?.tracking.find(t=>t.name.trim().toLowerCase()==='type of sale')?.trackingOptionId;
+      const freshRules=(await db.query(`SELECT * FROM ${s}.student_college_commission_rules WHERE customer_id=$1 AND college_id=$2 AND active ORDER BY rule_id`,[p.tenantId,snapshot.collegeId])).rows as CommissionRule[];
+      const expected=buildCommissionV2({rules:freshRules,context:snapshot.context??{},invoice:source,batch:b.snapshot,catalogue:current.catalogue,connectionId:current.catalogue.connectionId,catalogueRevision:current.catalogue.revision,contactId:current.mapping.xero_contact_id,mappingRevision:current.mapping.revision,collegeId:current.collegeId,collegeName:current.collegeName,brandingThemeId:current.theme.brandingThemeId,typeOfSaleOptionId:saleId});
+      if(commissionHash(expected)!==commissionHash(snapshot))throw new ConflictException('The PTY calculation, rule, contact or catalogue changed. Save and review the drafts again.');
+      if(expected.noRevenue){await this.cases.activity(db,p,id,'case.commission_no_revenue',`INV-${sequence}: reviewed rule produces no PTY revenue`);return {noRevenue:true};}
+     }else{
      const pricing=commissionPricing(commissionSourceLines(source),snapshot.calculation.commissionMinor),line=snapshot.value.lines[0];
      if(snapshot.value.lines.length!==1||scaled4(line.quantity)!==scaled4(pricing.quantity)||scaled4(line.unitAmount)!==scaled4(pricing.unitAmount))throw new ConflictException('The PTY quantity or price no longer matches TRUST. Prepare the PTY calculation again.');
      if(current?.catalogue?.trackingCategories!==undefined){
@@ -183,6 +192,7 @@ export class StudentCommissionInvoicesService{
       if(selected.length!==1||!current.saleCategory||options.length!==1||selected[0].trackingCategoryId&&selected[0].trackingCategoryId!==current.saleCategory.trackingCategoryId)throw new ConflictException('The PTY Type of Sale changed. Review and prepare this commission again.');
      }
      if(!current||current.issue||current.collegeId!==snapshot.collegeId||current.catalogue?.connectionId!==snapshot.connectionId||commissionHash(current.rule)!==commissionHash(snapshot.rule)||current.mapping?.xero_contact_id!==snapshot.contactId||current.mapping?.revision!==snapshot.mappingRevision||current.catalogue?.revision!==snapshot.catalogueRevision)throw new ConflictException('The PTY rule, contact or catalogue changed. Review the calculation again.');
+     }
      await db.query(`SELECT 1 FROM ${s}.student_operations_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3 FOR UPDATE`,[p.tenantId,snapshot.connectionId,snapshot.contactId]);
      const archiving=await db.query(`SELECT 1 FROM ${s}.student_case_deletions d,jsonb_array_elements(coalesce(d.targets->'contacts','[]')) c
        WHERE d.customer_id=$1 AND d.completed_at IS NULL AND c->>'connectionId'=$2::text AND c->>'contactId'=$3::text LIMIT 1`,[p.tenantId,snapshot.connectionId,snapshot.contactId]);
@@ -207,6 +217,7 @@ export class StudentCommissionInvoicesService{
        trust_connection_id=EXCLUDED.trust_connection_id,trust_invoice_id=EXCLUDED.trust_invoice_id,xero_connection_id=EXCLUDED.xero_connection_id,xero_contact_id=EXCLUDED.xero_contact_id`,[p.tenantId,id,batchId,sequence,t.xero_connection_id,t.xero_invoice_id,snapshot.connectionId,snapshot.contactId,key,p.identityUserId]);
      return {snapshot,key,trust:t,source,batch:b.snapshot};
     });
+    if('noRevenue' in claim){results.push({sequence,status:'no_revenue',message:'The reviewed rule produces no PTY revenue; no Xero invoice was created.'});return;}
     if('existing' in claim){results.push({sequence,status:claim.existing==='created'?'already_created':claim.existing});return;}
     owned=true;
     const trust=await (await sessionFor(claim.trust.xero_connection_id,'trust')).invoiceById(claim.trust.xero_invoice_id);
