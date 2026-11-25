@@ -25,7 +25,7 @@ export function buildCommissionV2(input:{rules:CommissionRule[];context:Commissi
  const warnings:string[]=[];
  if(rep.length===0)warnings.push('Sales Representative is not in the active PTY catalogue. No advisor tracking will be sent; review this before creating the invoice.');
  if(rep.length>1)throw new ConflictException('Resolve the duplicate Sales Representative category in PTY.');
- const advisor=rep[0]?.options.filter(o=>o.name.trim().toLowerCase()===String(batch.advisorLabel??batch.advisorName??'').trim().toLowerCase())??[];
+ const advisor=rep[0]?.options.filter(o=>o.name.trim().toLowerCase()===String(invoice.advisorLabel??batch.advisorLabel??batch.advisorName??'').trim().toLowerCase())??[];
  if(rep.length&&advisor.length!==1)throw new ConflictException('Map the invoice advisor to one active PTY Sales Representative option.');
  const lines:XeroInvoiceCreate['lines']=[];let taxMinor=0;
  for(const component of calculation.components){

@@ -1,3 +1,4 @@
+import {invoiceDraftXeroValue} from './student-case-invoice-matching.js';
 import {normalizeOfferConditionalFees,offerProviderExtraction} from './student-document-analysis.contracts.js';
 import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
@@ -10,6 +11,18 @@ const source:OfferExtraction={kind:'letter_of_offer',studentName:'Fixture Studen
 function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',catalogueRevision:1,reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
   lines:[{kind:'tuition',description:'Tuition',itemId:'44444444-4444-4444-8444-444444444444',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
 describe('Sophia-only invoice draft contract',()=>{
+  it('uses each invoice advisor in TRUST tracking and preserves the batch fallback',()=>{
+    const invoice=validateDraftSchedule(source,request())[0];
+    const snapshot={studentName:'Fixture',advisorLabel:'S15 Default Advisor',currency:'AUD',collegeName:'College',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',invoices:[invoice]};
+    expect(invoiceDraftXeroValue(snapshot,invoice,'contact').lines[0].tracking[1].option).toBe('S15 Default Advisor');
+    expect(invoiceDraftXeroValue(snapshot,{...invoice,advisorLabel:'S20 Other Advisor'},'contact').lines[0].tracking[1].option).toBe('S20 Other Advisor');
+  });
+  it('retains per-invoice advisor IDs and rejects client-supplied advisor labels',()=>{
+    const value=request();value.invoices[0].advisorId='55555555-5555-4555-8555-555555555555';
+    expect(invoiceDraftRequest.parse(value).invoices[0].advisorId).toBe(value.invoices[0].advisorId);
+    expect(validateDraftSchedule(source,value)[0].advisorId).toBe(value.invoices[0].advisorId);
+    expect(invoiceDraftRequest.safeParse({...value,invoices:[{...value.invoices[0],advisorLabel:'Untrusted'}]}).success).toBe(false);
+  });
   it('reduces TRUST by the agency discount while freezing the full PTY tuition base',()=>{
     const offer=structuredClone(source);offer.instalments[0].components=[{label:'Tuition',amountMinor:97000}];offer.instalments[0].agencyDiscountMinor=10000;
     const value=request();value.invoices[0].lines.push({...value.invoices[0].lines[0],kind:'agency_discount',description:'Agency discount',itemCode:'Agency discount',unitAmountMinor:-10000,amountMinor:-10000});

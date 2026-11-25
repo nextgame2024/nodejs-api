@@ -94,6 +94,11 @@ describe('PTY v2 component payload',()=>{
   const s=buildCommissionV2({...input,rules:[rule({}, {rateNumerator:0})]});
   expect(s.noRevenue).toBe(true);expect(s.value.lines).toEqual([]);expect(s.totalMinor).toBe(0);
  });
+ it('uses the invoice advisor override for PTY tracking',()=>{
+  const c=structuredClone(catalogue);c.trackingCategories.push({trackingCategoryId:'rep',name:'Sales Representative',options:[{trackingOptionId:'second',name:'Second Advisor'}]});
+  const result=buildCommissionV2({...input,catalogue:c,invoice:{...invoice,advisorLabel:'Second Advisor'}});
+  expect(result.value.lines[0].tracking[1].option).toBe('Second Advisor');expect(result.value.lines[1].tracking[1].option).toBe('Second Advisor');
+ });
  it('uses current advisor tracking when available, and rejects mismatches',()=>{
   const c=structuredClone(catalogue);c.trackingCategories.push({trackingCategoryId:'rep',name:'Sales Representative',options:[{trackingOptionId:'advisor',name:'Fixture Advisor'}]});
   expect(buildCommissionV2({...input,catalogue:c}).value.lines[1].tracking[1].trackingOptionId).toBe('advisor');

@@ -28,7 +28,7 @@ export async function exactXeroInvoiceMatches(candidates:XeroInvoiceRecord[],exp
   return complete.filter(candidate=>matchesXeroInvoice(candidate,expected,totalMinor));
 }
 export function invoiceDraftXeroValue(snapshot:InvoiceSnapshot,invoice:InvoiceSnapshot['invoices'][number],contactId:string):XeroInvoiceCreate{
-  const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:snapshot.advisorLabel}],first=invoice.lines[0];
+  const tracking=[{name:'Payment Track',option:'PENDING'},{name:'Sales Representative',option:invoice.advisorLabel??snapshot.advisorLabel}],first=invoice.lines[0];
   const lines:XeroInvoiceCreate['lines']=invoice.lines.map(line=>({description:line.description,quantity:line.quantity,unitAmount:line.unitPrice??(line.unitAmountMinor/100).toFixed(2),itemCode:line.itemCode,
     accountCode:line.accountCode,taxType:line.taxType,tracking}));
   if(invoice.conditionalFeeMinor>0)lines.push({description:'Conditional transfer fee',quantity:'1',unitAmount:(invoice.conditionalFeeMinor/100).toFixed(2),accountCode:first.accountCode,taxType:'BASEXCLUDED',tracking});

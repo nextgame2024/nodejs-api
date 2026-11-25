@@ -52,7 +52,7 @@ export const invoiceDraftRequest=z.object({offerId:z.uuid(),offerVersion:z.numbe
   catalogueConnectionId:z.uuid(),catalogueRevision:z.number().int().positive(),
   collegeId:z.uuid().optional(),
   reviewNote:z.string().trim().max(500),
-  invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,
+  invoices:z.array(z.object({advisorId:z.uuid().optional(),sequence:z.number().int().positive(),issueDate:date,dueDate:date,
     conditionalFeeApplies:z.boolean(),conditionalFeeMinor:money,lines:z.array(line).min(1).max(30)}).strict()).min(1).max(200),
 }).strict().refine(value=>(value.draftBatchId===undefined)===(value.draftRevision===undefined),{message:'Draft identity and revision must be provided together.'});
 export type InvoiceDraftRequest=z.infer<typeof invoiceDraftRequest>;
@@ -291,8 +291,11 @@ export class StudentCaseInvoiceDraftsService {
       // Only immutable provider receipts may retain the old net-tuition representation.
       const legacyFrozenDiscountSequences=frozen.filter(receipt=>previous?.invoices.some(invoice=>invoice.sequence===receipt.sequence&&!invoice.lines.some(line=>line.kind==='agency_discount'))).map(receipt=>receipt.sequence);
       const acceptedDefaultDates=previous&&existing.snapshot.reviewNote===''?previous.invoices:[];
+      const overrideIds=[...new Set(value.invoices.flatMap(invoice=>invoice.advisorId?[invoice.advisorId]:[]))];
+      const overrideAdvisors=overrideIds.length?(await db.query(`SELECT advisor_id,code,name FROM ${s}.student_operations_advisor_directory WHERE customer_id=$1 AND advisor_id=ANY($2::uuid[]) AND status='active'`,[p.tenantId,overrideIds])).rows:[];
+      if(overrideAdvisors.length!==overrideIds.length)throw new BadRequestException('Select an active advisor from this workspace for each invoice.');
       const invoices=validateDraftSchedule(offer.source,value,l=>lineTaxMinor(l.amountMinor,catalogue.taxRates.find(t=>t.taxType===l.taxType)!.rate!),analysisToday(),acceptedDefaultDates,legacyFrozenDiscountSequences)
-        .map(invoice=>({...invoice,collegeName:college.name as string|null})),advisorLabel=`${advisor.code} ${advisor.name}`;
+        .map(invoice=>{const selected=overrideAdvisors.find(a=>a.advisor_id===invoice.advisorId);return {...invoice,...selected?{advisorLabel:`${selected.code} ${selected.name}`}:{},collegeName:college.name as string|null};}),advisorLabel=`${advisor.code} ${advisor.name}`;
       const student=(await db.query(`SELECT legal_name FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2`,[p.tenantId,c.student_id])).rows[0];
       const snapshot={studentName:student.legal_name,advisorLabel,category:null,location:null,billingUnit:null,currency:offer.source.currency,
         catalogueConnectionId:value.catalogueConnectionId??null,catalogueRevision:value.catalogueRevision??null,
@@ -348,7 +351,7 @@ export class StudentCaseInvoiceDraftsService {
       await this.database.tenantTransaction(p.tenantId,async db=>{
         await this.cases.authorizedCase(db,p,id);
         const details=verified??{invoiceId:receipt.invoiceId,contactId,invoiceNumber:receipt.invoiceNumber,type:'ACCREC',status:receipt.status,
-          invoiceDate:invoice.issueDate,dueDate:invoice.dueDate,advisorName:snapshot.advisorLabel,invoiceReference:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,collegeName:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,
+          invoiceDate:invoice.issueDate,dueDate:invoice.dueDate,advisorName:invoice.advisorLabel??snapshot.advisorLabel,invoiceReference:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,collegeName:invoice.collegeName!==undefined?invoice.collegeName:snapshot.collegeName,
           concept:null,paymentTrack:null,total:receipt.total,amountPaid:0,amountDue:receipt.total,currencyCode:snapshot.currency,sentToContact:false,lineItems:[],updatedAt:null} as XeroInvoiceRecord;
         await projectCaseInvoice(db,p.tenantId,id,connectionId,details,p.identityUserId);
         if(verified)await db.query(`UPDATE ${s}.student_case_xero_invoice_exports SET projection_next_attempt_at=NULL WHERE customer_id=$1 AND batch_id=$2 AND sequence=$3`,[p.tenantId,batchId,invoice.sequence]);
@@ -552,6 +555,6 @@ export class StudentCaseInvoiceDraftsService {
 
 export const invoiceSnapshot=z.object({studentName:text,advisorLabel:text,currency:z.string().regex(/^[A-Z]{3}$/),collegeId:z.uuid().optional(),collegeName:z.string().nullable(),catalogueConnectionId:z.uuid(),
   invoices:z.array(z.object({sequence:z.number().int().positive(),issueDate:date,dueDate:date,conditionalFeeMinor:money,totalMinor:money,invoiceNumber:text,
-    collegeName:z.string().nullable().optional(),
+    advisorId:z.uuid().optional(),advisorLabel:text.optional(),collegeName:z.string().nullable().optional(),
     lines:z.array(z.object({description:z.string().min(1).max(4000),quantity:z.string(),unitPrice:z.string().optional(),unitAmountMinor:signedMoney,itemCode:text,accountCode:text,taxType:text}).passthrough())}).passthrough())}).passthrough();
 export type InvoiceSnapshot=z.infer<typeof invoiceSnapshot>;
