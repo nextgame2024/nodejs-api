@@ -36,6 +36,19 @@ export async function assignCreatedInvoiceAdvisor(db:PoolClient,tenantId:string,
   return result.rows[0]?.name as string|undefined;
 }
 
+// Saving the first invoice may fill a missing case/profile advisor; never replace an assignment.
+export async function assignDraftInvoiceAdvisor(db:PoolClient,tenantId:string,caseId:string,advisorId:string){
+  const s=caseSchema();
+  const result=await db.query(`UPDATE ${s}.student_operations_students st SET advisor_id=a.advisor_id,updated_at=now()
+    FROM ${s}.student_operations_cases c,${s}.student_operations_advisor_directory a
+    WHERE c.customer_id=$1 AND c.case_id=$2 AND st.customer_id=c.customer_id AND st.student_id=c.student_id
+      AND st.advisor_id IS NULL AND a.customer_id=c.customer_id AND a.advisor_id=$3 AND a.status='active'
+    RETURNING st.advisor_id`,[tenantId,caseId,advisorId]);
+  if(!result.rowCount)return {};
+  const updated=await db.query(`UPDATE ${s}.student_operations_cases SET record_version=record_version+1,updated_at=now() WHERE customer_id=$1 AND case_id=$2 RETURNING record_version`,[tenantId,caseId]);
+  return {assignedAdvisorId:advisorId,caseVersion:updated.rows[0].record_version as number};
+}
+
 class MissingContactProjection extends Error {
   constructor(readonly connectionId:string,readonly contactId:string){super('Contact projection missing');}
 }
@@ -313,12 +326,16 @@ export class StudentCaseInvoiceDraftsService {
         const updated=(await db.query(`UPDATE ${s}.student_case_invoice_draft_batches SET advisor_id=$4,advisor_label=$5,snapshot=$6,actor_identity_user_id=$7,updated_at=now(),revision=revision+1
           WHERE customer_id=$1 AND case_id=$2 AND batch_id=$3 RETURNING revision,updated_at AS "updatedAt"`,[p.tenantId,id,existing.batch_id,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
         await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} invoice drafts updated — Payment Track PENDING`);
-        return {batchId:existing.batch_id,count:invoices.length,updated:true,revision:updated.revision,updatedAt:updated.updatedAt};
+        const assignment=await assignDraftInvoiceAdvisor(db,p.tenantId,id,[...invoices].sort((a,b)=>a.sequence-b.sequence)[0].advisorId??value.advisorId);
+        if(assignment.assignedAdvisorId)await this.cases.activity(db,p,id,'case.advisor_assigned','Advisor assigned from first invoice draft');
+        return {...assignment,batchId:existing.batch_id,count:invoices.length,updated:true,revision:updated.revision,updatedAt:updated.updatedAt};
       }
       const batch=(await db.query(`INSERT INTO ${s}.student_case_invoice_draft_batches(customer_id,case_id,offer_id,advisor_id,advisor_label,snapshot,actor_identity_user_id)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING batch_id,revision,updated_at AS "updatedAt"`,[p.tenantId,id,value.offerId,value.advisorId,advisorLabel,JSON.stringify(snapshot),p.identityUserId])).rows[0];
       await this.cases.activity(db,p,id,'case.invoice_drafts_prepared',`${invoices.length} invoice drafts prepared — Payment Track PENDING`);
-      return {batchId:batch.batch_id,count:invoices.length,updated:false,revision:batch.revision,updatedAt:batch.updatedAt};
+      const assignment=await assignDraftInvoiceAdvisor(db,p.tenantId,id,[...invoices].sort((a,b)=>a.sequence-b.sequence)[0].advisorId??value.advisorId);
+      if(assignment.assignedAdvisorId)await this.cases.activity(db,p,id,'case.advisor_assigned','Advisor assigned from first invoice draft');
+      return {...assignment,batchId:batch.batch_id,count:invoices.length,updated:false,revision:batch.revision,updatedAt:batch.updatedAt};
     });
   }
 

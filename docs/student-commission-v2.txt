@@ -127,9 +127,10 @@ rule/catalogue options, with backend preview comparison before saving. No schema
 change or operational data migration. Validation: 91 browser tests and 59 runtime
 tests passed, including preview mismatch rollback and mobile/dark rendering.
 
-Invoice advisor and display update (25 November 2026): Default advisor applies
-to invoices without an override. Invoice advisor selects an optional override
-shared by the TRUST instalment and its PTY invoice. Overrides are validated
+Invoice advisor and display update (25 November 2026): One Advisor field per invoice is populated from the student case. When the case
+is unassigned, selecting an advisor on the first invoice fills the other blank
+invoice selections. Saving the draft assigns the case advisor only if still
+unassigned. Later selections change only that invoice and its paired PTY invoice. Overrides are validated
 against active advisors in the authenticated workspace and saved in the invoice
 snapshot; created invoices remain frozen. The PTY table immediately shows the
 selected advisor even if Xero tracking is unavailable. The missing tracking
@@ -137,3 +138,7 @@ warning is shown once per preview for six seconds. Type of Sale is editable
 in the commission table row; cashback keeps its separate Cash Back value. Tax
 rate names are resolved from catalogue codes (e.g. OUTPUT -> GST on Income).
 The desktop modal is wider; mobile retains the existing card layout. No migration.
+
+Single-advisor correction validation: 38 backend tests, including assignment on
+save and preserving an existing case assignment; browser coverage includes one
+visible selector, case defaults, first-invoice propagation and independent edits.

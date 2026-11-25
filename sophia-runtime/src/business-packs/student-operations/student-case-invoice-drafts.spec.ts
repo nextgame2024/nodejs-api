@@ -2,7 +2,7 @@ import {invoiceDraftXeroValue} from './student-case-invoice-matching.js';
 import {normalizeOfferConditionalFees,offerProviderExtraction} from './student-document-analysis.contracts.js';
 import { afterEach,describe,expect,it,jest } from '@jest/globals';
 import { BadGatewayException, ConflictException } from '@nestjs/common';
-import { StudentCaseInvoiceDraftsService,exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
+import { assignDraftInvoiceAdvisor,StudentCaseInvoiceDraftsService,exactXeroInvoiceMatches,invoiceDraftRequest,lineTotal,matchesXeroInvoice,validateDraftSchedule,xeroPreflightFailure,type InvoiceDraftRequest } from './student-case-invoice-drafts.js';
 import { analysisVerdict } from './student-document-analysis-state.js';
 import type { OfferExtraction } from './student-case-offers.js';
 
@@ -11,6 +11,14 @@ const source:OfferExtraction={kind:'letter_of_offer',studentName:'Fixture Studen
 function request():InvoiceDraftRequest{return {offerId:'11111111-1111-4111-8111-111111111111',offerVersion:1,caseVersion:1,advisorId:'22222222-2222-4222-8222-222222222222',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',catalogueRevision:1,reviewNote:'',invoices:[{sequence:1,issueDate:'2026-10-26',dueDate:'2026-11-01',conditionalFeeApplies:false,conditionalFeeMinor:0,
   lines:[{kind:'tuition',description:'Tuition',itemId:'44444444-4444-4444-8444-444444444444',itemCode:'ELICOS ON-SHORE',quantity:'1',unitAmountMinor:97000,amountMinor:97000,accountCode:'812',taxType:'BASEXCLUDED'}]}]};}
 describe('Sophia-only invoice draft contract',()=>{
+  it('assigns an unassigned case on draft save and returns the new case version',async()=>{
+    const prior=process.env.SOPHIA_RUNTIME_DATABASE_URL;process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://test:test@localhost/test';
+    try{const query=jest.fn<any>().mockResolvedValueOnce({rowCount:1,rows:[{advisor_id:'advisor'}]}).mockResolvedValueOnce({rows:[{record_version:4}]});
+      expect(await assignDraftInvoiceAdvisor({query} as never,'tenant','case','advisor')).toEqual({assignedAdvisorId:'advisor',caseVersion:4});
+      expect(query.mock.calls[0][1]).toEqual(['tenant','case','advisor']);expect(query.mock.calls[0][0]).toContain('st.advisor_id IS NULL');expect(query.mock.calls[0][0]).toContain('a.customer_id=c.customer_id');
+      query.mockReset();query.mockResolvedValue({rowCount:0,rows:[]});expect(await assignDraftInvoiceAdvisor({query} as never,'tenant','case','other')).toEqual({});expect(query).toHaveBeenCalledTimes(1);
+    }finally{if(prior===undefined)delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=prior;}
+  });
   it('uses each invoice advisor in TRUST tracking and preserves the batch fallback',()=>{
     const invoice=validateDraftSchedule(source,request())[0];
     const snapshot={studentName:'Fixture',advisorLabel:'S15 Default Advisor',currency:'AUD',collegeName:'College',catalogueConnectionId:'33333333-3333-4333-8333-333333333333',invoices:[invoice]};
