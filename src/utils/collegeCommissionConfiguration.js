@@ -2,9 +2,13 @@
 export function validateCommissionConfiguration(input) {
   if (input == null) return null;
   const fail = () => { throw new Error('Enter a valid version 2 commission configuration.'); };
-  const keys = ['benefits','version','state','blockedReason','city','effectiveFrom','effectiveTo','dateBasis','rateNumerator','rateDenominator','rateMethod','laterRateNumerator','nonBulkOnly','cashback'];
+  const keys = ['eligibilityNote','maxTrimester','label','choiceRequired','benefits','version','state','blockedReason','city','effectiveFrom','effectiveTo','dateBasis','rateNumerator','rateDenominator','rateMethod','laterRateNumerator','nonBulkOnly','cashback'];
   if (typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !keys.includes(k)) || input.version !== 2) fail();
   const v = structuredClone(input);
+  if(v.eligibilityNote!==undefined&&(typeof v.eligibilityNote!=='string'||!v.eligibilityNote.trim()||v.eligibilityNote.length>2000))fail();
+  if(v.maxTrimester!==undefined&&(!Number.isSafeInteger(v.maxTrimester)||v.maxTrimester<1||v.maxTrimester>100))fail();
+  if(v.label!==undefined&&(typeof v.label!=='string'||!v.label.trim()||v.label.length>300))fail();
+  if(v.choiceRequired!==undefined&&typeof v.choiceRequired!=='boolean')fail();
   if (!['ready','blocked'].includes(v.state) || !['fixed','trimester','first_month'].includes(v.rateMethod) || typeof v.nonBulkOnly !== 'boolean') fail();
   for (const field of ['city','blockedReason']) {
     if (v[field] != null && (typeof v[field] !== 'string' || v[field].length > (field === 'city' ? 200 : 4000))) fail();
@@ -26,8 +30,10 @@ export function validateCommissionConfiguration(input) {
     if(!Array.isArray(v.benefits)||v.benefits.length>2)fail();
     const sources=new Set();
     for(const b of v.benefits){
-      if(!b||typeof b!=='object'||Object.keys(b).some(k=>!['source','percentageBasisPoints','gstInclusive','itemCode','saleName','advisorName'].includes(k))||!['enrolment','materials'].includes(b.source)||sources.has(b.source)||b.source==='enrolment'&&c.mode!=='none')fail();
+      if(!b||typeof b!=='object'||Object.keys(b).some(k=>!['fixedAmountMinor','classification','source','percentageBasisPoints','gstInclusive','itemCode','saleName','advisorName'].includes(k))||!['enrolment','materials'].includes(b.source)||sources.has(b.source)||b.source==='enrolment'&&c.mode!=='none')fail();
       sources.add(b.source);
+      if(b.fixedAmountMinor!==undefined&&(!Number.isSafeInteger(b.fixedAmountMinor)||b.fixedAmountMinor<1||b.fixedAmountMinor>1000000000))fail();
+      if(b.classification!==undefined&&!['ELICOS','VET','HE'].includes(b.classification))fail();
       if(!Number.isSafeInteger(b.percentageBasisPoints)||b.percentageBasisPoints<1||b.percentageBasisPoints>10000||typeof b.gstInclusive!=='boolean')fail();
       for(const key of ['itemCode','saleName','advisorName']){if(key==='advisorName'&&b[key]===null)continue;if(typeof b[key]!=='string'||!b[key].trim()||b[key].length>(key==='advisorName'?200:100))fail();b[key]=b[key].trim();}
     }
@@ -36,6 +42,7 @@ export function validateCommissionConfiguration(input) {
 }
 
 export function commissionConditionsOverlap(a, b) {
+  if(a.configuration?.label&&b.configuration?.label&&a.configuration.label!==b.configuration.label)return false;
   const normal = v => String(v ?? '').normalize('NFKC').trim().toLowerCase();
   const ac = a.configuration, bc = b.configuration;
   const predicates = r => [r.classification,r.location,r.program,r.configuration?.city];

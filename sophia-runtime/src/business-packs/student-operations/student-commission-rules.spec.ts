@@ -118,3 +118,35 @@ describe('PTY v2 component payload',()=>{
   expect(()=>buildCommissionV2({...input,catalogue:c,batch:{...input.batch,advisorName:'Unmapped'}})).toThrow('Map the invoice advisor');
  });
 });
+
+describe('Named workbook contracts and source-fee support',()=>{
+ const first='11111111-1111-4111-8111-111111111111',second='22222222-2222-4222-8222-222222222222';
+ it('requires an explicit choice for overlapping named contracts and retains the selected rate',()=>{
+  const a=rule({rule_id:first},{label:'Undergraduate',choiceRequired:true,rateNumerator:2}),b=rule({rule_id:second},{label:'Postgraduate',choiceRequired:true,rateNumerator:15,rateDenominator:100});
+  expect(()=>selectCommissionRule([a,b],{})).toThrow('Select');expect(selectCommissionRule([a,b],{selectedRuleId:second})).toBe(b);
+  expect(calculateCommission(b,[tuition],{selectedRuleId:second}).commissionMinor).toBe(10800);
+ });
+ it('never allows an explicit choice to bypass a known classification or blocked rule',()=>{
+  const a=rule({rule_id:first,classification:'VET'}),b=rule({rule_id:second},{state:'blocked',blockedReason:'Review source conflict'});
+  expect(()=>selectCommissionRule([a],{classification:'ELICOS',selectedRuleId:first})).toThrow('conflicts');
+  expect(()=>selectCommissionRule([b],{selectedRuleId:second})).toThrow('source conflict');
+  expect(()=>selectCommissionRule([a],{selectedRuleId:second})).toThrow('unavailable');
+ });
+ it('uses a manual choice for missing campus facts while retaining known facts',()=>{
+  const a=rule({rule_id:first},{city:'Sydney'}),b=rule({rule_id:second},{city:'Adelaide'});
+  expect(()=>selectCommissionRule([a,b],{})).toThrow('Complete');expect(selectCommissionRule([a,b],{selectedRuleId:first})).toBe(a);
+  expect(()=>selectCommissionRule([a,b],{selectedRuleId:first,city:'Adelaide'})).toThrow('conflicts');
+ });
+ it('calculates Abbey fixed net materials only for ELICOS invoices containing a positive materials fee',()=>{
+  const r=rule({}, {benefits:[{source:'materials',fixedAmountMinor:4545,classification:'ELICOS',percentageBasisPoints:10000,gstInclusive:false,itemCode:'MARKETING VET',saleName:'Marketing',advisorName:'O10 Open for Australia'}]});
+  const lines=[tuition,{kind:'materials',amountMinor:10000}];
+  expect(calculateCommission(r,lines,{classification:'ELICOS'}).subtotalMinor).toBe(26145);
+  expect(calculateCommission(r,lines,{classification:'VET'}).subtotalMinor).toBe(21600);
+  expect(calculateCommission(r,[tuition,{kind:'materials',amountMinor:0}],{classification:'ELICOS'}).components).toHaveLength(1);
+ });
+ it('requires contract eligibility confirmation and refuses unconfigured JMC later trimesters',()=>{
+  expect(()=>calculateCommission(rule({}, {eligibilityNote:'Confirm commencement and payment'}),[tuition],{})).toThrow('Confirm commencement');
+  expect(calculateCommission(rule({}, {eligibilityNote:'Confirm commencement and payment'}),[tuition],{eligibilityConfirmed:true}).commissionMinor).toBe(21600);
+  expect(()=>calculateCommission(rule({}, {rateNumerator:2,rateMethod:'trimester',maxTrimester:4}),[tuition],{trimester:5})).toThrow('No agreed');
+ });
+});

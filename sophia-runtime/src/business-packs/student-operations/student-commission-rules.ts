@@ -4,11 +4,13 @@ import type {CommissionRule} from './student-commission-calculation.js';
 
 const nullableDate=z.iso.date().nullable();
 export const commissionConfiguration=z.object({
+ eligibilityNote:z.string().trim().min(1).max(2000).optional(),maxTrimester:z.number().int().min(1).max(100).optional(),
+ label:z.string().trim().min(1).max(300).optional(),choiceRequired:z.boolean().optional(),
  version:z.literal(2),state:z.enum(['ready','blocked']),blockedReason:z.string().trim().min(1).max(4000).nullable(),
  city:z.string().trim().min(1).max(200).nullable(),effectiveFrom:nullableDate,effectiveTo:nullableDate,dateBasis:z.literal('enrolment_date').nullable(),
  rateNumerator:z.number().int().min(0).max(1000000),rateDenominator:z.number().int().min(1).max(1000000),
  rateMethod:z.enum(['fixed','trimester','first_month']),laterRateNumerator:z.number().int().min(0).max(1000000),nonBulkOnly:z.boolean(),
- benefits:z.array(z.object({source:z.enum(['enrolment','materials']),percentageBasisPoints:z.number().int().min(1).max(10000),gstInclusive:z.boolean(),itemCode:z.string().trim().min(1).max(100),saleName:z.string().trim().min(1).max(100),advisorName:z.string().trim().min(1).max(200).nullable()}).strict()).max(2).optional(),
+ benefits:z.array(z.object({fixedAmountMinor:z.number().int().min(1).max(1000000000).optional(),classification:z.enum(['ELICOS','VET','HE']).optional(),source:z.enum(['enrolment','materials']),percentageBasisPoints:z.number().int().min(1).max(10000),gstInclusive:z.boolean(),itemCode:z.string().trim().min(1).max(100),saleName:z.string().trim().min(1).max(100),advisorName:z.string().trim().min(1).max(200).nullable()}).strict()).max(2).optional(),
  cashback:z.object({mode:z.enum(['none','enrolment_gross','fixed_net']),amountMinor:z.number().int().min(0).max(1_000_000_000)}).strict(),
 }).strict().refine(v=>v.rateNumerator<=v.rateDenominator&&v.laterRateNumerator<=v.rateDenominator&&(v.state==='blocked')===Boolean(v.blockedReason)
  &&Boolean(v.effectiveFrom||v.effectiveTo)===Boolean(v.dateBasis)&&(!v.effectiveFrom||!v.effectiveTo||v.effectiveFrom<=v.effectiveTo)
@@ -16,7 +18,7 @@ export const commissionConfiguration=z.object({
  &&new Set(v.benefits?.map(b=>b.source)).size===(v.benefits?.length??0)&&!(v.cashback.mode!=='none'&&v.benefits?.some(b=>b.source==='enrolment'))
  &&(v.cashback.mode==='fixed_net'?v.cashback.amountMinor>0:v.cashback.amountMinor===0));
 export type CommissionConfiguration=z.infer<typeof commissionConfiguration>;
-export const commissionContext=z.object({classification:z.enum(['ELICOS','VET','HE']).optional(),location:z.enum(['ON-SHORE','OFF-SHORE']).optional(),
+export const commissionContext=z.object({eligibilityConfirmed:z.boolean().optional(),selectedRuleId:z.uuid().optional(),classification:z.enum(['ELICOS','VET','HE']).optional(),location:z.enum(['ON-SHORE','OFF-SHORE']).optional(),
  program:z.string().trim().min(1).max(300).optional(),city:z.string().trim().min(1).max(200).optional(),
  enrolmentDate:z.iso.date().optional(),courseMonth:z.number().int().min(1).max(1000).optional(),trimester:z.number().int().min(1).max(100).optional(),isBulk:z.boolean().optional(),
 }).strict();
@@ -53,6 +55,13 @@ export function selectCommissionRule(rules:CommissionRule[],facts:CommissionCont
   if(c.effectiveFrom||c.effectiveTo){if(!facts.enrolmentDate)unknown=true;else if(c.effectiveFrom&&facts.enrolmentDate<c.effectiveFrom||c.effectiveTo&&facts.enrolmentDate>c.effectiveTo)matches=false;}
   return {rule,c,unknown,matches};
  });
+ if(facts.selectedRuleId){
+  const selected=states.find(s=>s.rule.rule_id===facts.selectedRuleId);
+  if(!selected||!selected.matches)throw new ConflictException('The selected rule is unavailable or conflicts with the confirmed course facts.');
+  if(selected.c.state==='blocked')throw new ConflictException(selected.c.blockedReason!);
+  return selected.rule;
+ }
+ if(states.some(s=>s.matches&&s.c.choiceRequired))throw new ConflictException('Select the applicable college rule for this invoice.');
  if(states.some(s=>s.matches&&s.unknown))throw new ConflictException('Complete the course classification, student location, program and original enrolment date required by the college rules.');
  const matched=states.filter(s=>s.matches&&!s.unknown);
  if(!matched.length)throw new ConflictException('No college commission rule matches these course facts. Review the college configuration.');
@@ -62,7 +71,7 @@ export function selectCommissionRule(rules:CommissionRule[],facts:CommissionCont
   return contained&&(aa.some((v,i)=>Boolean(v)&&!bb[i])||a.c.effectiveFrom!==b.c.effectiveFrom||a.c.effectiveTo!==b.c.effectiveTo);
  };
  const winners=matched.filter(a=>!matched.some(b=>a!==b&&narrower(b,a)));
- if(winners.length!==1)throw new ConflictException('Multiple college commission rules match. Resolve the conflicting conditions before creating PTY.');
+ if(winners.length!==1)throw new ConflictException('Multiple college commission rules match. Select the applicable rule for this invoice.');
  if(winners[0].c.state==='blocked')throw new ConflictException(winners[0].c.blockedReason!);
  return winners[0].rule;
 }
@@ -77,6 +86,8 @@ export function rationalMinor(base:number,numerator:number,denominator:number):n
 export function calculateCommission(rule:CommissionRule,lines:SourceLine[],facts:CommissionContext){
  const c=configuredRule(rule);
  if(c.state==='blocked')throw new ConflictException(c.blockedReason!);
+ if(c.eligibilityNote&&facts.eligibilityConfirmed!==true)throw new ConflictException(c.eligibilityNote);
+ if(c.maxTrimester&&facts.trimester&&facts.trimester>c.maxTrimester)throw new ConflictException('No agreed commission rate is configured for this trimester.');
  if(c.nonBulkOnly&&facts.isBulk!==false)throw new ConflictException('Confirm this is a normal, non-bulk enrolment before calculating commission.');
  let numerator=c.rateNumerator,denominator=c.rateDenominator;
  if(c.rateMethod==='trimester'){
@@ -97,11 +108,13 @@ export function calculateCommission(rule:CommissionRule,lines:SourceLine[],facts
   if(amountMinor>0)components.push({key:`enrolment:${index}`,kind:'cashback',sourceLineIndexes:[index],baseMinor:Number(l.amountMinor),amountMinor,rateNumerator:c.cashback.mode==='fixed_net'?0:10,rateDenominator:c.cashback.mode==='fixed_net'?1:11});
  }
  for(const benefit of c.benefits??[]){
+  if(benefit.classification&&!facts.classification)throw new ConflictException('Confirm the course classification for this benefit.');
+  if(benefit.classification&&benefit.classification!==facts.classification)continue;
   for(const [index,line] of lines.entries()){
    if(line.kind!==benefit.source)continue;
    if(!Number.isSafeInteger(line.amountMinor)||Number(line.amountMinor)<0)throw new BadRequestException('Check the eligible benefit fee.');
    if(!line.amountMinor)continue;
-   const amountMinor=rationalMinor(Number(line.amountMinor),benefit.percentageBasisPoints,benefit.gstInclusive?11000:10000);
+   const amountMinor=benefit.fixedAmountMinor!==undefined?rationalMinor(benefit.fixedAmountMinor,benefit.gstInclusive?10:1,benefit.gstInclusive?11:1):rationalMinor(Number(line.amountMinor),benefit.percentageBasisPoints,benefit.gstInclusive?11000:10000);
    if(amountMinor>0)components.push({key:`${benefit.source}:${index}`,kind:benefit.source==='enrolment'?'cashback':'bonus',sourceLineIndexes:[index],baseMinor:Number(line.amountMinor),amountMinor,rateNumerator:benefit.percentageBasisPoints,rateDenominator:benefit.gstInclusive?11000:10000,itemCode:benefit.itemCode,saleName:benefit.saleName,advisorName:benefit.advisorName??undefined});
   }
  }
