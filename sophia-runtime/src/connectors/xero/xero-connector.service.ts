@@ -264,7 +264,7 @@ export class XeroConnectorService {
       this.providerRequest(tenantId,connectionId,()=>this.client.salesCatalogue(accessToken,connection.xero_tenant_id),'discovery'),
       this.providerRequest(tenantId,connectionId,()=>this.client.brandingThemes(accessToken,connection.xero_tenant_id),'discovery'),
     ]);
-    return {...catalogue,brandingThemes,trackingCategories:trackingCategories.filter(c=>c.name.trim().toLowerCase()==='type of sale')};
+    return {...catalogue,brandingThemes,trackingCategories:trackingCategories.filter(c=>['type of sale','sales representative'].includes(c.name.trim().toLowerCase()))};
   }
 
   async syncInvoicePage(

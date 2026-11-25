@@ -80,7 +80,6 @@ export async function saveCommission(companyId, collegeId, ruleId, value, archiv
     if (ruleId) {
       const prior = existing.find(r => r.rule_id === ruleId);
       if (!archive && prior?.configuration && !value.configuration) throw fail('Reload the updated commission editor before saving this rule.');
-      if (!archive && prior?.configuration?.state === 'blocked' && value.configuration?.state !== 'blocked') throw fail('Resolve the blocked source record and re-import its reviewed configuration before enabling this rule.');
       if (!prior) throw fail('This rule has already changed or been archived. Reload the rules.', 'COMMISSION_CONFLICT');
       if (new Date(prior.updatedat).getTime() !== Date.parse(value.expected_updated_at)) {
         throw fail('This rule has changed since you opened it. Reload the rules before saving.', 'COMMISSION_CONFLICT');

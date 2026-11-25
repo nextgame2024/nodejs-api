@@ -86,6 +86,19 @@ describe('PTY v2 component payload',()=>{
   expect(s).toMatchObject({taxMinor:3978,totalMinor:43760,noRevenue:false});
   expect(s.calculation.components[1]).toMatchObject({itemId:'cashback',sourceLineIndexes:[1]});
  });
+ it('reconciles East Coast INV-8406 including agency materials support',()=>{
+  const c=structuredClone(catalogue);c.items.push({...item('marketing','MARKETING VET'),accountCode:'210'});c.accounts.push({code:'210',name:'Marketing Support',taxType:'OUTPUT'});
+  c.trackingCategories[0].options.push({trackingOptionId:'marketing',name:'Marketing'});
+  c.trackingCategories.push({trackingCategoryId:'rep',name:'Sales Representative',options:[{trackingOptionId:'advisor',name:'Fixture Advisor'},{trackingOptionId:'agency',name:'O10 Open for Australia'}]});
+  const benefits:NonNullable<CommissionConfiguration['benefits']>=[{source:'materials',percentageBasisPoints:10000,gstInclusive:true,itemCode:'MARKETING VET',saleName:'Marketing',advisorName:'O10 Open for Australia'}];
+  const request={...input,catalogue:c,rules:[rule({}, {cashback:{mode:'enrolment_gross',amountMinor:0},benefits})],invoice:{...invoice,lines:[...invoice.lines,{...tuition,kind:'materials',amountMinor:5000},{...tuition,kind:'agency_discount',amountMinor:-1000}]}};
+  const result=buildCommissionV2(request);
+  expect(result.calculation.components.map(c=>c.amountMinor)).toEqual([21600,18182,4545]);
+  expect(result).toMatchObject({taxMinor:4433,totalMinor:48760});
+  expect(result.value.lines[2]).toMatchObject({itemCode:'MARKETING VET',accountCode:'210',taxType:'OUTPUT',quantity:'1',unitAmount:'45.45',tracking:[expect.objectContaining({option:'Marketing'}),expect.objectContaining({option:'O10 Open for Australia'})]});
+  expect(buildCommissionV2({...request,invoice:{...invoice,lines:[tuition]}}).totalMinor).toBe(23760);
+  c.trackingCategories[1].options.pop();expect(()=>buildCommissionV2({...request,catalogue:c})).toThrow('benefit representative');
+ });
  it('refuses an unavailable tax mapping instead of applying a global fallback',()=>{
   const c=structuredClone(catalogue);c.items[1].taxType=null;
   expect(()=>buildCommissionV2({...input,catalogue:c})).toThrow('tax default');

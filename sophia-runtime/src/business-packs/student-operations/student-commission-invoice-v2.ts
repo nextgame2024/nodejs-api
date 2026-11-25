@@ -29,20 +29,23 @@ export function buildCommissionV2(input:{rules:CommissionRule[];context:Commissi
  if(rep.length&&advisor.length!==1)throw new ConflictException('Map the invoice advisor to one active PTY Sales Representative option.');
  const lines:XeroInvoiceCreate['lines']=[];let taxMinor=0;
  for(const component of calculation.components){
-  let code:string;try{code=component.kind==='commission'?commissionTuitionItemCode(source):'cash back';}catch(e){throw new BadRequestException((e as Error).message);}
+  let code:string;try{code=component.itemCode?.trim().toLowerCase()??(component.kind==='commission'?commissionTuitionItemCode(source):'cash back');}catch(e){throw new BadRequestException((e as Error).message);}
   const items=catalogue.items.filter(i=>i.code.trim().toLowerCase()===code&&i.accountCode&&catalogue.accounts.some(a=>a.code===i.accountCode));
   if(items.length!==1)throw new ConflictException(`Configure one PTY “${code}” item with a valid sales account.`);
   const item=items[0],taxes=catalogue.taxRates.filter(t=>t.taxType===item.taxType&&t.rate!==null);
   if(taxes.length!==1)throw new ConflictException(`Configure a valid tax default for PTY item “${item.code}”.`);
+  if(component.itemCode&&component.rateDenominator===11000&&Number(taxes[0].rate)!==10)throw new ConflictException('GST-inclusive benefits require a PTY item with 10% GST.');
   if(sale.length!==1)throw new ConflictException('Configure one active PTY Type of Sale category.');
   const saleId=input.typeOfSaleOptionId??invoice.typeOfSaleOptionId;
-  const options=sale[0].options.filter(o=>component.kind==='cashback'?o.name.trim().toLowerCase()==='cash back':saleId?o.trackingOptionId===saleId:o.name.trim().toLowerCase()==='instalment');
+  const options=sale[0].options.filter(o=>component.saleName?o.name.trim().toLowerCase()===component.saleName.trim().toLowerCase():component.kind==='cashback'?o.name.trim().toLowerCase()==='cash back':saleId?o.trackingOptionId===saleId:o.name.trim().toLowerCase()==='instalment');
   if(options.length!==1)throw new ConflictException(component.kind==='cashback'?'Configure the active Cash Back Type of Sale option in PTY.':'Select an active PTY Type of Sale.');
+  const lineAdvisor=component.advisorName?rep[0]?.options.filter(o=>o.name.trim().toLowerCase()===component.advisorName!.trim().toLowerCase())??[]:advisor;
+  if(component.advisorName&&lineAdvisor.length!==1)throw new ConflictException('Map the benefit representative to one active PTY Sales Representative option.');
   const pricing=component.kind==='commission'?commissionPricing(source,component.amountMinor):{quantity:'1',unitAmount:(component.amountMinor/100).toFixed(2)};
   component.itemId=item.itemId;component.taxMinor=lineTaxMinor(component.amountMinor,taxes[0].rate!);taxMinor+=component.taxMinor;
-  const description=component.kind==='commission'?`Student Name: ${batch.studentName}\nCommission for INV-${invoice.sequence}\n${source.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`:`Enrolment cashback for ${batch.studentName}\nTRUST INV-${invoice.sequence}, source line ${component.sourceLineIndexes[0]+1}\n${source[component.sourceLineIndexes[0]].description}`;
+  const description=component.kind==='commission'?`Student Name: ${batch.studentName}\nCommission for INV-${invoice.sequence}\n${source.filter(l=>l.kind==='tuition').map(l=>l.description).join('\n')}`:`${component.kind==='bonus'?'Materials marketing support':'Enrolment cashback'} for ${batch.studentName}\nTRUST INV-${invoice.sequence}, source line ${component.sourceLineIndexes[0]+1}\n${source[component.sourceLineIndexes[0]].description}`;
   lines.push({description:description.slice(0,4000),quantity:pricing.quantity,unitAmount:pricing.unitAmount,itemCode:item.code,accountCode:item.accountCode!,taxType:taxes[0].taxType,
-   tracking:[{name:sale[0].name,option:options[0].name,trackingCategoryId:sale[0].trackingCategoryId,trackingOptionId:options[0].trackingOptionId},...(rep[0]?[{name:rep[0].name,option:advisor[0].name,trackingCategoryId:rep[0].trackingCategoryId,trackingOptionId:advisor[0].trackingOptionId}]:[])]});
+   tracking:[{name:sale[0].name,option:options[0].name,trackingCategoryId:sale[0].trackingCategoryId,trackingOptionId:options[0].trackingOptionId},...(rep[0]?[{name:rep[0].name,option:lineAdvisor[0].name,trackingCategoryId:rep[0].trackingCategoryId,trackingOptionId:lineAdvisor[0].trackingOptionId}]:[])]});
  }
  const totalMinor=calculation.subtotalMinor+taxMinor;if(totalMinor>1_000_000_000)throw new BadRequestException('Commission total exceeds the supported limit.');
  const value:XeroInvoiceCreate={contactId:input.contactId,date:invoice.issueDate,dueDate:invoice.dueDate,reference:batch.studentName,currencyCode:batch.currency,brandingThemeId:input.brandingThemeId,lines};

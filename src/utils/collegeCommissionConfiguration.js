@@ -2,7 +2,7 @@
 export function validateCommissionConfiguration(input) {
   if (input == null) return null;
   const fail = () => { throw new Error('Enter a valid version 2 commission configuration.'); };
-  const keys = ['version','state','blockedReason','city','effectiveFrom','effectiveTo','dateBasis','rateNumerator','rateDenominator','rateMethod','laterRateNumerator','nonBulkOnly','cashback'];
+  const keys = ['benefits','version','state','blockedReason','city','effectiveFrom','effectiveTo','dateBasis','rateNumerator','rateDenominator','rateMethod','laterRateNumerator','nonBulkOnly','cashback'];
   if (typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !keys.includes(k)) || input.version !== 2) fail();
   const v = structuredClone(input);
   if (!['ready','blocked'].includes(v.state) || !['fixed','trimester','first_month'].includes(v.rateMethod) || typeof v.nonBulkOnly !== 'boolean') fail();
@@ -22,6 +22,16 @@ export function validateCommissionConfiguration(input) {
   if (v.rateMethod !== 'first_month' && v.laterRateNumerator !== 0 || v.rateMethod === 'trimester' && v.rateNumerator * 5 !== v.rateDenominator) fail();
   const c = v.cashback;
   if (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).some(k => !['mode','amountMinor'].includes(k)) || !['none','enrolment_gross','fixed_net'].includes(c.mode) || !Number.isSafeInteger(c.amountMinor) || c.amountMinor < 0 || c.amountMinor > 1000000000 || (c.mode !== 'fixed_net' && c.amountMinor !== 0) || (c.mode === 'fixed_net' && c.amountMinor === 0)) fail();
+  if(v.benefits!==undefined){
+    if(!Array.isArray(v.benefits)||v.benefits.length>2)fail();
+    const sources=new Set();
+    for(const b of v.benefits){
+      if(!b||typeof b!=='object'||Object.keys(b).some(k=>!['source','percentageBasisPoints','gstInclusive','itemCode','saleName','advisorName'].includes(k))||!['enrolment','materials'].includes(b.source)||sources.has(b.source)||b.source==='enrolment'&&c.mode!=='none')fail();
+      sources.add(b.source);
+      if(!Number.isSafeInteger(b.percentageBasisPoints)||b.percentageBasisPoints<1||b.percentageBasisPoints>10000||typeof b.gstInclusive!=='boolean')fail();
+      for(const key of ['itemCode','saleName','advisorName']){if(key==='advisorName'&&b[key]===null)continue;if(typeof b[key]!=='string'||!b[key].trim()||b[key].length>(key==='advisorName'?200:100))fail();b[key]=b[key].trim();}
+    }
+  }
   return v;
 }
 

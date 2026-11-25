@@ -46,3 +46,13 @@ describe('Reviewed v2 college import',()=>{
   const db={query:jest.fn()};await expect(importCommissionV2(db,planCommissionV2(csv(record())),id,{apply:true})).rejects.toThrow('backup');expect(db.query).not.toHaveBeenCalled();
  });
 });
+
+describe('Structured fee benefits',()=>{
+ const configuration={version:2,state:'ready',blockedReason:null,city:null,effectiveFrom:null,effectiveTo:null,dateBasis:null,rateNumerator:3,rateDenominator:10,rateMethod:'fixed',laterRateNumerator:0,nonBulkOnly:false,cashback:{mode:'enrolment_gross',amountMinor:0},benefits:[{source:'materials',percentageBasisPoints:10000,gstInclusive:true,itemCode:'MARKETING VET',saleName:'Marketing',advisorName:'O10 Open for Australia'}]};
+ test('accepts the reviewed East Coast numeric contract',()=>expect(validateCommissionConfiguration(configuration)).toEqual(configuration));
+ test('rejects duplicate sources, invalid percentages and ambiguous enrolment benefits',()=>{
+  expect(()=>validateCommissionConfiguration({...configuration,benefits:[configuration.benefits[0],configuration.benefits[0]]})).toThrow();
+  expect(()=>validateCommissionConfiguration({...configuration,benefits:[{...configuration.benefits[0],percentageBasisPoints:10001}]})).toThrow();
+  expect(()=>validateCommissionConfiguration({...configuration,benefits:[{...configuration.benefits[0],source:'enrolment'}]})).toThrow();
+ });
+});

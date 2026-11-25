@@ -119,8 +119,8 @@ describe('request-scoped Xero invoice session',()=>{
     expect(f.client.createInvoice).toHaveBeenCalledTimes(2);
   });
   it('imports active tracking metadata with the existing catalogue request',async()=>{
-    const f=fixture();f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Type of Sale',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Instalment'}]}]);const result=await f.service.salesCatalogue('tenant-a','connection-a');
-    expect(result.trackingCategories?.[0].name).toBe('Type of Sale');expect(f.client.trackingCategories).toHaveBeenCalledTimes(1);expect(f.client.salesCatalogue).toHaveBeenCalledTimes(1);
+    const f=fixture();f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'22222222-2222-4222-8222-222222222222',name:'Type of Sale',options:[{trackingOptionId:'33333333-3333-4333-8333-333333333333',name:'Instalment'}]}]);f.client.trackingCategories.mockResolvedValue([{trackingCategoryId:'sales',name:'Type of Sale',options:[]},{trackingCategoryId:'rep',name:'Sales Representative',options:[]}]);const result=await f.service.salesCatalogue('tenant-a','connection-a');
+    expect(result.trackingCategories?.[1].name).toBe('Sales Representative');expect(result.trackingCategories?.[0].name).toBe('Type of Sale');expect(f.client.trackingCategories).toHaveBeenCalledTimes(1);expect(f.client.salesCatalogue).toHaveBeenCalledTimes(1);
   });
   it('rejects PTY creation on an unassigned or disabled organisation',async()=>{
     const f=fixture(false);

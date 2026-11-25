@@ -8,10 +8,12 @@ export const commissionConfiguration=z.object({
  city:z.string().trim().min(1).max(200).nullable(),effectiveFrom:nullableDate,effectiveTo:nullableDate,dateBasis:z.literal('enrolment_date').nullable(),
  rateNumerator:z.number().int().min(0).max(1000000),rateDenominator:z.number().int().min(1).max(1000000),
  rateMethod:z.enum(['fixed','trimester','first_month']),laterRateNumerator:z.number().int().min(0).max(1000000),nonBulkOnly:z.boolean(),
+ benefits:z.array(z.object({source:z.enum(['enrolment','materials']),percentageBasisPoints:z.number().int().min(1).max(10000),gstInclusive:z.boolean(),itemCode:z.string().trim().min(1).max(100),saleName:z.string().trim().min(1).max(100),advisorName:z.string().trim().min(1).max(200).nullable()}).strict()).max(2).optional(),
  cashback:z.object({mode:z.enum(['none','enrolment_gross','fixed_net']),amountMinor:z.number().int().min(0).max(1_000_000_000)}).strict(),
 }).strict().refine(v=>v.rateNumerator<=v.rateDenominator&&v.laterRateNumerator<=v.rateDenominator&&(v.state==='blocked')===Boolean(v.blockedReason)
  &&Boolean(v.effectiveFrom||v.effectiveTo)===Boolean(v.dateBasis)&&(!v.effectiveFrom||!v.effectiveTo||v.effectiveFrom<=v.effectiveTo)
  &&(v.rateMethod==='first_month'||v.laterRateNumerator===0)&&(v.rateMethod!=='trimester'||v.rateNumerator*5===v.rateDenominator)
+ &&new Set(v.benefits?.map(b=>b.source)).size===(v.benefits?.length??0)&&!(v.cashback.mode!=='none'&&v.benefits?.some(b=>b.source==='enrolment'))
  &&(v.cashback.mode==='fixed_net'?v.cashback.amountMinor>0:v.cashback.amountMinor===0));
 export type CommissionConfiguration=z.infer<typeof commissionConfiguration>;
 export const commissionContext=z.object({classification:z.enum(['ELICOS','VET','HE']).optional(),location:z.enum(['ON-SHORE','OFF-SHORE']).optional(),
@@ -20,7 +22,7 @@ export const commissionContext=z.object({classification:z.enum(['ELICOS','VET','
 }).strict();
 export type CommissionContext=z.infer<typeof commissionContext>;
 type SourceLine={kind?:unknown;amountMinor?:unknown;itemCode?:unknown};
-export type CommissionComponent={key:string;kind:'commission'|'cashback';sourceLineIndexes:number[];baseMinor:number;amountMinor:number;rateNumerator:number;rateDenominator:number;itemId?:string;taxMinor?:number};
+export type CommissionComponent={key:string;kind:'commission'|'cashback'|'bonus';itemCode?:string;saleName?:string;advisorName?:string;sourceLineIndexes:number[];baseMinor:number;amountMinor:number;rateNumerator:number;rateDenominator:number;itemId?:string;taxMinor?:number};
 const normal=(v:unknown)=>String(v??'').normalize('NFKC').trim().toLowerCase();
 
 export function configuredRule(rule:CommissionRule):CommissionConfiguration {
@@ -93,6 +95,15 @@ export function calculateCommission(rule:CommissionRule,lines:SourceLine[],facts
   if(!l.amountMinor)continue;
   const amountMinor=c.cashback.mode==='fixed_net'?c.cashback.amountMinor:rationalMinor(Number(l.amountMinor),10,11);
   if(amountMinor>0)components.push({key:`enrolment:${index}`,kind:'cashback',sourceLineIndexes:[index],baseMinor:Number(l.amountMinor),amountMinor,rateNumerator:c.cashback.mode==='fixed_net'?0:10,rateDenominator:c.cashback.mode==='fixed_net'?1:11});
+ }
+ for(const benefit of c.benefits??[]){
+  for(const [index,line] of lines.entries()){
+   if(line.kind!==benefit.source)continue;
+   if(!Number.isSafeInteger(line.amountMinor)||Number(line.amountMinor)<0)throw new BadRequestException('Check the eligible benefit fee.');
+   if(!line.amountMinor)continue;
+   const amountMinor=rationalMinor(Number(line.amountMinor),benefit.percentageBasisPoints,benefit.gstInclusive?11000:10000);
+   if(amountMinor>0)components.push({key:`${benefit.source}:${index}`,kind:benefit.source==='enrolment'?'cashback':'bonus',sourceLineIndexes:[index],baseMinor:Number(line.amountMinor),amountMinor,rateNumerator:benefit.percentageBasisPoints,rateDenominator:benefit.gstInclusive?11000:10000,itemCode:benefit.itemCode,saleName:benefit.saleName,advisorName:benefit.advisorName??undefined});
+  }
  }
  const subtotalMinor=components.reduce((n,c)=>n+c.amountMinor,0);
  if(subtotalMinor>1_000_000_000)throw new BadRequestException('Commission exceeds the supported amount.');
