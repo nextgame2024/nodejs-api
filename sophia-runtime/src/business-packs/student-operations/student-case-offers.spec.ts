@@ -7,6 +7,11 @@ export const sampleOffer:OfferExtraction={kind:'letter_of_offer',studentName:'Ex
   fees:[{label:'Tuition',amountMinor:864000,conditional:false,condition:null},{label:'Enrolment',amountMinor:20000,conditional:false,condition:null},{label:'Material',amountMinor:20000,conditional:false,condition:null},{label:'International transfer fee',amountMinor:2500,conditional:true,condition:'International payments only'}],
   instalments:[{sequence:1,dueTerm:'Immediately',dueOn:null,totalMinor:99500,includedConditionalFeeMinor:2500},{sequence:2,dueTerm:null,dueOn:'2028-01-31',totalMinor:807000,includedConditionalFeeMinor:0}]};
 describe('Offer matching and totals',()=>{
+  test('accepts a full-course single payment with no instalment split',()=>{
+    const fees=[{label:'Tuition',amountMinor:384000,conditional:false,condition:null},{label:'Enrolment',amountMinor:29000,conditional:false,condition:null},{label:'Materials',amountMinor:24000,conditional:false,condition:null}];
+    const offer={...sampleOffer,statedTotalMinor:437000,fees,instalments:[{sequence:1,dueTerm:'Payment in full',dueOn:null,totalMinor:437000,includedConditionalFeeMinor:0,components:fees.map(f=>({label:f.label,amountMinor:f.amountMinor}))}]};
+    expect(offerConfirmationProblems(offer)).toEqual([]);expect(offerTotals(offer).unexplainedDifference).toBe(false);
+  });
   test('unique normalized exact names qualify, partial names do not auto-select',()=>{
     expect(matchOfferColleges(' EAST  COAST COLLEGE ',null,colleges)).toMatchObject({resolution:'exact',exactCollegeId:'a'});
     expect(matchOfferColleges('East Coast',null,colleges)).toMatchObject({resolution:'partial',exactCollegeId:null});
