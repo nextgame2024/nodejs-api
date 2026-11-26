@@ -1,4 +1,4 @@
-import { preparationConfigs } from "../scheduling/meeting-preparation.js";
+import { assignFormSlug, formUrl } from "./lead-form-urls.js";
 import { transaction } from "./assistant-settings.service.js";
 import { fail } from "./assistant-settings.contracts.js";
 import { uuid, version, text } from "./lead-records.contracts.js";
@@ -151,20 +151,13 @@ export async function listForms(actor, company, query) {
     const where = `FROM ${s}.lead_forms f JOIN ${s}.lead_form_types t ON t.customer_id=f.customer_id AND t.id=f.type_id ${publicationJoin} WHERE f.customer_id=$1 AND ($2='' OR f.name ILIKE $2) AND ($3::uuid IS NULL OR f.type_id=$3)`;
     const result = (
       await db.query(
-        `WITH filtered AS (SELECT f.id,f.name,f.type_id AS "typeId",t.name AS "typeName",f.version,f.updated_at AS "updatedAt",${publicationColumns},row_number() OVER(ORDER BY ${column} ${f.direction},f.id) AS ordinal ${where}), paged AS (SELECT * FROM filtered ORDER BY ordinal LIMIT $4 OFFSET $5) SELECT (SELECT count(*)::int FROM filtered) AS total,COALESCE((SELECT jsonb_agg(to_jsonb(paged)-'ordinal' ORDER BY ordinal) FROM paged),'[]'::jsonb) AS items`,
+        `WITH filtered AS (SELECT f.id,f.name,to_jsonb(f)->>'friendly_slug' AS "friendlySlug",f.type_id AS "typeId",t.name AS "typeName",f.version,f.updated_at AS "updatedAt",${publicationColumns},row_number() OVER(ORDER BY ${column} ${f.direction},f.id) AS ordinal ${where}), paged AS (SELECT * FROM filtered ORDER BY ordinal LIMIT $4 OFFSET $5) SELECT (SELECT count(*)::int FROM filtered) AS total,COALESCE((SELECT jsonb_agg(to_jsonb(paged)-'ordinal' ORDER BY ordinal) FROM paged),'[]'::jsonb) AS items`,
         [...params, f.limit, (f.page - 1) * f.limit],
       )
     ).rows[0];
-    const config = preparationConfigs()[tenant];
-    const links = new Map(
-      config ? [config, ...(config.aliases ?? [])].map((alias) => [
-        alias.publicToken,
-        new URL(`/forms/${alias.slug}`, config.origin).href,
-      ]) : [],
-    );
     result.items = result.items.map((row) => ({
       ...row,
-      friendlyUrl: row.publicationToken ? links.get(row.publicationToken) ?? null : null,
+      friendlyUrl: formUrl(row.publicationToken, row.friendlySlug, tenant),
     }));
     return result;
   });
@@ -223,6 +216,7 @@ export async function saveForm(actor, company, id, input) {
           `UPDATE ${s}.lead_forms SET emails=$3 WHERE customer_id=$1 AND id=$2`,
           [tenant, id, f.emails],
         );
+      await assignFormSlug(db, tenant, id);
       await audit(db, tenant, actor, id, "form_saved");
       if (await publicationsInstalled(db)) {
         const active = await db.query(

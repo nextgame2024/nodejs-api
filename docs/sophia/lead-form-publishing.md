@@ -15,3 +15,13 @@ Delivery retries every five minutes, up to five attempts. Monitor unsent rows wi
 Migrations 132 and 133 were applied to the configured database with user approval on 2026-11-15. No live test publications or test emails were sent. Deploy the API changes to activate its automatic email workflow.
 
 If the selected active advisor has no Scheduling calendar, publishing initializes it from the form hours using Scheduling defaults (30-minute appointments, 60-minute notice, 30-day booking window). Adjacent form intervals are compacted into working periods without changing form slots. Existing Scheduling calendars are never overwritten. If more than 28 separate working periods remain after compaction, configure the advisor calendar in Scheduling first.
+
+## Automatic friendly URLs
+
+Migration 142 adds stored, globally unique friendly slugs. Deploy the backend and frontend URL changes together after the migration. New saves and publications allocate a slug from the form name; collisions receive a numeric suffix. Renaming and republishing retain the stored slug. Drafts do not become public automatically. Unpublishing revokes both token and friendly routes.
+
+For existing records, run `node scripts/setup-form-friendly-urls.mjs` from backend for a rollback-only preview, then `node scripts/setup-form-friendly-urls.mjs --apply` using the configured migration-owner connection. This applies only migration 142 if missing and assigns missing slugs under each tenant scope. It preserves deployment-owned appointment aliases and does not publish forms or send notifications. Repeat runs make no changes to existing slugs.
+
+`PUBLIC_FORM_ORIGIN` can set the canonical public origin; it defaults to `https://sophiaai.com.au`. A tenant's existing appointment-preparation origin and aliases take precedence. Slug resolution reveals only an active publication's opaque token; content and submission operations still use the tenant-scoped runtime role.
+
+Migration 142 and the existing-form backfill were applied to the configured database on 26 November 2026. Sophia AI Business Discovery has `business-discovery`; Open for Australia Discover business has `discover-business`. Backend/frontend deployment is required to expose these routes through the live application.

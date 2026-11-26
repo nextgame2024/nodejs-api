@@ -120,6 +120,7 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
       "131_lead_forms.sql",
       "132_public_lead_forms.sql",
       "133_lead_form_email_notifications.sql",
+      "142_lead_form_friendly_urls.sql",
     ])
       await pool.query(
         (
@@ -255,7 +256,22 @@ suite("Public forms and appointments on isolated PostgreSQL", () => {
     ).toMatchObject({
       publicationToken: token,
       publishedVersion: form.version,
+      friendlyUrl: "https://sophiaai.com.au/forms/discovery",
     });
+    expect((await publicForms.getPublicForm('discovery')).name).toBe('Discovery');
+    const duplicate = await forms.saveForm(owner,company,randomUUID(),{expectedVersion:0,form:{name:'Discovery',typeId:form.typeId,blocks:form.blocks,emails:form.emails}});
+    const duplicatePublished=await publicForms.publishForm(owner,company,duplicate.id,{expectedVersion:duplicate.version});
+    expect(duplicatePublished.friendlyUrl).toBe('https://sophiaai.com.au/forms/discovery-2');
+    await forms.saveForm(owner,company,duplicate.id,{expectedVersion:duplicate.version,form:{name:'Renamed',typeId:duplicate.typeId,blocks:duplicate.blocks,emails:duplicate.emails}});
+    expect((await publicForms.getPublicForm('discovery-2')).name).toBe('Renamed');
+    await publicForms.unpublishForm(owner,company,duplicate.id);
+    await expect(publicForms.getPublicForm('discovery-2')).rejects.toMatchObject({status:404});
+    const scoped=await pool.connect();
+    try {
+      await scoped.query('BEGIN');await scoped.query('SET LOCAL ROLE sophia_runtime_app');
+      await scoped.query("SELECT set_config('sophia.tenant_id',$1,true)",[otherTenant]);
+      await expect(scoped.query('SELECT sophia_runtime.assign_lead_form_slug($1,$2)',[tenant,form.id])).rejects.toMatchObject({code:'42501'});
+    } finally {await scoped.query('ROLLBACK');scoped.release();}
     process.env.APPOINTMENT_PREPARATION_FORMS = JSON.stringify({
       [token.split('.')[0]]: {
         slug: 'prepare-for-meeting', origin: 'https://example.test',

@@ -1,3 +1,4 @@
+import { assignFormSlug, formUrl } from "./lead-form-urls.js";
 import {
   preparationConfigs,
   preparationAppointmentForEmail,
@@ -57,11 +58,16 @@ async function publication(db, tenant, id) {
   return p;
 }
 async function publicRun(token, fn) {
-  const { tenant, id } = publicToken(token),
-    db = await pool.connect();
+  const db = await pool.connect();
   try {
     await db.query("BEGIN");
     await db.query("SET LOCAL ROLE sophia_runtime_app");
+    let resolved = token;
+    if (typeof token === 'string' && /^[a-z][a-z0-9-]{2,100}$/.test(token)) {
+      const configured = Object.values(preparationConfigs()).flatMap(p => [p, ...(p.aliases ?? [])]).find(p => p.slug === token);
+      resolved = configured?.publicToken ?? (await db.query('SELECT sophia_runtime.resolve_lead_form_slug($1) AS token', [token])).rows[0]?.token;
+    }
+    const { tenant, id } = publicToken(resolved);
     await db.query("SELECT set_config('sophia.tenant_id',$1,true)", [tenant]);
     const p = await publication(db, tenant, id);
     const result = await fn(db, tenant, p);
@@ -212,7 +218,8 @@ export async function publishFormInTransaction(
       [tenant, id],
     )
   ).rows[0];
-  if (old?.form_version === expected) return { token: tenant + "." + old.id };
+  const slug = await assignFormSlug(db, tenant, id);
+  if (old?.form_version === expected) return { token: tenant + "." + old.id, friendlyUrl: formUrl(tenant + "." + old.id, slug, tenant) };
   // Publishing updates the existing campaign URL; requests lock the published snapshot while submitting.
   const published = old
     ? (
@@ -251,7 +258,7 @@ export async function publishFormInTransaction(
     `INSERT INTO ${s}.lead_forms_audit(customer_id,actor_identity,entity_id,action) VALUES($1,$2,$3,'form_published')`,
     [tenant, actor, id],
   );
-  return { token: tenant + "." + published.id };
+  return { token: tenant + "." + published.id, friendlyUrl: formUrl(tenant + "." + published.id, slug, tenant) };
 }
 
 export async function publicationStatus(actor, company, id) {
@@ -261,13 +268,14 @@ export async function publicationStatus(actor, company, id) {
       return { token: null, version: null };
     const row = (
       await db.query(
-        `SELECT id,form_version FROM ${s}.lead_form_publications WHERE customer_id=$1 AND form_id=$2 AND active`,
+        `SELECT p.id,p.form_version,f.friendly_slug FROM ${s}.lead_form_publications p JOIN ${s}.lead_forms f ON f.customer_id=p.customer_id AND f.id=p.form_id WHERE p.customer_id=$1 AND p.form_id=$2 AND p.active`,
         [tenant, id],
       )
     ).rows[0];
     return {
       token: row ? tenant + "." + row.id : null,
       version: row?.form_version ?? null,
+      friendlyUrl: row ? formUrl(tenant + "." + row.id, row.friendly_slug, tenant) : null,
     };
   });
 }
