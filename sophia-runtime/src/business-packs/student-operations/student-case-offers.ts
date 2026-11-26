@@ -1,3 +1,4 @@
+import { isOfferTuition } from './offer-tuition.js';
 import {assertCollegeContactAvailable} from './student-college-contact-lifecycle.js';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -33,7 +34,7 @@ export function offerConfirmationProblems(value:OfferExtraction) {
   const sequences=new Set<number>();
   for(const item of value.instalments){
     if(sequences.has(item.sequence))problems.push('Each instalment needs a unique number.');sequences.add(item.sequence);
-    if((item.agencyDiscountMinor??0)>(item.components??[]).filter(c=>/tuition/i.test(c.label)).reduce((n,c)=>n+c.amountMinor,0))problems.push('Agency discount cannot exceed tuition.');
+    if((item.agencyDiscountMinor??0)>(item.components??[]).filter(c=>isOfferTuition(c.label,value.courses)).reduce((n,c)=>n+c.amountMinor,0))problems.push('Agency discount cannot exceed tuition.');
     if(item.includedConditionalFeeMinor>item.totalMinor)problems.push('The included conditional fee cannot exceed its payment.');
     if(!item.dueOn&&!item.dueTerm)problems.push('Each instalment needs a due date or a payment term.');
   }

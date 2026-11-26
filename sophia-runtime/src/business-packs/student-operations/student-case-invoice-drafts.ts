@@ -1,3 +1,4 @@
+import { isOfferTuition } from './offer-tuition.js';
 import {assertStudentContactNameAvailable,studentContactName} from './student-contact-name.js';
 import { BadRequestException,ConflictException,ForbiddenException,HttpException,Inject,Injectable,Logger,NotFoundException } from '@nestjs/common';
 import { createHash,randomBytes } from 'node:crypto';
@@ -108,7 +109,7 @@ export function validateDraftSchedule(source:z.infer<typeof offerExtraction>,val
     if(invoice.conditionalFeeApplies&&fee===0)throw new BadRequestException('Confirm the conditional fee amount or choose not to apply it.');
     if(!invoice.conditionalFeeApplies&&invoice.conditionalFeeMinor!==0)throw new BadRequestException('An excluded conditional fee must be zero.');
     const discount=original.agencyDiscountMinor??0;
-    const grossTuition=(original.components??[]).filter(c=>/tuition/i.test(c.label)).reduce((n,c)=>n+c.amountMinor,0);
+    const grossTuition=(original.components??[]).filter(c=>isOfferTuition(c.label,source.courses)).reduce((n,c)=>n+c.amountMinor,0);
     if(discount>grossTuition||discount>original.totalMinor-original.includedConditionalFeeMinor)throw new BadRequestException('Agency discount cannot exceed tuition.');
     const discounts=invoice.lines.filter(l=>l.kind==='agency_discount');
     if(!(discount>0&&discounts.length===0&&legacyFrozenDiscountSequences.includes(invoice.sequence))&&(discount>0 ? discounts.length!==1||discounts[0].amountMinor!==-discount||discounts[0].itemCode!=='Agency discount' : discounts.length>0))throw new BadRequestException('Use one Agency discount line matching the approved offer discount.');
