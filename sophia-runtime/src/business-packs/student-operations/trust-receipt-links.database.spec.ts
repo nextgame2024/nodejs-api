@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import {DatabaseService} from '../../database/database.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
+import {TrustStagedDepositsController} from './trust-staged-deposits.controller.js';
 import {TrustReceiptsController} from './trust-receipts.controller.js';
 
 import {StudentOperationsWorkspaceService} from './student-operations-workspace.service.js';
@@ -24,7 +25,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await admin.query(`CREATE SCHEMA ${schema};
       GRANT USAGE ON SCHEMA ${schema} TO sophia_runtime_app;
       CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,amount_due numeric,currency_code text,invoice_type text,invoice_status text,settlement jsonb,xero_contact_id uuid,invoice_date date,total numeric,last_seen_sync_run_id uuid,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
-      CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text);
+      CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text,PRIMARY KEY(customer_id,xero_connection_id));
       CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,sync_run_id uuid,created_at timestamptz,status text,mode text);
       CREATE TABLE ${schema}.student_operations_advisor_roster(customer_id uuid,user_id text,display_name text);
       CREATE TABLE ${schema}.business_pack_access_audit_events(customer_id uuid,identity_user_id text,pack_id text,event_type text,outcome text,correlation_id text,metadata jsonb);
@@ -35,13 +36,17 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions']) {
+      if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
       await admin.query(sql.replaceAll('__SOPHIA_RUNTIME_SCHEMA__',schema));
     }
     const privileges = await admin.query(`SELECT has_table_privilege('sophia_runtime_app',$1,'UPDATE,DELETE,TRUNCATE') AS mutable`,[schema+'.student_trust_payment_reconciliation_checks']);
     expect(privileges.rows[0].mutable).toBe(false);
+    const stagePrivileges=await admin.query(`SELECT has_table_privilege('sophia_runtime_app',$1,'UPDATE,DELETE,TRUNCATE') AS mutable`,
+      [schema+'.student_trust_staged_deposits']);
+    expect(stagePrivileges.rows[0].mutable).toBe(false);
     db = new DatabaseService();
     service = new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db));
   });
@@ -52,6 +57,158 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       if(env[name]===undefined) delete process.env[name]; else process.env[name]=env[name];
     }
   });
+  it('stages an unmatched TRUST deposit once, scopes access, and removes it from the queue after verification',async()=>{
+    const staging=new TrustStagedDepositsController(db);
+    const conn=randomUUID(), inv=randomUUID(), run=randomUUID();
+    const source={account:'Test TRUST',bankTransactionId:'STAGED-1',receivedOn:'2020-01-02',amount:'2742.00',reference:'College fee',
+      statementFileName:'deposit.csv',statementFileSha256:'2'.repeat(64),statementRecord:'2'};
+    await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active')`,[tenant,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'operating')`,[tenant,conn]);
+    await expect(staging.stage(principal,conn,source)).rejects.toThrow();
+    await admin.query(`UPDATE ${schema}.student_operations_xero_sync_configurations SET organisation_role='trust' WHERE xero_connection_id=$1`,[conn]);
+    const attempts=await Promise.all([staging.stage(principal,conn,source),staging.stage(principal,conn,source)]);
+    expect(attempts.map(r=>r.created).sort()).toEqual([false,true]);
+    expect(attempts[0].id).toBe(attempts[1].id);
+    expect(await staging.stage(principal,conn,{...source,statementFileSha256:'3'.repeat(64)})).toMatchObject({created:false});
+    for (const changes of [{amount:'2743'},{bankTransactionId:'OTHER'},{statementRecord:'1'},{statementFileName:undefined},{receivedOn:'2999-01-01'}]) {
+      await expect(staging.stage(principal,conn,{...source,...changes})).rejects.toThrow();
+    }
+    await expect(staging.list({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,conn,{})).rejects.toThrow();
+    await expect(staging.list({studentOperationsPrincipal:{tenantId:tenant,role:'advisor'}} as never,conn,{})).rejects.toThrow();
+    const other={...source,bankTransactionId:'STAGED-2',statementRecord:'3'};
+    await staging.stage(principal,conn,other);
+    expect(await staging.list(principal,conn,{q:'fee'})).toMatchObject({page:1,hasMore:false,deposits:[{},{}]});
+    expect(await staging.list(principal,conn,{q:'STAGED-1'})).toMatchObject({deposits:[{id:attempts[0].id,source:{record:2}}]});
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices VALUES($1,$2,$3,2741.80,'AUD','ACCREC','AUTHORISED',NULL)`,[tenant,conn,inv]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','initial')`,[tenant,conn,run]);
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET last_seen_sync_run_id=$1 WHERE xero_invoice_id=$2`,[run,inv]);
+    await service.verify(principal,conn,inv,randomUUID(),source);
+    expect(await staging.list(principal,conn,{})).toMatchObject({deposits:[{transactionId:'STAGED-2'}]});
+    await expect(staging.stage(principal,conn,source)).rejects.toThrow();
+    for (let i=0;i<25;i++) await staging.stage(principal,conn,{...other,bankTransactionId:'PAGE-'+i,statementRecord:String(4+i)});
+    const firstPage=await staging.list(principal,conn,{page:'1'});
+    const secondPage=await staging.list(principal,conn,{page:'2'});
+    expect(firstPage.hasMore).toBe(true);
+    expect(secondPage.hasMore).toBe(false);
+    expect(new Set([...firstPage.deposits,...secondPage.deposits].map(d=>d.id)).size).toBe(26);
+    expect((await service.list(principal,conn,inv))[0].statementSource).toMatchObject({record:2,sha256:source.statementFileSha256});
+  });
+
+  it('ranks scoped current AUD invoice suggestions, preserves ties and abstains without evidence',async()=>{
+    const staging=new TrustStagedDepositsController(db);
+    const conn=randomUUID(),run=randomUUID(),oldRun=randomUUID(),contact=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active')`,[tenant,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust')`,[tenant,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES
+      ($1,$2,$3,now()-interval '1 day','succeeded','initial'),($1,$2,$4,now(),'succeeded','reconciliation')`,[tenant,conn,oldRun,run]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,legal_name)
+      VALUES($1,$2,$3,'Sponsor % Test')`,[tenant,conn,contact]);
+    const insert=(number:string,ref:string,amount:string,currency='AUD',status='AUTHORISED',seen=run)=>
+      admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices
+        (customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,currency_code,invoice_type,invoice_status,
+         amount_due,last_seen_sync_run_id,invoice_number,invoice_reference)
+        VALUES($1,$2,$3,$4,$5,'ACCREC',$6,$7,$8,$9,$10)`,[tenant,conn,randomUUID(),contact,currency,status,amount,seen,number,ref]);
+    await insert('INV-7','School','125');
+    await insert('INV-8','inv-7','99.8');
+    for (let i=0;i<12;i++) await insert('EQUAL-'+i,'Different','100');
+    await insert('OTHER','No match','800');
+    await insert('USD','INV-7','100','USD');
+    await insert('VOID','INV-7','100','AUD','VOIDED');
+    await insert('OLD','INV-7','100','AUD','AUTHORISED',oldRun);
+    const body={account:'Test',bankTransactionId:'MATCH-1',receivedOn:'2020-01-02',amount:'100',reference:'Inv-7',
+      statementFileName:'bank.csv',statementFileSha256:'4'.repeat(64),statementRecord:'2'};
+    const {id}=await staging.stage(principal,conn,body);
+    const get=(query:Record<string,string>={})=>staging.candidates(principal,conn,id,query);
+    const first=await get();
+    expect(first.ruleVersion).toBe(1);
+    expect(first.invoices.slice(0,2)).toMatchObject([
+      {invoiceNumber:'INV-7',numberMatch:true,difference:'-25.00'},
+      {invoiceNumber:'INV-8',referenceMatch:true,difference:'0.20'}]);
+    expect(first.invoices[2]).toMatchObject({amountMatch:true,peers:12,score:1});
+    const next=await get({page:'2'});
+    expect(next.hasMore).toBe(false);
+    expect(new Set([...first.invoices,...next.invoices].map(row=>row.id)).size).toBe(14);
+    expect((await get({q:'OTHER'})).invoices).toMatchObject([{invoiceNumber:'OTHER',score:0}]);
+    expect((await get({q:'sponsor %'})).invoices).toHaveLength(10);
+    const noEvidence=await staging.stage(principal,conn,{...body,reference:'',amount:'89',bankTransactionId:'MATCH-2',statementRecord:'3'});
+    expect((await staging.candidates(principal,conn,noEvidence.id,{})).invoices).toEqual([]);
+    await expect(staging.candidates(principal,conn,randomUUID(),{})).rejects.toThrow();
+    await expect(staging.candidates({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,conn,id,{})).rejects.toThrow();
+    const embedded=await staging.stage(principal,conn,{...body,reference:'Transfer for INV-7, thank you',amount:'89',bankTransactionId:'MATCH-3',statementRecord:'4'});
+    expect((await staging.candidates(principal,conn,embedded.id,{})).invoices).toMatchObject([{invoiceNumber:'INV-7',numberInReference:true}]);
+    const longer=await staging.stage(principal,conn,{...body,reference:'Transfer INV-70',amount:'89',bankTransactionId:'MATCH-4',statementRecord:'5'});
+    expect((await staging.candidates(principal,conn,longer.id,{})).invoices).toEqual([]);
+    const report=(extra:Record<string,unknown>={})=>staging.outcomes(principal,conn,{from:'2020-01-02',to:'2020-01-02',...extra});
+    expect(await report()).toMatchObject({total:4,reviewed:0,medianReviewMinutes:null,counts:{unreviewed:4},bands:[]});
+    await expect(report({from:'2018-01-01'})).rejects.toThrow();
+    await expect(report({to:'2020-01-01'})).rejects.toThrow();
+    await expect(staging.outcomes({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,conn,
+      {from:'2020-01-02',to:'2020-01-02'})).rejects.toThrow();
+    const a=first.invoices[0], b=first.invoices[1];
+    const command={invoiceId:a.id,requestId:randomUUID(),decision:'accepted',reason:'Compared the remittance',
+      revision:0,evidenceToken:a.evidenceToken,q:'',page:1};
+    await expect(staging.decide(principal,conn,id,{...command,reason:' '})).rejects.toThrow();
+    await expect(staging.decide(principal,conn,id,{...command,evidenceToken:'0'.repeat(64)})).rejects.toThrow();
+    const writes=await Promise.all([staging.decide(principal,conn,id,command),staging.decide(principal,conn,id,command)]);
+    expect(writes).toEqual([{revision:1},{revision:1}]);
+    await expect(staging.decide(principal,conn,id,{...command,reason:'other'})).rejects.toThrow();
+    await expect(staging.decide(principal,conn,id,{...command,requestId:randomUUID()})).rejects.toThrow();
+    expect(await report({outcome:'awaiting_receipt'})).toMatchObject({total:4,reviewed:1,filteredTotal:1,
+      deposits:[{id,acceptedId:a.id,verifiedId:null,outcome:'awaiting_receipt'}]});
+    const alternate={...command,invoiceId:b.id,evidenceToken:b.evidenceToken,revision:1,requestId:randomUUID()};
+    const changes=await Promise.allSettled([staging.decide(principal,conn,id,alternate),
+      staging.decide(principal,conn,id,{...alternate,requestId:randomUUID()})]);
+    expect(changes.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect((await get()).invoices.slice(0,2)).toMatchObject([{decision:'superseded'},{decision:'accepted'}]);
+    await staging.decide(principal,conn,id,{...alternate,decision:'dismissed',reason:'Payer supplied a correction',
+      revision:2,requestId:randomUUID()});
+    expect(await report({outcome:'dismissed'})).toMatchObject({deposits:[{id,acceptedId:null}],reviewed:1});
+    const history=await staging.decisions(principal,conn,id,{});
+    expect(history.entries).toMatchObject([{revision:3,decision:'dismissed',ruleVersion:1,reviewer:'fixture',
+      evidence:{id:b.id,balance:'99.80',lookup:'suggested'}},{revision:2,decision:'accepted'},{revision:1,reason:command.reason}]);
+    expect((await staging.decisions(principal,conn,id,{before:2})).entries).toHaveLength(1);
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET amount_due=132 WHERE xero_invoice_id=$1`,[a.id]);
+    expect((await get()).invoices[0]).toMatchObject({evidenceChanged:true});
+    await expect(staging.decide(principal,conn,id,{...command,revision:3,requestId:randomUUID()})).rejects.toThrow();
+    const invoice=a.id;
+    await service.verify(principal,conn,invoice,randomUUID(),body);
+    expect((await service.list(principal,conn,invoice))[0].reviewedDepositId).toBe(id);
+    expect((await staging.decisions(principal,conn,id,{})).entries).toHaveLength(3);
+    expect(await staging.decide(principal,conn,id,command)).toEqual({revision:1});
+    await expect(staging.decide(principal,conn,id,{...command,revision:3,requestId:randomUUID()})).rejects.toThrow();
+    await expect(get()).rejects.toThrow();
+    expect(await report({outcome:'no_acceptance'})).toMatchObject({deposits:[{id,acceptedId:null,verifiedId:a.id}],bands:[]});
+    for (const [idx,target] of [a.id,b.id].entries()) {
+      const deposit={...body,bankTransactionId:'COMPARE-'+idx,statementRecord:String(10+idx)};
+      const staged=await staging.stage(principal,conn,deposit);
+      const q=idx===0?'':'INV-7';
+      const lookup=await staging.candidates(principal,conn,staged.id,{q});
+      const chosen=lookup.invoices.find(row=>row.id===a.id)!;
+      await staging.decide(principal,conn,staged.id,{...command,q,invoiceId:a.id,evidenceToken:chosen.evidenceToken,requestId:randomUUID()});
+      await service.verify(principal,conn,target,randomUUID(),deposit);
+    }
+    const changed={...body,bankTransactionId:'CONFLICT',statementRecord:'12'};
+    await staging.stage(principal,conn,changed);
+    await service.verify(principal,conn,a.id,randomUUID(),{...changed,amount:'99'});
+    await admin.query(`UPDATE ${schema}.student_trust_staged_deposits d SET staged_at=m.first_review-interval '20 minutes'
+      FROM (SELECT deposit_id,min(reviewed_at) AS first_review FROM ${schema}.student_trust_invoice_match_decisions
+        WHERE customer_id=$1 AND connection_id=$2 GROUP BY deposit_id) m
+      WHERE d.customer_id=$1 AND d.connection_id=$2 AND d.deposit_id=m.deposit_id`,[tenant,conn]);
+    const metrics=await report({outcome:'different_invoice'});
+    expect(metrics).toMatchObject({total:7,reviewed:3,filteredTotal:1,
+      counts:{unreviewed:3,no_acceptance:1,same_invoice:1,different_invoice:1,conflict:1},
+      deposits:[{acceptedId:a.id,verifiedId:b.id,outcome:'different_invoice'}],
+      bands:[{lookup:'manual',agreed:0,verified:1,version:1},{lookup:'suggested',agreed:1,verified:1,version:1}]});
+    expect(metrics.medianReviewMinutes).toBe(20);
+    expect((await report({sort:'amount',direction:'asc'})).deposits[0].amount).toBe('89.00');
+    expect((await report({sort:'amount',direction:'desc'})).deposits[0].amount).toBe('100.00');
+    expect(await report({from:'2020-01-03',to:'2020-01-03'})).toMatchObject({total:0,counts:{},bands:[],deposits:[]});
+    for(let n=0;n<5;n++) await staging.stage(principal,conn,{...body,statementRecord:String(20+n),bankTransactionId:'PAGE-OUTCOME-'+n});
+    const pages=await Promise.all([1,2].map(page=>report({page,limit:'10'})));
+    expect(pages.map(data=>data.deposits.length)).toEqual([10,2]);
+    expect(new Set(pages.flatMap(data=>data.deposits.map((row:{id:string})=>row.id))).size).toBe(12);
+  });
+
   it('links only the invoice portion once and flags a later missing payment',async () => {
     const reviewer = {studentOperationsPrincipal:{tenantId:tenant,identityUserId:'reviewer',role:'chief_executive'}} as never;
     await admin.query(`INSERT INTO ${schema}.student_operations_advisor_roster VALUES
@@ -64,6 +221,20 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const input={receivedOn:date,account:'Fixture TRUST',amount:'2742.00',reference:'first'};
     const identical = {...input,reference:'same reference'};
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET invoice_number='TEST-42' WHERE xero_invoice_id=$1`,[invoice]);
+    const csvKey=randomUUID();
+    const csvInput={...input,bankTransactionId:'CSV-test',statementFileName:'statement.csv',
+      statementRecord:'2',statementFileSha256:'f'.repeat(64)};
+    for(const changes of [{statementRecord:'1'},{statementRecord:'1002'},{statementRecord:undefined},
+      {statementFileSha256:'invalid'},{statementFileName:'../bank.csv'},{bankTransactionId:''}]) {
+      await expect(service.verify(principal,connection,invoice,csvKey,{...csvInput,...changes})).rejects.toThrow();
+    }
+    await service.verify(principal,connection,invoice,csvKey,csvInput);
+    await expect(service.verify(principal,connection,invoice,csvKey,{...csvInput,amount:'2742'})).resolves.toEqual({id:csvKey});
+    expect(await service.list(principal,connection,invoice)).toMatchObject([{statementSource:{
+      name:'statement.csv',sha256:csvInput.statementFileSha256,record:2}}]);
+    await expect(service.verify(principal,connection,invoice,csvKey,{...csvInput,statementRecord:'3'})).rejects.toThrow();
+    await expect(service.verify(principal,connection,invoice,randomUUID(),{...csvInput,bankTransactionId:'another',account:'alias'})).rejects.toThrow();
+    await admin.query(`DELETE FROM ${schema}.student_trust_receipt_verifications WHERE verification_id=$1`,[csvKey]);
     const bankIds = ['BANK-1','BANK-2'];
     const keys = bankIds.map(() => randomUUID());
     await Promise.all(bankIds.map((bankTransactionId,i) =>

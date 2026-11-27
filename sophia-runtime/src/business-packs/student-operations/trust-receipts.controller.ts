@@ -15,7 +15,10 @@ import { StudentOperationsWorkspaceService, type StudentOperationsWorkspacePrinc
 
 type Request = {studentOperationsPrincipal: StudentOperationsWorkspacePrincipal; studentOperationsCorrelationId?: string};
 type Evidence = {buffer: Buffer; mimetype: string};
-const fields = z.object({
+export const receiptFields = z.object({
+  statementFileName: z.string().trim().min(1).max(255).regex(/^[^/\\\x00-\x1f\x7f]+\.csv$/i).optional(),
+  statementFileSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  statementRecord: z.string().regex(/^[1-9]\d{0,3}$/).transform(Number).pipe(z.number().int().min(2).max(1001)).optional(),
   importedPaymentId: z.uuid().optional(),
   importedPaymentAmount: z.string().regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/).optional(),
   receivedOn: z.iso.date(),
@@ -37,7 +40,7 @@ function linkDecisionNote(body: unknown) {
 const observationFields = `jsonb_build_object('id',o.observation_id,'firstSeenAt',o.first_seen_at,
                 'paymentDate',o.payment_date,'amount',o.amount::text,'currency',o.currency_code,'isReconciled',o.is_reconciled)`;
 
-function manager(request: Request) {
+export function manager(request: Request) {
   const principal = request.studentOperationsPrincipal;
   if (principal.role !== 'chief_executive') throw new ForbiddenException();
   return principal;
@@ -83,6 +86,14 @@ export class TrustReceiptsController {
        verifier.name AS "verifiedByName", payment_linker.name AS "paymentLinkedByName", l.linked_at AS "paymentLinkedAt", l.decision_note AS "paymentLinkNote",
        credit_linker.name AS "overpaymentLinkedByName", checker.name AS "reconciliationCheckedByName",
        reference, bank_transaction_id AS "bankTransactionId", payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue", imported_payment_amount::text AS "importedPaymentAmount",
+       (SELECT d.deposit_id FROM ${runtimeConfig().schema}.student_trust_staged_deposits d
+         WHERE d.customer_id=r.customer_id AND d.connection_id=r.connection_id AND lower(d.account_label)=lower(r.account_label)
+           AND d.bank_transaction_id=r.bank_transaction_id AND d.received_on=r.received_on AND d.amount=r.amount
+           AND EXISTS (SELECT 1 FROM ${runtimeConfig().schema}.student_trust_invoice_match_decisions decision
+             WHERE decision.customer_id=d.customer_id AND decision.connection_id=d.connection_id AND decision.deposit_id=d.deposit_id)
+       ) AS "reviewedDepositId",
+       CASE WHEN statement_record IS NOT NULL THEN jsonb_build_object(
+         'name',statement_file_name,'sha256',statement_file_sha256,'record',statement_record) END AS "statementSource",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
          WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) AS "linkedPaymentReconciled",
@@ -314,14 +325,19 @@ export class TrustReceiptsController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:8, fieldSize:1024, parts:10}}))
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:11, fieldSize:2048, parts:13}}))
   async verify(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Headers('idempotency-key') key: string,
     @Body() body: unknown, @UploadedFile() file?: Evidence) {
     const p = manager(request);
-    const parsed = fields.safeParse(body);
+    const parsed = receiptFields.safeParse(body);
     if (!parsed.success || !z.uuid().safeParse(key).success) throw new BadRequestException('Check the receipt details.');
     const {receivedOn,amount,account,reference,paymentPurpose,bankTransactionId} = parsed.data;
+    const {statementFileName,statementFileSha256,statementRecord} = parsed.data;
+    const hasSource = statementFileName !== undefined || statementFileSha256 !== undefined || statementRecord !== undefined;
+    if (hasSource && !(statementFileName && statementFileSha256 && statementRecord && bankTransactionId)) {
+      throw new BadRequestException('Include the statement filename, fingerprint, record number and bank transaction ID together.');
+    }
     const importedId = parsed.data.importedPaymentId?.toLowerCase();
     const importedAmount = parsed.data.importedPaymentAmount;
     if (!!importedId !== !!importedAmount || (importedAmount && (Number(importedAmount) <= 0 || Number(importedAmount) > Number(amount)))) {
@@ -333,15 +349,26 @@ export class TrustReceiptsController {
     const fingerprint = (formattedAmount: string) => {
       const parts = [connection,invoice,receivedOn,formattedAmount,account,reference,type];
       if (paymentPurpose) parts.push(paymentPurpose);
-      return createHash('sha256').update(JSON.stringify(importedId ? {parts,bankTransactionId,importedId,importedAmount:Number(importedAmount)} : bankTransactionId ? {parts,bankTransactionId} : parts)).update(file?.buffer ?? '').digest('hex');
+      const receiptPayload = importedId ? {parts,bankTransactionId,importedId,importedAmount:Number(importedAmount)} : bankTransactionId ? {parts,bankTransactionId} : parts;
+      const payload = hasSource ? {receiptPayload,statementFileName,statementFileSha256,statementRecord} : receiptPayload;
+      return createHash('sha256').update(JSON.stringify(payload)).update(file?.buffer ?? '').digest('hex');
     };
     const hash = fingerprint(centsAmount);
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId, async db => {
+      if (bankTransactionId) {
+        // Serialize final match reviews with verification of the same staged bank movement.
+        await db.query(`SELECT pg_advisory_xact_lock(hashtextextended(concat_ws('/',d.customer_id,d.connection_id,d.deposit_id),0))
+          FROM ${schema}.student_trust_staged_deposits d WHERE d.customer_id=$1 AND d.connection_id=$2
+          AND ((lower(d.account_label)=lower($3) AND d.bank_transaction_id=$4)
+            OR (d.statement_file_sha256=$5 AND d.statement_record=$6))
+          ORDER BY d.deposit_id`,[p.tenantId,connection,account,bankTransactionId,statementFileSha256??null,statementRecord??null]);
+      }
       const inserted = await db.query(`INSERT INTO ${this.table}
         (customer_id,connection_id,invoice_id,verification_id,verified_by,received_on,amount,account_label,reference,
-         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id,imported_payment_amount)
-        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14,$15::numeric
+         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id,imported_payment_amount,
+         statement_file_name,statement_file_sha256,statement_record)
+        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14,$15::numeric,$16,$17,$18
         FROM ${schema}.student_operations_xero_invoices i JOIN ${schema}.student_operations_xero_sync_configurations c
           USING (customer_id,xero_connection_id)
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
@@ -350,7 +377,7 @@ export class TrustReceiptsController {
           AND (${importedId ? `i.invoice_status IN ('PAID','AUTHORISED') AND ${currentPaymentList}
             AND ($15::numeric=$7::numeric OR (i.invoice_status='PAID' AND i.amount_due=0))
             AND EXISTS (SELECT 1 FROM (${importedInvoicePayments()}) payment
-              WHERE payment.id=$16::text AND payment.payment_date=$6::date::text AND payment.amount=$15::numeric)
+              WHERE payment.id=$19::text AND payment.payment_date=$6::date::text AND payment.amount=$15::numeric)
             AND NOT EXISTS (SELECT 1 FROM ${this.table} prior
               WHERE prior.customer_id=i.customer_id AND prior.connection_id=i.xero_connection_id AND prior.invoice_id=i.xero_invoice_id
               AND prior.received_on=$6::date AND prior.amount=$7::numeric AND prior.verification_id<>$4
@@ -359,7 +386,8 @@ export class TrustReceiptsController {
             : "i.invoice_status='AUTHORISED' AND i.amount_due>0"})
           AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
         ON CONFLICT DO NOTHING RETURNING verification_id`,
-        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null,importedAmount ?? null,...(importedId ? [importedId] : [])]);
+        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null,importedAmount ?? null,
+          statementFileName ?? null,statementFileSha256 ?? null,statementRecord ?? null,...(importedId ? [importedId] : [])]);
       if (!inserted.rowCount) {
         const prior = await db.query(`SELECT payload_hash FROM ${this.table} WHERE customer_id=$1 AND verification_id=$2 AND verified_by=$3`,[p.tenantId,key,p.identityUserId]);
         const priorHash = prior.rows[0]?.payload_hash;

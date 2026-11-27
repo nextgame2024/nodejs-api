@@ -4793,5 +4793,40 @@
     "verification": ["Angular ngc compilation passed", "129 ChromeHeadless tests passed across five reconciliation suites, including 375px and 1280px preview checks in light and dark themes"],
     "release": "Frontend deployment and connected acceptance pending. No database migration. Durable CSV lineage and unmatched movement staging remain open under item 08.",
     "pending": "Zero subtasks in this batch. All 23 numbered roadmap items await documented full acceptance."
+  },
+  "trustStatementReceiptLineage": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "08",
+    "completedSubtasks": ["Fingerprint the original CSV bytes", "Carry filename and logical record into the receipt draft", "Lock source-backed bank fields", "Detach source for manual editing", "Validate complete source metadata at verification", "Save source identity atomically with the receipt", "Bind source identity to idempotent replay", "Prevent duplicate source record use per organisation", "Display persisted provenance in receipt history", "Check an original file and its deposit details locally"],
+    "verification": ["Runtime build and Angular compilation passed", "146 backend tests with disposable PostgreSQL fixtures and 130 ChromeHeadless tests passed", "Migration 158 applied on the configured database; checked source columns, unique index and zero pending migrations"],
+    "release": "Backend and frontend deployment and connected acceptance pending. The manager retains the original CSV. Unmatched deposit staging remains open under roadmap item 08."
+  },
+  "trustDepositsAwaitingInvoice": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "08",
+    "completedSubtasks": ["Stage a reviewed CSV deposit without an invoice", "Restrict staging to the manager and active TRUST organisation", "Preserve source record and staging actor", "Enforce append-only tenant-scoped storage", "Handle concurrent saves and overlapping exports once", "Reject conflicting bank and statement identities", "Search by bank ID, reference or account", "Page through the saved queue", "Choose staged evidence in the invoice verification form", "Remove a matched deposit from the pending queue after verification"],
+    "verification": ["Runtime build and Angular compilation passed", "147 backend tests passed with disposable PostgreSQL fixtures enabled", "133 ChromeHeadless tests passed including staging at mobile and desktop widths in both themes", "Applied migrations 159 and 160; configured database reported forced RLS, runtime SELECT and INSERT, no UPDATE/DELETE/TRUNCATE privileges and zero pending migrations"],
+    "release": "Backend and frontend deployment and connected acceptance pending."
+  },
+  "trustStagedDepositInvoiceSuggestions": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "09",
+    "completedSubtasks": ["Scope lookup to unresolved deposits and current authorised AUD TRUST sales invoices", "Match exact invoice numbers", "Recognise whole invoice identifiers inside bank descriptions", "Match invoice references", "Rank equal balances below reference evidence", "Explain partial payments and excess in AUD", "Show ties across result pages", "Return no suggestions without evidence", "Search open invoices manually by number, reference or contact", "Open a candidate and explicitly carry the staged source into its receipt draft"],
+    "verification": ["Runtime build and Angular compilation passed", "148 backend tests passed with disposable PostgreSQL fixtures", "135 ChromeHeadless tests passed, including mobile and desktop suggestion controls in both themes", "Configured ledger reported zero pending migrations"],
+    "release": "Backend and frontend deployment and connected acceptance pending. Accepted and dismissed suggestion history remains open."
+  },
+  "trustInvoiceMatchDecisions": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "09",
+    "completedSubtasks": ["Accept a suggested or manually located invoice", "Dismiss an invoice match with a reason", "Identify the reviewer and time", "Preserve the matching rule and evidence at decision time", "Supersede earlier acceptances for the same deposit", "Reject stale evidence or stale review revisions", "Replay unchanged submissions once", "Serialize concurrent decisions and final receipt verification", "Browse append-only decision history on a staged deposit", "Recover that history from the verified receipt"],
+    "verification": ["Runtime build and Angular compilation passed", "148 targeted backend tests passed with disposable PostgreSQL fixtures", "137 ChromeHeadless tests passed", "Migration 161 applied; checked forced tenant RLS, runtime SELECT and INSERT only among read/write privileges, and zero pending migrations"],
+    "release": "Backend and frontend deployment, connected acceptance and outcome measurement pending."
+  },
+  "trustMatchOutcomes": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "09",
+    "completedSubtasks": ["Scope the report to an active TRUST organisation and bank deposit dates", "Count staged deposits and first-review coverage", "Measure median time from staging to first review", "Resolve superseded and dismissed acceptances", "Compare accepted invoices with verified receipts", "Identify verified receipts without an acceptance", "Isolate contradictory bank evidence", "Show agreement denominators by rule version, lookup method and score", "Filter, sort and page through individual outcomes", "Inspect decision history and refresh outcomes after local workflow changes"],
+    "verification": ["Runtime build and Angular compilation passed", "148 targeted backend tests passed with disposable PostgreSQL fixtures", "140 ChromeHeadless tests passed including 375px and 1280px layouts in light and dark themes", "Configured database ledger had zero pending migrations"],
+    "release": "Backend and frontend deployment, connected pilot measurement and acceptance pending."
   }
 }
