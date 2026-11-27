@@ -7,7 +7,7 @@ import type { XeroSalesCatalogue } from '../../connectors/xero/xero-sales-catalo
 
 export async function readSalesCatalogue(db:PoolClient,tenant:string,lock=false,role:'trust'|'operating'='trust'){
   const s=runtimeConfig().schema;
-  const rows=(await db.query(`SELECT c.xero_connection_id AS "connectionId",c.snapshot,c.revision,c.last_synced_at AS "lastSyncedAt",c.error_code AS "errorCode"
+  const rows=(await db.query(`SELECT c.xero_connection_id AS "connectionId",c.snapshot-'receiptBankAccounts' AS snapshot,c.revision,c.last_synced_at AS "lastSyncedAt",c.error_code AS "errorCode"
     FROM ${s}.student_xero_sales_catalogues c
     JOIN ${s}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=c.customer_id AND cfg.xero_connection_id=c.xero_connection_id AND cfg.organisation_role=$2 AND cfg.enabled
     JOIN ${s}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id AND x.status='active'

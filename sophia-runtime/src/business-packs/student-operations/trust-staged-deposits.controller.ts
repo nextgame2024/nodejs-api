@@ -1,3 +1,4 @@
+import { receiptAccount, changeReceiptAccount, mappingCommand } from './trust-receipt-account.js';
 import { listResiduals, recordResidual, residualCommand, residualDetail, residualQuery } from './trust-residuals.js';
 import { aud, cents, splitLineOptions, assignLinePurposes } from './trust-split-lines.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
@@ -85,6 +86,20 @@ export class TrustStagedDepositsController {
       }
       throw new ConflictException('This deposit is already verified or its bank or statement identity conflicts with existing evidence.');
     });
+  }
+
+  @Get('receipt-account')
+  @Header('Cache-Control','private, no-store')
+  accountMapping(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string) {
+    const p=manager(request);
+    return this.database.tenantReadTransaction(p.tenantId,db=>receiptAccount(db,runtimeConfig().schema,p.tenantId,connection));
+  }
+
+  @Post('receipt-account')
+  changeAccountMapping(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Body() body:unknown) {
+    const p=manager(request), parsed=mappingCommand.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Review the receipt label, account and reason.');
+    return this.database.tenantTransaction(p.tenantId,db=>changeReceiptAccount(db,runtimeConfig().schema,p.tenantId,connection,p.identityUserId,parsed.data));
   }
 
   @Get('residuals')

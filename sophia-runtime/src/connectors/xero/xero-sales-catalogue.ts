@@ -20,10 +20,14 @@ export function parseSalesCatalogue(rawItems:unknown,rawAccounts:unknown,rawTaxR
       unitPrice:decimal(i.SalesDetails?.UnitPrice),accountCode:i.SalesDetails?.AccountCode??null,
       taxType:i.SalesDetails?.TaxType??salesAccounts.find(a=>a.code===i.SalesDetails?.AccountCode)?.taxType??null})),
     accounts:salesAccounts,
+    receiptBankAccounts:parsedAccounts.flatMap(a=>{
+      if (a.Type!=='BANK' || a.Status!=='ACTIVE' || a.CurrencyCode!=='AUD' || !a.Name.trim() || !z.uuid().safeParse(a.AccountID).success) return [];
+      return [{id:String(a.AccountID).toLowerCase(),name:a.Name.trim()}];
+    }),
     taxRates:parsedTaxes.filter(t=>(!t.Status||t.Status==='ACTIVE')&&t.CanApplyToRevenue!==false).map(t=>({taxType:t.TaxType,name:t.Name,rate:decimal(t.EffectiveRate)})),
   };
 }
-export type XeroSalesCatalogue=ReturnType<typeof parseSalesCatalogue>&{brandingThemes?:Array<{brandingThemeId:string;name:string}>;trackingCategories?:Array<{trackingCategoryId:string;name:string;options:Array<{trackingOptionId:string;name:string}>}>};
+export type XeroSalesCatalogue=Omit<ReturnType<typeof parseSalesCatalogue>,'receiptBankAccounts'>&{receiptBankAccounts?:Array<{id:string;name:string}>;brandingThemes?:Array<{brandingThemeId:string;name:string}>;trackingCategories?:Array<{trackingCategoryId:string;name:string;options:Array<{trackingOptionId:string;name:string}>}>};
 export function scaled4(value:string):bigint{const [whole,fraction='']=decimal4.parse(value).split('.');return BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0'));}
 export function pricedLineMinor(quantity:string,price:string){signedDecimal4.parse(price);const sign=price.startsWith('-')?-1:1;return (sign*Number((scaled4(quantity)*scaled4(price.replace(/^-/,''))+500000n)/1000000n))||0;}
 export function lineTaxMinor(net:number,rate:string){return (Math.sign(net)*Number((BigInt(Math.abs(net))*scaled4(rate)+500000n)/1000000n))||0;}

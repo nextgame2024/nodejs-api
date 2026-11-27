@@ -1,3 +1,4 @@
+import { receiptAccount, lockReceiptAccount } from './trust-receipt-account.js';
 import { createHash } from 'node:crypto';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import type { PoolClient } from 'pg';
@@ -13,6 +14,7 @@ type Scope=[string,string,string,string];
 export interface Snapshot {
   connection:string;organisation:string;organisationId:string;invoice:string;receipt:string;invoiceNumber:string|null;contactId:string|null;contactName:string|null;
   account:string;date:string;amount:string;due:string;currency:string;bankId:string|null;reference:string;
+  mappedAccount?:{id:string;name:string;revision:number};
   invoiceFingerprint:string;
 }
 export interface ProposalEvent {
@@ -20,7 +22,7 @@ export interface ProposalEvent {
   recordedAt:Date;expiresAt:Date;expired:boolean;snapshot:Snapshot;
 }
 
-export async function receiptProposal(db:PoolClient,s:string,scope:Scope) {
+export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewer:string) {
   const {rows:[row]}=await db.query<Snapshot & {blocked:string|null}>(`
     SELECT r.connection_id AS connection,x.tenant_name AS organisation,x.xero_tenant_id AS "organisationId",r.invoice_id AS invoice,r.verification_id AS receipt,i.invoice_number AS "invoiceNumber",
       i.xero_contact_id AS "contactId",ct.legal_name AS "contactName",r.account_label AS account,r.received_on::text AS date,r.amount::text AS amount,
@@ -55,6 +57,12 @@ export async function receiptProposal(db:PoolClient,s:string,scope:Scope) {
       AND c.enabled AND c.organisation_role='trust' AND x.status='active'`,scope);
   if (!row) throw new NotFoundException();
   const {blocked,...snapshot}=row;
+  const mapping=await receiptAccount(db,s,scope[0],scope[1]),headMapping=mapping.history[0];
+  const accountIssue=!mapping.fresh?'A current bank account import is required.':!headMapping?.accountId?'Select the TRUST receipt account.':
+    !mapping.active?'Review the changed TRUST bank account.':
+    headMapping.receiptLabel?.trim().toLowerCase()!==snapshot.account.trim().toLowerCase()?'The receipt label differs from the approved mapping.':null;
+  if (!accountIssue && headMapping.accountId && headMapping.accountName)
+    snapshot.mappedAccount={id:headMapping.accountId,name:headMapping.accountName,revision:headMapping.revision};
   const token=createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
   const {rows:history}=await db.query<ProposalEvent>(`SELECT revision,actor,reason,action,evidence_token AS token,snapshot,
     recorded_at AS "recordedAt",expires_at AS "expiresAt",clock_timestamp()>=expires_at AS expired
@@ -63,13 +71,16 @@ export async function receiptProposal(db:PoolClient,s:string,scope:Scope) {
   const head=history[0];
   const state=!head?'new':head.action==='withdraw'?'withdrawn':blocked || head.token!==token?'stale':
     head.expired?'expired':head.action==='approve'?'approved':'prepared';
-  return {state,blocked,revision:head?.revision ?? 0,snapshot,token,history};
+  const releaseCheck=blocked || accountIssue || (state!=='approved'?'A current approved proposal is required.':
+    head.actor===reviewer?'An independent authorised reviewer must check this approval.':null);
+  return {state,blocked,accountIssue,releaseCheck,revision:head?.revision ?? 0,snapshot,token,history};
 }
 
 export async function recordProposal(db:PoolClient,s:string,scope:Scope,actor:string,input:z.infer<typeof proposalCommand>) {
   const [tenant,connection,invoice,receipt]=scope;
   await lockSplitInvoices(db,tenant,connection,[invoice]);
-  const detail=await receiptProposal(db,s,scope);
+  await lockReceiptAccount(db,s,tenant,connection,'read');
+  const detail=await receiptProposal(db,s,scope,actor);
   const table=s+'.student_trust_receipt_proposals';
   const prior=(await db.query(`SELECT revision,actor,action,reason,evidence_token FROM ${table}
     WHERE customer_id=$1 AND connection_id=$2 AND verification_id=$3 AND request_id=$4`,

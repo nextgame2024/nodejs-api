@@ -4943,5 +4943,28 @@
       "Configured migration 165 applied; zero pending; forced row-level security and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
     ],
     "release": "Operator reported the preceding residual batch deployed. This local proposal batch needs backend and frontend deployment and connected pilot testing. Dispatch, second-actor release checks and approved provider account mapping remain open."
+  },
+  "trustReceiptBankMapping": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "11",
+    "completedSubtasks": [
+      "Import minimal active AUD bank identities with the existing catalogue call",
+      "Scope the receiving account picker to an enabled TRUST organisation",
+      "Explicitly bind a verified receipt label to one imported Xero account ID",
+      "Record immutable mapping revisions with reason, actor and date",
+      "Serialize changes and replay identical mapping requests",
+      "Remove or replace mappings while preserving history",
+      "Freeze the matched account ID, name and mapping revision in new proposals",
+      "Reject stale, archived, renamed or mismatched accounts during release checks",
+      "Differentiate local approval from independent release readiness",
+      "Expose account evidence and local release status in the manager interface"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "154 targeted backend tests passed including disposable PostgreSQL and connector catalogue tests",
+      "153 ChromeHeadless tests passed including desktop/mobile account controls in both themes",
+      "Configured migration 166 applied; zero pending; forced row-level security and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
+    ],
+    "release": "Previous proposal batch reported deployed. Deploy this backend, catalogue worker and frontend and allow a successful settings sync before live account selection. No account was selected by the implementation. Local release checks are read-only. Durable dispatch and connected pilot acceptance remain outstanding."
   }
 }

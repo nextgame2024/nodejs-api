@@ -79,7 +79,7 @@ export class TrustReceiptsController {
   proposal(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Param('invoiceId',ParseUUIDPipe) invoice:string,
     @Param('receiptId',ParseUUIDPipe) receipt:string) {
     const p=manager(request);
-    return this.database.tenantReadTransaction(p.tenantId,db=>receiptProposal(db,runtimeConfig().schema,[p.tenantId,connection,invoice,receipt]));
+    return this.database.tenantReadTransaction(p.tenantId,db=>receiptProposal(db,runtimeConfig().schema,[p.tenantId,connection,invoice,receipt],p.identityUserId));
   }
 
   @Post(':receiptId/proposal')
