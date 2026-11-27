@@ -6,6 +6,8 @@ import {DatabaseService} from '../../database/database.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
 import {TrustReceiptsController} from './trust-receipts.controller.js';
 
+import {StudentOperationsWorkspaceService} from './student-operations-workspace.service.js';
+
 const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
 (socket ? describe : describe.skip)('TRUST receipt links with PostgreSQL', () => {
   const schema = 'receipt_test_' + randomUUID().replaceAll('-','');
@@ -25,6 +27,8 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text);
       CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,sync_run_id uuid,created_at timestamptz,status text,mode text);
       CREATE TABLE ${schema}.student_operations_advisor_roster(customer_id uuid,user_id text,display_name text);
+      CREATE TABLE ${schema}.business_pack_access_audit_events(customer_id uuid,identity_user_id text,pack_id text,event_type text,outcome text,correlation_id text,metadata jsonb);
+      GRANT INSERT ON ${schema}.business_pack_access_audit_events TO sophia_runtime_app;
       CREATE TABLE ${schema}.xero_connections(customer_id uuid,xero_connection_id uuid,status text);
       CREATE TABLE ${schema}.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,legal_name text,email text,contact_number text,account_number text);
       CREATE TABLE ${schema}.student_operations_xero_candidate_reviews(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,review_status text,student_id text);
@@ -39,7 +43,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const privileges = await admin.query(`SELECT has_table_privilege('sophia_runtime_app',$1,'UPDATE,DELETE,TRUNCATE') AS mutable`,[schema+'.student_trust_payment_reconciliation_checks']);
     expect(privileges.rows[0].mutable).toBe(false);
     db = new DatabaseService();
-    service = new TrustReceiptsController(db);
+    service = new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db));
   });
   afterAll(async () => {
     if(db) await db.onModuleDestroy();
@@ -70,6 +74,24 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(purposes.find(r=>r.id===second).paymentPurpose).toBe('Tuition instalment');
     const unlinked = randomUUID();
     await service.verify(principal,connection,invoice,unlinked,{...input,reference:'awaiting link'});
+    const screenshot = Buffer.from('89504e470d0a1a0a','hex');
+    await admin.query(`UPDATE ${schema}.student_trust_receipt_verifications SET evidence=$1,evidence_type='image/png' WHERE verification_id=$2`,[screenshot,unlinked]);
+    const download = (role:string, targetConnection:string) => service.evidence({
+      studentOperationsPrincipal:{tenantId:tenant,identityUserId:'download-fixture',role},
+      studentOperationsCorrelationId:'fixture-download'
+    } as never,targetConnection,invoice,unlinked);
+    expect((await download('chief_executive',connection)).getHeaders().type).toBe('image/png');
+    const wrongConnection = randomUUID();
+    await expect(download('chief_executive',wrongConnection)).rejects.toMatchObject({status:404});
+    await expect(download('advisor',connection)).rejects.toMatchObject({status:403});
+    const audit = await admin.query(`SELECT outcome,metadata FROM ${schema}.business_pack_access_audit_events
+      WHERE customer_id=$1 AND identity_user_id='download-fixture' AND correlation_id='fixture-download'`,[tenant]);
+    expect(audit.rows).toHaveLength(3);
+    const target = {action:'trust_receipt.evidence_download',invoiceId:invoice,receiptId:unlinked,connectionId:connection};
+    expect(audit.rows).toEqual(expect.arrayContaining([
+      {outcome:'allowed',metadata:target}, {outcome:'denied',metadata:target},
+      {outcome:'denied',metadata:{...target,connectionId:wrongConnection}}
+    ]));
     const credit=randomUUID();
     const entries=[{kind:'payment',id:payment,date,amount:2741.80},{kind:'overpayment',id:credit,date,amount:0.20}];
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1,invoice_status='PAID',amount_due=0`,[JSON.stringify({entries})]);

@@ -5,7 +5,7 @@ import {TrustReceiptsController, receiptEvidenceType} from './trust-receipts.con
 
 describe('TRUST verification intake', () => {
   const tx = jest.fn();
-  const controller = new TrustReceiptsController({tenantTransaction:tx} as never);
+  const controller = new TrustReceiptsController({tenantTransaction:tx} as never, {recordAccess:jest.fn()} as never);
   const input = {receivedOn:'2026-11-13',amount:'2742.00',account:'Fixture TRUST',reference:''};
   const request = (role:string) => ({studentOperationsPrincipal:{role}} as never);
 

@@ -1,0 +1,56 @@
+{
+  "currency": "AUD",
+  "unit": "cents",
+  "reviewStatus": "Awaiting finance review",
+  "sources": {
+    "demo-trust": "Synthetic TRUST bank observations and Xero sales invoices",
+    "demo-pty": "Synthetic PTY Xero commission invoices",
+    "demo-college": "Synthetic college confirmation",
+    "demo-processor": "Synthetic processor payout statement"
+  },
+  "partial": {
+    "owner": "TRUST reviewer",
+    "trigger": "Verified deposit for tuition",
+    "source": "demo-trust",
+    "date": "2026-11-16",
+    "invoiceNumber": "DEMO-001",
+    "tuition": 300000, "materials": 50000, "received": 300000,
+    "expectedInvoiceBalance": 50000, "expectedPtyCash": 0
+  },
+  "direct": {
+    "owner": "College settlements reviewer",
+    "trigger": "College confirms payment from student",
+    "source": "demo-college",
+    "date": "2026-11-17",
+    "confirmedCollegeReceipt": 300000,
+    "commissionInvoice": {"source": "demo-pty", "invoiceNumber": "DEMO-001", "amountDue": 24000},
+    "expectedTrustCash": 0, "expectedPtyCash": 0,
+    "expectedPtyBalance": 24000
+  },
+  "beforeFeed": {
+    "owner": "TRUST reviewer",
+    "trigger": "Manager verifies a deposit before the statement arrives",
+    "source": "demo-trust",
+    "observations": [
+      {"date": "2026-11-16", "channel": "bank screenshot", "movement": "demo-deposit-a", "amount": 80000},
+      {"date": "2026-11-17", "channel": "bank feed", "movement": "demo-deposit-a", "amount": 80000}
+    ],
+    "expectedDistinctReceipts": 1, "expectedTrustCash": 80000, "expectedPtyCash": 0
+  },
+  "payout": {
+    "owner": "Processor settlements reviewer",
+    "trigger": "Payout statement arrives",
+    "source": "demo-processor",
+    "date": "2026-11-19",
+    "charges": [100000, 50000], "fees": [-3000, -1500], "refunds": [-10000],
+    "expectedBankDeposit": 135500, "expectedAdditionalSalesFromPayout": 0
+  },
+  "excess": {
+    "owner": "TRUST reviewer",
+    "trigger": "Verified deposit exceeds the invoice balance",
+    "source": "demo-trust",
+    "date": "2026-11-20",
+    "received": 357000, "invoiceDue": 356800,
+    "expectedInvoiceAllocation": 356800, "expectedUnallocatedCredit": 200, "expectedPtyCash": 0
+  }
+}

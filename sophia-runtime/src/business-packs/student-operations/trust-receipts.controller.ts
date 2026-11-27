@@ -5,15 +5,15 @@ import {
   UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
 import { runtimeConfig } from '../../config/runtime-config.js';
 import { analysisToday } from './student-document-analysis-state.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
-import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
+import { StudentOperationsWorkspaceService, type StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
-type Request = {studentOperationsPrincipal: StudentOperationsWorkspacePrincipal};
+type Request = {studentOperationsPrincipal: StudentOperationsWorkspacePrincipal; studentOperationsCorrelationId?: string};
 type Evidence = {buffer: Buffer; mimetype: string};
 const fields = z.object({
   receivedOn: z.iso.date(),
@@ -48,7 +48,7 @@ export function receiptEvidenceType(file?: Evidence) {
 @Controller('business-packs/student-operations/v1/workspace/trust-receipts/:connectionId/:invoiceId')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class TrustReceiptsController {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(private readonly database: DatabaseService, private readonly workspace: StudentOperationsWorkspaceService) {}
   private get table() { return runtimeConfig().schema + '.student_trust_receipt_verifications'; }
 
   private get links() { return runtimeConfig().schema + '.student_trust_receipt_payment_links'; }
@@ -257,10 +257,20 @@ export class TrustReceiptsController {
   @Header('X-Content-Type-Options','nosniff')
   async evidence(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) id: string) {
-    const p = manager(request);
+    const p = request.studentOperationsPrincipal;
+    const correlation = request.studentOperationsCorrelationId ?? randomUUID();
+    const audit = (outcome: 'allowed' | 'denied') => this.workspace.recordAccess(
+      p.tenantId, p.identityUserId, outcome, correlation,
+      {action:'trust_receipt.evidence_download', connectionId:connection, invoiceId:invoice, receiptId:id},
+    );
+    if (p.role !== 'chief_executive') {
+      await audit('denied');
+      throw new ForbiddenException();
+    }
     const row = await this.database.tenantReadTransaction(p.tenantId, async db => (await db.query(
       `SELECT evidence,evidence_type FROM ${this.table} WHERE customer_id=$1 AND connection_id=$2 AND invoice_id=$3 AND verification_id=$4`,
       [p.tenantId,connection,invoice,id])).rows[0]);
+    await audit(row?.evidence ? 'allowed' : 'denied');
     if (!row?.evidence) throw new NotFoundException();
     return new StreamableFile(row.evidence, {type: row.evidence_type, disposition: 'attachment; filename="bank-verification.' + (row.evidence_type === 'image/png' ? 'png' : 'jpg') + '"'});
   }

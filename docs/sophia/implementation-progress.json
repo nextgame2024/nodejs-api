@@ -4635,5 +4635,17 @@
     "scope": "Use Amount when AppliedAmount is absent or null. Reject a malformed supplied allocation amount before storing the settlement.",
     "verification": ["Runtime build passed", "86 Xero client and Student Operations sync tests passed"],
     "release": "No migration required. Backend deployment pending."
+  },
+  "paymentOperationsRoadmap01Fixtures": {
+    "updatedOn": "2026-11-27",
+    "scope": "Five dated synthetic acceptance scenarios with roles, source inventory, expected accounting outcomes and separate TRUST and PTY invoice identities.",
+    "verification": ["Runtime build passed", "92 targeted tests passed including six fixture checks"],
+    "release": "Test fixtures only. No migration. Finance/accountant review of expected treatments remains open for roadmap task 01."
+  },
+  "paymentOperationsRoadmap02EvidenceAccessAudit": {
+    "updatedOn": "2026-11-27",
+    "scope": "Audit allowed and denied receipt screenshot requests reaching the controller with the workspace identity, correlation ID and requested document identifiers.",
+    "verification": ["Runtime build passed", "18 targeted workspace guard, receipt controller and PostgreSQL integration tests passed"],
+    "release": "Existing append-only audit table. No migration required. Backend deployment and broader organisation/action grants pending."
   }
 }
