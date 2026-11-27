@@ -495,8 +495,8 @@ export class XeroClient {
       baseCurrency: optionalString(value.BaseCurrency),
       countryCode: optionalString(value.CountryCode),
       isDemoCompany: value.IsDemoCompany === true,
-      periodLockDate:optionalDate(value.PeriodLockDate)??optionalXeroDate(value.PeriodLockDate),
-      endOfYearLockDate:optionalDate(value.EndOfYearLockDate)??optionalXeroDate(value.EndOfYearLockDate),
+      periodLockDate:optionalXeroDate(value.PeriodLockDate),
+      endOfYearLockDate:optionalXeroDate(value.EndOfYearLockDate),
     };
   }
 
@@ -1137,21 +1137,31 @@ function xeroContactRecord(raw:unknown):XeroContactRecord {
     updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
-export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number;isReconciled?:boolean}>};
+export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number;reference?:string;isReconciled?:boolean}>};
 export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceSettlement|undefined{
   const groups=[['Payments','PaymentID','payment'],['CreditNotes','CreditNoteID','credit_note'],['Prepayments','PrepaymentID','prepayment'],['Overpayments','OverpaymentID','overpayment']] as const;
+  if (groups.some(([key]) => value[key] != null && !Array.isArray(value[key]))) {
+    throw new BadGatewayException('Xero returned an invalid invoice allocation list.');
+  }
   if(!groups.some(([key])=>Array.isArray(value[key]))&&!value.FullyPaidOnDate)return undefined;
   const entries:XeroInvoiceSettlement['entries']=[];
   for(const [key,id,kind] of groups){
     if(!Array.isArray(value[key]))continue;
     if((value[key] as unknown[]).length>2000)throw new BadGatewayException('Xero returned too many invoice allocations.');
-    for(const raw of value[key] as unknown[]){const item=record(raw),identifier=optionalString(item[id]),amount=optionalNumber(item.AppliedAmount)??optionalNumber(item.Amount);
+    for (const raw of value[key] as unknown[]) {
+      const item = record(raw);
+      const identifier = optionalString(item[id]);
+      const suppliedAmount = item.AppliedAmount ?? item.Amount;
+      const amount = typeof suppliedAmount === 'string' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(suppliedAmount.trim())
+        ? null : optionalNumber(suppliedAmount);
       if(!identifier||!xeroUuid.test(identifier)||amount===null||amount<0)throw new BadGatewayException('Xero returned an invalid invoice allocation.');
+      const reference = kind === 'payment' ? optionalString(item.Reference)?.trim() : undefined;
       entries.push({kind,id:identifier,date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount,
+        ...(reference ? {reference} : {}),
         ...(kind === 'payment' && typeof item.IsReconciled === 'boolean' ? {isReconciled: item.IsReconciled} : {})});
     }
   }
-  return {fullyPaidOnDate:optionalDate(value.FullyPaidOnDate)??optionalXeroDate(value.FullyPaidOnDate),entries};
+  return {fullyPaidOnDate:optionalXeroDate(value.FullyPaidOnDate),entries};
 }
 function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
   const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];
@@ -1166,8 +1176,11 @@ function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
 }
 
 function optionalDate(value: unknown): string | null {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
-  return value.slice(0, 10);
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value)) return null;
+  const day = value.slice(0, 10);
+  const calendarDate = new Date(day + "T00:00:00Z");
+  if (!Number.isFinite(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== day) return null;
+  return Number.isFinite(Date.parse(value)) ? day : null;
 }
 
 function optionalTimestamp(value: unknown): string | null {
@@ -1209,7 +1222,9 @@ function paginationItemCount(payload: Record<string, unknown>): number | undefin
 
 function optionalXeroDate(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const match = /\/Date\((\d+)/.exec(value);
+  const day = optionalDate(value);
+  if (day) return day;
+  const match = /^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/.exec(value);
   if (!match?.[1]) return null;
   const parsed = new Date(Number(match[1]));
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);

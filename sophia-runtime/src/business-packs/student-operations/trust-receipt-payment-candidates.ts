@@ -15,7 +15,7 @@ export function currentTrustInvoice(schema: string, invoice: 'i' | 'invoice' | '
 
 // Correlated to the verified TRUST receipt aliased as r.
 export function trustReceiptPaymentCandidates(schema: string) {
-  return `SELECT e.id::uuid AS id, e.amount, e."isReconciled"
+  return `SELECT e.id::uuid AS id, e.amount, bool_or(e."isReconciled") AS "isReconciled"
       FROM ${schema}.student_operations_xero_invoices i
       JOIN ${schema}.student_operations_xero_sync_configurations c USING (customer_id,xero_connection_id)
       CROSS JOIN LATERAL jsonb_to_recordset(i.settlement->'entries') e(kind text,id text,date text,amount numeric,"isReconciled" boolean)
@@ -24,5 +24,28 @@ export function trustReceiptPaymentCandidates(schema: string) {
         AND i.invoice_status IN ('PAID','AUTHORISED') AND e.kind='payment'
         AND ${currentTrustInvoice(schema, 'i')}
         AND e.date=r.received_on::text AND e.amount > 0
-        AND e.amount=least(r.amount,round(r.invoice_due_at_verification,2))`;
+        AND e.amount=least(r.amount,round(r.invoice_due_at_verification,2))
+      GROUP BY e.id::uuid, e.amount`;
+}
+
+export function availableTrustPaymentIds(schema: string) {
+  return `SELECT candidate.id FROM (${trustReceiptPaymentCandidates(schema)}) candidate
+    WHERE NOT EXISTS (SELECT 1 FROM ${schema}.student_trust_receipt_payment_links used
+      WHERE used.customer_id=r.customer_id AND used.connection_id=r.connection_id
+        AND used.payment_id=candidate.id AND used.verification_id<>r.verification_id)`;
+}
+
+export function trustOverpaymentCandidates(schema: string, receipt: 'r' | 'receipt') {
+  return `SELECT credit.xero_invoice_id AS id, credit.total
+         FROM ${schema}.student_operations_xero_invoices invoice
+         JOIN ${schema}.student_operations_xero_sync_configurations cfg USING (customer_id,xero_connection_id)
+         JOIN ${schema}.student_operations_xero_invoices credit USING (customer_id,xero_connection_id,xero_contact_id)
+         WHERE cfg.enabled AND cfg.organisation_role='trust'
+           AND invoice.customer_id=${receipt}.customer_id AND invoice.xero_connection_id=${receipt}.connection_id AND invoice.xero_invoice_id=${receipt}.invoice_id
+           AND ${receipt}.amount > round(${receipt}.invoice_due_at_verification,2)
+           AND credit.invoice_type='RECEIVE-OVERPAYMENT' AND credit.invoice_status IN ('PAID','AUTHORISED')
+           AND credit.currency_code='AUD' AND credit.invoice_date=${receipt}.received_on
+           AND credit.total=${receipt}.amount-round(${receipt}.invoice_due_at_verification,2)
+           AND ${currentTrustInvoice(schema, 'invoice')}
+           AND ${currentTrustInvoice(schema, 'credit')}`;
 }

@@ -209,9 +209,9 @@ describe("StudentOperationsXeroSyncService", () => {
     await service.invoices(tenantId, connectionId, {queue:'receipts_awaiting_link', page:2});
     const [sql] = query.mock.calls.find(([sql]) => sql.includes('SELECT i.xero_invoice_id'))!;
     expect(sql).toContain("cfg.organisation_role='trust'");
-    expect(sql).toContain('receipt.customer_id=i.customer_id AND receipt.connection_id=i.xero_connection_id');
-    expect(sql).toContain('receipt.invoice_id=i.xero_invoice_id');
-    expect(sql).toContain('link.verification_id=receipt.verification_id');
+    expect(sql).toContain('r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id');
+    expect(sql).toContain('r.invoice_id=i.xero_invoice_id');
+    expect(sql).toContain('link.verification_id=r.verification_id');
     expect(sql).not.toContain('AND i.amount_due > 0');
   });
 

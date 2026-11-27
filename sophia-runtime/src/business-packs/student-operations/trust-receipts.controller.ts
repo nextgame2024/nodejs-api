@@ -1,4 +1,4 @@
-import { currentTrustInvoice, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
+import { availableTrustPaymentIds, currentTrustInvoice, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header,
   Headers, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, StreamableFile, UploadedFile,
@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { DatabaseService } from '../../database/database.service.js';
 import { runtimeConfig } from '../../config/runtime-config.js';
+import { analysisToday } from './student-document-analysis-state.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
 import type { StudentOperationsWorkspacePrincipal } from './student-operations-workspace.service.js';
 
@@ -21,6 +22,14 @@ const fields = z.object({
   paymentPurpose: z.string().trim().max(240).default(''),
   reference: z.string().trim().max(150).default(''),
 }).strict();
+
+const paymentLinkFields = z.object({decisionNote: z.string().trim().max(500).optional()}).strict();
+
+function linkDecisionNote(body: unknown) {
+  const parsed = paymentLinkFields.safeParse(body);
+  if (!parsed.success) throw new BadRequestException('Use a decision note of up to 500 characters.');
+  return parsed.data.decisionNote || null;
+}
 
 function manager(request: Request) {
   const principal = request.studentOperationsPrincipal;
@@ -52,21 +61,7 @@ export class TrustReceiptsController {
 
   private get excessLinks() { return runtimeConfig().schema + '.student_trust_receipt_overpayment_links'; }
 
-  private get excessCandidates() {
-    const schema = runtimeConfig().schema;
-    return `SELECT credit.xero_invoice_id AS id, credit.total
-         FROM ${schema}.student_operations_xero_invoices invoice
-         JOIN ${schema}.student_operations_xero_sync_configurations cfg USING (customer_id,xero_connection_id)
-         JOIN ${schema}.student_operations_xero_invoices credit USING (customer_id,xero_connection_id,xero_contact_id)
-         WHERE cfg.enabled AND cfg.organisation_role='trust'
-           AND invoice.customer_id=r.customer_id AND invoice.xero_connection_id=r.connection_id AND invoice.xero_invoice_id=r.invoice_id
-           AND r.amount > round(r.invoice_due_at_verification,2)
-           AND credit.invoice_type='RECEIVE-OVERPAYMENT' AND credit.invoice_status IN ('PAID','AUTHORISED')
-           AND credit.currency_code='AUD' AND credit.invoice_date=r.received_on
-           AND credit.total=r.amount-round(r.invoice_due_at_verification,2)
-           AND ${currentTrustInvoice(schema, 'invoice')}
-           AND ${currentTrustInvoice(schema, 'credit')}`;
-  }
+  private get excessCandidates() { return trustOverpaymentCandidates(runtimeConfig().schema, 'r'); }
 
   @Get()
   @Header('Cache-Control','private, no-store')
@@ -79,22 +74,19 @@ export class TrustReceiptsController {
        )
        SELECT verification_id AS id, received_on::text AS "receivedOn", amount::text, account_label AS account,
        claim.claim_id AS "reviewClaimId", owner.name AS "reviewOwnerName", claim.claimed_by=$4 AS "reviewOwnedByMe",
-       verifier.name AS "verifiedByName", payment_linker.name AS "paymentLinkedByName", l.linked_at AS "paymentLinkedAt",
+       verifier.name AS "verifiedByName", payment_linker.name AS "paymentLinkedByName", l.linked_at AS "paymentLinkedAt", l.decision_note AS "paymentLinkNote",
        credit_linker.name AS "overpaymentLinkedByName", checker.name AS "reconciliationCheckedByName",
        reference, payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
-         WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount LIMIT 1) AS "linkedPaymentReconciled",
-       check_record.checked_at AS "reconciliationCheckedAt",
-       x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt",
+         WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) AS "linkedPaymentReconciled",
+       check_record.checked_at AS "reconciliationCheckedAt", check_record.reported_reconciled_on::text AS "reportedReconciledOn",
+       x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt", x.decision_note AS "overpaymentLinkNote",
        ARRAY(SELECT candidate.id FROM (${this.excessCandidates}) candidate
          WHERE NOT EXISTS (SELECT 1 FROM ${this.excessLinks} used WHERE used.customer_id=r.customer_id
            AND used.connection_id=r.connection_id AND used.overpayment_id=candidate.id AND used.verification_id<>r.verification_id)
          ORDER BY candidate.id) AS "possibleOverpaymentIds",
-       ARRAY(SELECT candidate.id FROM (${this.candidates}) candidate
-         WHERE NOT EXISTS (SELECT 1 FROM ${this.links} used WHERE used.customer_id=r.customer_id
-           AND used.connection_id=r.connection_id AND used.payment_id=candidate.id AND used.verification_id<>r.verification_id)
-         ORDER BY candidate.id) AS "candidateIds"
+       ARRAY(${availableTrustPaymentIds(runtimeConfig().schema)} ORDER BY candidate.id) AS "candidateIds"
        FROM ${this.table} r LEFT JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
        LEFT JOIN ${this.excessLinks} x USING (customer_id,connection_id,verification_id)
        LEFT JOIN ${this.checks} check_record ON check_record.customer_id=l.customer_id
@@ -113,19 +105,21 @@ export class TrustReceiptsController {
   @Post(':id/link/:paymentId')
   async link(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) id: string,
-    @Param('paymentId',ParseUUIDPipe) payment: string) {
+    @Param('paymentId',ParseUUIDPipe) payment: string, @Body() body: unknown = {}) {
     const p = manager(request);
+    const note = linkDecisionNote(body);
     const params = [p.tenantId,connection,invoice,id,payment];
     return this.database.tenantTransaction(p.tenantId, async db => {
       const inserted = await db.query(`INSERT INTO ${this.links}
-        (customer_id,connection_id,verification_id,payment_id,payment_amount,linked_by)
-        SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.amount,$6
+        (customer_id,connection_id,verification_id,payment_id,payment_amount,linked_by,decision_note)
+        SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.amount,$6,$7
         FROM ${this.table} r CROSS JOIN LATERAL (${this.candidates}) candidate
         WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND candidate.id=$5
-        ON CONFLICT DO NOTHING`, [...params,p.identityUserId]);
+        ON CONFLICT DO NOTHING`, [...params,p.identityUserId,note]);
       if (!inserted.rowCount) {
-        const existing = await db.query(`SELECT 1 FROM ${this.links} l JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
+        const existing = await db.query(`SELECT l.decision_note FROM ${this.links} l JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
           WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND l.payment_id=$5`, params);
+        if (existing.rowCount && note && note !== existing.rows[0].decision_note) throw new ConflictException('This payment link was already saved with a different decision note.');
         if (!existing.rowCount) throw new ConflictException('This payment or receipt has changed. Review the latest imported payments.');
       }
       return {paymentId:payment};
@@ -207,22 +201,29 @@ export class TrustReceiptsController {
   @Post(':id/reconciliation-check/:paymentId')
   async attestReconciliation(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
-    @Param('paymentId',ParseUUIDPipe) payment: string) {
+    @Param('paymentId',ParseUUIDPipe) payment: string, @Body() body: unknown = {}) {
     const principal = manager(request);
+    const parsed = z.object({reportedReconciledOn: z.iso.date().optional()}).strict().safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Enter a valid reconciliation date.');
+    const date = parsed.data.reportedReconciledOn ?? null;
+    if (date && date > analysisToday()) {
+      throw new BadRequestException('The reconciliation date cannot be in the future.');
+    }
     const scope = `FROM ${this.table} r JOIN ${this.links} l USING (customer_id,connection_id,verification_id)`;
     const filter = `r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND l.payment_id=$5`;
     const params = [principal.tenantId, connection, invoice, receipt, payment];
     return this.database.tenantTransaction(principal.tenantId, async db => {
-      await db.query(`INSERT INTO ${this.checks} (customer_id,connection_id,payment_id,checked_by)
-        SELECT l.customer_id,l.connection_id,l.payment_id,$6 ${scope}
+      await db.query(`INSERT INTO ${this.checks} (customer_id,connection_id,payment_id,checked_by,reported_reconciled_on)
+        SELECT l.customer_id,l.connection_id,l.payment_id,$6,$7::date ${scope}
         CROSS JOIN LATERAL (${this.candidates}) candidate
         WHERE ${filter} AND candidate.id=l.payment_id AND candidate.amount=l.payment_amount
           AND candidate."isReconciled" IS NOT TRUE
-        ON CONFLICT DO NOTHING`, [...params, principal.identityUserId]);
-      const result = await db.query(`SELECT c.checked_at AS "checkedAt" ${scope}
+        ON CONFLICT DO NOTHING`, [...params, principal.identityUserId,date]);
+      const result = await db.query(`SELECT c.checked_at AS "checkedAt", c.reported_reconciled_on::text AS "reportedReconciledOn" ${scope}
         JOIN ${this.checks} c ON c.customer_id=l.customer_id AND c.connection_id=l.connection_id AND c.payment_id=l.payment_id
         WHERE ${filter}`, params);
       if (!result.rowCount) throw new ConflictException('The linked payment has changed. Review its latest reconciliation status.');
+      if (date && result.rows[0].reportedReconciledOn !== date) throw new ConflictException('This check was already saved with a different reconciliation date.');
       return result.rows[0];
     });
   }
@@ -230,19 +231,21 @@ export class TrustReceiptsController {
   @Post(':id/overpayments/:overpaymentId')
   async linkOverpayment(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
-    @Param('overpaymentId',ParseUUIDPipe) overpayment: string) {
+    @Param('overpaymentId',ParseUUIDPipe) overpayment: string, @Body() body: unknown = {}) {
     const principal = manager(request);
+    const note = linkDecisionNote(body);
     const params = [principal.tenantId, connection, invoice, receipt, overpayment];
     return this.database.tenantTransaction(principal.tenantId, async db => {
       const inserted = await db.query(`INSERT INTO ${this.excessLinks}
-        (customer_id,connection_id,verification_id,overpayment_id,excess_amount,linked_by)
-        SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.total,$6
+        (customer_id,connection_id,verification_id,overpayment_id,excess_amount,linked_by,decision_note)
+        SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.total,$6,$7
         FROM ${this.table} r CROSS JOIN LATERAL (${this.excessCandidates}) candidate
         WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND candidate.id=$5
-        ON CONFLICT DO NOTHING`, [...params,principal.identityUserId]);
+        ON CONFLICT DO NOTHING`, [...params,principal.identityUserId,note]);
       if (!inserted.rowCount) {
-        const existing = await db.query(`SELECT 1 FROM ${this.excessLinks} x JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
+        const existing = await db.query(`SELECT x.decision_note FROM ${this.excessLinks} x JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
           WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND x.overpayment_id=$5`, params);
+        if (existing.rowCount && note && note !== existing.rows[0].decision_note) throw new ConflictException('This overpayment link was already saved with a different decision note.');
         if (!existing.rowCount) throw new ConflictException('Review the latest receipt and overpayment before confirming.');
       }
       return {overpaymentId: overpayment};

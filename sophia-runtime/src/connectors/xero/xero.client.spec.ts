@@ -16,12 +16,56 @@ describe('invoice settlement snapshots',()=>{
     const id='11111111-1111-4111-8111-111111111111';
     expect(xeroInvoiceSettlement({DateString:'2026-11-11',FullyPaidOnDate:'2026-11-20',Payments:[{PaymentID:id,DateString:'2026-11-19',Amount:100}],CreditNotes:[{CreditNoteID:id,DateString:'2026-11-20',AppliedAmount:25}]})).toEqual({fullyPaidOnDate:'2026-11-20',entries:[{kind:'payment',id,date:'2026-11-19',amount:100},{kind:'credit_note',id,date:'2026-11-20',amount:25}]});
   });
+  it.each([
+    [undefined, '2024-02-29', '2024-02-29'],
+    [undefined, '2026-11-19T00:00:00+10:00', '2026-11-19'],
+    ['2026-11-20', '2026-11-19', '2026-11-20'],
+    ['2026-02-30', '/Date(0+0000)/', '1970-01-01'],
+    [undefined, '/Date(-86400000)/', '1969-12-31'],
+    [undefined, '/Date(0broken', null],
+    [undefined, '2026-02-29', null],
+  ])('imports the payment calendar date from %s and %s', (DateString, Date, expected) => {
+    const snapshot = xeroInvoiceSettlement({Payments:[{
+      PaymentID:'11111111-1111-4111-8111-111111111111', Amount:100, DateString, Date,
+    }]});
+    expect(snapshot?.entries[0].date).toBe(expected);
+  });
+  it.each([
+    [0, 0], [' 25.50 ', 25.5], [null, 100], [undefined, 100],
+  ])('uses the supplied applied amount %s when importing invoice credit', (applied, expected) => {
+    const snapshot = xeroInvoiceSettlement({ CreditNotes: [{
+      CreditNoteID: '11111111-1111-4111-8111-111111111111', AppliedAmount: applied, Amount: 100,
+    }] });
+    expect(snapshot?.entries[0].amount).toBe(expected);
+  });
+
+  it.each(['invalid', '0x10', '', false, -1])('rejects invalid applied amount %s even when an amount is available', applied => {
+    const allocation = { CreditNoteID: '11111111-1111-4111-8111-111111111111', AppliedAmount: applied, Amount: 100 };
+    expect(() => xeroInvoiceSettlement({ CreditNotes: [allocation] })).toThrow('invalid invoice allocation');
+  });
+
+  it('keeps the payment reference separate from invoice and credit references', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const snapshot = xeroInvoiceSettlement({Reference:'invoice reference',
+      Payments:[{PaymentID:id, Amount:100, Reference:'  Tuition transfer  '}, {PaymentID:id, Amount:50, Reference:' '}],
+      CreditNotes:[{CreditNoteID:id, AppliedAmount:10, Reference:'credit reference'}]});
+    expect(snapshot?.entries.map(entry => entry.reference)).toEqual(['Tuition transfer',undefined,undefined]);
+  });
   it.each([true, false])('preserves explicit Xero payment reconciliation state %s', flag => {
     const id = '11111111-1111-4111-8111-111111111111';
     const snapshot = xeroInvoiceSettlement({ Payments: [{ PaymentID: id, Amount: 10, IsReconciled: flag }] });
     expect(snapshot?.entries[0].isReconciled).toBe(flag);
   });
   it('distinguishes an omitted summary from an explicitly empty allocation snapshot',()=>{expect(xeroInvoiceSettlement({})).toBeUndefined();expect(xeroInvoiceSettlement({Payments:[]})).toEqual({fullyPaidOnDate:null,entries:[]});});
+  it.each(['Payments', 'CreditNotes', 'Prepayments', 'Overpayments'])('rejects a malformed %s list before accepting a partial snapshot', key => {
+    const malformed = { [key]: { unexpected: true } };
+    expect(() => xeroInvoiceSettlement(malformed)).toThrow('invalid invoice allocation list');
+    expect(() => xeroInvoiceSettlement({ Payments: [], CreditNotes: [], ...malformed })).toThrow('invalid invoice allocation list');
+  });
+  it('keeps null allocation lists compatible with omitted lists', () => {
+    expect(xeroInvoiceSettlement({ Payments: null })).toBeUndefined();
+    expect(xeroInvoiceSettlement({ Payments: null, CreditNotes: [] })).toEqual({ fullyPaidOnDate: null, entries: [] });
+  });
   it('rejects malformed allocations instead of persisting partial financial details',()=>{expect(()=>xeroInvoiceSettlement({Payments:[{PaymentID:'bad',Amount:100}]})).toThrow();});
 });
 

@@ -4491,5 +4491,149 @@
     "scope": "Use the invoice register's full-import cutoff for TRUST verification, invoice payment matches and excess credit links. Preserve existing verification retries.",
     "verification": ["Runtime build passed", "30 focused backend tests passed, including stale invoice verification, link rejection and receipt replay in PostgreSQL"],
     "release": "Backend deployment pending. No migration required."
+  },
+  "trustReconciliationQueueAge": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the age of the oldest pending payment link matching the current queue filters, using Brisbane calendar dates.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, including filtered payment age and Brisbane date display"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustReconciliationManagerCheckFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter linked payments to manager-reported reconciliations where the matching imported Xero payment explicitly shows pending.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, covering owner filtering and unknown or subsequently confirmed payment status"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustUnlinkedReceiptExcess": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the total verified receipt excess and the portion without a recorded Xero overpayment link on each invoice in the TRUST excess queue.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, including mixed linked and unlinked receipts and zero unlinked excess"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustExcessLinkStatusFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter the TRUST excess queue to invoices with excess awaiting an overpayment link or invoices whose verified excess is fully linked.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, including the transition from partly linked to fully linked"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustOverpaymentMismatchFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show invoices with a recorded overpayment link that fails the receipt screen's current import matching rules.",
+    "verification": ["Runtime build and Angular compilation passed", "30 backend and 4 ChromeHeadless tests passed, including changed, restored and missing linked overpayments"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustUnlinkedExcessAge": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the oldest unlinked excess receipt age in Brisbane calendar days. Default the needs-link filter to oldest first with stable invoice ordering.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, covering exclusion of linked receipts from age and queue-specific sorting requests"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustReceiptScreenshotSelection": {
+    "updatedOn": "2026-11-27",
+    "scope": "Let managers remove a selected bank screenshot before verification. Clear the file picker after a successful save and retain evidence for retries.",
+    "verification": ["Angular compilation passed", "11 focused ChromeHeadless receipt form tests passed, including screenshot removal, retry and successful reset"],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "trustPaymentCandidateReferences": {
+    "updatedOn": "2026-11-27",
+    "scope": "Preserve optional payment references in imported invoice settlement entries and show each reference beside its matching candidate during TRUST receipt review.",
+    "verification": ["Runtime build and Angular compilation passed", "65 focused connector and sync tests and 12 receipt form browser tests passed"],
+    "release": "Backend and frontend deployment pending. No migration required. Existing snapshots gain references when reimported with payment details."
+  },
+  "trustReceiptReferenceRanking": {
+    "updatedOn": "2026-11-27",
+    "scope": "Prioritise and label eligible invoice payment candidates with matching nonblank bank references, ignoring case and surrounding whitespace. Retain all candidates for manager review.",
+    "verification": ["Angular compilation passed", "12 receipt form browser tests passed, including tied references, punctuation differences and refreshed invoice data"],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "trustUnlinkedReceiptSummary": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the per-invoice count and gross AUD amount of verified receipts awaiting a Xero payment link alongside the invoice balance.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, including a paid invoice with two unlinked receipts and the update after linking one"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustUnlinkedReceiptCandidateCount": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show how many unlinked receipts on each invoice have an eligible imported payment, using the receipt review's available payment query.",
+    "verification": ["Runtime build and Angular compilation passed", "30 backend and 4 ChromeHeadless tests passed, including two receipts sharing a candidate and its removal after linking"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustReceiptCandidateAvailabilityFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter the TRUST unlinked receipt queue by whether at least one verified receipt on an invoice has an available imported Xero payment.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend and 4 ChromeHeadless tests passed, including the switch between filters after a shared candidate is linked"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustMultiplePaymentCandidates": {
+    "updatedOn": "2026-11-27",
+    "scope": "Count receipts with multiple distinct available Xero payments and filter the unlinked receipt queue to affected invoices.",
+    "verification": ["Runtime build and Angular compilation passed", "30 backend and 4 ChromeHeadless tests passed, including distinct candidates, duplicate imported IDs and the queue filter"],
+    "release": "Backend and frontend deployment pending. No migration required."
+  },
+  "trustReceiptReferenceConflicts": {
+    "updatedOn": "2026-11-27",
+    "scope": "Label differing nonblank bank and imported references and identify cases where several available payments match the bank reference.",
+    "verification": ["Angular compilation passed", "12 receipt form browser tests passed, including shared, different and missing references"],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "trustPaymentLinkDecisionNote": {
+    "updatedOn": "2026-11-27",
+    "scope": "Save an optional manager decision note with the confirmed TRUST payment link and show it on the verified receipt. Retries preserve the saved note.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 12 receipt form browser tests passed", "Applied migration 151 and verified its ledger entry and nullable decision_note column"],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustOverpaymentLinkDecisionNote": {
+    "updatedOn": "2026-11-27",
+    "scope": "Capture an optional decision note when confirming a TRUST overpayment link. Display the original note on the receipt and preserve it on retries.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 12 receipt form browser tests passed", "Applied migration 152 and verified its ledger entry and nullable decision_note column"],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReportedReconciliationDate": {
+    "updatedOn": "2026-11-27",
+    "scope": "Record the optional reconciliation date observed in Xero separately from the manager's check timestamp. Validate against the Brisbane calendar date and preserve the original observation on retries.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 12 receipt form browser tests passed", "Applied migration 153 and verified its ledger entry and nullable date column"],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReconciliationQueueReportedDate": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the latest manager-reported reconciliation date among pending payments matching the invoice queue filters.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend tests and 4 payment operations browser tests passed"],
+    "release": "Uses the existing migration 153 column. Backend and frontend deployment pending."
+  },
+  "trustCheckedUnknownQueueFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter manager-reported reconciliations to matching imported payments whose reconciliation status is unavailable. Support follow-up owner filtering and scoped totals.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend tests and 4 payment operations browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustDuplicateSettlementReconciliation": {
+    "updatedOn": "2026-11-27",
+    "scope": "Combine repeated matching payment IDs in one imported settlement snapshot so receipt detail and manager checks agree with the reconciliation queue.",
+    "verification": ["Runtime build passed", "23 backend tests passed, including duplicate entries with missing, pending and confirmed reconciliation flags in PostgreSQL"],
+    "release": "Backend deployment pending. No migration required."
+  },
+  "trustPartialCandidateCoverage": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter invoices where only some verified unlinked receipts have a possible Xero payment.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend tests and 4 payment operations browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "xeroSettlementCollectionValidation": {
+    "updatedOn": "2026-11-27",
+    "scope": "Reject malformed non-null allocation lists before constructing an invoice settlement snapshot. Preserve support for omitted, null and empty lists.",
+    "verification": ["Runtime build passed", "70 Xero client and Student Operations sync tests passed"],
+    "release": "No migration required. Backend deployment pending."
+  },
+  "xeroReceiptCalendarDates": {
+    "updatedOn": "2026-11-27",
+    "scope": "Read ISO calendar dates and legacy encoded dates from Xero Date fields, retain the supplied calendar day across offsets and fall back when DateString is invalid.",
+    "verification": ["Runtime build passed", "77 Xero client and Student Operations sync tests passed"],
+    "release": "No migration required. Backend deployment pending."
+  },
+  "xeroAppliedAmountValidation": {
+    "updatedOn": "2026-11-27",
+    "scope": "Use Amount when AppliedAmount is absent or null. Reject a malformed supplied allocation amount before storing the settlement.",
+    "verification": ["Runtime build passed", "86 Xero client and Student Operations sync tests passed"],
+    "release": "No migration required. Backend deployment pending."
   }
 }
