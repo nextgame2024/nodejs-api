@@ -1,3 +1,4 @@
+import { listResiduals, recordResidual, residualCommand, residualDetail, residualQuery } from './trust-residuals.js';
 import { aud, cents, splitLineOptions, assignLinePurposes } from './trust-split-lines.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
 import { matchOutcomes, outcomeQuery } from './trust-match-outcomes.js';
@@ -83,6 +84,39 @@ export class TrustStagedDepositsController {
         if (!verified.rowCount) return {id:prior.rows[0].id,created:false};
       }
       throw new ConflictException('This deposit is already verified or its bank or statement identity conflicts with existing evidence.');
+    });
+  }
+
+  @Get('residuals')
+  @Header('Cache-Control','private, no-store')
+  async residuals(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Query() query:unknown) {
+    const p=manager(request), parsed=residualQuery.safeParse(query);
+    if (!parsed.success) throw new BadRequestException('Check the residual filters and page.');
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return listResiduals(db,runtimeConfig().schema,p.tenantId,connection,parsed.data);
+    });
+  }
+
+  @Get(':depositId/residual')
+  @Header('Cache-Control','private, no-store')
+  async residual(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('depositId',ParseUUIDPipe) deposit:string) {
+    const p=manager(request);
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return residualDetail(db,runtimeConfig().schema,[p.tenantId,connection,deposit]);
+    });
+  }
+
+  @Post(':depositId/residual')
+  async reviewResidual(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('depositId',ParseUUIDPipe) deposit:string,@Body() body:unknown) {
+    const p=manager(request), parsed=residualCommand.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Select a student or clear the attribution and enter a reason.');
+    return this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return recordResidual(db,runtimeConfig().schema,[p.tenantId,connection,deposit],p.identityUserId,parsed.data);
     });
   }
 

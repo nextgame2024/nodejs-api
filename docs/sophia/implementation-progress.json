@@ -4897,5 +4897,28 @@
       "Migration 163 applied, forced row-level security and restricted runtime permissions verified, zero pending migrations"
     ],
     "release": "Operator reported prior reservation deployment. New line-level backend and frontend deployment plus connected pilot acceptance pending. Student attribution and handling of residual cash remain open."
+  },
+  "trustStudentResidualReviews": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "10",
+    "completedSubtasks": [
+      "List positive unassigned cash from active reservations once per deposit",
+      "Show residual age, bank identity and amount",
+      "Filter, sort and page through assigned or unassigned residuals",
+      "Total residuals for an exact student identity",
+      "Offer confirmed students from the reserved invoices",
+      "Attribute the full residual with a reason",
+      "Correct or clear attribution in an append-only review history",
+      "Reject stale revisions and replay unchanged submissions",
+      "Retire released residuals and isolate later reservation revisions",
+      "Refresh the register after split changes and verify it on mobile and desktop"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "149 targeted backend tests passed with disposable PostgreSQL",
+      "147 ChromeHeadless tests passed including the residual review workflow in light and dark themes at 375px and 1280px",
+      "Migration 164 applied; zero pending; forced tenant RLS and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
+    ],
+    "release": "Previous invoice-line release reported deployed. Current backend and frontend require deployment. Residual attribution is local to the reservation. Financial resolution and connected acceptance remain open."
   }
 }

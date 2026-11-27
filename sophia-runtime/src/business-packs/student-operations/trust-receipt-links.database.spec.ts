@@ -32,11 +32,12 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       GRANT INSERT ON ${schema}.business_pack_access_audit_events TO sophia_runtime_app;
       CREATE TABLE ${schema}.xero_connections(customer_id uuid,xero_connection_id uuid,status text);
       CREATE TABLE ${schema}.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,legal_name text,email text,contact_number text,account_number text);
-      CREATE TABLE ${schema}.student_operations_xero_candidate_reviews(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,review_status text,student_id text);
+      CREATE TABLE ${schema}.student_operations_xero_candidate_reviews(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,review_status text,student_id uuid);
+      CREATE TABLE ${schema}.student_operations_students(customer_id uuid,student_id uuid,legal_name text,student_reference text,PRIMARY KEY(student_id,customer_id));
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -129,7 +130,31 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const winner=deposits[results.findIndex(r=>r.status==='fulfilled')];
     expect((await lookup()).lines[1].available).toBe('5.00');
     expect((await staging.candidates(principal,conn,winner.id,{})).reservation.plan.allocations[0].lines[0].label).toBe('Materials');
+    const student=randomUUID(),contact=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.student_operations_students VALUES($1,$2,'Student Example','S-42')`,[tenant,student]);
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET xero_contact_id=$2 WHERE xero_invoice_id=$1`,[inv,contact]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_candidate_reviews VALUES($1,$2,$3,'accepted',$4)`,[tenant,conn,contact,student]);
+    const list=(query={})=>staging.residuals(principal,conn,query);
+    expect(await list()).toMatchObject({count:1,total:'10.00',rows:[{student:null,revision:0}]});
+    const pending=await staging.residual(principal,conn,winner.id);
+    expect(pending.choices).toMatchObject([{id:student,reference:'S-42'}]);
+    const assign={studentId:student,requestId:randomUUID(),revision:0,reservation:1,reason:'Reviewed remittance'};
+    const save=(body:unknown)=>staging.reviewResidual(principal,conn,winner.id,body);
+    await expect(save({...assign,studentId:randomUUID()})).rejects.toThrow();
+    await expect(staging.reviewResidual({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,
+      conn,winner.id,assign)).rejects.toThrow();
+    expect(await Promise.all([save(assign),save(assign)])).toEqual([{revision:1},{revision:1}]);
+    await expect(save({...assign,reason:'Different'})).rejects.toThrow();
+    expect(await list({status:'assigned',q:'s-42'})).toMatchObject({count:1,total:'10.00',rows:[{student:'Student Example'}]});
+    expect(await list({studentId:student})).toMatchObject({count:1,total:'10.00'});
+    expect(await list({studentId:randomUUID()})).toMatchObject({count:0,total:'0.00'});
+    expect(await list({status:'unassigned'})).toMatchObject({count:0,total:'0.00'});
+    await expect(save({...assign,studentId:null,requestId:randomUUID()})).rejects.toThrow();
+    await save({...assign,studentId:null,revision:1,requestId:randomUUID(),reason:'Corrected payer evidence'});
+    expect((await staging.residual(principal,conn,winner.id)).history.map(r=>r.studentId)).toEqual([null,student]);
     await staging.changeReservation(principal,conn,winner.id,{action:'release',revision:1,reason:'Correction',requestId:randomUUID()});
+    expect(await list()).toMatchObject({count:0,total:'0.00'});
+    await expect(save({...assign,revision:2,requestId:randomUUID()})).rejects.toThrow();
     expect((await lookup()).lines[1].available).toBe('25.00');
     items[1].description='Revised supplies';
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET line_items=$2 WHERE xero_invoice_id=$1`,[inv,JSON.stringify(items)]);
