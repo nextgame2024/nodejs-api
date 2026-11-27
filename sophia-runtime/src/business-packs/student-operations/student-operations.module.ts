@@ -1,3 +1,4 @@
+import { TrustReceiptsController } from './trust-receipts.controller.js';
 import {StudentCaseDeletionsService} from './student-case-deletions.service.js';
 import {StudentCommissionInvoicesController} from './student-commission-invoices.controller.js';
 import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
@@ -27,6 +28,7 @@ import { XeroWebhookController } from "../../connectors/xero/xero-webhook.contro
 @Module({
   imports: [AdminModule, ConnectorsModule],
   controllers: [
+    TrustReceiptsController,
     StudentCommissionInvoicesController,
     StudentOperationsCasesController,
     StudentOperationsWorkspaceController,

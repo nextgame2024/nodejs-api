@@ -1137,7 +1137,7 @@ function xeroContactRecord(raw:unknown):XeroContactRecord {
     updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
-export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number}>};
+export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number;isReconciled?:boolean}>};
 export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceSettlement|undefined{
   const groups=[['Payments','PaymentID','payment'],['CreditNotes','CreditNoteID','credit_note'],['Prepayments','PrepaymentID','prepayment'],['Overpayments','OverpaymentID','overpayment']] as const;
   if(!groups.some(([key])=>Array.isArray(value[key]))&&!value.FullyPaidOnDate)return undefined;
@@ -1147,7 +1147,8 @@ export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceS
     if((value[key] as unknown[]).length>2000)throw new BadGatewayException('Xero returned too many invoice allocations.');
     for(const raw of value[key] as unknown[]){const item=record(raw),identifier=optionalString(item[id]),amount=optionalNumber(item.AppliedAmount)??optionalNumber(item.Amount);
       if(!identifier||!xeroUuid.test(identifier)||amount===null||amount<0)throw new BadGatewayException('Xero returned an invalid invoice allocation.');
-      entries.push({kind,id:identifier,date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount});
+      entries.push({kind,id:identifier,date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount,
+        ...(kind === 'payment' && typeof item.IsReconciled === 'boolean' ? {isReconciled: item.IsReconciled} : {})});
     }
   }
   return {fullyPaidOnDate:optionalDate(value.FullyPaidOnDate)??optionalXeroDate(value.FullyPaidOnDate),entries};

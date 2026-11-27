@@ -199,6 +199,21 @@ describe("StudentOperationsXeroSyncService", () => {
     })).rejects.toThrow("Invalid Xero invoice query.");
   });
 
+  it("limits the operations queue to positive authorised sales invoices in the selected organisation", async () => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => ({
+      rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{ exists: 1 }] : [],
+      rowCount: sql.includes("FROM sophia_runtime.xero_connections") ? 1 : 0,
+    }));
+    const database = {tenantReadTransaction: jest.fn(async (_tenant: string, work: (db: unknown) => Promise<unknown>) => work({query}))};
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+    await service.invoices(tenantId, connectionId, {queue: 'outstanding_invoices', sort: 'dueDate', direction: 'asc'});
+    const [sql, params] = query.mock.calls.find(([sql]) => sql.includes('SELECT i.xero_invoice_id'))!;
+    expect(sql).toContain("i.invoice_type='ACCREC' AND i.invoice_status='AUTHORISED' AND i.amount_due > 0");
+    expect(sql).toContain('WHERE i.customer_id=$1 AND i.xero_connection_id=$2');
+    expect(sql).toContain('ORDER BY i.due_date ASC NULLS LAST, i.xero_invoice_id ASC');
+    expect(params).toEqual([tenantId, connectionId, 25, 0]);
+  });
+
   it("filters supplier invoices by confirmed tenant/contact/connection mappings before paging", async () => {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => ({
       rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{ exists: 1 }] : [],

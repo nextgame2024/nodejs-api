@@ -34,6 +34,7 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
+  queue: z.literal("outstanding_invoices").optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -407,6 +408,9 @@ export class StudentOperationsXeroSyncService {
       durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
+      if (parsed.data.queue === 'outstanding_invoices') {
+        filters.push("AND i.invoice_type='ACCREC' AND i.invoice_status='AUTHORISED' AND i.amount_due > 0");
+      }
       if (supplierId) {
         params.push(supplierId);
         filters.push(`AND EXISTS (
@@ -616,7 +620,7 @@ export class StudentOperationsXeroSyncService {
       UNION ALL SELECT e.case_id,e.batch_id,e.sequence,e.xero_connection_id,e.xero_invoice_id,'operating',e.trust_connection_id,e.trust_invoice_id
       FROM ${s}.student_commission_exports e WHERE e.customer_id=$1 AND e.status='created')
       SELECT r.case_id AS "caseId",r.sequence,r.role,r.connection_id AS "connectionId",r.invoice_id AS "invoiceId",i.invoice_number AS "invoiceNumber",i.invoice_status AS status,
-        i.invoice_date AS date,i.due_date AS "dueDate",i.amount_paid AS "amountPaid",i.amount_due AS "amountDue",i.xero_invoice_id IS NOT NULL AS indexed
+        i.currency_code AS "currencyCode",i.invoice_date AS date,i.due_date AS "dueDate",i.amount_paid AS "amountPaid",i.amount_due AS "amountDue",i.xero_invoice_id IS NOT NULL AS indexed
       FROM related r LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=r.connection_id AND i.xero_invoice_id=r.invoice_id
       WHERE r.source_connection=$2 AND r.source_invoice=$3 ORDER BY r.sequence,r.connection_id,r.invoice_id`,[tenant,connectionId,invoiceId])).rows;
   }

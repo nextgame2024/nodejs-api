@@ -16,6 +16,11 @@ describe('invoice settlement snapshots',()=>{
     const id='11111111-1111-4111-8111-111111111111';
     expect(xeroInvoiceSettlement({DateString:'2026-11-11',FullyPaidOnDate:'2026-11-20',Payments:[{PaymentID:id,DateString:'2026-11-19',Amount:100}],CreditNotes:[{CreditNoteID:id,DateString:'2026-11-20',AppliedAmount:25}]})).toEqual({fullyPaidOnDate:'2026-11-20',entries:[{kind:'payment',id,date:'2026-11-19',amount:100},{kind:'credit_note',id,date:'2026-11-20',amount:25}]});
   });
+  it.each([true, false])('preserves explicit Xero payment reconciliation state %s', flag => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const snapshot = xeroInvoiceSettlement({ Payments: [{ PaymentID: id, Amount: 10, IsReconciled: flag }] });
+    expect(snapshot?.entries[0].isReconciled).toBe(flag);
+  });
   it('distinguishes an omitted summary from an explicitly empty allocation snapshot',()=>{expect(xeroInvoiceSettlement({})).toBeUndefined();expect(xeroInvoiceSettlement({Payments:[]})).toEqual({fullyPaidOnDate:null,entries:[]});});
   it('rejects malformed allocations instead of persisting partial financial details',()=>{expect(()=>xeroInvoiceSettlement({Payments:[{PaymentID:'bad',Amount:100}]})).toThrow();});
 });
