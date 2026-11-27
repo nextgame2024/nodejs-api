@@ -69,6 +69,7 @@ describe("StudentOperationsXeroController", () => {
       principal.tenantId,
       "44444444-4444-4444-8444-444444444444",
       "77777777-7777-4777-8777-777777777777",
+      false,
     );
   });
 

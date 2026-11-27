@@ -1,4 +1,4 @@
-import { availableTrustPaymentIds, currentTrustInvoice, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
+import { availableTrustPaymentIds, currentTrustInvoice, currentPaymentList, importedInvoicePayments, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header,
   Headers, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, StreamableFile, UploadedFile,
@@ -16,6 +16,8 @@ import { StudentOperationsWorkspaceService, type StudentOperationsWorkspacePrinc
 type Request = {studentOperationsPrincipal: StudentOperationsWorkspacePrincipal; studentOperationsCorrelationId?: string};
 type Evidence = {buffer: Buffer; mimetype: string};
 const fields = z.object({
+  importedPaymentId: z.uuid().optional(),
+  importedPaymentAmount: z.string().regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/).optional(),
   receivedOn: z.iso.date(),
   amount: z.string().regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/).refine(value => Number(value) > 0),
   account: z.string().trim().min(1).max(120),
@@ -80,7 +82,7 @@ export class TrustReceiptsController {
        claim.claim_id AS "reviewClaimId", owner.name AS "reviewOwnerName", claim.claimed_by=$4 AS "reviewOwnedByMe",
        verifier.name AS "verifiedByName", payment_linker.name AS "paymentLinkedByName", l.linked_at AS "paymentLinkedAt", l.decision_note AS "paymentLinkNote",
        credit_linker.name AS "overpaymentLinkedByName", checker.name AS "reconciliationCheckedByName",
-       reference, bank_transaction_id AS "bankTransactionId", payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
+       reference, bank_transaction_id AS "bankTransactionId", payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue", imported_payment_amount::text AS "importedPaymentAmount",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
          WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) AS "linkedPaymentReconciled",
@@ -312,7 +314,7 @@ export class TrustReceiptsController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:6, fieldSize:1024, parts:8}}))
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:8, fieldSize:1024, parts:10}}))
   async verify(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Headers('idempotency-key') key: string,
     @Body() body: unknown, @UploadedFile() file?: Evidence) {
@@ -320,29 +322,44 @@ export class TrustReceiptsController {
     const parsed = fields.safeParse(body);
     if (!parsed.success || !z.uuid().safeParse(key).success) throw new BadRequestException('Check the receipt details.');
     const {receivedOn,amount,account,reference,paymentPurpose,bankTransactionId} = parsed.data;
+    const importedId = parsed.data.importedPaymentId?.toLowerCase();
+    const importedAmount = parsed.data.importedPaymentAmount;
+    if (!!importedId !== !!importedAmount || (importedAmount && (Number(importedAmount) <= 0 || Number(importedAmount) > Number(amount)))) {
+      throw new BadRequestException('Check the selected payment and full bank receipt amount.');
+    }
     const type = receiptEvidenceType(file);
     const [whole, fraction = ''] = amount.split('.');
     const centsAmount = whole + '.' + fraction.padEnd(2, '0');
     const fingerprint = (formattedAmount: string) => {
       const parts = [connection,invoice,receivedOn,formattedAmount,account,reference,type];
       if (paymentPurpose) parts.push(paymentPurpose);
-      return createHash('sha256').update(JSON.stringify(bankTransactionId ? {parts,bankTransactionId} : parts)).update(file?.buffer ?? '').digest('hex');
+      return createHash('sha256').update(JSON.stringify(importedId ? {parts,bankTransactionId,importedId,importedAmount:Number(importedAmount)} : bankTransactionId ? {parts,bankTransactionId} : parts)).update(file?.buffer ?? '').digest('hex');
     };
     const hash = fingerprint(centsAmount);
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId, async db => {
       const inserted = await db.query(`INSERT INTO ${this.table}
         (customer_id,connection_id,invoice_id,verification_id,verified_by,received_on,amount,account_label,reference,
-         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id)
-        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14
+         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id,imported_payment_amount)
+        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14,$15::numeric
         FROM ${schema}.student_operations_xero_invoices i JOIN ${schema}.student_operations_xero_sync_configurations c
           USING (customer_id,xero_connection_id)
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
           AND c.enabled AND c.organisation_role='trust' AND i.currency_code='AUD' AND i.invoice_type='ACCREC'
           AND ${currentTrustInvoice(schema, 'i')}
-          AND i.invoice_status='AUTHORISED' AND i.amount_due>0 AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
+          AND (${importedId ? `i.invoice_status IN ('PAID','AUTHORISED') AND ${currentPaymentList}
+            AND ($15::numeric=$7::numeric OR (i.invoice_status='PAID' AND i.amount_due=0))
+            AND EXISTS (SELECT 1 FROM (${importedInvoicePayments()}) payment
+              WHERE payment.id=$16::text AND payment.payment_date=$6::date::text AND payment.amount=$15::numeric)
+            AND NOT EXISTS (SELECT 1 FROM ${this.table} prior
+              WHERE prior.customer_id=i.customer_id AND prior.connection_id=i.xero_connection_id AND prior.invoice_id=i.xero_invoice_id
+              AND prior.received_on=$6::date AND prior.amount=$7::numeric AND prior.verification_id<>$4
+              AND NOT EXISTS (SELECT 1 FROM ${this.links} l WHERE l.customer_id=prior.customer_id AND l.verification_id=prior.verification_id)
+              AND (prior.bank_transaction_id IS NULL OR $14::text IS NULL OR prior.bank_transaction_id=$14))`
+            : "i.invoice_status='AUTHORISED' AND i.amount_due>0"})
+          AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
         ON CONFLICT DO NOTHING RETURNING verification_id`,
-        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null]);
+        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null,importedAmount ?? null,...(importedId ? [importedId] : [])]);
       if (!inserted.rowCount) {
         const prior = await db.query(`SELECT payload_hash FROM ${this.table} WHERE customer_id=$1 AND verification_id=$2 AND verified_by=$3`,[p.tenantId,key,p.identityUserId]);
         const priorHash = prior.rows[0]?.payload_hash;
@@ -368,8 +385,16 @@ export class TrustReceiptsController {
               invoiceId:existing.rows[0].invoice_id, receivedOn:existing.rows[0].received_on, amount:existing.rows[0].amount,
             });
           }
+          if (importedId) throw new ConflictException('Review existing verifications and refresh the imported payment before saving.');
           throw new ConflictException('Review existing receipts, payment date and current TRUST invoice before saving.');
         }
+      }
+      if (inserted.rowCount && importedId) {
+        const linked = await db.query(`INSERT INTO ${this.links}
+          (customer_id,connection_id,verification_id,payment_id,payment_amount,linked_by)
+          VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+          [p.tenantId,connection,key,importedId,importedAmount,p.identityUserId]);
+        if (!linked.rowCount) throw new ConflictException('This imported payment already has a receipt link.');
       }
       return {id:key};
     });

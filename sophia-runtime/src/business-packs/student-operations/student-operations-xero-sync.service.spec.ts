@@ -243,7 +243,7 @@ describe("StudentOperationsXeroSyncService", () => {
     const [sql] = query.mock.calls.find(([sql]) => sql.includes('SELECT i.xero_invoice_id'))!;
     expect(sql).toContain("cfg.organisation_role='trust'");
     expect(sql).toContain("receipt.invoice_id=i.xero_invoice_id");
-    expect(sql).toContain("receipt.amount > round(receipt.invoice_due_at_verification, 2)");
+    expect(sql).toContain("receipt.amount > coalesce(receipt.imported_payment_amount,round(receipt.invoice_due_at_verification,2))");
     expect(sql).toContain("excess.receipt_excess > 0");
     expect(sql).not.toContain("student_trust_receipt_payment_links");
     expect(sql).not.toContain("AND i.amount_due > 0");

@@ -78,9 +78,10 @@ export class StudentOperationsXeroController {
     @Req() request: WorkspaceRequest,
     @Param("connectionId") connectionId: string,
     @Param("invoiceId") invoiceId: string,
+    @Query("receiptHistory") receiptHistory?: string,
   ) {
     const principal = this.authorize(request);
-    return this.sync.invoice(principal.tenantId, connectionId, invoiceId);
+    return this.sync.invoice(principal.tenantId, connectionId, invoiceId, receiptHistory === "true");
   }
 
   @Get("connections/:connectionId/student-sync")

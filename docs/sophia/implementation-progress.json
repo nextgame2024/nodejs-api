@@ -4749,5 +4749,49 @@
     "scope": "Keep payments with contradictory imported flags in review. Filter unchecked pending payments and unchecked matched payments with unavailable Xero status independently in Payments and Control.",
     "verification": ["Runtime build and Angular compilation passed", "30 targeted backend tests including PostgreSQL integration and four manager panel browser tests passed"],
     "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReconciliationSearchAgeAndCurrency": {
+    "updatedOn": "2026-11-27",
+    "scope": "Search reconciliation follow-ups by receipt reference or exact Xero payment ID. Apply a minimum age in Brisbane calendar days to each payment link before aggregating. Display the verified AUD payment amount independently of the invoice currency.",
+    "verification": ["Runtime build and Angular compilation passed", "30 targeted backend tests including PostgreSQL integration and four queue panel Chrome tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReconciliationAcceptance": {
+    "updatedOn": "2026-11-27",
+    "scope": "Confirmed payments register, reversal coverage, historical AUD receipt access, overpayment eligibility, omitted and contradictory status handling, completed claim release, Brisbane date limits, invoice draft and navigation isolation, and manager acceptance guide.",
+    "verification": ["npm run build passed in sophia-runtime", "Five backend suites passed with disposable PostgreSQL fixtures enabled (139 tests)", "Angular ngc compilation passed", "Four ChromeHeadless suites passed (114 tests)"],
+    "release": "Backend and frontend deployment pending. No migration required. Connected Xero acceptance testing pending."
+  },
+  "paymentOperationsRefreshAndQueueNavigation": {
+    "updatedOn": "2026-11-27",
+    "scope": "Organisation-specific import and progress controls in Payment operations, per-connection import and receipt updates, retained rows during refresh and retry, server page sizes and navigation, receipt-reference and linked overpayment search, literal search characters and updated acceptance instructions.",
+    "verification": ["Runtime build and Angular compilation passed", "139 backend tests passed with PostgreSQL fixtures enabled", "117 ChromeHeadless tests passed, including payment navigation at 375px and 1280px in light and dark themes"],
+    "release": "No migration required. Backend and frontend deployment and connected Xero acceptance testing pending."
+  },
+  "trustHistoricalReceiptExceptions": {
+    "updatedOn": "2026-11-27",
+    "scope": "Accept the invoice status returned by the runtime for AUD receipt verification. Reject empty screenshots. Add a TRUST invoice exception queue covering voided, deleted and omitted invoices, with verified receipt totals, dates, evidence searches, historical detail, missing contact support and recovery after re-import.",
+    "verification": ["Runtime build and Angular compilation passed", "145 backend tests passed with disposable PostgreSQL fixtures", "119 ChromeHeadless tests passed"],
+    "release": "No migration required. Backend and frontend deployment and connected Xero acceptance testing pending."
+  },
+  "trustReceiptAfterImportedPayment": {
+    "updatedOn": "2026-11-27",
+    "scope": "Select an imported TRUST payment on paid or partially paid invoices, verify date and reviewed amount, detect changed or omitted details, save receipt and link atomically, protect retries and concurrent submissions, check for an existing unlinked bank receipt, preserve the invoice balance and track paid-invoice excess independently.",
+    "verification": ["Runtime build and Angular compilation passed", "146 targeted backend tests passed with disposable PostgreSQL fixtures enabled", "120 targeted ChromeHeadless tests passed", "Migration runner applied 157_trust_imported_payment_verification.sql; catalog confirmed a nullable numeric(16,2) column"],
+    "release": "Migration 157 applied. Backend and frontend deployment and connected Xero acceptance testing pending."
+  },
+  "trustImportedPaymentsWithoutReceiptLinks": {
+    "updatedOn": "2026-11-27",
+    "scope": "Find current unlinked imported AUD invoice payments on TRUST paid and partially paid invoices. Search by payment ID or reference, filter by payment date and amount, and compare invoice-level totals and latest payment dates. Show payment references and bank evidence discrepancies during verification.",
+    "verification": ["Runtime build and Angular compilation passed", "146 targeted backend tests passed with disposable PostgreSQL fixtures", "121 targeted ChromeHeadless tests passed"],
+    "release": "No migration required. Backend and frontend deployment and connected Xero acceptance testing pending."
+  },
+  "trustStatementCsvPreview": {
+    "updatedOn": "2026-11-27",
+    "roadmapItem": "08",
+    "scope": "Downloadable statement header, bounded local CSV preview, account matching, booked or posted AUD credits, date and amount validation, repeated ID handling, conflicting ID exclusion, existing receipt detection, searchable eligible rows and explicit draft prefill.",
+    "verification": ["Angular ngc compilation passed", "129 ChromeHeadless tests passed across five reconciliation suites, including 375px and 1280px preview checks in light and dark themes"],
+    "release": "Frontend deployment and connected acceptance pending. No database migration. Durable CSV lineage and unmatched movement staging remain open under item 08.",
+    "pending": "Zero subtasks in this batch. All 23 numbered roadmap items await documented full acceptance."
   }
 }

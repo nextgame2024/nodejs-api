@@ -1,4 +1,4 @@
-import { availableTrustPaymentIds, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
+import { availableTrustPaymentIds, currentTrustInvoice, currentPaymentList, importedInvoicePayments, receiptAllocationBasis, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -35,11 +35,14 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
+  importedPaymentDate: z.iso.date().optional(),
+  importedPaymentAmount: z.string().regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/).refine(amount=>Number(amount)>0).optional(),
   paymentCandidateStatus: z.enum(["available", "multiple", "partial", "none"]).optional(),
   excessLinkStatus: z.enum(["needs_link", "fully_linked", "link_mismatch"]).optional(),
   reconciliationStatus: z.enum(["link_mismatch", "checked_pending", "checked_unknown", "unchecked_pending", "unchecked_unknown"]).optional(),
+  minFollowUpDays: z.coerce.number().int().min(1).max(3650).optional(),
   followUpOwner: z.enum(["mine", "unassigned"]).optional(),
-  queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts", "reconciliation_review"]).optional(),
+  queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts", "reconciliation_review", "reconciled_payments", "receipt_exceptions", "payments_without_receipts"]).optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -129,6 +132,15 @@ type InvoiceRow = {
   oldest_pending_link?: Date;
   pending_days?: number;
   pending_amount?: string;
+  confirmed_amount?: string;
+  confirmed_count?: number;
+  available_payments?: number;
+  available_amount?: string;
+  latest_payment_on?: string;
+  exception_reason?: 'voided' | 'deleted' | 'not_current';
+  verified_count?: number;
+  verified_amount?: string;
+  latest_receipt_on?: string;
   pending_count?: number;
   checked_count?: number;
   latest_reported_reconciled_on?: string | null;
@@ -414,13 +426,17 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
-  async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string, identityUserId?: string) {
+  async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string, identityUserId?: string, exactInvoiceId?: string) {
     const parsed = InvoiceQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
-    const { followUpOwner, reconciliationStatus, queue } = parsed.data;
+    const { followUpOwner, minFollowUpDays, reconciliationStatus, queue } = parsed.data;
+    const importedQueue = queue === 'payments_without_receipts';
+    if ((parsed.data.importedPaymentDate || parsed.data.importedPaymentAmount) && !importedQueue) {
+      throw new ConflictException('Choose imported payments without receipt links to filter payment date or amount.');
+    }
     if (parsed.data.paymentCandidateStatus && queue !== 'receipts_awaiting_link') throw new ConflictException('Choose the unlinked receipts queue to filter possible payments.');
     if (parsed.data.excessLinkStatus && queue !== 'excess_receipts') throw new ConflictException('Choose the excess receipts queue to filter overpayment links.');
-    if ((followUpOwner || reconciliationStatus) && queue !== 'reconciliation_review') throw new ConflictException('Choose the reconciliation queue to filter follow-ups.');
+    if ((followUpOwner || minFollowUpDays || reconciliationStatus) && queue !== 'reconciliation_review') throw new ConflictException('Choose the reconciliation queue to filter follow-ups.');
     if (followUpOwner === 'mine' && !identityUserId) throw new ConflictException('A manager identity is required for personal follow-ups.');
     const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction, supplierId } = parsed.data;
     const schema = runtimeConfig().schema;
@@ -435,17 +451,47 @@ export class StudentOperationsXeroSyncService {
       durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
+      const exceptionQueue = queue === 'receipt_exceptions';
+      if (exactInvoiceId) filters.push(`AND i.xero_invoice_id=$${params.push(exactInvoiceId)}::uuid`);
       const receiptSearch = q && queue && queue !== 'outstanding_invoices' ? params.push(q) : 0;
-      const bankIdMatch = (alias: 'receipt' | 'r') => receiptSearch
-        ? `bool_or(${alias}.bank_transaction_id = $${receiptSearch}) AS matches_bank_id,` : '';
+      const receiptMatch = (alias: 'receipt' | 'r', linkedId?: 'credit.overpayment_id' | 'l.payment_id') =>
+        receiptSearch ? `bool_or(${alias}.bank_transaction_id = $${receiptSearch}
+          OR strpos(lower(${alias}.reference),lower($${receiptSearch})) > 0
+          ${linkedId ? `OR ${linkedId}::text = lower($${receiptSearch})` : ''}) AS matches_receipt,` : '';
+      const importedJoin = importedQueue ? `JOIN LATERAL (
+        SELECT count(*)::int AS available_payments, sum(payment.amount) AS available_amount, max(payment.payment_date) AS latest_payment_on
+          ${receiptSearch ? `,bool_or(payment.id=lower($${receiptSearch}) OR payment.matches_reference) AS matches_receipt` : ''}
+        FROM (${importedInvoicePayments(receiptSearch)}) payment
+        WHERE ${currentPaymentList}
+          AND NOT EXISTS (SELECT 1 FROM ${schema}.student_trust_receipt_payment_links used
+            WHERE used.customer_id=i.customer_id AND used.connection_id=i.xero_connection_id AND used.payment_id=payment.id::uuid)
+          ${parsed.data.importedPaymentDate ? `AND payment.payment_date=$${params.push(parsed.data.importedPaymentDate)}::text` : ''}
+          ${parsed.data.importedPaymentAmount ? `AND payment.amount=$${params.push(parsed.data.importedPaymentAmount)}::numeric` : ''}
+      ) available ON available.available_payments>0` : '';
+      if (importedQueue) filters.push(`AND i.invoice_type='ACCREC' AND i.currency_code='AUD' AND i.invoice_status IN ('PAID','AUTHORISED')
+        AND EXISTS (SELECT 1 FROM ${schema}.student_operations_xero_sync_configurations cfg WHERE cfg.customer_id=i.customer_id
+          AND cfg.xero_connection_id=i.xero_connection_id AND cfg.enabled AND cfg.organisation_role='trust')`);
+      const exceptionJoin = exceptionQueue ? `JOIN LATERAL (
+        SELECT count(*)::int AS verified_count, sum(receipt.amount) AS verified_amount,
+          max(receipt.received_on)::text AS latest_receipt_on
+          ${receiptSearch ? `, bool_or(receipt.bank_transaction_id=$${receiptSearch}
+            OR strpos(lower(receipt.reference), lower($${receiptSearch}))>0
+            OR link.payment_id::text=lower($${receiptSearch}) OR credit.overpayment_id::text=lower($${receiptSearch})) AS matches_receipt` : ''}
+        FROM ${schema}.student_trust_receipt_verifications receipt
+        ${receiptSearch ? `LEFT JOIN ${schema}.student_trust_receipt_payment_links link USING (customer_id,connection_id,verification_id)
+          LEFT JOIN ${schema}.student_trust_receipt_overpayment_links credit USING (customer_id,connection_id,verification_id)` : ''}
+        JOIN ${schema}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=receipt.customer_id
+          AND cfg.xero_connection_id=receipt.connection_id AND cfg.enabled AND cfg.organisation_role='trust'
+        WHERE receipt.customer_id=i.customer_id AND receipt.connection_id=i.xero_connection_id AND receipt.invoice_id=i.xero_invoice_id
+      ) evidence ON evidence.verified_count > 0` : '';
       const excessQueue = parsed.data.queue === 'excess_receipts';
       const mismatchHaving = parsed.data.excessLinkStatus === 'link_mismatch'
         ? `HAVING bool_or(credit.overpayment_id IS NOT NULL AND NOT EXISTS (
             SELECT 1 FROM (${trustOverpaymentCandidates(schema, 'receipt')}) candidate
             WHERE candidate.id=credit.overpayment_id))` : '';
       const excessJoin = excessQueue ? `JOIN LATERAL (
-        SELECT ${bankIdMatch('receipt')} sum(receipt.amount - round(receipt.invoice_due_at_verification, 2)) AS receipt_excess,
-               coalesce(sum(receipt.amount - round(receipt.invoice_due_at_verification, 2))
+        SELECT ${receiptMatch('receipt','credit.overpayment_id')} sum(receipt.amount - ${receiptAllocationBasis('receipt')}) AS receipt_excess,
+               coalesce(sum(receipt.amount - ${receiptAllocationBasis('receipt')})
                  FILTER (WHERE credit.overpayment_id IS NULL), 0) AS unlinked_excess,
                (now() AT TIME ZONE 'Australia/Brisbane')::date
                  - min(receipt.received_on) FILTER (WHERE credit.overpayment_id IS NULL) AS unlinked_excess_days
@@ -456,7 +502,7 @@ export class StudentOperationsXeroSyncService {
         WHERE cfg.enabled AND cfg.organisation_role='trust'
           AND receipt.customer_id=i.customer_id AND receipt.connection_id=i.xero_connection_id
           AND receipt.invoice_id=i.xero_invoice_id
-          AND receipt.amount > round(receipt.invoice_due_at_verification, 2)
+          AND receipt.amount > ${receiptAllocationBasis('receipt')}
         ${mismatchHaving}
       ) excess ON excess.receipt_excess > 0` : '';
       if (parsed.data.excessLinkStatus === 'needs_link') filters.push('AND excess.unlinked_excess > 0');
@@ -466,7 +512,7 @@ export class StudentOperationsXeroSyncService {
       }
       const unlinkedQueue = queue === 'receipts_awaiting_link';
       const unlinkedJoin = unlinkedQueue ? `JOIN LATERAL (
-          SELECT ${bankIdMatch('r')} count(*)::int AS unlinked_receipt_count, sum(r.amount) AS unlinked_receipt_amount,
+          SELECT ${receiptMatch('r')} count(*)::int AS unlinked_receipt_count, sum(r.amount) AS unlinked_receipt_amount,
                  count(*) FILTER (WHERE matches.count > 0)::int AS receipts_with_candidates,
                  count(*) FILTER (WHERE matches.count = 2)::int AS receipts_with_multiple_candidates
           FROM ${schema}.student_trust_receipt_verifications r
@@ -490,7 +536,8 @@ export class StudentOperationsXeroSyncService {
         filters.push('AND unlinked.receipts_with_candidates > 0 AND unlinked.receipts_with_candidates < unlinked.unlinked_receipt_count');
       }
       if (parsed.data.paymentCandidateStatus === 'none') filters.push('AND unlinked.receipts_with_candidates = 0');
-      const reconciliationQueue = queue === 'reconciliation_review';
+      const confirmedQueue = queue === 'reconciled_payments';
+      const reconciliationQueue = confirmedQueue || queue === 'reconciliation_review';
       let ownerFilter = '';
       if (followUpOwner === 'mine') {
         params.push(identityUserId);
@@ -498,6 +545,9 @@ export class StudentOperationsXeroSyncService {
       } else if (followUpOwner === 'unassigned') {
         ownerFilter = 'AND claim.claim_id IS NULL';
       }
+      const ageFilter = minFollowUpDays
+        ? `AND (l.linked_at AT TIME ZONE 'Australia/Brisbane')::date <=
+            (now() AT TIME ZONE 'Australia/Brisbane')::date - $${params.push(minFollowUpDays)}::int` : '';
       const reconciliationConditions = {
         link_mismatch: 'imported.matches = 0',
         checked_pending: 'check_record.payment_id IS NOT NULL AND imported.reconciled IS FALSE',
@@ -507,7 +557,7 @@ export class StudentOperationsXeroSyncService {
       };
       const reconciliationFilter = reconciliationStatus ? `AND ${reconciliationConditions[reconciliationStatus]}` : '';
       const reconciliationJoin = reconciliationQueue ? `JOIN LATERAL (
-          SELECT ${bankIdMatch('r')} min(l.linked_at) AS oldest_pending_link,
+          SELECT ${receiptMatch('r','l.payment_id')} min(l.linked_at) AS oldest_pending_link,
                  (now() AT TIME ZONE 'Australia/Brisbane')::date
                    - (min(l.linked_at) AT TIME ZONE 'Australia/Brisbane')::date AS pending_days,
                  sum(l.payment_amount) AS pending_amount,
@@ -532,9 +582,10 @@ export class StudentOperationsXeroSyncService {
           ) imported
           WHERE cfg.enabled AND cfg.organisation_role='trust'
             AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
+            ${ageFilter}
             ${ownerFilter}
             ${reconciliationFilter}
-            AND imported.reconciled IS NOT TRUE
+            AND imported.reconciled IS ${confirmedQueue ? 'TRUE' : 'NOT TRUE'}
         ) pending ON pending.pending_count > 0` : '';
       if (supplierId) {
         params.push(supplierId);
@@ -548,7 +599,8 @@ export class StudentOperationsXeroSyncService {
         )`);
       }
       if (q) {
-        params.push(`%${q}%`);
+        const searchText = queue ? q.replace(/[\\%_]/g, '\\$&') : q;
+        params.push(`%${searchText}%`);
         const position = params.length;
         filters.push(`AND (
           i.invoice_number ILIKE $${position} OR i.invoice_reference ILIKE $${position}
@@ -556,7 +608,7 @@ export class StudentOperationsXeroSyncService {
           OR c.contact_number ILIKE $${position} OR c.account_number ILIKE $${position}
           OR i.concept ILIKE $${position} OR i.advisor_name ILIKE $${position}
           OR i.payment_track ILIKE $${position}
-          ${receiptSearch ? `OR ${excessQueue ? 'excess' : unlinkedQueue ? 'unlinked' : 'pending'}.matches_bank_id` : ''}
+          ${receiptSearch ? `OR ${importedQueue ? 'available.matches_receipt' : exceptionQueue ? 'evidence.matches_receipt' : excessQueue ? 'excess.matches_receipt' : unlinkedQueue ? 'unlinked.matches_receipt' : 'pending.matches_receipt'}` : ''}
         )`);
       }
       if (status) {
@@ -578,6 +630,8 @@ export class StudentOperationsXeroSyncService {
       params.push(limit, (page - 1) * limit);
       const limitPosition = params.length - 1;
       let order = `${InvoiceSortExpressions[sort ?? "date"]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
+      if (!sort && importedQueue) order = 'available.latest_payment_on DESC, i.xero_invoice_id ASC';
+      if (!sort && exceptionQueue) order = 'evidence.latest_receipt_on DESC, i.xero_invoice_id ASC';
       if (!sort && reconciliationQueue) order = "pending.oldest_pending_link ASC, i.xero_invoice_id ASC";
       if (!sort && parsed.data.excessLinkStatus === 'needs_link') order = "excess.unlinked_excess_days DESC, i.xero_invoice_id ASC";
       const queryStartedAt = performance.now();
@@ -591,7 +645,11 @@ export class StudentOperationsXeroSyncService {
                 count(*) OVER()::int AS total_count,
                 ${unlinkedQueue ? 'unlinked.unlinked_receipt_count, unlinked.unlinked_receipt_amount, unlinked.receipts_with_candidates, unlinked.receipts_with_multiple_candidates,' : ''}
                 ${excessQueue ? 'excess.receipt_excess, excess.unlinked_excess, excess.unlinked_excess_days,' : ''}
-                ${reconciliationQueue ? 'pending.oldest_pending_link, pending.pending_days, pending.pending_amount, pending.pending_count, pending.checked_count, pending.latest_reported_reconciled_on, pending.unassigned_count, pending.xero_pending_count, pending.unknown_status_count, pending.unmatched_link_count,' : ''}
+                ${exceptionQueue ? `evidence.verified_count, evidence.verified_amount, evidence.latest_receipt_on,
+                  CASE i.invoice_status WHEN 'VOIDED' THEN 'voided' WHEN 'DELETED' THEN 'deleted' ELSE 'not_current' END AS exception_reason,` : ''}
+                ${importedQueue ? 'available.available_payments,available.available_amount,available.latest_payment_on,' : ''}
+                ${confirmedQueue ? 'pending.pending_amount AS confirmed_amount, pending.pending_count AS confirmed_count,' : ''}
+                ${reconciliationQueue && !confirmedQueue ? 'pending.oldest_pending_link, pending.pending_days, pending.pending_amount, pending.pending_count, pending.checked_count, pending.latest_reported_reconciled_on, pending.unassigned_count, pending.xero_pending_count, pending.unknown_status_count, pending.unmatched_link_count,' : ''}
                 count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
                 count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
                 count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
@@ -601,19 +659,22 @@ export class StudentOperationsXeroSyncService {
                 count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()::int AS authorised_total_count,
                 count(*) FILTER (WHERE i.invoice_status='PAID') OVER()::int AS paid_total_count
           FROM ${schema}.student_operations_xero_invoices i
+          ${importedJoin}
+          ${exceptionJoin}
           ${unlinkedJoin}
           ${excessJoin}
           ${reconciliationJoin}
-          JOIN ${schema}.student_operations_xero_contacts c
+          ${exceptionQueue ? 'LEFT JOIN' : 'JOIN'} ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
             AND c.xero_contact_id=i.xero_contact_id
-           JOIN ${schema}.student_operations_xero_sync_runs seen
-             ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id
+           ${exceptionQueue ? '' : `JOIN ${schema}.student_operations_xero_sync_runs seen
+             ON seen.customer_id=i.customer_id AND seen.sync_run_id=i.last_seen_sync_run_id`}
            LEFT JOIN ${schema}.student_operations_xero_candidate_reviews r
              ON r.customer_id=i.customer_id AND r.xero_connection_id=i.xero_connection_id
             AND r.xero_contact_id=i.xero_contact_id
           WHERE i.customer_id=$1 AND i.xero_connection_id=$2
-            AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
+            ${exceptionQueue ? `AND i.invoice_type='ACCREC'
+              AND (i.invoice_status IN ('VOIDED','DELETED') OR NOT ${currentTrustInvoice(schema,'i')})` : `AND i.invoice_type IN ('ACCREC','ACCRECCREDIT','RECEIVE-PREPAYMENT','RECEIVE-OVERPAYMENT')
             AND i.invoice_status IN (${XERO_REGISTER_STATUSES_SQL})
             AND seen.created_at >= COALESCE((
               SELECT max(full_run.created_at)
@@ -622,7 +683,7 @@ export class StudentOperationsXeroSyncService {
                  AND full_run.xero_connection_id=$2
                  AND full_run.status='succeeded'
                  AND full_run.mode IN ('initial','reconciliation')
-            ), seen.created_at)
+            ), seen.created_at)`}
             ${filters.join("\n            ")}
           ORDER BY ${order}
           LIMIT $${limitPosition} OFFSET $${limitPosition + 1}`,
@@ -686,8 +747,12 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
-  async invoice(tenantId: string, connectionId: string, invoiceId: string) {
-    if (!/^[0-9a-f-]{36}$/i.test(invoiceId)) throw new NotFoundException("Xero invoice not found.");
+  async invoice(tenantId: string, connectionId: string, invoiceId: string, receiptHistory = false) {
+    if (!z.uuid().safeParse(invoiceId).success) throw new NotFoundException("Xero invoice not found.");
+    if (receiptHistory) {
+      const history = await this.invoices(tenantId,connectionId,{queue:'receipt_exceptions',limit:1},undefined,undefined,invoiceId);
+      if (history.invoices[0]) return {...history.invoices[0],lineItems:[],settlement:null,relatedInvoices:[]};
+    }
     const schema = runtimeConfig().schema;
     return this.database.tenantReadTransaction(tenantId, async (db) => {
       await assertConnection(db, schema, tenantId, connectionId);
@@ -1219,6 +1284,11 @@ function candidateProjection(row: CandidateRow) {
 
 function invoiceProjection(row: InvoiceRow) {
   return {
+    ...(row.exception_reason ? {receiptException:{reason:row.exception_reason,count:row.verified_count,
+      amount:Number(row.verified_amount),latestReceiptOn:row.latest_receipt_on}} : {}),
+    ...(row.available_payments == null ? {} : {availablePayments:{count:row.available_payments,
+      amount:Number(row.available_amount), latestDate:row.latest_payment_on}}),
+    ...(row.confirmed_count == null ? {} : {confirmedPayments:{count:row.confirmed_count, amount:Number(row.confirmed_amount)}}),
     ...(row.oldest_pending_link == null ? {} : { reconciliation: {
       oldestLinkedAt: row.oldest_pending_link.toISOString(),
       pendingDays: row.pending_days,
