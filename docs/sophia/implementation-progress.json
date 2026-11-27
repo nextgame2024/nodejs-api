@@ -4920,5 +4920,28 @@
       "Migration 164 applied; zero pending; forced tenant RLS and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
     ],
     "release": "Previous invoice-line release reported deployed. Current backend and frontend require deployment. Residual attribution is local to the reservation. Financial resolution and connected acceptance remain open."
+  },
+  "trustReceiptProposals": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "11",
+    "completedSubtasks": [
+      "Open local payment review from the verified receipt",
+      "Check single-invoice TRUST receipt eligibility",
+      "Identify unlinked imported payments and incomplete imports",
+      "Freeze receipt, invoice, receiving account label and Xero organisation evidence",
+      "Prepare a versioned proposal with a reason",
+      "Approve a specific proposal revision",
+      "Withdraw a current or stale proposal and preserve its snapshot",
+      "Expire proposals after 24 hours and detect changed evidence",
+      "Serialize competing decisions and replay unchanged requests",
+      "Show recent decisions with reviewer, time, reason and original payment details"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "150 targeted backend tests passed with disposable PostgreSQL",
+      "150 ChromeHeadless tests passed including narrow and desktop proposal controls in both themes",
+      "Configured migration 165 applied; zero pending; forced row-level security and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
+    ],
+    "release": "Operator reported the preceding residual batch deployed. This local proposal batch needs backend and frontend deployment and connected pilot testing. Dispatch, second-actor release checks and approved provider account mapping remain open."
   }
 }
