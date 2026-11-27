@@ -35,6 +35,8 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
+  reconciliationStatus: z.literal("link_mismatch").optional(),
+  followUpOwner: z.enum(["mine", "unassigned"]).optional(),
   queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts", "reconciliation_review"]).optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
@@ -402,9 +404,12 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
-  async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string) {
+  async invoices(tenantId: string, connectionId: string, input: unknown, correlationId?: string, identityUserId?: string) {
     const parsed = InvoiceQuerySchema.safeParse(input);
     if (!parsed.success) throw new ConflictException("Invalid Xero invoice query.");
+    const { followUpOwner, reconciliationStatus, queue } = parsed.data;
+    if ((followUpOwner || reconciliationStatus) && queue !== 'reconciliation_review') throw new ConflictException('Choose the reconciliation queue to filter follow-ups.');
+    if (followUpOwner === 'mine' && !identityUserId) throw new ConflictException('A manager identity is required for personal follow-ups.');
     const { page, limit, q, status, dateFrom, dateTo, paymentTrack, sort, direction, supplierId } = parsed.data;
     const schema = runtimeConfig().schema;
     const startedAt = performance.now();
@@ -447,7 +452,14 @@ export class StudentOperationsXeroSyncService {
             )
         )`);
       }
-      const reconciliationQueue = parsed.data.queue === 'reconciliation_review';
+      const reconciliationQueue = queue === 'reconciliation_review';
+      let ownerFilter = '';
+      if (followUpOwner === 'mine') {
+        params.push(identityUserId);
+        ownerFilter = `AND claim.claimed_by=$${params.length}`;
+      } else if (followUpOwner === 'unassigned') {
+        ownerFilter = 'AND claim.claim_id IS NULL';
+      }
       const reconciliationJoin = reconciliationQueue ? `JOIN LATERAL (
           SELECT min(l.linked_at) AS oldest_pending_link, sum(l.payment_amount) AS pending_amount,
                  count(*)::int AS pending_count, count(check_record.payment_id)::int AS checked_count,
@@ -470,6 +482,8 @@ export class StudentOperationsXeroSyncService {
           ) imported
           WHERE cfg.enabled AND cfg.organisation_role='trust'
             AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
+            ${ownerFilter}
+            ${reconciliationStatus === 'link_mismatch' ? 'AND imported.matches = 0' : ''}
             AND imported.reconciled IS NOT TRUE
         ) pending ON pending.pending_count > 0` : '';
       if (supplierId) {

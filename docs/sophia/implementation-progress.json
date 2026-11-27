@@ -4445,5 +4445,51 @@
       "Applied migration 149 using the configured runner and verified its ledger entry, forced RLS and restricted application role privileges"
     ],
     "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReconciliationOwnerFilters": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter pending TRUST payments by current manager or unassigned ownership before aggregation and pagination.",
+    "verification": [
+      "Backend build and ngc -p tsconfig.app.json --noEmit passed",
+      "32 focused backend tests and 12 ChromeHeadless tests passed, including per-owner amounts on a shared invoice and selector navigation"
+    ],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReconciliationClaimHistory": {
+    "updatedOn": "2026-11-27",
+    "scope": "Managers can open a linked TRUST payment's follow-up history and page through previous claims and releases after reconciliation.",
+    "verification": [
+      "Backend build and Angular compilation passed",
+      "26 focused backend tests and 13 ChromeHeadless tests passed",
+      "Applied migration 150 and verified its ledger entry and index readiness"
+    ],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReconciliationMismatchFilter": {
+    "updatedOn": "2026-11-27",
+    "scope": "Filter the TRUST reconciliation queue to links that no longer match imported payment details. Apply owner and mismatch filters before invoice totals and pagination.",
+    "verification": [
+      "Backend build and Angular compilation passed",
+      "19 focused backend tests and 4 ChromeHeadless tests passed"
+    ],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReceiptMismatchDetails": {
+    "updatedOn": "2026-11-27",
+    "scope": "Compare the linked payment amount and date with the imported invoice payment for the same ID. Distinguish a missing payment from unavailable settlement details.",
+    "verification": ["Angular compilation passed", "14 focused ChromeHeadless receipt and payment queue tests passed"],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "trustReceiptMatchingPrecision": {
+    "updatedOn": "2026-11-27",
+    "scope": "Match imported AUD invoice payments using the same cent-rounded verified balance used for receipt excess, retaining exact payment amount checks.",
+    "verification": ["Runtime build passed", "30 focused backend tests passed, including PostgreSQL cases for half-cent rounding, partial payments and a balance below half a cent"],
+    "release": "Backend deployment pending. No migration required."
+  },
+  "trustReceiptImportFreshness": {
+    "updatedOn": "2026-11-27",
+    "scope": "Use the invoice register's full-import cutoff for TRUST verification, invoice payment matches and excess credit links. Preserve existing verification retries.",
+    "verification": ["Runtime build passed", "30 focused backend tests passed, including stale invoice verification, link rejection and receipt replay in PostgreSQL"],
+    "release": "Backend deployment pending. No migration required."
   }
 }

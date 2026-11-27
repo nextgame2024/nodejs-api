@@ -64,7 +64,7 @@ describe("StudentOperationsXeroController", () => {
       "77777777-7777-4777-8777-777777777777",
     );
 
-    expect(invoices).toHaveBeenCalledWith(principal.tenantId, expect.any(String), { page: "1", limit: "25" }, "test-correlation");
+    expect(invoices).toHaveBeenCalledWith(principal.tenantId, expect.any(String), { page: "1", limit: "25" }, "test-correlation", principal.identityUserId);
     expect(invoice).toHaveBeenCalledWith(
       principal.tenantId,
       "44444444-4444-4444-8444-444444444444",

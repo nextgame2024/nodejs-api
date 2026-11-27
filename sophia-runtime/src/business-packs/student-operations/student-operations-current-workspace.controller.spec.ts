@@ -69,7 +69,7 @@ describe("StudentOperationsCurrentWorkspaceController", () => {
     const result = await controller.paymentsRegister({ studentOperationsPrincipal: { ...principal, role: 'chief_executive' }, studentOperationsCorrelationId: 'trace-1' }, query);
     expect(result).toMatchObject({ workspace: { role: 'chief_executive' }, connection, invoices: { page: 4 }, connectionIssue: null });
     expect(status).toHaveBeenCalledWith(principal.tenantId);
-    expect(invoices).toHaveBeenCalledWith(principal.tenantId, 'trust-connection', query, 'trace-1');
+    expect(invoices).toHaveBeenCalledWith(principal.tenantId, 'trust-connection', query, 'trace-1', principal.identityUserId);
   });
 
   it('never reads integration data for operations or advisors', async () => {

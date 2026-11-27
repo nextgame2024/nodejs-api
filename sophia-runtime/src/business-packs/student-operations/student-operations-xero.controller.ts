@@ -60,7 +60,7 @@ export class StudentOperationsXeroController {
   ) {
     const principal = this.authorize(request);
     return this.sync.invoices(principal.tenantId, connectionId, query,
-      request.studentOperationsCorrelationId);
+      request.studentOperationsCorrelationId, principal.identityUserId);
   }
 
   @Get("connections/:connectionId/student-invoices/payment-tracks")

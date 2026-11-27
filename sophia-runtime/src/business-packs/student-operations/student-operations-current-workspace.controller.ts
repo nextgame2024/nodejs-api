@@ -79,7 +79,7 @@ export class StudentOperationsCurrentWorkspaceController {
       return { workspace, connections, connection, invoices: null, connectionIssue: 'scope_missing' };
     }
     const invoices = await this.sync.invoices(principal.tenantId, connection.connectionId, query,
-      request.studentOperationsCorrelationId);
+      request.studentOperationsCorrelationId, principal.identityUserId);
     return { workspace, connections, connection, invoices, connectionIssue: null };
   }
 

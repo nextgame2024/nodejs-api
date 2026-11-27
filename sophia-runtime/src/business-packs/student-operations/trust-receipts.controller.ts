@@ -1,7 +1,7 @@
-import { trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
+import { currentTrustInvoice, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header,
-  Headers, NotFoundException, Param, ParseUUIDPipe, Post, Req, StreamableFile, UploadedFile,
+  Headers, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, StreamableFile, UploadedFile,
   UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -58,17 +58,14 @@ export class TrustReceiptsController {
          FROM ${schema}.student_operations_xero_invoices invoice
          JOIN ${schema}.student_operations_xero_sync_configurations cfg USING (customer_id,xero_connection_id)
          JOIN ${schema}.student_operations_xero_invoices credit USING (customer_id,xero_connection_id,xero_contact_id)
-         JOIN ${schema}.student_operations_xero_sync_runs seen
-           ON seen.customer_id=credit.customer_id AND seen.sync_run_id=credit.last_seen_sync_run_id
          WHERE cfg.enabled AND cfg.organisation_role='trust'
            AND invoice.customer_id=r.customer_id AND invoice.xero_connection_id=r.connection_id AND invoice.xero_invoice_id=r.invoice_id
            AND r.amount > round(r.invoice_due_at_verification,2)
            AND credit.invoice_type='RECEIVE-OVERPAYMENT' AND credit.invoice_status IN ('PAID','AUTHORISED')
            AND credit.currency_code='AUD' AND credit.invoice_date=r.received_on
            AND credit.total=r.amount-round(r.invoice_due_at_verification,2)
-           AND NOT EXISTS (SELECT 1 FROM ${schema}.student_operations_xero_sync_runs newer
-             WHERE newer.customer_id=r.customer_id AND newer.xero_connection_id=r.connection_id
-               AND newer.status='succeeded' AND newer.mode IN ('initial','reconciliation') AND newer.created_at>seen.created_at)`;
+           AND ${currentTrustInvoice(schema, 'invoice')}
+           AND ${currentTrustInvoice(schema, 'credit')}`;
   }
 
   @Get()
@@ -132,6 +129,34 @@ export class TrustReceiptsController {
         if (!existing.rowCount) throw new ConflictException('This payment or receipt has changed. Review the latest imported payments.');
       }
       return {paymentId:payment};
+    });
+  }
+
+  @Get(':id/payments/:paymentId/claims')
+  @Header('Cache-Control','private, no-store')
+  async claimHistory(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
+    @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
+    @Param('paymentId',ParseUUIDPipe) payment: string, @Query('before') before?: string) {
+    const p = manager(request);
+    if (before !== undefined && !z.uuid().safeParse(before).success) throw new BadRequestException('Invalid history cursor.');
+    const params = [p.tenantId,connection,invoice,receipt,payment];
+    const cursor = before ? `AND (c.claimed_at,c.claim_id) < (
+      SELECT previous.claimed_at,previous.claim_id FROM ${this.claims} previous
+      WHERE previous.customer_id=c.customer_id AND previous.connection_id=c.connection_id
+        AND previous.payment_id=c.payment_id AND previous.claim_id=$6)` : '';
+    if (before) params.push(before);
+    return this.database.tenantReadTransaction(p.tenantId, async db => {
+      const {rows} = await db.query(`SELECT c.claim_id AS id, c.claimed_at AS "claimedAt",
+          c.released_at AS "releasedAt", nullif(trim(staff.display_name),'') AS "ownerName"
+        FROM ${this.table} r JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
+        JOIN ${this.claims} c ON c.customer_id=l.customer_id AND c.connection_id=l.connection_id AND c.payment_id=l.payment_id
+        LEFT JOIN ${runtimeConfig().schema}.student_operations_advisor_roster staff
+          ON staff.customer_id=c.customer_id AND staff.user_id::text=c.claimed_by
+        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4
+          AND l.payment_id=$5 ${cursor}
+        ORDER BY c.claimed_at DESC,c.claim_id DESC LIMIT 11`,params);
+      const entries = rows.slice(0,10);
+      return {entries, nextCursor: rows.length > entries.length ? entries[entries.length-1].id : null};
     });
   }
 
@@ -262,6 +287,7 @@ export class TrustReceiptsController {
           USING (customer_id,xero_connection_id)
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
           AND c.enabled AND c.organisation_role='trust' AND i.currency_code='AUD' AND i.invoice_type='ACCREC'
+          AND ${currentTrustInvoice(schema, 'i')}
           AND i.invoice_status='AUTHORISED' AND i.amount_due>0 AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
         ON CONFLICT DO NOTHING RETURNING verification_id`,
         [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null]);
