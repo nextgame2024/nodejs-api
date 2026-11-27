@@ -4367,5 +4367,14 @@
       "7 ChromeHeadless tests passed across the receipt form and operations panel"
     ],
     "release": "Runtime and frontend deployment pending. Uses existing tables."
+  },
+  "trustReceiptXeroHandoff": {
+    "updatedOn": "2026-11-27",
+    "scope": "Open the TRUST invoice, candidate payment or linked payment using the selected connection's Xero organisation short code.",
+    "verification": [
+      "ngc -p tsconfig.app.json --noEmit",
+      "8 ChromeHeadless tests passed across the receipt form and payment operations panel"
+    ],
+    "release": "Frontend deployment pending. Live Xero navigation was not tested."
   }
 }
