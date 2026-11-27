@@ -120,6 +120,10 @@ type InvoiceRow = {
   pending_amount?: string;
   pending_count?: number;
   checked_count?: number;
+  unassigned_count?: number;
+  xero_pending_count?: number;
+  unknown_status_count?: number;
+  unmatched_link_count?: number;
   xero_invoice_id: string;
   xero_contact_id: string;
   invoice_type: string;
@@ -446,19 +450,27 @@ export class StudentOperationsXeroSyncService {
       const reconciliationQueue = parsed.data.queue === 'reconciliation_review';
       const reconciliationJoin = reconciliationQueue ? `JOIN LATERAL (
           SELECT min(l.linked_at) AS oldest_pending_link, sum(l.payment_amount) AS pending_amount,
-                 count(*)::int AS pending_count, count(check_record.payment_id)::int AS checked_count
+                 count(*)::int AS pending_count, count(check_record.payment_id)::int AS checked_count,
+                 count(*) FILTER (WHERE claim.claim_id IS NULL)::int AS unassigned_count,
+                 count(*) FILTER (WHERE imported.reconciled IS FALSE)::int AS xero_pending_count,
+                 count(*) FILTER (WHERE imported.matches > 0 AND imported.reconciled IS NULL)::int AS unknown_status_count,
+                 count(*) FILTER (WHERE imported.matches = 0)::int AS unmatched_link_count
           FROM ${schema}.student_trust_receipt_verifications r
           JOIN ${schema}.student_trust_receipt_payment_links l USING (customer_id,connection_id,verification_id)
           JOIN ${schema}.student_operations_xero_sync_configurations cfg
             ON cfg.customer_id=r.customer_id AND cfg.xero_connection_id=r.connection_id
+          LEFT JOIN ${schema}.student_trust_reconciliation_claims claim
+            ON claim.customer_id=l.customer_id AND claim.connection_id=l.connection_id AND claim.payment_id=l.payment_id AND claim.released_at IS NULL
           LEFT JOIN ${schema}.student_trust_payment_reconciliation_checks check_record
             ON check_record.customer_id=l.customer_id AND check_record.connection_id=l.connection_id AND check_record.payment_id=l.payment_id
+          CROSS JOIN LATERAL (
+            SELECT count(*) AS matches, bool_or(candidate."isReconciled") AS reconciled
+            FROM (${trustReceiptPaymentCandidates(schema)}) candidate
+            WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount
+          ) imported
           WHERE cfg.enabled AND cfg.organisation_role='trust'
             AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
-            AND NOT EXISTS (
-              SELECT 1 FROM (${trustReceiptPaymentCandidates(schema)}) candidate
-              WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE
-            )
+            AND imported.reconciled IS NOT TRUE
         ) pending ON pending.pending_count > 0` : '';
       if (supplierId) {
         params.push(supplierId);
@@ -513,7 +525,7 @@ export class StudentOperationsXeroSyncService {
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
                 count(*) OVER()::int AS total_count,
                 ${excessQueue ? 'excess.receipt_excess,' : ''}
-                ${reconciliationQueue ? 'pending.oldest_pending_link, pending.pending_amount, pending.pending_count, pending.checked_count,' : ''}
+                ${reconciliationQueue ? 'pending.oldest_pending_link, pending.pending_amount, pending.pending_count, pending.checked_count, pending.unassigned_count, pending.xero_pending_count, pending.unknown_status_count, pending.unmatched_link_count,' : ''}
                 count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
                 count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
                 count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
@@ -1117,6 +1129,10 @@ function invoiceProjection(row: InvoiceRow) {
       amount: Number(row.pending_amount),
       payments: row.pending_count,
       managerChecks: row.checked_count,
+      unassigned: row.unassigned_count,
+      xeroPending: row.xero_pending_count,
+      statusUnknown: row.unknown_status_count,
+      linkMismatch: row.unmatched_link_count,
     } }),
     ...(row.receipt_excess == null ? {} : { receiptExcess: Number(row.receipt_excess) }),
     xeroInvoiceId: row.xero_invoice_id,

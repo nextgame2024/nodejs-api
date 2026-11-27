@@ -4397,5 +4397,53 @@
       "9 ChromeHeadless payment panel and receipt form tests passed"
     ],
     "release": "No schema change. Backend and frontend deployment pending."
+  },
+  "trustReconciliationQueueStatus": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show per-invoice counts of pending Xero payments, missing reconciliation flags and links that no longer match.",
+    "verification": [
+      "Compared the configured database ledger to the repository migrations. Current through 147.",
+      "npm run build in sophia-runtime and ngc -p tsconfig.app.json --noEmit",
+      "26 focused backend tests and 9 ChromeHeadless tests passed"
+    ],
+    "release": "Backend and frontend deployment pending."
+  },
+  "trustReceiptPaymentPurpose": {
+    "updatedOn": "2026-11-27",
+    "scope": "Record an optional local payment purpose with a verified TRUST receipt and display it in the receipt history.",
+    "verification": [
+      "Backend build and Angular ngc compilation passed",
+      "26 focused backend tests and 9 ChromeHeadless tests passed, including purpose persistence and duplicate protection",
+      "Applied migration 148 using the configured migration runner and verified its ledger entry and nullable payment_purpose column"
+    ],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReceiptAuditNames": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the staff member and recorded time for receipt verification, payment and overpayment links, and manual reconciliation checks using current tenant roster names.",
+    "verification": [
+      "Backend build and ngc -p tsconfig.app.json --noEmit passed",
+      "26 focused backend tests and 9 ChromeHeadless tests passed, including different actors and a missing local roster entry with a same-ID record in another tenant"
+    ],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReceiptReturnRefresh": {
+    "updatedOn": "2026-11-27",
+    "scope": "On return to a visible receipt or manual refresh, reload the local invoice and receipt details, update the review queue and preserve draft verification fields.",
+    "verification": [
+      "ngc -p tsconfig.app.json --noEmit",
+      "10 focused ChromeHeadless tests passed, including tab visibility, duplicate requests, failed refresh, retry and teardown"
+    ],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "trustReconciliationFollowUpOwnership": {
+    "updatedOn": "2026-11-27",
+    "scope": "One manager can claim each outstanding linked payment. Only the owner can release the claim. The register counts unassigned follow-ups per invoice.",
+    "verification": [
+      "Backend build and ngc -p tsconfig.app.json --noEmit passed",
+      "26 focused backend tests and 11 ChromeHeadless tests passed, including concurrent claims and stale release retries",
+      "Applied migration 149 using the configured runner and verified its ledger entry, forced RLS and restricted application role privileges"
+    ],
+    "release": "Database migrated. Backend and frontend deployment pending."
   }
 }

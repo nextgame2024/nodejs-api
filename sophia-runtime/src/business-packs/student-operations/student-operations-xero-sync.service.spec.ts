@@ -227,7 +227,8 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(sql).toContain("cfg.organisation_role='trust'");
     expect(sql).toContain('r.invoice_id=i.xero_invoice_id');
     expect(sql).toContain('ORDER BY pending.oldest_pending_link ASC, i.xero_invoice_id ASC');
-    expect(sql).toContain('candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE');
+    expect(sql).toContain('candidate.id=l.payment_id AND candidate.amount=l.payment_amount');
+    expect(sql).toContain('imported.reconciled IS NOT TRUE');
     expect(sql).not.toContain('AND i.amount_due > 0');
   });
 
