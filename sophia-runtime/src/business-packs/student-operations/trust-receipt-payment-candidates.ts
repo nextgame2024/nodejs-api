@@ -15,7 +15,13 @@ export function currentTrustInvoice(schema: string, invoice: 'i' | 'invoice' | '
 
 // Correlated to the verified TRUST receipt aliased as r.
 export function trustReceiptPaymentCandidates(schema: string) {
-  return `SELECT e.id::uuid AS id, e.amount, bool_or(e."isReconciled") AS "isReconciled"
+  const current = `i.settlement->>'allocationListsOmitted' IS DISTINCT FROM 'true'
+    AND ((i.settlement->'omittedKinds') ? 'payment') IS NOT TRUE`;
+  return `SELECT e.id::uuid AS id, min(e.amount) AS amount,
+        bool_and(${current}) AS "paymentListCurrent",
+        CASE WHEN bool_and(${current})
+          AND bool_and(e."isReconciled") = bool_or(e."isReconciled")
+          THEN bool_and(e."isReconciled") END AS "isReconciled"
       FROM ${schema}.student_operations_xero_invoices i
       JOIN ${schema}.student_operations_xero_sync_configurations c USING (customer_id,xero_connection_id)
       CROSS JOIN LATERAL jsonb_to_recordset(i.settlement->'entries') e(kind text,id text,date text,amount numeric,"isReconciled" boolean)
@@ -23,14 +29,15 @@ export function trustReceiptPaymentCandidates(schema: string) {
         AND c.enabled AND c.organisation_role='trust' AND i.invoice_type='ACCREC' AND i.currency_code='AUD'
         AND i.invoice_status IN ('PAID','AUTHORISED') AND e.kind='payment'
         AND ${currentTrustInvoice(schema, 'i')}
-        AND e.date=r.received_on::text AND e.amount > 0
-        AND e.amount=least(r.amount,round(r.invoice_due_at_verification,2))
-      GROUP BY e.id::uuid, e.amount`;
+      GROUP BY e.id::uuid
+      HAVING bool_and((e.date=r.received_on::text AND e.amount > 0
+        AND e.amount=least(r.amount,round(r.invoice_due_at_verification,2))) IS TRUE)`;
 }
 
-export function availableTrustPaymentIds(schema: string) {
+export function availableTrustPaymentIds(schema: string, includeExistingLink = false) {
   return `SELECT candidate.id FROM (${trustReceiptPaymentCandidates(schema)}) candidate
-    WHERE NOT EXISTS (SELECT 1 FROM ${schema}.student_trust_receipt_payment_links used
+    WHERE (candidate."paymentListCurrent"${includeExistingLink ? ' OR candidate.id=l.payment_id' : ''})
+      AND NOT EXISTS (SELECT 1 FROM ${schema}.student_trust_receipt_payment_links used
       WHERE used.customer_id=r.customer_id AND used.connection_id=r.connection_id
         AND used.payment_id=candidate.id AND used.verification_id<>r.verification_id)`;
 }

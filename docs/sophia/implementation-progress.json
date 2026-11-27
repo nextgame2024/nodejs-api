@@ -4647,5 +4647,107 @@
     "scope": "Audit allowed and denied receipt screenshot requests reaching the controller with the workspace identity, correlation ID and requested document identifiers.",
     "verification": ["Runtime build passed", "18 targeted workspace guard, receipt controller and PostgreSQL integration tests passed"],
     "release": "Existing append-only audit table. No migration required. Backend deployment and broader organisation/action grants pending."
+  },
+  "paymentOperationsManagerPolicyDecision": {
+    "updatedOn": "2026-11-27",
+    "scope": "Open for Australia confirmed Pedro Muñoz can perform all payment operations for TRUST and PTY. Additional staff grants are deferred.",
+    "verification": ["Reviewed the supplied Chief Executive workspace screenshot and the Student Operations role permission map"],
+    "release": "Recorded policy decision. Uses the existing Chief Executive role for implemented actions. No migration required."
+  },
+  "paymentOperationsSettlementIdCase": {
+    "updatedOn": "2026-11-27",
+    "scope": "Canonicalise Xero settlement UUIDs on import and use case-insensitive payment ID lookups for existing receipt reviews.",
+    "verification": ["Runtime build and Angular compilation passed", "87 backend and 12 receipt form browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustReceiptAmountReplay": {
+    "updatedOn": "2026-11-27",
+    "scope": "Use exact cents in new receipt fingerprints and recognise equivalent decimal spellings on retries of existing verifications.",
+    "verification": ["Runtime build passed", "12 focused receipt tests passed including concurrent retries, legacy fingerprints, changed amounts and actor isolation"],
+    "release": "No migration required. Backend deployment pending."
+  },
+  "trustBankTransactionIdentity": {
+    "updatedOn": "2026-11-27",
+    "scope": "Capture an optional bank transaction ID, enforce uniqueness per TRUST connection and receiving account label, and distinguish otherwise identical deposits when both IDs are known.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 12 receipt form browser tests passed", "Configured migration runner committed 154_trust_receipt_bank_transaction_id.sql"],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReceiptBankIdSearch": {
+    "updatedOn": "2026-11-27",
+    "scope": "Find invoices by an exact bank transaction ID in the unlinked receipt, excess receipt and reconciliation queues.",
+    "verification": ["Runtime build and Angular compilation passed", "23 backend tests passed, including receipt queue searches against PostgreSQL"],
+    "release": "Uses the existing migration 154 column. Backend and frontend deployment pending."
+  },
+  "trustDuplicateBankTransactionReview": {
+    "updatedOn": "2026-11-27",
+    "scope": "Identify the existing invoice on a duplicate bank transaction ID conflict in the same TRUST connection and receiving account. Preserve the verification draft.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend tests and 13 receipt form browser tests passed"],
+    "release": "Uses migration 154. Backend and frontend deployment pending."
+  },
+  "trustDuplicateReceiptComparison": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show the date and amount of the verified receipt after a duplicate bank ID, and open its invoice using the TRUST organisation short code.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 13 receipt form browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "trustContradictoryPaymentObservations": {
+    "updatedOn": "2026-11-27",
+    "scope": "Require all imported entries for a payment ID on the invoice to agree with the verified receipt date and applied amount before linking or recording a new reconciliation check.",
+    "verification": ["Runtime build passed", "30 backend tests passed including conflicting amounts, differing dates and missing dates in PostgreSQL"],
+    "release": "No migration required. Backend deployment pending."
+  },
+  "trustConflictingPaymentReviewDetails": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show each distinct amount and date for a mismatched linked payment. Show conflicting references on candidates and withhold reference-match ranking when ambiguous.",
+    "verification": ["Angular compilation passed", "13 receipt form browser tests passed"],
+    "release": "Frontend deployment pending. No migration required."
+  },
+  "paymentOperationsImportedPaymentObservations": {
+    "updatedOn": "2026-11-27",
+    "scope": "Persist each distinct imported invoice payment amount, currency, date and reconciliation flag with its first observed sync run. Scope by tenant, connection, invoice and payment ID and commit alongside the invoice checkpoint.",
+    "verification": ["Runtime build passed", "126 PTY PostgreSQL integration, Xero sync and connector tests passed", "Configured migration runner applied 155_xero_payment_observations.sql"],
+    "release": "Database migrated. Collection starts with imports after backend deployment. Historical snapshots were not backfilled."
+  },
+  "trustLinkedPaymentObservationReview": {
+    "updatedOn": "2026-11-27",
+    "scope": "Show up to five distinct imported observations on each linked TRUST receipt, scoped by tenant, connection, invoice and payment ID and ordered by first-seen time.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend and 13 receipt form browser tests passed"],
+    "release": "Uses migration 155. Backend and frontend deployment pending."
+  },
+  "trustOlderPaymentObservations": {
+    "updatedOn": "2026-11-27",
+    "scope": "Load earlier observations after the five-record receipt preview in pages of ten, under the same customer, connection, invoice, receipt and linked payment.",
+    "verification": ["Runtime build and Angular compilation passed", "12 backend tests and 14 receipt form browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "xeroDateOnlySettlementUpdate": {
+    "updatedOn": "2026-11-27",
+    "scope": "Preserve stored invoice allocations when a Xero update supplies only the fully-paid date. Continue to honour explicit empty allocation snapshots.",
+    "verification": ["Runtime build passed", "127 Xero connector, sync and PostgreSQL integration tests passed"],
+    "release": "No migration required. Backend deployment pending."
+  },
+  "trustRetainedAllocationStatus": {
+    "updatedOn": "2026-11-27",
+    "scope": "Mark retained settlement entries when an invoice update omits payment details. Show their provenance in invoice review and treat matching linked payments as status unavailable in the reconciliation queue.",
+    "verification": ["Runtime build and Angular compilation passed", "132 backend tests and 14 receipt form browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "xeroPartialAllocationLists": {
+    "updatedOn": "2026-11-27",
+    "scope": "Refresh each supplied allocation list independently. Carry forward entries from omitted lists, label them in invoice detail and treat carried-forward payment reconciliation status as unavailable.",
+    "verification": ["Runtime build and Angular compilation passed", "132 backend tests and 14 receipt form browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
+  },
+  "xeroReceiptLinkCurrencyAndHistory": {
+    "updatedOn": "2026-11-27",
+    "scope": "Require a current imported payment list for new TRUST receipt links and keep existing links reviewable. Discard carried-forward allocations when the invoice currency changes or is unknown. Index payment history in its pagination order.",
+    "verification": ["npm run build passed", "Five targeted Jest suites passed with PostgreSQL fixtures enabled (139 tests)", "Configured database catalog confirmed migration 156 index valid and ready"],
+    "release": "Migration 156 applied. Backend deployment pending."
+  },
+  "trustUncheckedReconciliationReview": {
+    "updatedOn": "2026-11-27",
+    "scope": "Keep payments with contradictory imported flags in review. Filter unchecked pending payments and unchecked matched payments with unavailable Xero status independently in Payments and Control.",
+    "verification": ["Runtime build and Angular compilation passed", "30 targeted backend tests including PostgreSQL integration and four manager panel browser tests passed"],
+    "release": "No migration required. Backend and frontend deployment pending."
   }
 }

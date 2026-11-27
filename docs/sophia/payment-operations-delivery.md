@@ -28,6 +28,10 @@ The first usable increment gives authorised staff a read-only operational overvi
 | Overpaid student, future invoice, unclaimed credit | Detect exact excess before posting, create student residual, age it, route to reviewed Xero treatment. | Phase 4 approved carry-forward to eligible same-contact invoice, refund or accountant-authorised adjustment. |
 | Direct payment with no TRUST invoice, Stripe paid before payout | Capture evidence/task, no automatic posting, distinguish source unavailable and not applicable. | Phase 3 completes external confirmation, commission origin, processor-to-bank matching and due-date alerts. |
 
+## Open for Australia payment permissions
+
+Pedro Muñoz is authorised to perform all payment-operations actions for both TRUST and PTY, including preparing and approving payments. His Business Manager account is shown with the Chief Executive role. This decision covers actions as they become available in Sophia. Permissions for additional staff will be defined later.
+
 ## Incremental pull requests
 
 Complexity is relative to the current pack: **S** single bounded change, **M** several layers or a provider contract, **L** concurrency, multiple systems or accounting policy. Dependencies refer to the first column. Each row defines a mergeable unit; release controls are per customer, organisation, resource and operation. Merging a schema, sender adapter or command worker does not enable financial side effects.

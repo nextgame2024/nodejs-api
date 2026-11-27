@@ -37,13 +37,13 @@ const CandidateSortExpressions = {
 const InvoiceQuerySchema = z.object({
   paymentCandidateStatus: z.enum(["available", "multiple", "partial", "none"]).optional(),
   excessLinkStatus: z.enum(["needs_link", "fully_linked", "link_mismatch"]).optional(),
-  reconciliationStatus: z.enum(["link_mismatch", "checked_pending", "checked_unknown"]).optional(),
+  reconciliationStatus: z.enum(["link_mismatch", "checked_pending", "checked_unknown", "unchecked_pending", "unchecked_unknown"]).optional(),
   followUpOwner: z.enum(["mine", "unassigned"]).optional(),
   queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts", "reconciliation_review"]).optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
-  q: z.string().trim().max(100).optional(),
+  q: z.string().trim().max(150).optional(),
   status: z.enum(["DRAFT", "SUBMITTED", "AUTHORISED", "PAID"]).optional(),
   dateFrom: z.iso.date().optional(),
   dateTo: z.iso.date().optional(),
@@ -435,13 +435,16 @@ export class StudentOperationsXeroSyncService {
       durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
+      const receiptSearch = q && queue && queue !== 'outstanding_invoices' ? params.push(q) : 0;
+      const bankIdMatch = (alias: 'receipt' | 'r') => receiptSearch
+        ? `bool_or(${alias}.bank_transaction_id = $${receiptSearch}) AS matches_bank_id,` : '';
       const excessQueue = parsed.data.queue === 'excess_receipts';
       const mismatchHaving = parsed.data.excessLinkStatus === 'link_mismatch'
         ? `HAVING bool_or(credit.overpayment_id IS NOT NULL AND NOT EXISTS (
             SELECT 1 FROM (${trustOverpaymentCandidates(schema, 'receipt')}) candidate
             WHERE candidate.id=credit.overpayment_id))` : '';
       const excessJoin = excessQueue ? `JOIN LATERAL (
-        SELECT sum(receipt.amount - round(receipt.invoice_due_at_verification, 2)) AS receipt_excess,
+        SELECT ${bankIdMatch('receipt')} sum(receipt.amount - round(receipt.invoice_due_at_verification, 2)) AS receipt_excess,
                coalesce(sum(receipt.amount - round(receipt.invoice_due_at_verification, 2))
                  FILTER (WHERE credit.overpayment_id IS NULL), 0) AS unlinked_excess,
                (now() AT TIME ZONE 'Australia/Brisbane')::date
@@ -463,7 +466,7 @@ export class StudentOperationsXeroSyncService {
       }
       const unlinkedQueue = queue === 'receipts_awaiting_link';
       const unlinkedJoin = unlinkedQueue ? `JOIN LATERAL (
-          SELECT count(*)::int AS unlinked_receipt_count, sum(r.amount) AS unlinked_receipt_amount,
+          SELECT ${bankIdMatch('r')} count(*)::int AS unlinked_receipt_count, sum(r.amount) AS unlinked_receipt_amount,
                  count(*) FILTER (WHERE matches.count > 0)::int AS receipts_with_candidates,
                  count(*) FILTER (WHERE matches.count = 2)::int AS receipts_with_multiple_candidates
           FROM ${schema}.student_trust_receipt_verifications r
@@ -495,8 +498,16 @@ export class StudentOperationsXeroSyncService {
       } else if (followUpOwner === 'unassigned') {
         ownerFilter = 'AND claim.claim_id IS NULL';
       }
+      const reconciliationConditions = {
+        link_mismatch: 'imported.matches = 0',
+        checked_pending: 'check_record.payment_id IS NOT NULL AND imported.reconciled IS FALSE',
+        checked_unknown: 'check_record.payment_id IS NOT NULL AND imported.matches > 0 AND imported.reconciled IS NULL',
+        unchecked_pending: 'check_record.payment_id IS NULL AND imported.reconciled IS FALSE',
+        unchecked_unknown: 'check_record.payment_id IS NULL AND imported.matches > 0 AND imported.reconciled IS NULL',
+      };
+      const reconciliationFilter = reconciliationStatus ? `AND ${reconciliationConditions[reconciliationStatus]}` : '';
       const reconciliationJoin = reconciliationQueue ? `JOIN LATERAL (
-          SELECT min(l.linked_at) AS oldest_pending_link,
+          SELECT ${bankIdMatch('r')} min(l.linked_at) AS oldest_pending_link,
                  (now() AT TIME ZONE 'Australia/Brisbane')::date
                    - (min(l.linked_at) AT TIME ZONE 'Australia/Brisbane')::date AS pending_days,
                  sum(l.payment_amount) AS pending_amount,
@@ -522,9 +533,7 @@ export class StudentOperationsXeroSyncService {
           WHERE cfg.enabled AND cfg.organisation_role='trust'
             AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
             ${ownerFilter}
-            ${reconciliationStatus === 'link_mismatch' ? 'AND imported.matches = 0' : ''}
-            ${reconciliationStatus === 'checked_pending' ? 'AND check_record.payment_id IS NOT NULL AND imported.reconciled IS FALSE' : ''}
-            ${reconciliationStatus === 'checked_unknown' ? 'AND check_record.payment_id IS NOT NULL AND imported.matches > 0 AND imported.reconciled IS NULL' : ''}
+            ${reconciliationFilter}
             AND imported.reconciled IS NOT TRUE
         ) pending ON pending.pending_count > 0` : '';
       if (supplierId) {
@@ -547,6 +556,7 @@ export class StudentOperationsXeroSyncService {
           OR c.contact_number ILIKE $${position} OR c.account_number ILIKE $${position}
           OR i.concept ILIKE $${position} OR i.advisor_name ILIKE $${position}
           OR i.payment_track ILIKE $${position}
+          ${receiptSearch ? `OR ${excessQueue ? 'excess' : unlinkedQueue ? 'unlinked' : 'pending'}.matches_bank_id` : ''}
         )`);
       }
       if (status) {
@@ -992,7 +1002,20 @@ export class StudentOperationsXeroSyncService {
              invoice_reference=EXCLUDED.invoice_reference, concept=EXCLUDED.concept,
              advisor_name=EXCLUDED.advisor_name, college_name=EXCLUDED.college_name,
              payment_track=EXCLUDED.payment_track, sent_to_contact=EXCLUDED.sent_to_contact,
-             line_items=EXCLUDED.line_items,settlement=COALESCE(EXCLUDED.settlement,student_operations_xero_invoices.settlement),
+             line_items=EXCLUDED.line_items,
+             settlement=CASE WHEN EXCLUDED.currency_code IS NULL OR student_operations_xero_invoices.currency_code IS DISTINCT FROM EXCLUDED.currency_code
+               THEN EXCLUDED.settlement
+               WHEN EXCLUDED.settlement->>'allocationListsOmitted' = 'true'
+               THEN jsonb_set(EXCLUDED.settlement,'{entries}',COALESCE(student_operations_xero_invoices.settlement->'entries','[]'::jsonb))
+               WHEN EXCLUDED.settlement IS NULL
+               THEN student_operations_xero_invoices.settlement || '{"allocationListsOmitted":true}'::jsonb
+               WHEN EXCLUDED.settlement ? 'omittedKinds'
+               THEN jsonb_set(EXCLUDED.settlement,'{entries}',(EXCLUDED.settlement->'entries') || COALESCE((
+                 SELECT jsonb_agg(prior.entry ORDER BY prior.position)
+                 FROM jsonb_array_elements(student_operations_xero_invoices.settlement->'entries') WITH ORDINALITY AS prior(entry,position)
+                 WHERE (EXCLUDED.settlement->'omittedKinds') ? (prior.entry->>'kind')
+               ),'[]'::jsonb))
+               ELSE EXCLUDED.settlement END,
              invoice_type=EXCLUDED.invoice_type, invoice_status=EXCLUDED.invoice_status,
              invoice_date=EXCLUDED.invoice_date, due_date=EXCLUDED.due_date,
              currency_code=EXCLUDED.currency_code, total=EXCLUDED.total,
@@ -1001,6 +1024,21 @@ export class StudentOperationsXeroSyncService {
              last_seen_sync_run_id=EXCLUDED.last_seen_sync_run_id, updated_at=now()`,
           [tenantId, run.xero_connection_id, run.sync_run_id, JSON.stringify(invoices)],
         );
+        const observations = invoices.flatMap(invoice => (invoice.settlement?.entries ?? [])
+          .filter(entry => entry.kind === 'payment')
+          .map(entry => ({
+            invoice_id:invoice.invoiceId, payment_id:entry.id, amount:entry.amount,
+            currency_code:invoice.currencyCode, payment_date:entry.date, is_reconciled:entry.isReconciled,
+          })));
+        if (observations.length) {
+          await db.query(`INSERT INTO ${schema}.student_xero_payment_observations
+              (customer_id,xero_connection_id,first_seen_run_id,xero_invoice_id,payment_id,amount,currency_code,payment_date,is_reconciled)
+            SELECT $1,$2,$3,invoice_id,payment_id,amount,currency_code,payment_date,is_reconciled
+            FROM jsonb_to_recordset($4::jsonb) AS observation(invoice_id uuid,payment_id uuid,amount numeric,
+              currency_code text,payment_date date,is_reconciled boolean)
+            ON CONFLICT DO NOTHING`,
+            [tenantId,run.xero_connection_id,run.sync_run_id,JSON.stringify(observations)]);
+        }
       }
       await checkpointProgress(db, schema, tenantId, run.sync_run_id, owner, "invoice_count", processedCount);
     });

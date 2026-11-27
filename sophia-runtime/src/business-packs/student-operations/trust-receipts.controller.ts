@@ -19,6 +19,7 @@ const fields = z.object({
   receivedOn: z.iso.date(),
   amount: z.string().regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/).refine(value => Number(value) > 0),
   account: z.string().trim().min(1).max(120),
+  bankTransactionId: z.string().trim().max(150).default(''),
   paymentPurpose: z.string().trim().max(240).default(''),
   reference: z.string().trim().max(150).default(''),
 }).strict();
@@ -30,6 +31,9 @@ function linkDecisionNote(body: unknown) {
   if (!parsed.success) throw new BadRequestException('Use a decision note of up to 500 characters.');
   return parsed.data.decisionNote || null;
 }
+
+const observationFields = `jsonb_build_object('id',o.observation_id,'firstSeenAt',o.first_seen_at,
+                'paymentDate',o.payment_date,'amount',o.amount::text,'currency',o.currency_code,'isReconciled',o.is_reconciled)`;
 
 function manager(request: Request) {
   const principal = request.studentOperationsPrincipal;
@@ -76,17 +80,22 @@ export class TrustReceiptsController {
        claim.claim_id AS "reviewClaimId", owner.name AS "reviewOwnerName", claim.claimed_by=$4 AS "reviewOwnedByMe",
        verifier.name AS "verifiedByName", payment_linker.name AS "paymentLinkedByName", l.linked_at AS "paymentLinkedAt", l.decision_note AS "paymentLinkNote",
        credit_linker.name AS "overpaymentLinkedByName", checker.name AS "reconciliationCheckedByName",
-       reference, payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
+       reference, bank_transaction_id AS "bankTransactionId", payment_purpose AS "paymentPurpose", verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
          WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) AS "linkedPaymentReconciled",
+       ARRAY(SELECT ${observationFields}
+         FROM ${runtimeConfig().schema}.student_xero_payment_observations o
+         WHERE o.customer_id=r.customer_id AND o.xero_connection_id=r.connection_id
+           AND o.xero_invoice_id=r.invoice_id AND o.payment_id=l.payment_id
+         ORDER BY o.first_seen_at DESC,o.observation_id DESC LIMIT 6) AS "paymentObservations",
        check_record.checked_at AS "reconciliationCheckedAt", check_record.reported_reconciled_on::text AS "reportedReconciledOn",
        x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt", x.decision_note AS "overpaymentLinkNote",
        ARRAY(SELECT candidate.id FROM (${this.excessCandidates}) candidate
          WHERE NOT EXISTS (SELECT 1 FROM ${this.excessLinks} used WHERE used.customer_id=r.customer_id
            AND used.connection_id=r.connection_id AND used.overpayment_id=candidate.id AND used.verification_id<>r.verification_id)
          ORDER BY candidate.id) AS "possibleOverpaymentIds",
-       ARRAY(${availableTrustPaymentIds(runtimeConfig().schema)} ORDER BY candidate.id) AS "candidateIds"
+       ARRAY(${availableTrustPaymentIds(runtimeConfig().schema, true)} ORDER BY candidate.id) AS "candidateIds"
        FROM ${this.table} r LEFT JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
        LEFT JOIN ${this.excessLinks} x USING (customer_id,connection_id,verification_id)
        LEFT JOIN ${this.checks} check_record ON check_record.customer_id=l.customer_id
@@ -99,7 +108,10 @@ export class TrustReceiptsController {
        LEFT JOIN staff credit_linker ON credit_linker.id=x.linked_by
        LEFT JOIN staff checker ON checker.id=check_record.checked_by
        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 ORDER BY verified_at DESC`,
-      [p.tenantId,connection,invoice,p.identityUserId])).rows);
+      [p.tenantId,connection,invoice,p.identityUserId])).rows.map(row => ({
+        ...row, paymentObservations:row.paymentObservations.slice(0,5),
+        observationCursor:row.paymentObservations.length > 5 ? row.paymentObservations[4].id : null,
+      })));
   }
 
   @Post(':id/link/:paymentId')
@@ -115,6 +127,7 @@ export class TrustReceiptsController {
         SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.amount,$6,$7
         FROM ${this.table} r CROSS JOIN LATERAL (${this.candidates}) candidate
         WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND candidate.id=$5
+          AND candidate."paymentListCurrent"
         ON CONFLICT DO NOTHING`, [...params,p.identityUserId,note]);
       if (!inserted.rowCount) {
         const existing = await db.query(`SELECT l.decision_note FROM ${this.links} l JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
@@ -123,6 +136,29 @@ export class TrustReceiptsController {
         if (!existing.rowCount) throw new ConflictException('This payment or receipt has changed. Review the latest imported payments.');
       }
       return {paymentId:payment};
+    });
+  }
+
+  @Get(':id/payments/:paymentId/observations')
+  @Header('Cache-Control','private, no-store')
+  async olderObservations(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
+    @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
+    @Param('paymentId',ParseUUIDPipe) payment: string, @Query('before',ParseUUIDPipe) before: string) {
+    const p = manager(request);
+    const observations = runtimeConfig().schema + '.student_xero_payment_observations';
+    return this.database.tenantReadTransaction(p.tenantId, async db => {
+      const {rows} = await db.query(`SELECT ${observationFields} AS entry
+        FROM ${this.table} r JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
+        JOIN ${observations} o ON o.customer_id=r.customer_id AND o.xero_connection_id=r.connection_id
+          AND o.xero_invoice_id=r.invoice_id AND o.payment_id=l.payment_id
+        JOIN ${observations} previous ON previous.customer_id=o.customer_id AND previous.xero_connection_id=o.xero_connection_id
+          AND previous.xero_invoice_id=o.xero_invoice_id
+        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4
+          AND l.payment_id=$5 AND previous.payment_id=o.payment_id AND previous.observation_id=$6
+          AND (o.first_seen_at,o.observation_id)<(previous.first_seen_at,previous.observation_id)
+        ORDER BY o.first_seen_at DESC,o.observation_id DESC LIMIT 11`,[p.tenantId,connection,invoice,receipt,payment,before]);
+      const entries = rows.slice(0,10).map(row => row.entry);
+      return {entries, nextCursor:rows.length > 10 ? entries[9].id : null};
     });
   }
 
@@ -276,26 +312,29 @@ export class TrustReceiptsController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:5, fieldSize:1024, parts:7}}))
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:6, fieldSize:1024, parts:8}}))
   async verify(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Headers('idempotency-key') key: string,
     @Body() body: unknown, @UploadedFile() file?: Evidence) {
     const p = manager(request);
     const parsed = fields.safeParse(body);
     if (!parsed.success || !z.uuid().safeParse(key).success) throw new BadRequestException('Check the receipt details.');
-    const {receivedOn,amount,account,reference,paymentPurpose} = parsed.data;
+    const {receivedOn,amount,account,reference,paymentPurpose,bankTransactionId} = parsed.data;
     const type = receiptEvidenceType(file);
-    // Keep the original fingerprint for clients retrying receipts without a purpose.
-    const fingerprint = [connection,invoice,receivedOn,amount,account,reference,type];
-    if (paymentPurpose) fingerprint.push(paymentPurpose);
-    const hash = createHash('sha256').update(JSON.stringify(fingerprint))
-      .update(file?.buffer ?? '').digest('hex');
+    const [whole, fraction = ''] = amount.split('.');
+    const centsAmount = whole + '.' + fraction.padEnd(2, '0');
+    const fingerprint = (formattedAmount: string) => {
+      const parts = [connection,invoice,receivedOn,formattedAmount,account,reference,type];
+      if (paymentPurpose) parts.push(paymentPurpose);
+      return createHash('sha256').update(JSON.stringify(bankTransactionId ? {parts,bankTransactionId} : parts)).update(file?.buffer ?? '').digest('hex');
+    };
+    const hash = fingerprint(centsAmount);
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId, async db => {
       const inserted = await db.query(`INSERT INTO ${this.table}
         (customer_id,connection_id,invoice_id,verification_id,verified_by,received_on,amount,account_label,reference,
-         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose)
-        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13
+         evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id)
+        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14
         FROM ${schema}.student_operations_xero_invoices i JOIN ${schema}.student_operations_xero_sync_configurations c
           USING (customer_id,xero_connection_id)
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
@@ -303,10 +342,34 @@ export class TrustReceiptsController {
           AND ${currentTrustInvoice(schema, 'i')}
           AND i.invoice_status='AUTHORISED' AND i.amount_due>0 AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
         ON CONFLICT DO NOTHING RETURNING verification_id`,
-        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null]);
+        [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null]);
       if (!inserted.rowCount) {
         const prior = await db.query(`SELECT payload_hash FROM ${this.table} WHERE customer_id=$1 AND verification_id=$2 AND verified_by=$3`,[p.tenantId,key,p.identityUserId]);
-        if (prior.rows[0]?.payload_hash !== hash) throw new ConflictException('Review existing receipts, payment date and current TRUST invoice before saving.');
+        const priorHash = prior.rows[0]?.payload_hash;
+        // Older receipts fingerprinted the entered decimal scale. Only equivalent spellings may replay.
+        const matchesLegacy = priorHash && priorHash !== hash && centsAmount.endsWith('0') &&
+          (priorHash === fingerprint(centsAmount.slice(0, -1)) ||
+            (centsAmount.endsWith('.00') && priorHash === fingerprint(whole)));
+        if (priorHash !== hash && !matchesLegacy) {
+          if (bankTransactionId && !priorHash) {
+            const existing = await db.query(`SELECT i.invoice_number, r.invoice_id, r.received_on::text, r.amount::text
+              FROM ${this.table} r
+              JOIN ${schema}.student_operations_xero_invoices i
+                ON i.customer_id=r.customer_id AND i.xero_connection_id=r.connection_id AND i.xero_invoice_id=r.invoice_id
+              JOIN ${schema}.student_operations_xero_sync_configurations cfg
+                ON cfg.customer_id=r.customer_id AND cfg.xero_connection_id=r.connection_id
+              WHERE r.customer_id=$1 AND r.connection_id=$2 AND lower(r.account_label)=lower($3)
+                AND r.bank_transaction_id=$4 AND cfg.enabled AND cfg.organisation_role='trust'`,
+              [p.tenantId,connection,account,bankTransactionId]);
+            if (existing.rowCount) throw new ConflictException({
+              errorCode:'trust_bank_transaction_already_verified',
+              message:'This bank transaction is already verified in Sophia.',
+              invoiceNumber:existing.rows[0].invoice_number,
+              invoiceId:existing.rows[0].invoice_id, receivedOn:existing.rows[0].received_on, amount:existing.rows[0].amount,
+            });
+          }
+          throw new ConflictException('Review existing receipts, payment date and current TRUST invoice before saving.');
+        }
       }
       return {id:key};
     });

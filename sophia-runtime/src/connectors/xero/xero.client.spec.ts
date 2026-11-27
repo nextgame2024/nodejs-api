@@ -14,7 +14,7 @@ const config: XeroConfig = {
 describe('invoice settlement snapshots',()=>{
   it('keeps payments and credit allocations separate from invoice dates',()=>{
     const id='11111111-1111-4111-8111-111111111111';
-    expect(xeroInvoiceSettlement({DateString:'2026-11-11',FullyPaidOnDate:'2026-11-20',Payments:[{PaymentID:id,DateString:'2026-11-19',Amount:100}],CreditNotes:[{CreditNoteID:id,DateString:'2026-11-20',AppliedAmount:25}]})).toEqual({fullyPaidOnDate:'2026-11-20',entries:[{kind:'payment',id,date:'2026-11-19',amount:100},{kind:'credit_note',id,date:'2026-11-20',amount:25}]});
+    expect(xeroInvoiceSettlement({DateString:'2026-11-11',FullyPaidOnDate:'2026-11-20',Payments:[{PaymentID:id,DateString:'2026-11-19',Amount:100}],CreditNotes:[{CreditNoteID:id,DateString:'2026-11-20',AppliedAmount:25}]})).toEqual({fullyPaidOnDate:'2026-11-20',omittedKinds:['prepayment','overpayment'],entries:[{kind:'payment',id,date:'2026-11-19',amount:100},{kind:'credit_note',id,date:'2026-11-20',amount:25}]});
   });
   it.each([
     [undefined, '2024-02-29', '2024-02-29'],
@@ -44,6 +44,15 @@ describe('invoice settlement snapshots',()=>{
     expect(() => xeroInvoiceSettlement({ CreditNotes: [allocation] })).toThrow('invalid invoice allocation');
   });
 
+  it('normalises allocation IDs to the UUID representation used by receipt links', () => {
+    const id = 'abcdefaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const snapshot = xeroInvoiceSettlement({
+      Payments: [{PaymentID:id.toUpperCase(), Amount:50}],
+      CreditNotes: [{CreditNoteID:id, AppliedAmount:10}],
+    });
+    expect(snapshot?.entries.map(entry => [entry.kind, entry.id])).toEqual([['payment', id], ['credit_note', id]]);
+  });
+
   it('keeps the payment reference separate from invoice and credit references', () => {
     const id = '11111111-1111-4111-8111-111111111111';
     const snapshot = xeroInvoiceSettlement({Reference:'invoice reference',
@@ -56,7 +65,15 @@ describe('invoice settlement snapshots',()=>{
     const snapshot = xeroInvoiceSettlement({ Payments: [{ PaymentID: id, Amount: 10, IsReconciled: flag }] });
     expect(snapshot?.entries[0].isReconciled).toBe(flag);
   });
-  it('distinguishes an omitted summary from an explicitly empty allocation snapshot',()=>{expect(xeroInvoiceSettlement({})).toBeUndefined();expect(xeroInvoiceSettlement({Payments:[]})).toEqual({fullyPaidOnDate:null,entries:[]});});
+  it('distinguishes a date-only update from an explicitly empty allocation list', () => {
+    const dateOnly = {FullyPaidOnDate:'2026-11-22'};
+    expect(xeroInvoiceSettlement({...dateOnly,Payments:null})).toEqual({
+      fullyPaidOnDate:'2026-11-22', entries:[], allocationListsOmitted:true,
+    });
+    expect(xeroInvoiceSettlement({...dateOnly,Payments:[]})).toEqual({fullyPaidOnDate:'2026-11-22',entries:[],omittedKinds:['credit_note','prepayment','overpayment']});
+    expect(xeroInvoiceSettlement({FullyPaidOnDate:'invalid'})).toBeUndefined();
+  });
+  it('distinguishes an omitted summary from an explicitly empty allocation snapshot',()=>{expect(xeroInvoiceSettlement({})).toBeUndefined();expect(xeroInvoiceSettlement({Payments:[]})).toMatchObject({fullyPaidOnDate:null,entries:[]});});
   it.each(['Payments', 'CreditNotes', 'Prepayments', 'Overpayments'])('rejects a malformed %s list before accepting a partial snapshot', key => {
     const malformed = { [key]: { unexpected: true } };
     expect(() => xeroInvoiceSettlement(malformed)).toThrow('invalid invoice allocation list');
@@ -64,7 +81,7 @@ describe('invoice settlement snapshots',()=>{
   });
   it('keeps null allocation lists compatible with omitted lists', () => {
     expect(xeroInvoiceSettlement({ Payments: null })).toBeUndefined();
-    expect(xeroInvoiceSettlement({ Payments: null, CreditNotes: [] })).toEqual({ fullyPaidOnDate: null, entries: [] });
+    expect(xeroInvoiceSettlement({ Payments: null, CreditNotes: [] })).toEqual({ fullyPaidOnDate: null, entries: [], omittedKinds:['payment','prepayment','overpayment'] });
   });
   it('rejects malformed allocations instead of persisting partial financial details',()=>{expect(()=>xeroInvoiceSettlement({Payments:[{PaymentID:'bad',Amount:100}]})).toThrow();});
 });

@@ -1137,13 +1137,17 @@ function xeroContactRecord(raw:unknown):XeroContactRecord {
     updatedAt:optionalTimestamp(value.UpdatedDateUTCString)??optionalXeroTimestamp(value.UpdatedDateUTC)};
 }
 
-export type XeroInvoiceSettlement={fullyPaidOnDate:string|null;entries:Array<{kind:'payment'|'credit_note'|'prepayment'|'overpayment';id:string;date:string|null;amount:number;reference?:string;isReconciled?:boolean}>};
+type XeroAllocationKind = 'payment'|'credit_note'|'prepayment'|'overpayment';
+export type XeroInvoiceSettlement={allocationListsOmitted?:true;omittedKinds?:XeroAllocationKind[];fullyPaidOnDate:string|null;entries:Array<{kind:XeroAllocationKind;id:string;date:string|null;amount:number;reference?:string;isReconciled?:boolean}>};
 export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceSettlement|undefined{
   const groups=[['Payments','PaymentID','payment'],['CreditNotes','CreditNoteID','credit_note'],['Prepayments','PrepaymentID','prepayment'],['Overpayments','OverpaymentID','overpayment']] as const;
   if (groups.some(([key]) => value[key] != null && !Array.isArray(value[key]))) {
     throw new BadGatewayException('Xero returned an invalid invoice allocation list.');
   }
-  if(!groups.some(([key])=>Array.isArray(value[key]))&&!value.FullyPaidOnDate)return undefined;
+  const fullyPaidOnDate = optionalXeroDate(value.FullyPaidOnDate);
+  if (!groups.some(([key]) => Array.isArray(value[key]))) {
+    return fullyPaidOnDate ? {fullyPaidOnDate, entries:[], allocationListsOmitted:true} : undefined;
+  }
   const entries:XeroInvoiceSettlement['entries']=[];
   for(const [key,id,kind] of groups){
     if(!Array.isArray(value[key]))continue;
@@ -1156,12 +1160,13 @@ export function xeroInvoiceSettlement(value:Record<string,unknown>):XeroInvoiceS
         ? null : optionalNumber(suppliedAmount);
       if(!identifier||!xeroUuid.test(identifier)||amount===null||amount<0)throw new BadGatewayException('Xero returned an invalid invoice allocation.');
       const reference = kind === 'payment' ? optionalString(item.Reference)?.trim() : undefined;
-      entries.push({kind,id:identifier,date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount,
+      entries.push({kind,id:identifier.toLowerCase(),date:optionalDate(item.DateString)??optionalXeroDate(item.Date),amount,
         ...(reference ? {reference} : {}),
         ...(kind === 'payment' && typeof item.IsReconciled === 'boolean' ? {isReconciled: item.IsReconciled} : {})});
     }
   }
-  return {fullyPaidOnDate:optionalXeroDate(value.FullyPaidOnDate),entries};
+  const omittedKinds = groups.filter(([key]) => !Array.isArray(value[key])).map(([, , kind]) => kind);
+  return {fullyPaidOnDate,entries,...(omittedKinds.length ? {omittedKinds} : {})};
 }
 function xeroInvoiceRecord(value:Record<string,unknown>):XeroInvoiceRecord{
   const contact=record(value.Contact),lineItems=Array.isArray(value.LineItems)?value.LineItems.map(record):[];

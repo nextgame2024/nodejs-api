@@ -10,7 +10,7 @@ import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.s
 import {autoMatchCollegeContacts} from './student-college-auto-matching.js';
 import type {InvoiceSnapshot} from './student-case-invoice-drafts.js';
 import {invoiceDraftXeroValue} from './student-case-invoice-matching.js';
-import type {XeroInvoiceCreate,XeroInvoiceRecord} from '../../connectors/xero/xero.client.js';
+import {xeroInvoiceSettlement,type XeroInvoiceCreate,type XeroInvoiceRecord} from '../../connectors/xero/xero.client.js';
 
 // Opt-in only; this suite creates fixtures in a dedicated disposable database.
 const url=process.env.STUDENT_PTY_TEST_DATABASE_URL;
@@ -70,6 +70,7 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await pool.query(sql('100_student_xero_invoice_exports.sql'));await pool.query(sql('127_student_pty_foundation.sql'));await pool.query(sql('128_student_commission_invoices.sql'));await pool.query(sql('129_student_college_matching_aliases.sql'));
   await pool.query('ALTER TABLE public.bm_college_commission_rules DROP CONSTRAINT IF EXISTS bm_commission_configuration_version');
   await pool.query(sql('140_student_commission_rule_configuration.sql'));
+  await pool.query(sql('155_xero_payment_observations.sql'));
   // Contact review has evolved since the original PTY fixtures; these narrow fixtures keep its list contract current.
   await pool.query(`ALTER TABLE ${schema}.student_college_xero_contact_links ADD COLUMN supplier_id uuid, ADD COLUMN student_user_id uuid;
     CREATE VIEW ${schema}.student_contact_review_directory AS SELECT customer_id,college_id AS id,college_name AS name,'college'::text AS kind,'active'::text AS status,NULL::text AS trading_name,NULL::text AS acronym FROM ${schema}.student_operations_college_directory WHERE customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid;
@@ -363,7 +364,48 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await sync.persistInvoices(tenant,run,'worker',[value],1);await sync.persistInvoices(tenant,run,'worker',[value],1);
   const result=await tx(tenant,db=>db.query(`SELECT invoice_date::text,college_name,invoice_reference,amount_paid::text,settlement FROM ${schema}.student_operations_xero_invoices WHERE xero_invoice_id=$1`,[invoiceId]));
   expect(result.rowCount).toBe(1);expect(result.rows[0]).toMatchObject({invoice_date:'2026-11-20',college_name:null,invoice_reference:'Fixture Student',amount_paid:'125',settlement:value.settlement});
+  const secondPayment = {...value.settlement.entries[0], id:randomUUID()};
+  value.settlement.entries.push(secondPayment,secondPayment);
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  value.settlement.entries[0].isReconciled = true;
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  const observed = (customer:string) => tx(customer,db=>db.query(`SELECT payment_id,amount::text,is_reconciled,first_seen_run_id
+    FROM ${schema}.student_xero_payment_observations WHERE xero_invoice_id=$1`,[invoiceId]));
+  expect((await observed(tenant)).rows).toHaveLength(3);
+  expect((await observed(other)).rowCount).toBe(0);
+  expect((await observed(tenant)).rows).toEqual(expect.arrayContaining([
+    {payment_id:contactId,amount:'125',is_reconciled:null,first_seen_run_id:runId},
+    {payment_id:contactId,amount:'125',is_reconciled:true,first_seen_run_id:runId},
+    {payment_id:secondPayment.id,amount:'125',is_reconciled:null,first_seen_run_id:runId}
+  ]));
+  const storedSettlement = async () => (await pool.query(`SELECT settlement FROM ${schema}.student_operations_xero_invoices WHERE xero_invoice_id=$1`,[invoiceId])).rows[0].settlement;
   delete value.settlement;await sync.persistInvoices(tenant,run,'worker',[value],1);
-  expect((await pool.query(`SELECT settlement FROM ${schema}.student_operations_xero_invoices WHERE xero_invoice_id=$1`,[invoiceId])).rows[0].settlement.entries).toHaveLength(1);
+  expect((await storedSettlement()).allocationListsOmitted).toBe(true);
+  expect((await storedSettlement()).entries).toHaveLength(3);
+  const paidDate = {FullyPaidOnDate:'2026-11-22'};
+  value.settlement=xeroInvoiceSettlement(paidDate);
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  expect(await storedSettlement()).toMatchObject({fullyPaidOnDate:'2026-11-22',entries:[
+    expect.objectContaining({id:contactId,isReconciled:true}),secondPayment,secondPayment
+  ]});
+  const creditId = randomUUID();
+  value.settlement=xeroInvoiceSettlement({...paidDate,CreditNotes:[{CreditNoteID:creditId,AppliedAmount:10}]});
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  expect((await storedSettlement()).entries).toHaveLength(4);
+  expect((await storedSettlement()).omittedKinds).toContain('payment');
+  value.settlement=xeroInvoiceSettlement({...paidDate,Payments:[]});
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  expect((await storedSettlement()).entries).toEqual([expect.objectContaining({kind:'credit_note',id:creditId})]);
+  value.currencyCode='USD';
+  value.settlement=xeroInvoiceSettlement(paidDate);
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  expect((await storedSettlement()).entries).toEqual([]);
+  expect((await pool.query(`SELECT DISTINCT currency_code FROM ${schema}.student_xero_payment_observations WHERE xero_invoice_id=$1`,[invoiceId])).rows)
+    .toEqual([{currency_code:'AUD'}]);
+  value.settlement=xeroInvoiceSettlement({...paidDate,Payments:[],CreditNotes:[],Prepayments:[],Overpayments:[]});
+  await sync.persistInvoices(tenant,run,'worker',[value],1);
+  expect(await storedSettlement()).toEqual({fullyPaidOnDate:'2026-11-22',entries:[]});
+  expect((await observed(tenant)).rowCount).toBe(3);
  });
 });

@@ -1,5 +1,5 @@
 import {beforeAll,afterAll,describe,it,expect} from '@jest/globals';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import {DatabaseService} from '../../database/database.service.js';
@@ -35,7 +35,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index']) {
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
       await admin.query(sql.replaceAll('__SOPHIA_RUNTIME_SCHEMA__',schema));
@@ -62,7 +62,28 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','initial')`,[tenant,connection,run]);
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET last_seen_sync_run_id=$1 WHERE xero_invoice_id=$2`,[run,invoice]);
     const input={receivedOn:date,account:'Fixture TRUST',amount:'2742.00',reference:'first'};
-    await service.verify(principal,connection,invoice,receipt,input);
+    const identical = {...input,reference:'same reference'};
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET invoice_number='TEST-42' WHERE xero_invoice_id=$1`,[invoice]);
+    const bankIds = ['BANK-1','BANK-2'];
+    const keys = bankIds.map(() => randomUUID());
+    await Promise.all(bankIds.map((bankTransactionId,i) =>
+      service.verify(principal,connection,invoice,keys[i],{...identical,bankTransactionId})));
+    await expect(service.verify(principal,connection,invoice,keys[0],{...identical,bankTransactionId:'BANK-1'})).resolves.toEqual({id:keys[0]});
+    await expect(service.verify(principal,connection,invoice,randomUUID(),{...identical,reference:'changed',amount:'3000.00',bankTransactionId:'BANK-1'})).rejects.toMatchObject({response:{errorCode:'trust_bank_transaction_already_verified',invoiceNumber:'TEST-42',invoiceId:invoice,receivedOn:date,amount:'2742.00'}});
+    await expect(service.verify(principal,connection,invoice,randomUUID(),identical)).rejects.toThrow();
+    expect((await service.list(principal,connection,invoice)).map(r=>r.bankTransactionId).sort()).toEqual(bankIds);
+    await admin.query(`DELETE FROM ${schema}.student_trust_receipt_verifications WHERE verification_id=ANY($1::uuid[])`,[keys]);
+    const retries = ['2742','2742.0','2742.00'].map(amount =>
+      service.verify(principal,connection,invoice,receipt,{...input,amount}));
+    expect(await Promise.all(retries)).toEqual(Array(3).fill({id:receipt}));
+    const oldHash = createHash('sha256').update(JSON.stringify([
+      connection,invoice,date,'2742.0',input.account,input.reference,null
+    ])).digest('hex');
+    await admin.query(`UPDATE ${schema}.student_trust_receipt_verifications SET payload_hash=$2 WHERE verification_id=$1`,[receipt,oldHash]);
+    await expect(service.verify(principal,connection,invoice,receipt,input)).resolves.toEqual({id:receipt});
+    await expect(service.verify(principal,connection,invoice,receipt,{...input,amount:'2742.01'})).rejects.toThrow();
+    await expect(service.verify(reviewer,connection,invoice,receipt,input)).rejects.toThrow();
+    await expect(service.verify(principal,connection,invoice,randomUUID(),{...input,bankTransactionId:'BANK-3'})).rejects.toThrow();
     const tuition = {...input,reference:'second',paymentPurpose:'Tuition instalment'};
     await service.verify(principal,connection,invoice,second,tuition);
     await service.verify(principal,connection,invoice,second,tuition);
@@ -73,7 +94,8 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await admin.query(`INSERT INTO ${schema}.student_operations_advisor_roster VALUES ($1,'fixture','Fixture Verifier')`,[tenant]);
     expect(purposes.find(r=>r.id===second).paymentPurpose).toBe('Tuition instalment');
     const unlinked = randomUUID();
-    await service.verify(principal,connection,invoice,unlinked,{...input,reference:'awaiting link'});
+    const bankId = 'BANK-' + 'X'.repeat(145);
+    await service.verify(principal,connection,invoice,unlinked,{...input,reference:'awaiting link',bankTransactionId:bankId});
     const screenshot = Buffer.from('89504e470d0a1a0a','hex');
     await admin.query(`UPDATE ${schema}.student_trust_receipt_verifications SET evidence=$1,evidence_type='image/png' WHERE verification_id=$2`,[screenshot,unlinked]);
     const download = (role:string, targetConnection:string) => service.evidence({
@@ -105,6 +127,18 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const links=await Promise.allSettled([receipt,second].map(id=>service.link(reviewer,connection,invoice,id,payment,{decisionNote:'  Compared bank evidence  '})));
     expect(links.filter(x=>x.status==='fulfilled')).toHaveLength(1);
     const owner=links[0].status==='fulfilled'?receipt:second;
+    await admin.query(`INSERT INTO ${schema}.student_xero_payment_observations
+      (customer_id,xero_connection_id,xero_invoice_id,payment_id,amount,currency_code,first_seen_run_id,first_seen_at)
+      SELECT $1,$2,$3,$4,n,'AUD',$5,timestamptz '2020-01-01' + n * interval '1 day' FROM generate_series(1,6) n`,
+      [tenant,connection,invoice,payment,run]);
+    const receiptHistory = (await service.list(principal,connection,invoice));
+    expect(receiptHistory.find(r=>r.id===owner).paymentObservations.map((o:{amount:string})=>o.amount)).toEqual(['6','5','4','3','2']);
+    expect(receiptHistory.find(r=>r.id===unlinked).paymentObservations).toEqual([]);
+    const cursor = receiptHistory.find(r=>r.id===owner).observationCursor;
+    expect(await service.olderObservations(principal,connection,invoice,owner,payment,cursor))
+      .toMatchObject({entries:[{amount:'1'}],nextCursor:null});
+    expect(await service.olderObservations(principal,connection,invoice,unlinked,payment,cursor))
+      .toEqual({entries:[],nextCursor:null});
     await expect(service.linkOverpayment(principal,connection,invoice,owner,payment)).rejects.toThrow();
     const excessLinks=await Promise.allSettled([receipt,second].map(id=>service.linkOverpayment(principal,connection,invoice,id,credit,{decisionNote:'  Checked credit against deposit  '})));
     expect(excessLinks.filter(result=>result.status==='fulfilled')).toHaveLength(1);
@@ -148,8 +182,21 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(new Set([...newest.entries,...older.entries].map(c=>c.id)).size).toBe(12);
     expect(older.entries[0].ownerName).toBeNull();
     expect(older.nextCursor).toBeNull();
+    const availablePayment = randomUUID();
+    for (const contradiction of [{amount:2741.81}, {date:'2020-01-03'}, {date:null}]) {
+      const entries = [payment,availablePayment].flatMap(id => {
+        const original = {kind:'payment',id,date,amount:2741.80,isReconciled:false};
+        return [original,{...original,...contradiction}];
+      });
+      await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,
+        [JSON.stringify({entries}),invoice]);
+      const receipts = await service.list(principal,connection,invoice);
+      expect(receipts.find(r=>r.id===owner)).toMatchObject({linkedPaymentId:payment,linkedPaymentReconciled:null,candidateIds:[]});
+      await expect(service.link(principal,connection,invoice,unlinked,availablePayment)).rejects.toThrow();
+      await expect(service.attestReconciliation(principal,connection,invoice,owner,payment)).rejects.toThrow();
+    }
     for (const flag of [undefined, true, false]) {
-      const settlement = {entries:[{kind:'payment',id:payment,date,amount:2741.80,isReconciled:flag === true ? false : undefined},
+      const settlement = {entries:[{kind:'payment',id:payment,date,amount:2741.80,isReconciled:undefined},
         {kind:'payment',id:payment,date,amount:2741.80,isReconciled:flag},
         {kind:'payment',id:randomUUID(),date,amount:2741.80,isReconciled:true}]};
       await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify(settlement),invoice]);
@@ -173,6 +220,11 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const writeEntries = () => admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify({entries:pendingEntries}),invoice]);
     await writeEntries();
     const register = new StudentOperationsXeroSyncService(db,{} as never);
+    const searchBankId = (queue:string, q:string) => register.invoices(tenant,connection,{queue,q});
+    expect(await searchBankId('receipts_awaiting_link',bankId)).toMatchObject({total:1});
+    expect(await searchBankId('receipts_awaiting_link',bankId.slice(0,-1))).toMatchObject({total:0});
+    expect(await searchBankId('excess_receipts',bankId)).toMatchObject({total:1});
+    expect(await searchBankId('reconciliation_review',bankId)).toMatchObject({total:0});
     const awaitingLink = (paymentCandidateStatus?: 'available' | 'multiple' | 'partial' | 'none') => register.invoices(tenant,connection,{queue:'receipts_awaiting_link',paymentCandidateStatus});
     expect(await awaitingLink()).toMatchObject({total:1,invoices:[{amountDue:0,unlinkedReceipts:{count:2,amount:5484,withCandidates:2}}]});
     expect((await awaitingLink('available')).total).toBe(1);
@@ -191,6 +243,16 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(await awaitingLink('multiple')).toMatchObject({total:1,invoices:[{unlinkedReceipts:{
       count:2, amount:5484, withCandidates:2, withMultipleCandidates:2
     }}]});
+    for (const marker of [{allocationListsOmitted:true},{omittedKinds:['payment']}]) {
+      await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,
+        [JSON.stringify({...marker,entries:pendingEntries}),invoice]);
+      expect((await awaitingLink('available')).total).toBe(0);
+      const receipts = await service.list(principal,connection,invoice);
+      expect(receipts.find(r=>r.id===unlinked).candidateIds).toEqual([]);
+      expect(receipts.find(r=>r.id===owner).candidateIds).toEqual([payment]);
+      await expect(service.link(principal,connection,invoice,unlinked,anotherPayment)).rejects.toThrow('Review the latest imported payments');
+      await expect(service.link(principal,connection,invoice,owner,payment)).resolves.toEqual({paymentId:payment});
+    }
     pendingEntries.splice(2);
     await writeEntries();
     await service.link(principal,connection,invoice,owner===receipt?second:receipt,anotherPayment);
@@ -236,8 +298,29 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect((await register.invoices(tenant,connection,checkedPending)).invoices)
       .toMatchObject([{reconciliation:{amount:2741.80,payments:1,managerChecks:1,xeroPending:1}}]);
     expect((await register.invoices(tenant,connection,{...checkedPending,followUpOwner:'unassigned'})).invoices).toEqual([]);
+    const uncheckedPending = {queue:'reconciliation_review', reconciliationStatus:'unchecked_pending'};
+    const uncheckedUnknown = {queue:'reconciliation_review', reconciliationStatus:'unchecked_unknown'};
+    expect((await register.invoices(tenant,connection,uncheckedPending)).invoices)
+      .toMatchObject([{reconciliation:{amount:2741.80,payments:1,managerChecks:0,unassigned:1}}]);
+    expect((await register.invoices(tenant,connection,uncheckedUnknown)).total).toBe(0);
+    {
+      const entries = [...pendingEntries,{...pendingEntries[1],isReconciled:true}];
+      await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify({entries}),invoice]);
+      expect((await register.invoices(tenant,connection,uncheckedUnknown)).invoices)
+        .toMatchObject([{reconciliation:{payments:1,statusUnknown:1,linkMismatch:0,managerChecks:0}}]);
+      expect((await register.invoices(tenant,connection,uncheckedPending)).total).toBe(0);
+      expect((await service.list(principal,connection,invoice)).find(r=>r.linkedPaymentId===anotherPayment).linkedPaymentReconciled).toBeNull();
+    }
+    await writeEntries();
     const checkedUnknown = {queue:'reconciliation_review', reconciliationStatus:'checked_unknown'};
     expect((await register.invoices(tenant,connection,checkedUnknown)).invoices).toEqual([]);
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,
+      [JSON.stringify({allocationListsOmitted:true,entries:pendingEntries.map(entry=>({...entry,isReconciled:true}))}),invoice]);
+    expect(await pending()).toMatchObject([{reconciliation:{payments:2,statusUnknown:2,linkMismatch:0}}]);
+    expect((await service.list(principal,connection,invoice)).find(r=>r.id===owner).linkedPaymentReconciled).toBeNull();
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,
+      [JSON.stringify({omittedKinds:['payment'],entries:pendingEntries.map(entry=>({...entry,isReconciled:true}))}),invoice]);
+    expect(await pending()).toMatchObject([{reconciliation:{payments:2,statusUnknown:2,linkMismatch:0}}]);
     const mixedEntries = [{kind:'payment',id:payment,date,amount:2741.80},
       {kind:'payment',id:anotherPayment,date,amount:2740,isReconciled:true}];
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify({entries:mixedEntries}),invoice]);
@@ -247,6 +330,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       total:1,invoices:[{reconciliation:{amount:2741.80,payments:1,managerChecks:1,statusUnknown:1,linkMismatch:0}}]
     });
     expect((await register.invoices(tenant,connection,{...checkedUnknown,followUpOwner:'unassigned'})).invoices).toEqual([]);
+    expect((await register.invoices(tenant,connection,uncheckedUnknown)).total).toBe(0);
     const mismatches = {queue:'reconciliation_review', reconciliationStatus:'link_mismatch'};
     expect((await register.invoices(tenant,connection,mismatches)).invoices)
       .toMatchObject([{reconciliation:{amount:2741.80,payments:1,managerChecks:0,statusUnknown:0,linkMismatch:1}}]);
