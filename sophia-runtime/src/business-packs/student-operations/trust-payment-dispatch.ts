@@ -68,7 +68,16 @@ export async function dispatchRegister(db:PoolClient,s:string,tenant:string,conn
   ), filtered AS (SELECT * FROM entries WHERE ($3='all' OR status=$3) AND ($4='' OR strpos(lower("invoiceNumber"),lower($4))>0
     OR strpos(lower("bankId"),lower($4))>0 OR id::text=lower($4))),
   page AS (SELECT * FROM filtered ORDER BY "queuedAt" ${input.direction},id LIMIT $5 OFFSET $6)
-  SELECT count(*)::int AS count,coalesce((SELECT jsonb_agg(p ORDER BY "queuedAt" ${input.direction},id) FROM page p),'[]') AS rows
+  SELECT count(*)::int AS count,coalesce((SELECT jsonb_agg(to_jsonb(p)||jsonb_build_object('workerCheck',w.check) ORDER BY "queuedAt" ${input.direction},id)
+    FROM page p LEFT JOIN LATERAL (
+      SELECT jsonb_build_object('attempt',a.attempt,'at',coalesce(r.checked_at,a.claimed_at),'detail',r.detail,
+        'status',CASE WHEN r.outcome IN ('matched','review') THEN r.outcome
+          WHEN r.outcome IS NULL AND a.lease_until>statement_timestamp() THEN 'checking'
+          WHEN a.attempt>=3 THEN 'exhausted' ELSE 'retry' END) AS check
+      FROM ${s}.student_trust_dispatch_attempts a LEFT JOIN ${s}.student_trust_dispatch_results r
+        USING(customer_id,connection_id,dispatch_id,attempt)
+      WHERE a.customer_id=$1 AND a.connection_id=$2 AND a.dispatch_id=p.id ORDER BY a.attempt DESC LIMIT 1
+    ) w ON true),'[]') AS rows
   FROM filtered`,[tenant,connection,input.status,input.q,input.limit,(input.page-1)*input.limit]);
   return result.rows[0];
 }

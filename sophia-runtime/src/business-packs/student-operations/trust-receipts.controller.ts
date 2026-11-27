@@ -1,3 +1,5 @@
+import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
+import { currentDispatch,checkDispatchInvoice } from './trust-dispatch-invoice-check.js';
 import { enqueueFields, cancelFields, enqueuePayment, cancelPayment } from './trust-payment-dispatch.js';
 import { proposalCommand, receiptProposal, recordProposal } from './trust-receipt-proposals.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
@@ -60,7 +62,7 @@ export function receiptEvidenceType(file?: Evidence) {
 @Controller('business-packs/student-operations/v1/workspace/trust-receipts/:connectionId/:invoiceId')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class TrustReceiptsController {
-  constructor(private readonly database: DatabaseService, private readonly workspace: StudentOperationsWorkspaceService) {}
+  constructor(private readonly database: DatabaseService, private readonly workspace: StudentOperationsWorkspaceService, private readonly xero:XeroConnectorService) {}
   private get table() { return runtimeConfig().schema + '.student_trust_receipt_verifications'; }
 
   private get links() { return runtimeConfig().schema + '.student_trust_receipt_payment_links'; }
@@ -81,6 +83,21 @@ export class TrustReceiptsController {
     const p=manager(request),parsed=enqueueFields.safeParse(body);
     if (!parsed.success) throw new BadRequestException('Review the approval and enter a release reason.');
     return this.database.tenantTransaction(p.tenantId,db=>enqueuePayment(db,runtimeConfig().schema,[p.tenantId,connection,invoice,receipt],p.identityUserId,parsed.data));
+  }
+
+  @Post(':receiptId/dispatch/:dispatchId/check-invoice')
+  @Header('Cache-Control','private, no-store')
+  async checkInvoice(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('invoiceId',ParseUUIDPipe) invoice:string,@Param('receiptId',ParseUUIDPipe) receipt:string,
+    @Param('dispatchId',ParseUUIDPipe) dispatch:string) {
+    const p=manager(request);
+    const read=()=>this.database.tenantReadTransaction(p.tenantId,db=>currentDispatch(db,runtimeConfig().schema,
+      [p.tenantId,connection,invoice,receipt],p.identityUserId,dispatch));
+    const before=await read();
+    const live=await this.xero.invoiceById(p.tenantId,connection,invoice,before.snapshot.organisationId);
+    const after=await read();
+    if (before.token!==after.token) throw new ConflictException('Refresh the changed dispatch.');
+    return {issue:checkDispatchInvoice(after,live),checkedAt:new Date().toISOString()};
   }
 
   @Post(':receiptId/dispatch/cancel')

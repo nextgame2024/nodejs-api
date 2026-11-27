@@ -4987,5 +4987,51 @@
       "156 ChromeHeadless tests passed"
     ],
     "release": "Previous bank mapping deployment reported. This batch requires backend and frontend deployment. Provider submission, recovery and connected pilot acceptance remain open."
+  },
+  "trustDispatchInvoiceCheck": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "11",
+    "completedSubtasks": [
+      "Expose a manager-only invoice check on a selected dispatch",
+      "Reject cancelled, expired or superseded dispatches before fetching",
+      "Bind the provider lookup to the approved organisation",
+      "Check invoice identity, invoice number and contact",
+      "Check sales invoice type, authorised status and AUD currency",
+      "Require an explicit provider balance and compare receipt coverage",
+      "Require an explicit payment list and compare it with the import",
+      "Compare the provider revision timestamp",
+      "Recheck dispatch eligibility after the provider request",
+      "Display the timestamped result on demand and clear it on refresh"
+    ],
+    "verification": [
+      "Runtime build and Angular template compilation passed",
+      "PostgreSQL dispatch tests and synthetic Xero connector tests",
+      "157 targeted ChromeHeadless tests passed",
+      "Configured migration ledger checked with zero pending"
+    ],
+    "release": "Deploy backend and frontend. This read-only comparison is available before worker claim and payment submission are implemented. Connected pilot acceptance remains pending."
+  },
+  "trustDispatchWorkerChecks": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "11",
+    "completedSubtasks": [
+      "Add a one-shot worker for a named customer and TRUST connection",
+      "Select active queued dispatches in deterministic order",
+      "Serialize concurrent claim selection",
+      "Persist attempts under forced tenant isolation",
+      "Recover abandoned leases on later runs",
+      "Delay provider retries and cap attempts",
+      "Revalidate local evidence before and after the invoice lookup",
+      "Fence results from workers whose leases expired",
+      "Persist matched, review and unavailable observations",
+      "Display latest worker attempt, time and result in the register"
+    ],
+    "verification": [
+      "npm run build passed in sophia-runtime",
+      "103 targeted backend tests passed with disposable PostgreSQL and synthetic Xero responses",
+      "157 targeted ChromeHeadless tests passed",
+      "Migration 168 applied with zero pending; verified forced RLS and append-only runtime access on both tables"
+    ],
+    "release": "Previous manual invoice check reported deployed. Deploy backend and frontend for worker checks. The operator is invoked explicitly. Payment submission and connected pilot acceptance remain open."
   }
 }

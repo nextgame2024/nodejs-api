@@ -595,12 +595,14 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key));
   }
 
-  async invoiceById(tenantId:string,connectionId:string,invoiceId:string){
+  async invoiceById(tenantId:string,connectionId:string,invoiceId:string,expectedOrganisation?:string){
     const connection=await this.loadConnection(tenantId,connectionId);
+    if (expectedOrganisation!==undefined && connection.xero_tenant_id!==expectedOrganisation)
+      throw new ConflictException('The connected Xero organisation changed.');
     if(missingScopes(connection.granted_scopes,['accounting.invoices.read']).length&&missingScopes(connection.granted_scopes,['accounting.transactions.read']).length)
       throw new ConflictException({errorCode:'xero_invoice_read_scope_missing',message:'An administrator must reconnect Xero and authorize invoice verification.'});
     const accessToken=await this.accessToken(tenantId,connection.xero_authorization_id,requiredConfig());
-    return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId));
+    return this.providerRequest(tenantId,connectionId,()=>this.client.invoiceById(accessToken,connection.xero_tenant_id,invoiceId,expectedOrganisation!==undefined));
   }
 
   async invoiceCandidates(tenantId:string,connectionId:string,contactId:string,date:string){

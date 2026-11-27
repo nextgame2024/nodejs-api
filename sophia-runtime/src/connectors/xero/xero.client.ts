@@ -611,11 +611,14 @@ export class XeroClient {
     };
   }
 
-  async invoiceById(accessToken:string,tenantId:string,invoiceId:string):Promise<XeroInvoiceRecord>{
+  async invoiceById(accessToken:string,tenantId:string,invoiceId:string,requirePaymentEvidence=false):Promise<XeroInvoiceRecord>{
     if(!/^[0-9a-f-]{36}$/i.test(invoiceId))throw new BadGatewayException('Invalid Xero invoice identity.');
     const payload=record(await this.json(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}`,accessToken,tenantId));
     if(!Array.isArray(payload.Invoices)||payload.Invoices.length!==1)throw new BadGatewayException('Xero did not return the created invoice.');
-    return xeroInvoiceRecord(record(payload.Invoices[0]));
+    const raw=record(payload.Invoices[0]);
+    if (requirePaymentEvidence && (typeof raw.AmountDue!=='number' || !Number.isFinite(raw.AmountDue) || !Array.isArray(raw.Payments)))
+      throw new BadGatewayException('Xero returned incomplete payment evidence.');
+    return xeroInvoiceRecord(raw);
   }
 
   /** Bounded existence check; both sales and purchases protect a shared contact. */

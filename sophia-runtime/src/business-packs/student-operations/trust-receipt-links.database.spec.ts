@@ -1,3 +1,4 @@
+import {TrustDispatchWorker} from './trust-dispatch-worker.js';
 import {beforeAll,afterAll,describe,it,expect} from '@jest/globals';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
@@ -39,7 +40,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
         ADD provider_updated_at timestamptz, ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
     await admin.query(`GRANT UPDATE ON ${schema}.student_xero_sales_catalogues TO sophia_runtime_app`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -51,7 +52,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       [schema+'.student_trust_staged_deposits']);
     expect(stagePrivileges.rows[0].mutable).toBe(false);
     db = new DatabaseService();
-    service = new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db));
+    service = new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db),{} as never);
   });
   afterAll(async () => {
     if(db) await db.onModuleDestroy();
@@ -106,6 +107,8 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       (customer_id,xero_connection_id,xero_invoice_id,currency_code,invoice_type,invoice_status,xero_contact_id,
        amount_due,total,last_seen_sync_run_id,invoice_number,settlement)
       VALUES($1,$2,$3,'AUD','ACCREC','AUTHORISED',$4,3500,3500,$5,'INV-TEST','{"entries":[]}')`,[tenant,conn,inv,contact,run]);
+    const updated='2026-11-01T01:00:00Z';
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET provider_updated_at=$2 WHERE xero_invoice_id=$1`,[inv,updated]);
     await service.verify(principal,conn,inv,receipt,{account:'Test TRUST',receivedOn:'2020-01-02',amount:'3000',reference:'Tuition',bankTransactionId:'TEST-01'});
     const read=()=>service.proposal(principal,conn,inv,receipt);
     const save=(body:unknown)=>service.changeProposal(principal,conn,inv,receipt,body);
@@ -146,9 +149,48 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await expect(release({...enqueue,reason:'Other evidence'})).rejects.toThrow();
     await expect(release({...enqueue,requestId:randomUUID()})).rejects.toThrow();
     expect((await read()).dispatch).toMatchObject({id:queued[0].id,actor:'reviewer',cancelledAt:null});
+    const live={invoiceId:inv,invoiceNumber:'INV-TEST',contactId:contact,type:'ACCREC',status:'AUTHORISED',currencyCode:'AUD',
+      amountDue:3500,updatedAt:updated,settlement:{entries:[]}};
+    let response:unknown=live;
+    let duringRead:(()=>Promise<unknown>)|undefined;
+    const calls:string[][]=[];
+    const checks=new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db),{invoiceById:async(...args:string[])=>{
+      calls.push(args);await duringRead?.();return response;
+    }} as never);
+    let workerCalls=0;
+    const worker=new TrustDispatchWorker(db,{invoiceById:async()=>{
+      workerCalls++;
+      if (workerCalls===1) throw new Error('private provider data');
+      return live as never;
+    }});
+    expect(await worker.processOne(randomUUID(),conn)).toEqual({status:'idle'});
+    expect(await worker.processOne(tenant,randomUUID())).toEqual({status:'idle'});
+    const runWorker=()=>worker.processOne(tenant,conn);
+    expect((await Promise.all([runWorker(),runWorker()])).map(r=>r.status).sort()).toEqual(['idle','unavailable']);
+    expect(workerCalls).toBe(1);
+    expect(await staging.dispatches(principal,conn,{})).toMatchObject({rows:[{workerCheck:{attempt:1,status:'retry',detail:'Invoice verification was unavailable.'}}]});
+    await admin.query(`UPDATE ${schema}.student_trust_dispatch_results SET checked_at=now()-interval '3 min' WHERE dispatch_id=$1`,[queued[0].id]);
+    // An interrupted second run used its entire lease without producing a result.
+    await admin.query(`INSERT INTO ${schema}.student_trust_dispatch_attempts(customer_id,connection_id,dispatch_id,attempt,lease_until)
+      VALUES($1,$2,$3,2,now()-interval '1 second')`,[tenant,conn,queued[0].id]);
+    expect(await runWorker()).toMatchObject({status:'matched',attempt:3});
+    expect(await runWorker()).toEqual({status:'idle'});
+    expect(await staging.dispatches(principal,conn,{})).toMatchObject({rows:[{workerCheck:{attempt:3,status:'matched'}}]});
+    const check=()=>checks.checkInvoice(principal,conn,inv,receipt,queued[0].id);
+    await expect(checks.checkInvoice(principal,conn,inv,receipt,randomUUID())).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+    expect(await check()).toMatchObject({issue:null});
+    expect(calls[0]).toEqual([tenant,conn,inv,'fixture']);
+    for (const difference of [{invoiceId:randomUUID()},{contactId:randomUUID()},{status:'PAID'},{type:'ACCPAY'},{currencyCode:'USD'},
+      {amountDue:3499},{settlement:undefined},{settlement:{entries:[],omittedKinds:['payment']}},
+      {settlement:{entries:[{kind:'payment',id:randomUUID(),amount:50}]}},{updatedAt:null}]) {
+      response={...live,...difference};
+      expect((await check()).issue).toBeTruthy();
+    }
     expect(await staging.dispatches(principal,conn,{q:'TEST-01'})).toMatchObject({count:1,rows:[{status:'recorded',amount:'3000.00',invoice:inv}]});
     await expect(staging.dispatches({studentOperationsPrincipal:{role:'chief_executive',tenantId:randomUUID()}} as never,conn,{})).rejects.toThrow();
-    await admin.query(`UPDATE ${schema}.student_xero_sales_catalogues SET last_synced_at=now()-interval '25 hours' WHERE xero_connection_id=$1`,[conn]);
+    duringRead=()=>admin.query(`UPDATE ${schema}.student_xero_sales_catalogues SET last_synced_at=now()-interval '25 hours' WHERE xero_connection_id=$1`,[conn]);
+    response=live;await expect(check()).rejects.toThrow('current dispatch');
     expect(await read()).toMatchObject({state:'stale'});
     await admin.query(`UPDATE ${schema}.student_xero_sales_catalogues SET last_synced_at=now(),snapshot=jsonb_set(snapshot,'{receiptBankAccounts,0,name}','"Renamed TRUST"') WHERE xero_connection_id=$1`,[conn]);
     expect((await read()).accountIssue).toContain('changed');
@@ -177,6 +219,17 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const second=await release({...enqueue,revision:6,token:changed.token,requestId:randomUUID()});
     expect(second.id).not.toBe(queued[0].id);
     const cancel={dispatchId:second.id,reason:'Incorrect release'};
+    const lateWorker=new TrustDispatchWorker(db,{invoiceById:async()=>{
+      await admin.query(`UPDATE ${schema}.student_trust_dispatch_attempts SET lease_until=now()-interval '1 second' WHERE dispatch_id=$1`,[second.id]);
+      return live as never;
+    }});
+    expect(await lateWorker.processOne(tenant,conn)).toMatchObject({status:'lease_expired',attempt:1});
+    const cancelledWorker=new TrustDispatchWorker(db,{invoiceById:async()=>{
+      await service.cancelDispatch(principal,conn,inv,receipt,cancel);
+      return live as never;
+    }});
+    expect(await cancelledWorker.processOne(tenant,conn)).toMatchObject({status:'review',attempt:2});
+    expect(await runWorker()).toEqual({status:'idle'});
     expect(await service.cancelDispatch(principal,conn,inv,receipt,cancel)).toEqual(second);
     expect(await service.cancelDispatch(principal,conn,inv,receipt,cancel)).toEqual(second);
     await expect(service.cancelDispatch(principal,conn,inv,receipt,{...cancel,reason:'Different reason'})).rejects.toThrow();
