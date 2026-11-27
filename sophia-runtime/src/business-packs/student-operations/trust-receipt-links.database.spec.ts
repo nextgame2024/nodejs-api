@@ -20,10 +20,11 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema};
       GRANT USAGE ON SCHEMA ${schema} TO sophia_runtime_app;
-      CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,amount_due numeric,currency_code text,invoice_type text,invoice_status text,settlement jsonb,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
+      CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,amount_due numeric,currency_code text,invoice_type text,invoice_status text,settlement jsonb,xero_contact_id uuid,invoice_date date,total numeric,last_seen_sync_run_id uuid,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text);
+      CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,sync_run_id uuid,created_at timestamptz,status text,mode text);
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links']) {
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
       await admin.query(sql.replaceAll('__SOPHIA_RUNTIME_SCHEMA__',schema));
     }
@@ -47,15 +48,31 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const credit=randomUUID();
     const entries=[{kind:'payment',id:payment,date,amount:2741.80},{kind:'overpayment',id:credit,date,amount:0.20}];
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1,invoice_status='PAID',amount_due=0`,[JSON.stringify({entries})]);
-    expect((await service.list(principal,connection,invoice))[0].candidateIds).toEqual([payment]);
+    const contact=randomUUID(), run=randomUUID();
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET xero_contact_id=$1`,[contact]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','initial')`,[tenant,connection,run]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices
+      (customer_id,xero_connection_id,xero_invoice_id,currency_code,invoice_type,invoice_status,xero_contact_id,invoice_date,total,last_seen_sync_run_id)
+      VALUES($1,$2,$3,'AUD','RECEIVE-OVERPAYMENT','AUTHORISED',$4,$5,0.20,$6)`,[tenant,connection,credit,contact,date,run]);
+    expect((await service.list(principal,connection,invoice))[0]).toMatchObject({candidateIds:[payment],possibleOverpaymentIds:[credit]});
     await expect(service.link(principal,connection,invoice,receipt,credit)).rejects.toThrow();
     const links=await Promise.allSettled([receipt,second].map(id=>service.link(principal,connection,invoice,id,payment)));
     expect(links.filter(x=>x.status==='fulfilled')).toHaveLength(1);
     const owner=links[0].status==='fulfilled'?receipt:second;
+    await expect(service.linkOverpayment(principal,connection,invoice,owner,payment)).rejects.toThrow();
+    const excessLinks=await Promise.allSettled([receipt,second].map(id=>service.linkOverpayment(principal,connection,invoice,id,credit)));
+    expect(excessLinks.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    const excessOwner=excessLinks[0].status==='fulfilled'?receipt:second;
+    await service.linkOverpayment(principal,connection,invoice,excessOwner,credit);
+    const reviews = await service.list(principal,connection,invoice);
+    expect(reviews.find(r=>r.id===excessOwner)).toMatchObject({linkedOverpaymentId:credit,possibleOverpaymentIds:[credit]});
+    expect(reviews.find(r=>r.id!==excessOwner).possibleOverpaymentIds).toEqual([]);
     await service.link(principal,connection,invoice,owner,payment);
     await expect(service.link(principal,connection,randomUUID(),owner,payment)).rejects.toThrow();
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=NULL`);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','reconciliation')`,[tenant,connection,randomUUID()]);
+    expect((await service.list(principal,connection,invoice)).find(r=>r.id===excessOwner)).toMatchObject({linkedOverpaymentId:credit,possibleOverpaymentIds:[]});
     const row=(await service.list(principal,connection,invoice)).find(r=>r.id===owner);
-    expect(row).toMatchObject({amount:'2742.00',linkedAmount:'2741.80',candidateIds:[],linkedPaymentId:payment});
+    expect(row).toMatchObject({amount:'2742.00',linkedAmount:'2741.80',possibleOverpaymentIds:[],candidateIds:[],linkedPaymentId:payment});
   });
 });

@@ -55,6 +55,27 @@ export class TrustReceiptsController {
         AND e.date=r.received_on::text AND e.amount=least(r.amount,r.invoice_due_at_verification)`;
   }
 
+  private get excessLinks() { return runtimeConfig().schema + '.student_trust_receipt_overpayment_links'; }
+
+  private get excessCandidates() {
+    const schema = runtimeConfig().schema;
+    return `SELECT credit.xero_invoice_id AS id, credit.total
+         FROM ${schema}.student_operations_xero_invoices invoice
+         JOIN ${schema}.student_operations_xero_sync_configurations cfg USING (customer_id,xero_connection_id)
+         JOIN ${schema}.student_operations_xero_invoices credit USING (customer_id,xero_connection_id,xero_contact_id)
+         JOIN ${schema}.student_operations_xero_sync_runs seen
+           ON seen.customer_id=credit.customer_id AND seen.sync_run_id=credit.last_seen_sync_run_id
+         WHERE cfg.enabled AND cfg.organisation_role='trust'
+           AND invoice.customer_id=r.customer_id AND invoice.xero_connection_id=r.connection_id AND invoice.xero_invoice_id=r.invoice_id
+           AND r.amount > round(r.invoice_due_at_verification,2)
+           AND credit.invoice_type='RECEIVE-OVERPAYMENT' AND credit.invoice_status IN ('PAID','AUTHORISED')
+           AND credit.currency_code='AUD' AND credit.invoice_date=r.received_on
+           AND credit.total=r.amount-round(r.invoice_due_at_verification,2)
+           AND NOT EXISTS (SELECT 1 FROM ${schema}.student_operations_xero_sync_runs newer
+             WHERE newer.customer_id=r.customer_id AND newer.xero_connection_id=r.connection_id
+               AND newer.status='succeeded' AND newer.mode IN ('initial','reconciliation') AND newer.created_at>seen.created_at)`;
+  }
+
   @Get()
   @Header('Cache-Control','private, no-store')
   list(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string, @Param('invoiceId',ParseUUIDPipe) invoice: string) {
@@ -63,11 +84,17 @@ export class TrustReceiptsController {
       `SELECT verification_id AS id, received_on::text AS "receivedOn", amount::text, account_label AS account,
        reference, verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
+       x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt",
+       ARRAY(SELECT candidate.id FROM (${this.excessCandidates}) candidate
+         WHERE NOT EXISTS (SELECT 1 FROM ${this.excessLinks} used WHERE used.customer_id=r.customer_id
+           AND used.connection_id=r.connection_id AND used.overpayment_id=candidate.id AND used.verification_id<>r.verification_id)
+         ORDER BY candidate.id) AS "possibleOverpaymentIds",
        ARRAY(SELECT candidate.id FROM (${this.candidates}) candidate
          WHERE NOT EXISTS (SELECT 1 FROM ${this.links} used WHERE used.customer_id=r.customer_id
            AND used.connection_id=r.connection_id AND used.payment_id=candidate.id AND used.verification_id<>r.verification_id)
          ORDER BY candidate.id) AS "candidateIds"
        FROM ${this.table} r LEFT JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
+       LEFT JOIN ${this.excessLinks} x USING (customer_id,connection_id,verification_id)
        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 ORDER BY verified_at DESC`,
       [p.tenantId,connection,invoice])).rows);
   }
@@ -91,6 +118,28 @@ export class TrustReceiptsController {
         if (!existing.rowCount) throw new ConflictException('This payment or receipt has changed. Review the latest imported payments.');
       }
       return {paymentId:payment};
+    });
+  }
+
+  @Post(':id/overpayments/:overpaymentId')
+  async linkOverpayment(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
+    @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
+    @Param('overpaymentId',ParseUUIDPipe) overpayment: string) {
+    const principal = manager(request);
+    const params = [principal.tenantId, connection, invoice, receipt, overpayment];
+    return this.database.tenantTransaction(principal.tenantId, async db => {
+      const inserted = await db.query(`INSERT INTO ${this.excessLinks}
+        (customer_id,connection_id,verification_id,overpayment_id,excess_amount,linked_by)
+        SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.total,$6
+        FROM ${this.table} r CROSS JOIN LATERAL (${this.excessCandidates}) candidate
+        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND candidate.id=$5
+        ON CONFLICT DO NOTHING`, [...params,principal.identityUserId]);
+      if (!inserted.rowCount) {
+        const existing = await db.query(`SELECT 1 FROM ${this.excessLinks} x JOIN ${this.table} r USING (customer_id,connection_id,verification_id)
+          WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND x.overpayment_id=$5`, params);
+        if (!existing.rowCount) throw new ConflictException('Review the latest receipt and overpayment before confirming.');
+      }
+      return {overpaymentId: overpayment};
     });
   }
 

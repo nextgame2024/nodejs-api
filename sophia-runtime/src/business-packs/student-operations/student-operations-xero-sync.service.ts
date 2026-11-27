@@ -34,7 +34,7 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
-  queue: z.literal("outstanding_invoices").optional(),
+  queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts"]).optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -114,6 +114,7 @@ type CandidateRow = {
 };
 
 type InvoiceRow = {
+  receipt_excess?: string;
   xero_invoice_id: string;
   xero_contact_id: string;
   invoice_type: string;
@@ -408,8 +409,34 @@ export class StudentOperationsXeroSyncService {
       durations.connectionCheckMs = elapsedMs(connectionStartedAt);
       const params: unknown[] = [tenantId, connectionId];
       const filters: string[] = [];
+      const excessQueue = parsed.data.queue === 'excess_receipts';
+      const excessJoin = excessQueue ? `JOIN LATERAL (
+        SELECT sum(receipt.amount - round(receipt.invoice_due_at_verification, 2)) AS receipt_excess
+        FROM ${schema}.student_trust_receipt_verifications receipt
+        JOIN ${schema}.student_operations_xero_sync_configurations cfg
+          ON cfg.customer_id=receipt.customer_id AND cfg.xero_connection_id=receipt.connection_id
+        WHERE cfg.enabled AND cfg.organisation_role='trust'
+          AND receipt.customer_id=i.customer_id AND receipt.connection_id=i.xero_connection_id
+          AND receipt.invoice_id=i.xero_invoice_id
+          AND receipt.amount > round(receipt.invoice_due_at_verification, 2)
+      ) excess ON excess.receipt_excess > 0` : '';
       if (parsed.data.queue === 'outstanding_invoices') {
         filters.push("AND i.invoice_type='ACCREC' AND i.invoice_status='AUTHORISED' AND i.amount_due > 0");
+      }
+      if (parsed.data.queue === 'receipts_awaiting_link') {
+        filters.push(`AND EXISTS (
+          SELECT 1 FROM ${schema}.student_trust_receipt_verifications receipt
+          JOIN ${schema}.student_operations_xero_sync_configurations cfg
+            ON cfg.customer_id=receipt.customer_id AND cfg.xero_connection_id=receipt.connection_id
+          WHERE cfg.enabled AND cfg.organisation_role='trust'
+            AND receipt.customer_id=i.customer_id AND receipt.connection_id=i.xero_connection_id
+            AND receipt.invoice_id=i.xero_invoice_id
+            AND NOT EXISTS (
+              SELECT 1 FROM ${schema}.student_trust_receipt_payment_links link
+              WHERE link.customer_id=receipt.customer_id AND link.connection_id=receipt.connection_id
+                AND link.verification_id=receipt.verification_id
+            )
+        )`);
       }
       if (supplierId) {
         params.push(supplierId);
@@ -461,6 +488,7 @@ export class StudentOperationsXeroSyncService {
                 i.advisor_name, i.college_name, i.payment_track,
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
                 count(*) OVER()::int AS total_count,
+                ${excessQueue ? 'excess.receipt_excess,' : ''}
                 count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
                 count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
                 count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
@@ -470,6 +498,7 @@ export class StudentOperationsXeroSyncService {
                 count(*) FILTER (WHERE i.invoice_status='AUTHORISED') OVER()::int AS authorised_total_count,
                 count(*) FILTER (WHERE i.invoice_status='PAID') OVER()::int AS paid_total_count
           FROM ${schema}.student_operations_xero_invoices i
+          ${excessJoin}
           JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
             AND c.xero_contact_id=i.xero_contact_id
@@ -1057,6 +1086,7 @@ function candidateProjection(row: CandidateRow) {
 
 function invoiceProjection(row: InvoiceRow) {
   return {
+    ...(row.receipt_excess == null ? {} : { receiptExcess: Number(row.receipt_excess) }),
     xeroInvoiceId: row.xero_invoice_id,
     xeroContactId: row.xero_contact_id,
     documentType: row.invoice_type === "ACCRECCREDIT"
