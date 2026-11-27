@@ -1,3 +1,4 @@
+import { trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header,
   Headers, NotFoundException, Param, ParseUUIDPipe, Post, Req, StreamableFile, UploadedFile,
@@ -42,18 +43,7 @@ export class TrustReceiptsController {
 
   private get links() { return runtimeConfig().schema + '.student_trust_receipt_payment_links'; }
 
-  // Shared by preview and confirmation. Only payments on this exact invoice qualify.
-  private get candidates() {
-    const schema = runtimeConfig().schema;
-    return `SELECT e.id::uuid AS id, e.amount
-      FROM ${schema}.student_operations_xero_invoices i
-      JOIN ${schema}.student_operations_xero_sync_configurations c USING (customer_id,xero_connection_id)
-      CROSS JOIN LATERAL jsonb_to_recordset(i.settlement->'entries') e(kind text,id text,date text,amount numeric)
-      WHERE i.customer_id=r.customer_id AND i.xero_connection_id=r.connection_id AND i.xero_invoice_id=r.invoice_id
-        AND c.enabled AND c.organisation_role='trust' AND i.invoice_type='ACCREC' AND i.currency_code='AUD'
-        AND i.invoice_status IN ('PAID','AUTHORISED') AND e.kind='payment'
-        AND e.date=r.received_on::text AND e.amount=least(r.amount,r.invoice_due_at_verification)`;
-  }
+  private get candidates() { return trustReceiptPaymentCandidates(runtimeConfig().schema); }
 
   private get excessLinks() { return runtimeConfig().schema + '.student_trust_receipt_overpayment_links'; }
 
@@ -84,6 +74,8 @@ export class TrustReceiptsController {
       `SELECT verification_id AS id, received_on::text AS "receivedOn", amount::text, account_label AS account,
        reference, verified_at AS "verifiedAt", invoice_due_at_verification::text AS "invoiceDue",
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
+       (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
+         WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount LIMIT 1) AS "linkedPaymentReconciled",
        x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt",
        ARRAY(SELECT candidate.id FROM (${this.excessCandidates}) candidate
          WHERE NOT EXISTS (SELECT 1 FROM ${this.excessLinks} used WHERE used.customer_id=r.customer_id

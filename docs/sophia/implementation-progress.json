@@ -4345,5 +4345,27 @@
       "Nightly job not manually triggered; verified persistence logic by inspection",
       "No frontend push or new deployment required for this data operation"
     ]
+  },
+  "trustReceiptPartialPaymentReview": {
+    "updatedOn": "2026-11-27",
+    "migration": "145_trust_receipt_overpayment_links.sql applied to the configured Sophia database. Migration ledger and forced row-level security verified.",
+    "scope": "TRUST partial-payment preview and historical expected balance from the invoice balance at verification.",
+    "verification": [
+      "node sophia-runtime/dist/database/migrate.js via the configured database connection",
+      "ngc -p tsconfig.app.json --noEmit",
+      "ChromeHeadless receipt form and payment operations panel suites: 7 tests passed"
+    ],
+    "release": "Frontend deployment pending."
+  },
+  "trustReceiptReconciliationReview": {
+    "updatedOn": "2026-11-27",
+    "scope": "TRUST queue for linked invoice payments pending imported bank reconciliation confirmation, including missing flags and reversals.",
+    "verification": [
+      "npm run build in sophia-runtime",
+      "26 focused Jest tests passed across trust-receipt-links.database, student-operations-xero-sync.service and trust-receipts.controller",
+      "ngc -p tsconfig.app.json --noEmit",
+      "7 ChromeHeadless tests passed across the receipt form and operations panel"
+    ],
+    "release": "Runtime and frontend deployment pending. Uses existing tables."
   }
 }

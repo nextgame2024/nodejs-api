@@ -1,3 +1,4 @@
+import { trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -34,7 +35,7 @@ const CandidateSortExpressions = {
 } as const;
 
 const InvoiceQuerySchema = z.object({
-  queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts"]).optional(),
+  queue: z.enum(["outstanding_invoices", "receipts_awaiting_link", "excess_receipts", "reconciliation_review"]).optional(),
   supplierId: z.uuid().optional(),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -435,6 +436,20 @@ export class StudentOperationsXeroSyncService {
               SELECT 1 FROM ${schema}.student_trust_receipt_payment_links link
               WHERE link.customer_id=receipt.customer_id AND link.connection_id=receipt.connection_id
                 AND link.verification_id=receipt.verification_id
+            )
+        )`);
+      }
+      if (parsed.data.queue === 'reconciliation_review') {
+        filters.push(`AND EXISTS (
+          SELECT 1 FROM ${schema}.student_trust_receipt_verifications r
+          JOIN ${schema}.student_trust_receipt_payment_links l USING (customer_id,connection_id,verification_id)
+          JOIN ${schema}.student_operations_xero_sync_configurations cfg
+            ON cfg.customer_id=r.customer_id AND cfg.xero_connection_id=r.connection_id
+          WHERE cfg.enabled AND cfg.organisation_role='trust'
+            AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
+            AND NOT EXISTS (
+              SELECT 1 FROM (${trustReceiptPaymentCandidates(schema)}) candidate
+              WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE
             )
         )`);
       }

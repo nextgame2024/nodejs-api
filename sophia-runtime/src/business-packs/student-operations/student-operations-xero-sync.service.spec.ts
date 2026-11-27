@@ -215,6 +215,21 @@ describe("StudentOperationsXeroSyncService", () => {
     expect(sql).not.toContain('AND i.amount_due > 0');
   });
 
+  it("includes linked TRUST receipts until their specific imported payment confirms reconciliation", async () => {
+    const query = jest.fn(async (sql: string) => ({
+      rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{exists:1}] : [],
+      rowCount: sql.includes("FROM sophia_runtime.xero_connections") ? 1 : 0,
+    }));
+    const database = {tenantReadTransaction: async (_tenant: string, work: (db: unknown) => Promise<unknown>) => work({query})};
+    const service = new StudentOperationsXeroSyncService(database as never, {} as never);
+    await service.invoices(tenantId, connectionId, {queue:'reconciliation_review'});
+    const [sql] = query.mock.calls.find(([sql]) => sql.includes('SELECT i.xero_invoice_id'))!;
+    expect(sql).toContain("cfg.organisation_role='trust'");
+    expect(sql).toContain('r.invoice_id=i.xero_invoice_id');
+    expect(sql).toContain('candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE');
+    expect(sql).not.toContain('AND i.amount_due > 0');
+  });
+
   it("keeps historical excess receipts visible independently of payment links", async () => {
     const query = jest.fn(async (sql: string) => ({
       rows: sql.includes("FROM sophia_runtime.xero_connections") ? [{ exists: 1 }] : [],

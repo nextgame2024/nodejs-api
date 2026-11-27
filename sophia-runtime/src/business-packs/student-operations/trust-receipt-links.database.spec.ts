@@ -69,10 +69,17 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(reviews.find(r=>r.id!==excessOwner).possibleOverpaymentIds).toEqual([]);
     await service.link(principal,connection,invoice,owner,payment);
     await expect(service.link(principal,connection,randomUUID(),owner,payment)).rejects.toThrow();
+    for (const flag of [undefined, true, false]) {
+      const settlement = {entries:[{kind:'payment',id:payment,date,amount:2741.80,isReconciled:flag},
+        {kind:'payment',id:randomUUID(),date,amount:2741.80,isReconciled:true}]};
+      await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify(settlement),invoice]);
+      const linked=(await service.list(principal,connection,invoice)).find(r=>r.id===owner);
+      expect(linked.linkedPaymentReconciled).toBe(flag ?? null);
+    }
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=NULL`);
     await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','reconciliation')`,[tenant,connection,randomUUID()]);
     expect((await service.list(principal,connection,invoice)).find(r=>r.id===excessOwner)).toMatchObject({linkedOverpaymentId:credit,possibleOverpaymentIds:[]});
     const row=(await service.list(principal,connection,invoice)).find(r=>r.id===owner);
-    expect(row).toMatchObject({amount:'2742.00',linkedAmount:'2741.80',possibleOverpaymentIds:[],candidateIds:[],linkedPaymentId:payment});
+    expect(row).toMatchObject({amount:'2742.00',linkedAmount:'2741.80',linkedPaymentReconciled:null,possibleOverpaymentIds:[],candidateIds:[],linkedPaymentId:payment});
   });
 });
