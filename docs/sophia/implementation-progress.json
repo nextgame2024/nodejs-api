@@ -4966,5 +4966,26 @@
       "Configured migration 166 applied; zero pending; forced row-level security and runtime SELECT/INSERT without UPDATE/DELETE/TRUNCATE verified"
     ],
     "release": "Previous proposal batch reported deployed. Deploy this backend, catalogue worker and frontend and allow a successful settings sync before live account selection. No account was selected by the implementation. Local release checks are read-only. Durable dispatch and connected pilot acceptance remain outstanding."
+  },
+  "trustPaymentDispatchQueue": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "11",
+    "completedSubtasks": [
+      "Record one dispatch per approved revision",
+      "Verify independent release and current account mapping",
+      "Preserve approved details with a stable dispatch ID",
+      "Replay identical concurrent and delayed submissions",
+      "Reject conflicting requests and stale or expired approvals",
+      "Record cancellation with its reason",
+      "Cancel dispatch when the approval is superseded",
+      "Inspect dispatch details from the receipt",
+      "Search, filter, sort and page the organisation register",
+      "Open the linked invoice from the register"
+    ],
+    "verification": [
+      "154 targeted backend tests passed",
+      "156 ChromeHeadless tests passed"
+    ],
+    "release": "Previous bank mapping deployment reported. This batch requires backend and frontend deployment. Provider submission, recovery and connected pilot acceptance remain open."
   }
 }

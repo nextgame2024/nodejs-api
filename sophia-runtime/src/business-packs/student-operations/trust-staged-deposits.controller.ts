@@ -1,3 +1,4 @@
+import { dispatchQuery, dispatchRegister } from './trust-payment-dispatch.js';
 import { receiptAccount, changeReceiptAccount, mappingCommand } from './trust-receipt-account.js';
 import { listResiduals, recordResidual, residualCommand, residualDetail, residualQuery } from './trust-residuals.js';
 import { aud, cents, splitLineOptions, assignLinePurposes } from './trust-split-lines.js';
@@ -85,6 +86,17 @@ export class TrustStagedDepositsController {
         if (!verified.rowCount) return {id:prior.rows[0].id,created:false};
       }
       throw new ConflictException('This deposit is already verified or its bank or statement identity conflicts with existing evidence.');
+    });
+  }
+
+  @Get('dispatches')
+  @Header('Cache-Control','private, no-store')
+  async dispatches(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Query() query:unknown) {
+    const p=manager(request),parsed=dispatchQuery.safeParse(query);
+    if (!parsed.success) throw new BadRequestException('Review the queue search and pagination.');
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return dispatchRegister(db,runtimeConfig().schema,p.tenantId,connection,parsed.data);
     });
   }
 

@@ -1,0 +1,74 @@
+import { ConflictException } from '@nestjs/common';
+import type { PoolClient } from 'pg';
+import { z } from 'zod';
+import { receiptProposal } from './trust-receipt-proposals.js';
+import { lockReceiptAccount } from './trust-receipt-account.js';
+import { lockSplitInvoices } from './trust-split-reservations.js';
+
+export const enqueueFields=z.object({
+  revision:z.number().int().positive(),token:z.string().regex(/^[a-f0-9]{64}$/),requestId:z.uuid(),reason:z.string().trim().min(1).max(500),
+}).strict();
+export const cancelFields=z.object({dispatchId:z.uuid(),reason:z.string().trim().min(1).max(500)}).strict();
+
+export async function enqueuePayment(db:PoolClient,s:string,scope:[string,string,string,string],actor:string,input:z.infer<typeof enqueueFields>) {
+  const [tenant,connection,invoice,receipt]=scope;
+  await lockSplitInvoices(db,tenant,connection,[invoice]);
+  await lockReceiptAccount(db,s,tenant,connection,'read');
+  const detail=await receiptProposal(db,s,scope,actor);
+  const table=s+'.student_trust_payment_dispatches';
+  const {rows:[prior]}=await db.query(`SELECT dispatch_id AS id,approval_revision,request_id,evidence_token,released_by,reason
+    FROM ${table} WHERE customer_id=$1 AND connection_id=$2 AND verification_id=$3 AND request_id=$4`,
+    [tenant,connection,receipt,input.requestId]);
+  if (prior) {
+    if (prior.approval_revision!==input.revision || prior.evidence_token!==input.token || prior.released_by!==actor || prior.reason!==input.reason)
+      throw new ConflictException('This dispatch request changed.');
+    return {id:prior.id as string};
+  }
+  if (detail.releaseCheck || detail.revision!==input.revision || detail.token!==input.token || !detail.snapshot.mappedAccount)
+    throw new ConflictException('Refresh the proposal and review the release checks.');
+  const result=await db.query<{id:string}>(`INSERT INTO ${table}
+    (customer_id,connection_id,verification_id,approval_revision,request_id,evidence_token,snapshot,approver,released_by,reason,expires_at)
+    SELECT customer_id,connection_id,verification_id,revision,$5,evidence_token,snapshot,actor,$6,$7,expires_at
+    FROM ${s}.student_trust_receipt_proposals WHERE customer_id=$1 AND connection_id=$2 AND verification_id=$3 AND revision=$4
+      AND action='approve' AND evidence_token=$8 AND actor<>$6 AND clock_timestamp()<expires_at
+    ON CONFLICT DO NOTHING RETURNING dispatch_id AS id`,[tenant,connection,receipt,input.revision,input.requestId,actor,input.reason,input.token]);
+  if (!result.rowCount) throw new ConflictException('The approval expired or already has a dispatch record.');
+  return result.rows[0];
+}
+
+export async function cancelPayment(db:PoolClient,s:string,scope:[string,string,string,string],actor:string,input:z.infer<typeof cancelFields>) {
+  const [tenant,connection,invoice,receipt]=scope;
+  await lockSplitInvoices(db,tenant,connection,[invoice]);
+  const detail=await receiptProposal(db,s,scope,actor);
+  const prior=(await db.query(`SELECT c.actor,c.reason FROM ${s}.student_trust_dispatch_cancellations c
+    JOIN ${s}.student_trust_payment_dispatches q USING(customer_id,connection_id,dispatch_id)
+    WHERE q.customer_id=$1 AND q.connection_id=$2 AND q.verification_id=$3 AND q.dispatch_id=$4`,
+    [tenant,connection,receipt,input.dispatchId])).rows[0];
+  if (prior) {
+    if (prior.actor===actor && prior.reason===input.reason) return {id:input.dispatchId};
+    throw new ConflictException('This dispatch has already been cancelled.');
+  }
+  if (detail.dispatch?.id!==input.dispatchId) throw new ConflictException('Refresh the dispatch record.');
+  await db.query(`INSERT INTO ${s}.student_trust_dispatch_cancellations(customer_id,connection_id,dispatch_id,actor,reason)
+    VALUES($1,$2,$3,$4,$5)`,[tenant,connection,input.dispatchId,actor,input.reason]);
+  return {id:input.dispatchId};
+}
+
+export const dispatchQuery=z.object({q:z.string().trim().max(150).default(''),page:z.coerce.number().int().min(1).max(100000).default(1),
+  limit:z.coerce.number().pipe(z.union([z.literal(25),z.literal(50),z.literal(100)])).default(25),
+  direction:z.enum(['asc','desc']).default('desc'),status:z.enum(['all','recorded','cancelled','expired']).default('all')}).strict();
+
+export async function dispatchRegister(db:PoolClient,s:string,tenant:string,connection:string,input:z.infer<typeof dispatchQuery>) {
+  const result=await db.query(`WITH entries AS (
+    SELECT q.dispatch_id AS id,q.queued_at AS "queuedAt",q.snapshot->>'invoice' AS invoice,q.snapshot->>'invoiceNumber' AS "invoiceNumber",
+      q.snapshot->>'bankId' AS "bankId",q.snapshot->>'amount' AS amount,q.approver,q.released_by AS reviewer,
+      CASE WHEN c.dispatch_id IS NOT NULL THEN 'cancelled' WHEN q.expires_at<=statement_timestamp() THEN 'expired' ELSE 'recorded' END AS status
+    FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
+    WHERE q.customer_id=$1 AND q.connection_id=$2
+  ), filtered AS (SELECT * FROM entries WHERE ($3='all' OR status=$3) AND ($4='' OR strpos(lower("invoiceNumber"),lower($4))>0
+    OR strpos(lower("bankId"),lower($4))>0 OR id::text=lower($4))),
+  page AS (SELECT * FROM filtered ORDER BY "queuedAt" ${input.direction},id LIMIT $5 OFFSET $6)
+  SELECT count(*)::int AS count,coalesce((SELECT jsonb_agg(p ORDER BY "queuedAt" ${input.direction},id) FROM page p),'[]') AS rows
+  FROM filtered`,[tenant,connection,input.status,input.q,input.limit,(input.page-1)*input.limit]);
+  return result.rows[0];
+}

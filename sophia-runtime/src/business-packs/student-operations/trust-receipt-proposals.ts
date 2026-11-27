@@ -22,6 +22,10 @@ export interface ProposalEvent {
   recordedAt:Date;expiresAt:Date;expired:boolean;snapshot:Snapshot;
 }
 
+export interface DispatchReceipt {
+  id:string;revision:number;actor:string;reason:string;queuedAt:Date;expiresAt:Date;expired:boolean;
+  cancelledAt:Date|null;cancelledBy:string|null;cancelReason:string|null;
+}
 export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewer:string) {
   const {rows:[row]}=await db.query<Snapshot & {blocked:string|null}>(`
     SELECT r.connection_id AS connection,x.tenant_name AS organisation,x.xero_tenant_id AS "organisationId",r.invoice_id AS invoice,r.verification_id AS receipt,i.invoice_number AS "invoiceNumber",
@@ -73,7 +77,13 @@ export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewe
     head.expired?'expired':head.action==='approve'?'approved':'prepared';
   const releaseCheck=blocked || accountIssue || (state!=='approved'?'A current approved proposal is required.':
     head.actor===reviewer?'An independent authorised reviewer must check this approval.':null);
-  return {state,blocked,accountIssue,releaseCheck,revision:head?.revision ?? 0,snapshot,token,history};
+  const {rows:[dispatch]}=await db.query<DispatchReceipt>(`SELECT q.dispatch_id AS id,q.approval_revision AS revision,q.released_by AS actor,
+    q.reason,q.queued_at AS "queuedAt",q.expires_at AS "expiresAt",clock_timestamp()>=q.expires_at AS expired,
+    c.cancelled_at AS "cancelledAt",c.actor AS "cancelledBy",c.reason AS "cancelReason"
+    FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
+    WHERE q.customer_id=$1 AND q.connection_id=$2 AND q.verification_id=$3 ORDER BY q.approval_revision DESC LIMIT 1`,
+    [scope[0],scope[1],scope[3]]);
+  return {dispatch:dispatch ?? null,state,blocked,accountIssue,releaseCheck,revision:head?.revision ?? 0,snapshot,token,history};
 }
 
 export async function recordProposal(db:PoolClient,s:string,scope:Scope,actor:string,input:z.infer<typeof proposalCommand>) {
@@ -103,5 +113,9 @@ export async function recordProposal(db:PoolClient,s:string,scope:Scope,actor:st
     [tenant,connection,receipt,revision,input.requestId,input.action,input.token,JSON.stringify(withdraw?head.snapshot:detail.snapshot),
      actor,input.reason,input.action==='prepare'?null:head.expiresAt]);
   if (!result.rowCount) throw new ConflictException('The proposal expired. Refresh before continuing.');
+  if (detail.dispatch && !detail.dispatch.cancelledAt) {
+    await db.query(`INSERT INTO ${s}.student_trust_dispatch_cancellations(customer_id,connection_id,dispatch_id,actor,reason)
+      VALUES($1,$2,$3,$4,$5)`,[tenant,connection,detail.dispatch.id,actor,'Proposal superseded by revision '+revision]);
+  }
   return {revision};
 }

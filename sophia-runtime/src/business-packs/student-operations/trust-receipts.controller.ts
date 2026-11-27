@@ -1,3 +1,4 @@
+import { enqueueFields, cancelFields, enqueuePayment, cancelPayment } from './trust-payment-dispatch.js';
 import { proposalCommand, receiptProposal, recordProposal } from './trust-receipt-proposals.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
 import { availableTrustPaymentIds, currentTrustInvoice, currentPaymentList, importedInvoicePayments, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
@@ -73,6 +74,22 @@ export class TrustReceiptsController {
   private get excessLinks() { return runtimeConfig().schema + '.student_trust_receipt_overpayment_links'; }
 
   private get excessCandidates() { return trustOverpaymentCandidates(runtimeConfig().schema, 'r'); }
+
+  @Post(':receiptId/dispatch')
+  enqueue(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Param('invoiceId',ParseUUIDPipe) invoice:string,
+    @Param('receiptId',ParseUUIDPipe) receipt:string,@Body() body:unknown) {
+    const p=manager(request),parsed=enqueueFields.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Review the approval and enter a release reason.');
+    return this.database.tenantTransaction(p.tenantId,db=>enqueuePayment(db,runtimeConfig().schema,[p.tenantId,connection,invoice,receipt],p.identityUserId,parsed.data));
+  }
+
+  @Post(':receiptId/dispatch/cancel')
+  cancelDispatch(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Param('invoiceId',ParseUUIDPipe) invoice:string,
+    @Param('receiptId',ParseUUIDPipe) receipt:string,@Body() body:unknown) {
+    const p=manager(request),parsed=cancelFields.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Choose the dispatch and enter a cancellation reason.');
+    return this.database.tenantTransaction(p.tenantId,db=>cancelPayment(db,runtimeConfig().schema,[p.tenantId,connection,invoice,receipt],p.identityUserId,parsed.data));
+  }
 
   @Get(':receiptId/proposal')
   @Header('Cache-Control','private, no-store')
