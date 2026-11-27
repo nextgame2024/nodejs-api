@@ -145,6 +145,20 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await expect(staging.outcomes({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,conn,
       {from:'2020-01-02',to:'2020-01-02'})).rejects.toThrow();
     const a=first.invoices[0], b=first.invoices[1];
+    const left={invoiceId:a.id,expectedBalance:a.balance,amount:'70.13'};
+    const right={invoiceId:b.id,expectedBalance:b.balance,amount:'29.67'};
+    const split=(allocations:unknown[])=>staging.previewSplit(principal,conn,id,{allocations});
+    expect(await split([left,right])).toEqual({allocated:'99.80',unassigned:'0.20',allocations:[
+      {invoiceId:a.id,invoiceNumber:'INV-7',amount:'70.13',remainingDue:'54.87'},
+      {invoiceId:b.id,invoiceNumber:'INV-8',amount:'29.67',remainingDue:'70.13'}]});
+    expect(await split([{...left,amount:'100'}])).toMatchObject({allocated:'100.00',unassigned:'0.00'});
+    for (const invalid of [[],Array(21).fill(left),[left,{...left,invoiceId:a.id.toUpperCase()}],
+      [left,{...right,amount:'30'}],[{...right,amount:'100'}],[{...left,amount:'0'}],
+      [{...left,amount:'0.001'}],[{...left,expectedBalance:'100'}],[{...left,invoiceId:randomUUID()}]]) {
+      await expect(split(invalid)).rejects.toThrow();
+    }
+    await expect(staging.previewSplit({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,
+      conn,id,{allocations:[left]})).rejects.toThrow();
     const command={invoiceId:a.id,requestId:randomUUID(),decision:'accepted',reason:'Compared the remittance',
       revision:0,evidenceToken:a.evidenceToken,q:'',page:1};
     await expect(staging.decide(principal,conn,id,{...command,reason:' '})).rejects.toThrow();
@@ -168,10 +182,12 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       evidence:{id:b.id,balance:'99.80',lookup:'suggested'}},{revision:2,decision:'accepted'},{revision:1,reason:command.reason}]);
     expect((await staging.decisions(principal,conn,id,{before:2})).entries).toHaveLength(1);
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET amount_due=132 WHERE xero_invoice_id=$1`,[a.id]);
+    await expect(split([left,right])).rejects.toThrow('balance changed');
     expect((await get()).invoices[0]).toMatchObject({evidenceChanged:true});
     await expect(staging.decide(principal,conn,id,{...command,revision:3,requestId:randomUUID()})).rejects.toThrow();
     const invoice=a.id;
     await service.verify(principal,conn,invoice,randomUUID(),body);
+    await expect(split([right])).rejects.toThrow('verified receipt');
     expect((await service.list(principal,conn,invoice))[0].reviewedDepositId).toBe(id);
     expect((await staging.decisions(principal,conn,id,{})).entries).toHaveLength(3);
     expect(await staging.decide(principal,conn,id,command)).toEqual({revision:1});

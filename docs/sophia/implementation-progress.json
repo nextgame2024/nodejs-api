@@ -4828,5 +4828,28 @@
     "completedSubtasks": ["Scope the report to an active TRUST organisation and bank deposit dates", "Count staged deposits and first-review coverage", "Measure median time from staging to first review", "Resolve superseded and dismissed acceptances", "Compare accepted invoices with verified receipts", "Identify verified receipts without an acceptance", "Isolate contradictory bank evidence", "Show agreement denominators by rule version, lookup method and score", "Filter, sort and page through individual outcomes", "Inspect decision history and refresh outcomes after local workflow changes"],
     "verification": ["Runtime build and Angular compilation passed", "148 targeted backend tests passed with disposable PostgreSQL fixtures", "140 ChromeHeadless tests passed including 375px and 1280px layouts in light and dark themes", "Configured database ledger had zero pending migrations"],
     "release": "Backend and frontend deployment, connected pilot measurement and acceptance pending."
+  },
+  "trustReceiptSplitPreview": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "10",
+    "completedSubtasks": [
+      "Select invoices across matching and manual search pages",
+      "Retain explicit allocation amounts while searching",
+      "Prevent duplicate invoice selections and bound the draft to 20 invoices",
+      "Recheck the staged deposit against receipt verification",
+      "Recheck current authorised AUD receivables in the selected TRUST organisation",
+      "Reject stale imported balances",
+      "Validate exact cent amounts against individual and deposit limits",
+      "Show remaining due for each invoice",
+      "Show total allocated and unassigned deposit cash",
+      "Invalidate obsolete previews on edits or workspace changes"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "148 targeted backend tests passed with disposable PostgreSQL fixtures",
+      "142 ChromeHeadless tests passed including mobile and desktop control layout in both themes",
+      "Configured migration ledger checked, zero pending"
+    ],
+    "release": "Operator reports the preceding batch deployed. The split preview requires deployment of the new backend and frontend. Full item 10 acceptance needs durable reservations, concurrent balance protection and line-purpose allocation. Connected pilot outstanding."
   }
 }

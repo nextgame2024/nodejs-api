@@ -13,6 +13,20 @@ import { manager, receiptFields } from './trust-receipts.controller.js';
 const stageFields = receiptFields.pick({account:true,receivedOn:true,amount:true,reference:true,bankTransactionId:true,
   statementFileName:true,statementFileSha256:true,statementRecord:true}).required();
 const queryFields = z.object({page:z.coerce.number().int().min(1).max(100000).default(1),q:z.string().trim().max(150).default('')}).strict();
+const splitFields=z.object({
+  allocations:z.array(z.object({
+    invoiceId:z.uuid().transform(id=>id.toLowerCase()), amount:receiptFields.shape.amount,
+    expectedBalance:receiptFields.shape.amount,
+  }).strict()).min(1).max(20),
+}).strict();
+
+function cents(amount:string) {
+  const [whole,fraction='']=amount.split('.');
+  return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
+}
+function aud(value:bigint) {
+  return (value/100n).toString()+'.'+(value%100n).toString().padStart(2,'0');
+}
 const ruleVersion=1;
 const decisionFields=queryFields.extend({
   invoiceId:z.uuid(), decision:z.enum(['accepted','dismissed']), reason:z.string().trim().min(1).max(500),
@@ -101,7 +115,7 @@ export class TrustStagedDepositsController {
     });
   }
 
-  private async candidatePage(db:PoolClient,tenant:string,connection:string,depositId:string,q:string,page:number) {
+  private async availableDeposit(db:PoolClient,tenant:string,connection:string,depositId:string) {
       const schema=runtimeConfig().schema;
       const deposit=await db.query(`SELECT d.reference,d.amount::text,EXISTS (
           SELECT 1 FROM ${schema}.student_trust_receipt_verifications r
@@ -112,7 +126,48 @@ export class TrustStagedDepositsController {
         WHERE d.customer_id=$1 AND d.connection_id=$2 AND d.deposit_id=$3`,[tenant,connection,depositId]);
       if (!deposit.rowCount) throw new NotFoundException();
       if (deposit.rows[0].used) throw new ConflictException('A verified receipt already uses this bank transaction or CSV record.');
-      const reference:string=deposit.rows[0].reference;
+      return deposit.rows[0] as {reference:string;amount:string};
+  }
+
+  @Post(':depositId/split-preview')
+  @Header('Cache-Control','private, no-store')
+  async previewSplit(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('depositId',ParseUUIDPipe) depositId:string,@Body() body:unknown) {
+    const principal=manager(request);
+    const parsed=splitFields.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Choose up to 20 invoices and enter positive AUD amounts with up to two decimal places.');
+    const allocations=parsed.data.allocations;
+    const ids=allocations.map(row=>row.invoiceId);
+    if (new Set(ids).size!==ids.length) throw new BadRequestException('Choose each invoice once.');
+    const tenant=principal.tenantId, schema=runtimeConfig().schema;
+    return this.database.tenantReadTransaction(tenant,async db=>{
+      await this.requireTrust(db,tenant,connection);
+      const deposit=await this.availableDeposit(db,tenant,connection,depositId);
+      const invoices=await db.query<{id:string;number:string|null;balance:string}>(`SELECT i.xero_invoice_id AS id,
+        i.invoice_number AS number, round(i.amount_due,2)::text AS balance FROM ${schema}.student_operations_xero_invoices i
+        WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=ANY($3::uuid[])
+        AND i.invoice_type='ACCREC' AND i.invoice_status='AUTHORISED' AND i.currency_code='AUD'
+        AND round(i.amount_due,2)>0 AND ${currentTrustInvoice(schema,'i')}`,[tenant,connection,ids]);
+      let total=0n;
+      const rows=allocations.map(input=>{
+        const invoice=invoices.rows.find(row=>row.id===input.invoiceId);
+        if (!invoice || cents(invoice.balance)!==cents(input.expectedBalance))
+          throw new ConflictException('An invoice or its balance changed. Find the invoice again and review the split.');
+        const amount=cents(input.amount), balance=cents(invoice.balance);
+        if (amount>balance) throw new BadRequestException('An allocation exceeds the imported invoice balance.');
+        total+=amount;
+        return {invoiceId:invoice.id,invoiceNumber:invoice.number,amount:aud(amount),remainingDue:aud(balance-amount)};
+      });
+      const received=cents(deposit.amount);
+      if (total>received) throw new BadRequestException('The allocations exceed the bank deposit.');
+      return {allocations:rows,allocated:aud(total),unassigned:aud(received-total)};
+    });
+  }
+
+  private async candidatePage(db:PoolClient,tenant:string,connection:string,depositId:string,q:string,page:number) {
+      const schema=runtimeConfig().schema;
+      const deposit=await this.availableDeposit(db,tenant,connection,depositId);
+      const reference=deposit.reference;
       const numberTokens=(reference.toLowerCase().match(/[\p{L}\p{N}]+(?:[-_/][\p{L}\p{N}]+)*/gu) ?? [])
         .filter(token=>token!==reference.toLowerCase() && /[0-9]/.test(token) && /[a-z]/i.test(token));
       // Reference evidence takes precedence over a coincidentally equal balance.
@@ -136,7 +191,7 @@ export class TrustStagedDepositsController {
       )
       SELECT *,($4::numeric-balance)::text AS difference,count(*) OVER(PARTITION BY score)::int AS peers
       FROM ranked ORDER BY score DESC,"invoiceNumber" NULLS LAST,id LIMIT 11 OFFSET $6`,
-        [tenant,connection,reference,deposit.rows[0].amount,q,(page-1)*10,numberTokens]);
+        [tenant,connection,reference,deposit.amount,q,(page-1)*10,numberTokens]);
       const candidates=result.rows.slice(0,10);
       const table=schema+'.student_trust_invoice_match_decisions';
       const scope=[tenant,connection,depositId];
