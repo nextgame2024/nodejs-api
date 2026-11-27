@@ -4874,5 +4874,28 @@
       "Migration 162 applied on configured database; zero pending; verified forced tenant RLS and immutable event permissions"
     ],
     "release": "Prior preview deployment reported by operator. New reservation backend and frontend need deployment. Line-level purposes, student residual workflow and connected pilot acceptance remain open."
+  },
+  "trustInvoiceLineReservations": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "10",
+    "completedSubtasks": [
+      "Load scoped imported TRUST lines on demand",
+      "Resolve cent-exact line amounts including identifiable tax against invoice total",
+      "Withhold line assignment for incomplete or partially paid invoices",
+      "Enter individual line purposes from the remittance",
+      "Distinguish invoice allocation without purpose from unassigned deposit cash",
+      "Reject duplicate lines and totals above the invoice allocation",
+      "Recheck source identity and available amounts at reservation",
+      "Serialize competing reservations on the same line",
+      "Retain the selected lines and amounts in the immutable reservation snapshot",
+      "Restore line availability on release"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "149 targeted backend tests passed, including PostgreSQL concurrency, stale line, release and tenant isolation",
+      "144 targeted ChromeHeadless tests passed",
+      "Migration 163 applied, forced row-level security and restricted runtime permissions verified, zero pending migrations"
+    ],
+    "release": "Operator reported prior reservation deployment. New line-level backend and frontend deployment plus connected pilot acceptance pending. Student attribution and handling of residual cash remain open."
   }
 }

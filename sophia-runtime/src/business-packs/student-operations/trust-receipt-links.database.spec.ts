@@ -36,7 +36,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -92,6 +92,50 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(secondPage.hasMore).toBe(false);
     expect(new Set([...firstPage.deposits,...secondPage.deposits].map(d=>d.id)).size).toBe(26);
     expect((await service.list(principal,conn,inv))[0].statementSource).toMatchObject({record:2,sha256:source.statementFileSha256});
+  });
+
+  it('reserves line purposes under invoice locks and restores capacity on release',async()=>{
+    const staging=new TrustStagedDepositsController(db);
+    const conn=randomUUID(),run=randomUUID(),inv=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active')`,[tenant,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust')`,[tenant,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','initial')`,[tenant,conn,run]);
+    const items=[{lineItemId:randomUUID(),description:'Tuition',lineAmount:100,taxAmount:0},
+      {lineItemId:randomUUID(),description:'Materials',lineAmount:20,taxAmount:5}];
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices
+      (customer_id,xero_connection_id,xero_invoice_id,currency_code,invoice_type,invoice_status,
+       amount_due,total,last_seen_sync_run_id,line_items) VALUES($1,$2,$3,'AUD','ACCREC','AUTHORISED',125,125,$4,$5)`,
+      [tenant,conn,inv,run,JSON.stringify(items)]);
+    const stage=(n:number)=>staging.stage(principal,conn,{account:'Trust',receivedOn:'2020-01-02',amount:'40',reference:'test',
+      bankTransactionId:'LINE-'+n,statementFileName:'bank.csv',statementFileSha256:'6'.repeat(64),statementRecord:String(n)});
+    const deposits=await Promise.all([stage(2),stage(3)]);
+    const lookup=()=>staging.invoiceLines(principal,conn,deposits[0].id,inv);
+    const options=(await lookup()).lines;
+    expect(options.map(row=>row.available)).toEqual(['100.00','25.00']);
+    await expect(staging.invoiceLines({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,
+      conn,deposits[0].id,inv)).rejects.toThrow();
+    const line={lineId:options[1].lineId,token:options[1].token,amount:'20'};
+    const input={invoiceId:inv,expectedBalance:'125',amount:'30',lines:[line]};
+    const preview=(row:unknown)=>staging.previewSplit(principal,conn,deposits[0].id,{allocations:[row]});
+    expect(await preview(input)).toMatchObject({unassigned:'10.00',allocations:[{purposeUnassigned:'10.00',lines:[
+      {lineId:line.lineId,gross:'25.00',amount:'20.00'}]}]});
+    for (const invalid of [{...input,amount:'19'},{...input,lines:[line,line]},
+      {...input,lines:[{...line,amount:'26'}]},{...input,lines:[{...line,token:'0'.repeat(64)}]}]) {
+      await expect(preview(invalid)).rejects.toThrow();
+    }
+    const results=await Promise.allSettled(deposits.map(d=>staging.changeReservation(principal,conn,d.id,{
+      action:'reserve',allocations:[input],reason:'Remittance',revision:0,requestId:randomUUID()})));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    const winner=deposits[results.findIndex(r=>r.status==='fulfilled')];
+    expect((await lookup()).lines[1].available).toBe('5.00');
+    expect((await staging.candidates(principal,conn,winner.id,{})).reservation.plan.allocations[0].lines[0].label).toBe('Materials');
+    await staging.changeReservation(principal,conn,winner.id,{action:'release',revision:1,reason:'Correction',requestId:randomUUID()});
+    expect((await lookup()).lines[1].available).toBe('25.00');
+    items[1].description='Revised supplies';
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET line_items=$2 WHERE xero_invoice_id=$1`,[inv,JSON.stringify(items)]);
+    await expect(preview(input)).rejects.toThrow('Refresh the invoice lines');
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET amount_due=100 WHERE xero_invoice_id=$1`,[inv]);
+    expect((await lookup()).lines).toEqual([]);
   });
 
   it('ranks scoped current AUD invoice suggestions, preserves ties and abstains without evidence',async()=>{

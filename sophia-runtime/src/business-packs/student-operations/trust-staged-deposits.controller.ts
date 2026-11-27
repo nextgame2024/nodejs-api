@@ -1,3 +1,4 @@
+import { aud, cents, splitLineOptions, assignLinePurposes } from './trust-split-lines.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
 import { matchOutcomes, outcomeQuery } from './trust-match-outcomes.js';
 import { createHash } from 'node:crypto';
@@ -18,16 +19,11 @@ const splitFields=z.object({
   allocations:z.array(z.object({
     invoiceId:z.uuid().transform(id=>id.toLowerCase()), amount:receiptFields.shape.amount,
     expectedBalance:receiptFields.shape.amount,
+    lines:z.array(z.object({lineId:z.uuid().transform(id=>id.toLowerCase()),token:z.string().regex(/^[a-f0-9]{64}$/),
+      amount:receiptFields.shape.amount}).strict()).min(1).max(100).optional(),
   }).strict()).min(1).max(20),
 }).strict();
 
-function cents(amount:string) {
-  const [whole,fraction='']=amount.split('.');
-  return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
-}
-function aud(value:bigint) {
-  return (value/100n).toString()+'.'+(value%100n).toString().padStart(2,'0');
-}
 const ruleVersion=1;
 const decisionFields=queryFields.extend({
   invoiceId:z.uuid(), decision:z.enum(['accepted','dismissed']), reason:z.string().trim().min(1).max(500),
@@ -130,6 +126,21 @@ export class TrustStagedDepositsController {
       return deposit.rows[0] as {reference:string;amount:string};
   }
 
+  @Get(':depositId/invoice-lines/:invoiceId')
+  @Header('Cache-Control','private, no-store')
+  async invoiceLines(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('depositId',ParseUUIDPipe) depositId:string,@Param('invoiceId',ParseUUIDPipe) invoiceId:string) {
+    const {tenantId}=manager(request);
+    return this.database.tenantReadTransaction(tenantId,async db=>{
+      await this.requireTrust(db,tenantId,connection);
+      await this.availableDeposit(db,tenantId,connection,depositId);
+      const invoices=await splitLineOptions(db,runtimeConfig().schema,tenantId,connection,[invoiceId]);
+      const lines=invoices.get(invoiceId.toLowerCase());
+      if (!lines) throw new NotFoundException();
+      return {lines};
+    });
+  }
+
   @Post(':depositId/split-preview')
   @Header('Cache-Control','private, no-store')
   async previewSplit(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
@@ -154,6 +165,8 @@ export class TrustStagedDepositsController {
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=ANY($3::uuid[])
         AND i.invoice_type='ACCREC' AND i.invoice_status='AUTHORISED' AND i.currency_code='AUD'
         AND round(i.amount_due,2)>0 AND ${currentTrustInvoice(schema,'i')}`,[tenant,connection,ids]);
+      const withLines=allocations.filter(row=>row.lines).map(row=>row.invoiceId);
+      const options=withLines.length ? await splitLineOptions(db,schema,tenant,connection,withLines) : undefined;
       let total=0n;
       const rows=allocations.map(input=>{
         const invoice=invoices.rows.find(row=>row.id===input.invoiceId);
@@ -162,7 +175,8 @@ export class TrustStagedDepositsController {
         const amount=cents(input.amount), balance=cents(invoice.balance);
         if (amount>balance) throw new BadRequestException('An allocation exceeds the imported invoice balance.');
         total+=amount;
-        return {invoiceId:invoice.id,invoiceNumber:invoice.number,amount:aud(amount),remainingDue:aud(balance-amount)};
+        return {invoiceId:invoice.id,invoiceNumber:invoice.number,amount:aud(amount),remainingDue:aud(balance-amount),
+          ...(input.lines ? assignLinePurposes(input.lines,options?.get(invoice.id) ?? [],amount) : {})};
       });
       const received=cents(deposit.amount);
       if (total>received) throw new BadRequestException('The allocations exceed the bank deposit.');
@@ -229,6 +243,11 @@ export class TrustStagedDepositsController {
           (customer_id,connection_id,deposit_id,revision,invoice_id,amount)
           SELECT $1,$2,$3,$4,"invoiceId",amount FROM jsonb_to_recordset($5::jsonb) AS x("invoiceId" uuid,amount numeric)`,
           [...scope,revision,JSON.stringify(plan.allocations)]);
+        const lines=plan.allocations.flatMap(row=>(row.lines ?? []).map(line=>({invoiceId:row.invoiceId,lineId:line.lineId,amount:line.amount})));
+        if (lines.length) await db.query(`INSERT INTO ${schema}.student_trust_split_line_allocations
+          (customer_id,connection_id,deposit_id,invoice_id,line_id,amount)
+          SELECT $1,$2,$3,"invoiceId","lineId",amount FROM jsonb_to_recordset($4::jsonb) AS x("invoiceId" uuid,"lineId" uuid,amount numeric)`,
+          [...scope,JSON.stringify(lines)]);
       } else await db.query(`DELETE FROM ${schema}.student_trust_split_allocations WHERE ${where}`,scope);
       return {revision};
     });
