@@ -36,7 +36,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -159,6 +159,36 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     }
     await expect(staging.previewSplit({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,
       conn,id,{allocations:[left]})).rejects.toThrow();
+    const reservation={action:'reserve',revision:0,requestId:randomUUID(),reason:'Reviewed payer remittance',allocations:[left,right]};
+    const change=(deposit:string,input:unknown)=>staging.changeReservation(principal,conn,deposit,input);
+    const second={...reservation,requestId:randomUUID(),allocations:[{...left,amount:'60.00'}]};
+    const competing=await Promise.allSettled([change(id,reservation),change(embedded.id,second)]);
+    expect(competing.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    const firstWon=competing[0].status==='fulfilled';
+    const winner=firstWon?id:embedded.id, loser=firstWon?embedded.id:id;
+    const accepted=firstWon?reservation:second, rejected=firstWon?second:reservation;
+    expect(await change(winner,accepted)).toEqual({revision:1});
+    await expect(change(winner,{...accepted,reason:'Changed request'})).rejects.toThrow('request changed');
+    const snapshot=(await staging.candidates(principal,conn,winner,{})).reservation;
+    expect(snapshot).toMatchObject({revision:1,action:'reserve',reason:accepted.reason,actor:'fixture'});
+    expect(snapshot.plan.allocated).toBe(firstWon?'99.80':'60.00');
+    // Verify a different movement on the reserved invoice, then the reserved movement on another invoice.
+    await expect(service.verify(principal,conn,a.id,randomUUID(),{...body,bankTransactionId:'MANUAL',
+      statementFileName:undefined,statementFileSha256:undefined,statementRecord:undefined})).rejects.toThrow('active split');
+    const source=firstWon?body:{...body,bankTransactionId:'MATCH-3',statementRecord:'4',amount:'89'};
+    await expect(service.verify(principal,conn,first.invoices[2].id,randomUUID(),source)).rejects.toThrow('active split');
+    const release={action:'release',revision:1,requestId:randomUUID(),reason:'Corrected remittance'};
+    await expect(change(winner,{...release,revision:0})).rejects.toThrow('current reservation');
+    await expect(staging.changeReservation({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,
+      conn,winner,release)).rejects.toThrow();
+    expect(await Promise.all([change(winner,release),change(winner,release)])).toEqual([{revision:2},{revision:2}]);
+    expect((await staging.candidates(principal,conn,winner,{})).reservation).toMatchObject({revision:2,action:'release',plan:null});
+    await change(loser,rejected);
+    // Different deposits can reserve disjoint portions of one invoice.
+    const small={...reservation,revision:2,requestId:randomUUID(),allocations:[{...left,amount:'1.00'}]};
+    await change(winner,small);
+    await change(winner,{...release,revision:3,requestId:randomUUID()});
+    await change(loser,{...release,requestId:randomUUID()});
     const command={invoiceId:a.id,requestId:randomUUID(),decision:'accepted',reason:'Compared the remittance',
       revision:0,evidenceToken:a.evidenceToken,q:'',page:1};
     await expect(staging.decide(principal,conn,id,{...command,reason:' '})).rejects.toThrow();
@@ -188,6 +218,8 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const invoice=a.id;
     await service.verify(principal,conn,invoice,randomUUID(),body);
     await expect(split([right])).rejects.toThrow('verified receipt');
+    await expect(change(noEvidence.id,{...reservation,requestId:randomUUID(),allocations:[
+      {...left,amount:'1',expectedBalance:'132'}]})).rejects.toThrow('unlinked receipts');
     expect((await service.list(principal,conn,invoice))[0].reviewedDepositId).toBe(id);
     expect((await staging.decisions(principal,conn,id,{})).entries).toHaveLength(3);
     expect(await staging.decide(principal,conn,id,command)).toEqual({revision:1});

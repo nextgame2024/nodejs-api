@@ -1,3 +1,4 @@
+import { lockSplitInvoices } from './trust-split-reservations.js';
 import { availableTrustPaymentIds, currentTrustInvoice, currentPaymentList, importedInvoicePayments, trustOverpaymentCandidates, trustReceiptPaymentCandidates } from './trust-receipt-payment-candidates.js';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Header,
@@ -364,6 +365,7 @@ export class TrustReceiptsController {
             OR (d.statement_file_sha256=$5 AND d.statement_record=$6))
           ORDER BY d.deposit_id`,[p.tenantId,connection,account,bankTransactionId,statementFileSha256??null,statementRecord??null]);
       }
+      await lockSplitInvoices(db,p.tenantId,connection,[invoice]);
       const inserted = await db.query(`INSERT INTO ${this.table}
         (customer_id,connection_id,invoice_id,verification_id,verified_by,received_on,amount,account_label,reference,
          evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id,imported_payment_amount,
@@ -388,6 +390,17 @@ export class TrustReceiptsController {
         ON CONFLICT DO NOTHING RETURNING verification_id`,
         [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null,importedAmount ?? null,
           statementFileName ?? null,statementFileSha256 ?? null,statementRecord ?? null,...(importedId ? [importedId] : [])]);
+      if (inserted.rowCount) {
+        const reserved=await db.query(`SELECT held.bank_transaction_id FROM ${schema}.student_trust_split_allocations a
+          JOIN ${schema}.student_trust_staged_deposits held USING(customer_id,connection_id,deposit_id)
+          WHERE a.customer_id=$1 AND a.connection_id=$2 AND (a.invoice_id=$3 OR a.deposit_id IN
+            (SELECT d.deposit_id FROM ${schema}.student_trust_staged_deposits d WHERE d.customer_id=$1 AND d.connection_id=$2
+            AND ((lower(d.account_label)=lower($4) AND d.bank_transaction_id=$5)
+              OR (d.statement_file_sha256=$6 AND d.statement_record=$7)))) ORDER BY a.deposit_id LIMIT 1`,
+          [p.tenantId,connection,invoice,account,bankTransactionId||null,statementFileSha256??null,statementRecord??null]);
+        if (reserved.rowCount) throw new ConflictException({errorCode:'trust_active_split',bankTransactionId:reserved.rows[0].bank_transaction_id,
+          message:'Review and release the active split reservation before verifying this receipt.'});
+      }
       if (!inserted.rowCount) {
         const prior = await db.query(`SELECT payload_hash FROM ${this.table} WHERE customer_id=$1 AND verification_id=$2 AND verified_by=$3`,[p.tenantId,key,p.identityUserId]);
         const priorHash = prior.rows[0]?.payload_hash;

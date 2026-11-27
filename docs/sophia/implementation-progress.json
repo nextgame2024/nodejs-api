@@ -4851,5 +4851,28 @@
       "Configured migration ledger checked, zero pending"
     ],
     "release": "Operator reports the preceding batch deployed. The split preview requires deployment of the new backend and frontend. Full item 10 acceptance needs durable reservations, concurrent balance protection and line-purpose allocation. Connected pilot outstanding."
+  },
+  "trustSplitReservations": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "10",
+    "completedSubtasks": [
+      "Persist checked invoice allocations for a staged deposit",
+      "Reopen the saved split with its unassigned amount",
+      "Record reviewer, timestamp and reason in a tenant-scoped event ledger",
+      "Reject stale deposit revisions",
+      "Replay identical save and release requests once",
+      "Serialize competing deposits against shared invoice balances",
+      "Allow multiple deposits to reserve disjoint portions of an invoice",
+      "Block reservations against outstanding unlinked verifications",
+      "Identify the conflicting bank movement during single-invoice verification",
+      "Release allocations atomically while retaining the original evidence"
+    ],
+    "verification": [
+      "Runtime build and Angular compilation passed",
+      "148 backend tests including competing PostgreSQL reservations and release/retry cases passed",
+      "143 targeted ChromeHeadless tests passed",
+      "Migration 162 applied on configured database; zero pending; verified forced tenant RLS and immutable event permissions"
+    ],
+    "release": "Prior preview deployment reported by operator. New reservation backend and frontend need deployment. Line-level purposes, student residual workflow and connected pilot acceptance remain open."
   }
 }

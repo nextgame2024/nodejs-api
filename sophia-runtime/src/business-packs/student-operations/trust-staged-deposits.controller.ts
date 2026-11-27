@@ -1,3 +1,4 @@
+import { lockSplitInvoices } from './trust-split-reservations.js';
 import { matchOutcomes, outcomeQuery } from './trust-match-outcomes.js';
 import { createHash } from 'node:crypto';
 import { currentTrustInvoice } from './trust-receipt-payment-candidates.js';
@@ -136,12 +137,17 @@ export class TrustStagedDepositsController {
     const principal=manager(request);
     const parsed=splitFields.safeParse(body);
     if (!parsed.success) throw new BadRequestException('Choose up to 20 invoices and enter positive AUD amounts with up to two decimal places.');
-    const allocations=parsed.data.allocations;
-    const ids=allocations.map(row=>row.invoiceId);
-    if (new Set(ids).size!==ids.length) throw new BadRequestException('Choose each invoice once.');
-    const tenant=principal.tenantId, schema=runtimeConfig().schema;
-    return this.database.tenantReadTransaction(tenant,async db=>{
-      await this.requireTrust(db,tenant,connection);
+    return this.database.tenantReadTransaction(principal.tenantId,async db=>{
+      await this.requireTrust(db,principal.tenantId,connection);
+      return this.calculateSplit(db,principal.tenantId,connection,depositId,parsed.data.allocations);
+    });
+  }
+
+  private async calculateSplit(db:PoolClient,tenant:string,connection:string,depositId:string,
+    allocations:z.infer<typeof splitFields>['allocations']) {
+      const schema=runtimeConfig().schema;
+      const ids=allocations.map(row=>row.invoiceId);
+      if (new Set(ids).size!==ids.length) throw new BadRequestException('Choose each invoice once.');
       const deposit=await this.availableDeposit(db,tenant,connection,depositId);
       const invoices=await db.query<{id:string;number:string|null;balance:string}>(`SELECT i.xero_invoice_id AS id,
         i.invoice_number AS number, round(i.amount_due,2)::text AS balance FROM ${schema}.student_operations_xero_invoices i
@@ -161,6 +167,70 @@ export class TrustStagedDepositsController {
       const received=cents(deposit.amount);
       if (total>received) throw new BadRequestException('The allocations exceed the bank deposit.');
       return {allocations:rows,allocated:aud(total),unassigned:aud(received-total)};
+  }
+
+  private async splitState(db:PoolClient,scope:string[]) {
+    const state=await db.query(`SELECT revision,action,plan,reason,actor,recorded_at AS "recordedAt"
+      FROM ${runtimeConfig().schema}.student_trust_split_events
+      WHERE customer_id=$1 AND connection_id=$2 AND deposit_id=$3 ORDER BY revision DESC LIMIT 1`,scope);
+    return state.rows[0] ?? null;
+  }
+
+  @Post(':depositId/split-reservation')
+  async changeReservation(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('depositId',ParseUUIDPipe) depositId:string,@Body() body:unknown) {
+    const principal=manager(request);
+    const fields={revision:z.number().int().nonnegative(),reason:z.string().trim().min(1).max(500),requestId:z.uuid()};
+    const parsed=z.discriminatedUnion('action',[
+      splitFields.extend({...fields,action:z.literal('reserve')}),
+      z.object({...fields,action:z.literal('release')}).strict(),
+    ]).safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Review the split and enter a reason.');
+    const input=parsed.data, tenant=principal.tenantId, schema=runtimeConfig().schema;
+    const scope=[tenant,connection,depositId], hash=fingerprint([principal.identityUserId,input]);
+    const where='customer_id=$1 AND connection_id=$2 AND deposit_id=$3';
+    return this.database.tenantTransaction(tenant,async db=>{
+      await this.requireTrust(db,tenant,connection);
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[scope.join('/').toLowerCase()]);
+      const replay=await db.query(`SELECT revision,request_hash FROM ${schema}.student_trust_split_events
+        WHERE ${where} AND request_id=$4`,[...scope,input.requestId]);
+      if (replay.rowCount) {
+        if (replay.rows[0].request_hash!==hash) throw new ConflictException('Reservation request changed.');
+        return {revision:replay.rows[0].revision};
+      }
+      const previous=await this.splitState(db,scope);
+      if ((previous?.revision ?? 0)!==input.revision || (previous?.action==='reserve')!==(input.action==='release'))
+        throw new ConflictException('Refresh the current reservation before continuing.');
+      let plan;
+      if (input.action==='reserve') {
+        const ids=input.allocations.map(a=>a.invoiceId);
+        await lockSplitInvoices(db,tenant,connection,ids);
+        plan=await this.calculateSplit(db,tenant,connection,depositId,input.allocations);
+        const committed=await db.query<{invoice_id:string;reserved:string;unlinked:boolean}>(`
+          SELECT id AS invoice_id,coalesce((SELECT sum(a.amount) FROM ${schema}.student_trust_split_allocations a
+            WHERE a.customer_id=$1 AND a.connection_id=$2 AND a.invoice_id=id),0)::text AS reserved,
+            EXISTS(SELECT 1 FROM ${schema}.student_trust_receipt_verifications r WHERE r.customer_id=$1
+              AND r.connection_id=$2 AND r.invoice_id=id AND NOT EXISTS(SELECT 1 FROM ${schema}.student_trust_receipt_payment_links l
+                WHERE l.customer_id=r.customer_id AND l.connection_id=r.connection_id AND l.verification_id=r.verification_id)) AS unlinked
+          FROM unnest($3::uuid[]) AS id`,[tenant,connection,ids]);
+        for (const row of input.allocations) {
+          const other=committed.rows.find(r=>r.invoice_id===row.invoiceId)!;
+          if (other.unlinked || cents(row.amount)+cents(other.reserved)>cents(row.expectedBalance))
+            throw new ConflictException('Review existing reservations and unlinked receipts for the selected invoices.');
+        }
+      }
+      const revision=input.revision+1;
+      await db.query(`INSERT INTO ${schema}.student_trust_split_events
+        (customer_id,connection_id,deposit_id,revision,request_id,request_hash,action,reason,actor,plan)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[...scope,revision,input.requestId,hash,input.action,input.reason,
+        principal.identityUserId,plan ? JSON.stringify(plan) : null]);
+      if (plan) {
+        await db.query(`INSERT INTO ${schema}.student_trust_split_allocations
+          (customer_id,connection_id,deposit_id,revision,invoice_id,amount)
+          SELECT $1,$2,$3,$4,"invoiceId",amount FROM jsonb_to_recordset($5::jsonb) AS x("invoiceId" uuid,amount numeric)`,
+          [...scope,revision,JSON.stringify(plan.allocations)]);
+      } else await db.query(`DELETE FROM ${schema}.student_trust_split_allocations WHERE ${where}`,scope);
+      return {revision};
     });
   }
 
@@ -207,7 +277,7 @@ export class TrustStagedDepositsController {
         const state=previous?.decision==='accepted' && previous.revision!==head.last_accept ? 'superseded' : previous?.decision;
         return {...row,evidenceToken,decision:state ?? null,evidenceChanged:!!previous && previous.evidence_token!==evidenceToken};
       });
-      return {ruleVersion,revision:head.revision,invoices,hasMore:result.rows.length>10,page};
+      return {reservation:await this.splitState(db,scope),ruleVersion,revision:head.revision,invoices,hasMore:result.rows.length>10,page};
   }
 
   @Post(':depositId/decisions')
