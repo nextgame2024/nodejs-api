@@ -44,7 +44,7 @@ const InvoiceQuerySchema = z.object({
   dateFrom: z.iso.date().optional(),
   dateTo: z.iso.date().optional(),
   paymentTrack: z.string().trim().min(1).max(200).optional(),
-  sort: z.enum(["invoiceNumber", "reference", "student", "date", "dueDate", "paid", "due", "status", "sent", "advisor", "paymentTrack"]).default("date"),
+  sort: z.enum(["invoiceNumber", "reference", "student", "date", "dueDate", "paid", "due", "status", "sent", "advisor", "paymentTrack"]).optional(),
   direction: z.enum(["asc", "desc"]).default("desc"),
 }).strict().refine((value) => !value.dateFrom || !value.dateTo || value.dateFrom <= value.dateTo,
   { message: "The start date must be on or before the end date." });
@@ -116,6 +116,10 @@ type CandidateRow = {
 
 type InvoiceRow = {
   receipt_excess?: string;
+  oldest_pending_link?: Date;
+  pending_amount?: string;
+  pending_count?: number;
+  checked_count?: number;
   xero_invoice_id: string;
   xero_contact_id: string;
   invoice_type: string;
@@ -439,20 +443,23 @@ export class StudentOperationsXeroSyncService {
             )
         )`);
       }
-      if (parsed.data.queue === 'reconciliation_review') {
-        filters.push(`AND EXISTS (
-          SELECT 1 FROM ${schema}.student_trust_receipt_verifications r
+      const reconciliationQueue = parsed.data.queue === 'reconciliation_review';
+      const reconciliationJoin = reconciliationQueue ? `JOIN LATERAL (
+          SELECT min(l.linked_at) AS oldest_pending_link, sum(l.payment_amount) AS pending_amount,
+                 count(*)::int AS pending_count, count(check_record.payment_id)::int AS checked_count
+          FROM ${schema}.student_trust_receipt_verifications r
           JOIN ${schema}.student_trust_receipt_payment_links l USING (customer_id,connection_id,verification_id)
           JOIN ${schema}.student_operations_xero_sync_configurations cfg
             ON cfg.customer_id=r.customer_id AND cfg.xero_connection_id=r.connection_id
+          LEFT JOIN ${schema}.student_trust_payment_reconciliation_checks check_record
+            ON check_record.customer_id=l.customer_id AND check_record.connection_id=l.connection_id AND check_record.payment_id=l.payment_id
           WHERE cfg.enabled AND cfg.organisation_role='trust'
             AND r.customer_id=i.customer_id AND r.connection_id=i.xero_connection_id AND r.invoice_id=i.xero_invoice_id
             AND NOT EXISTS (
               SELECT 1 FROM (${trustReceiptPaymentCandidates(schema)}) candidate
               WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE
             )
-        )`);
-      }
+        ) pending ON pending.pending_count > 0` : '';
       if (supplierId) {
         params.push(supplierId);
         filters.push(`AND EXISTS (
@@ -493,7 +500,9 @@ export class StudentOperationsXeroSyncService {
       }
       params.push(limit, (page - 1) * limit);
       const limitPosition = params.length - 1;
-      const order = `${InvoiceSortExpressions[sort]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
+      const order = reconciliationQueue && !sort
+        ? "pending.oldest_pending_link ASC, i.xero_invoice_id ASC"
+        : `${InvoiceSortExpressions[sort ?? "date"]} ${direction.toUpperCase()} NULLS LAST, i.xero_invoice_id ASC`;
       const queryStartedAt = performance.now();
       const result = await db.query<InvoiceRow>(
         `SELECT i.xero_invoice_id, i.xero_contact_id, i.invoice_type, i.invoice_number, i.invoice_reference,
@@ -504,6 +513,7 @@ export class StudentOperationsXeroSyncService {
                 COALESCE(r.review_status, 'pending') AS review_status, r.student_id,
                 count(*) OVER()::int AS total_count,
                 ${excessQueue ? 'excess.receipt_excess,' : ''}
+                ${reconciliationQueue ? 'pending.oldest_pending_link, pending.pending_amount, pending.pending_count, pending.checked_count,' : ''}
                 count(*) FILTER (WHERE i.invoice_type='ACCREC') OVER()::int AS invoice_total_count,
                 count(*) FILTER (WHERE i.invoice_type='ACCRECCREDIT') OVER()::int AS credit_note_total_count,
                 count(*) FILTER (WHERE i.invoice_type='RECEIVE-PREPAYMENT') OVER()::int AS prepayment_total_count,
@@ -514,6 +524,7 @@ export class StudentOperationsXeroSyncService {
                 count(*) FILTER (WHERE i.invoice_status='PAID') OVER()::int AS paid_total_count
           FROM ${schema}.student_operations_xero_invoices i
           ${excessJoin}
+          ${reconciliationJoin}
           JOIN ${schema}.student_operations_xero_contacts c
              ON c.customer_id=i.customer_id AND c.xero_connection_id=i.xero_connection_id
             AND c.xero_contact_id=i.xero_contact_id
@@ -1101,6 +1112,12 @@ function candidateProjection(row: CandidateRow) {
 
 function invoiceProjection(row: InvoiceRow) {
   return {
+    ...(row.oldest_pending_link == null ? {} : { reconciliation: {
+      oldestLinkedAt: row.oldest_pending_link.toISOString(),
+      amount: Number(row.pending_amount),
+      payments: row.pending_count,
+      managerChecks: row.checked_count,
+    } }),
     ...(row.receipt_excess == null ? {} : { receiptExcess: Number(row.receipt_excess) }),
     xeroInvoiceId: row.xero_invoice_id,
     xeroContactId: row.xero_contact_id,

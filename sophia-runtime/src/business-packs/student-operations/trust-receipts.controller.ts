@@ -45,6 +45,8 @@ export class TrustReceiptsController {
 
   private get candidates() { return trustReceiptPaymentCandidates(runtimeConfig().schema); }
 
+  private get checks() { return runtimeConfig().schema + '.student_trust_payment_reconciliation_checks'; }
+
   private get excessLinks() { return runtimeConfig().schema + '.student_trust_receipt_overpayment_links'; }
 
   private get excessCandidates() {
@@ -76,6 +78,7 @@ export class TrustReceiptsController {
        evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
          WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount LIMIT 1) AS "linkedPaymentReconciled",
+       check_record.checked_at AS "reconciliationCheckedAt",
        x.overpayment_id AS "linkedOverpaymentId", x.linked_at AS "overpaymentLinkedAt",
        ARRAY(SELECT candidate.id FROM (${this.excessCandidates}) candidate
          WHERE NOT EXISTS (SELECT 1 FROM ${this.excessLinks} used WHERE used.customer_id=r.customer_id
@@ -87,6 +90,8 @@ export class TrustReceiptsController {
          ORDER BY candidate.id) AS "candidateIds"
        FROM ${this.table} r LEFT JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
        LEFT JOIN ${this.excessLinks} x USING (customer_id,connection_id,verification_id)
+       LEFT JOIN ${this.checks} check_record ON check_record.customer_id=l.customer_id
+         AND check_record.connection_id=l.connection_id AND check_record.payment_id=l.payment_id
        WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 ORDER BY verified_at DESC`,
       [p.tenantId,connection,invoice])).rows);
   }
@@ -110,6 +115,29 @@ export class TrustReceiptsController {
         if (!existing.rowCount) throw new ConflictException('This payment or receipt has changed. Review the latest imported payments.');
       }
       return {paymentId:payment};
+    });
+  }
+
+  @Post(':id/reconciliation-check/:paymentId')
+  async attestReconciliation(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
+    @Param('invoiceId',ParseUUIDPipe) invoice: string, @Param('id',ParseUUIDPipe) receipt: string,
+    @Param('paymentId',ParseUUIDPipe) payment: string) {
+    const principal = manager(request);
+    const scope = `FROM ${this.table} r JOIN ${this.links} l USING (customer_id,connection_id,verification_id)`;
+    const filter = `r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND l.payment_id=$5`;
+    const params = [principal.tenantId, connection, invoice, receipt, payment];
+    return this.database.tenantTransaction(principal.tenantId, async db => {
+      await db.query(`INSERT INTO ${this.checks} (customer_id,connection_id,payment_id,checked_by)
+        SELECT l.customer_id,l.connection_id,l.payment_id,$6 ${scope}
+        CROSS JOIN LATERAL (${this.candidates}) candidate
+        WHERE ${filter} AND candidate.id=l.payment_id AND candidate.amount=l.payment_amount
+          AND candidate."isReconciled" IS NOT TRUE
+        ON CONFLICT DO NOTHING`, [...params, principal.identityUserId]);
+      const result = await db.query(`SELECT c.checked_at AS "checkedAt" ${scope}
+        JOIN ${this.checks} c ON c.customer_id=l.customer_id AND c.connection_id=l.connection_id AND c.payment_id=l.payment_id
+        WHERE ${filter}`, params);
+      if (!result.rowCount) throw new ConflictException('The linked payment has changed. Review its latest reconciliation status.');
+      return result.rows[0];
     });
   }
 

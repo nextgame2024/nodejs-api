@@ -11,6 +11,7 @@ describe('TRUST verification intake', () => {
 
   it('requires the manager role before processing receipt data', async () => {
     await expect(controller.verify(request('advisor'),randomUUID(),randomUUID(),randomUUID(),input)).rejects.toThrow(ForbiddenException);
+    await expect(controller.attestReconciliation(request('advisor'),randomUUID(),randomUUID(),randomUUID(),randomUUID())).rejects.toThrow(ForbiddenException);
     expect(tx).not.toHaveBeenCalled();
   });
 

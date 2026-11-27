@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import {DatabaseService} from '../../database/database.service.js';
+import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
 import {TrustReceiptsController} from './trust-receipts.controller.js';
 
 const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
@@ -23,11 +24,19 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_operations_xero_invoices(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,amount_due numeric,currency_code text,invoice_type text,invoice_status text,settlement jsonb,xero_contact_id uuid,invoice_date date,total numeric,last_seen_sync_run_id uuid,PRIMARY KEY(customer_id,xero_connection_id,xero_invoice_id));
       CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text);
       CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,sync_run_id uuid,created_at timestamptz,status text,mode text);
+      CREATE TABLE ${schema}.xero_connections(customer_id uuid,xero_connection_id uuid,status text);
+      CREATE TABLE ${schema}.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,legal_name text,email text,contact_number text,account_number text);
+      CREATE TABLE ${schema}.student_operations_xero_candidate_reviews(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,review_status text,student_id text);
+      ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
+        ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges']) {
+      if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
       await admin.query(sql.replaceAll('__SOPHIA_RUNTIME_SCHEMA__',schema));
     }
+    const privileges = await admin.query(`SELECT has_table_privilege('sophia_runtime_app',$1,'UPDATE,DELETE,TRUNCATE') AS mutable`,[schema+'.student_trust_payment_reconciliation_checks']);
+    expect(privileges.rows[0].mutable).toBe(false);
     db = new DatabaseService();
     service = new TrustReceiptsController(db);
   });
@@ -69,13 +78,40 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(reviews.find(r=>r.id!==excessOwner).possibleOverpaymentIds).toEqual([]);
     await service.link(principal,connection,invoice,owner,payment);
     await expect(service.link(principal,connection,randomUUID(),owner,payment)).rejects.toThrow();
+    await expect(service.attestReconciliation(principal,connection,randomUUID(),owner,payment)).rejects.toThrow();
+    await expect(service.attestReconciliation(principal,connection,invoice,owner,credit)).rejects.toThrow();
     for (const flag of [undefined, true, false]) {
       const settlement = {entries:[{kind:'payment',id:payment,date,amount:2741.80,isReconciled:flag},
         {kind:'payment',id:randomUUID(),date,amount:2741.80,isReconciled:true}]};
       await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify(settlement),invoice]);
       const linked=(await service.list(principal,connection,invoice)).find(r=>r.id===owner);
       expect(linked.linkedPaymentReconciled).toBe(flag ?? null);
+      if (flag === true) await expect(service.attestReconciliation(principal,connection,invoice,owner,payment)).rejects.toThrow();
+      if (flag === false) {
+        const checks=await Promise.all([1,2].map(()=>service.attestReconciliation(principal,connection,invoice,owner,payment)));
+        expect(checks[0].checkedAt).toEqual(checks[1].checkedAt);
+        const checked=(await service.list(principal,connection,invoice)).find(r=>r.id===owner);
+        expect(checked).toMatchObject({linkedPaymentReconciled:false,reconciliationCheckedAt:checks[0].checkedAt});
+      }
     }
+    await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active')`,[tenant,connection]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_contacts VALUES($1,$2,$3,'Fixture')`,[tenant,connection,contact]);
+    await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET last_seen_sync_run_id=$1 WHERE xero_invoice_id=$2`,[run,invoice]);
+    const anotherPayment = randomUUID();
+    const pendingEntries = [payment,anotherPayment].map(id=>({kind:'payment',id,date,amount:2741.80,isReconciled:false}));
+    const writeEntries = () => admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,[JSON.stringify({entries:pendingEntries}),invoice]);
+    await writeEntries();
+    await service.link(principal,connection,invoice,owner===receipt?second:receipt,anotherPayment);
+    await admin.query(`UPDATE ${schema}.student_trust_receipt_payment_links SET linked_at='2020-01-02T01:00:00Z' WHERE payment_id=$1`,[payment]);
+    const register=new StudentOperationsXeroSyncService(db,{} as never);
+    const pending = async () => (await register.invoices(tenant,connection,{queue:'reconciliation_review'})).invoices;
+    expect(await pending()).toMatchObject([{reconciliation:{oldestLinkedAt:'2020-01-02T01:00:00.000Z',amount:5483.60,payments:2,managerChecks:1}}]);
+    pendingEntries[0].isReconciled=true;
+    await writeEntries();
+    expect(await pending()).toMatchObject([{reconciliation:{amount:2741.80,payments:1,managerChecks:0}}]);
+    pendingEntries[1].isReconciled=true;
+    await writeEntries();
+    expect(await pending()).toEqual([]);
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=NULL`);
     await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','reconciliation')`,[tenant,connection,randomUUID()]);
     expect((await service.list(principal,connection,invoice)).find(r=>r.id===excessOwner)).toMatchObject({linkedOverpaymentId:credit,possibleOverpaymentIds:[]});

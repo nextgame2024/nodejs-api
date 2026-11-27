@@ -4376,5 +4376,26 @@
       "8 ChromeHeadless tests passed across the receipt form and payment operations panel"
     ],
     "release": "Frontend deployment pending. Live Xero navigation was not tested."
+  },
+  "trustReconciliationManagerCheck": {
+    "updatedOn": "2026-11-27",
+    "scope": "Manager records seeing a linked TRUST payment reconciled in Xero. The imported payment flag controls the reconciliation queue.",
+    "verification": [
+      "npm run build in sophia-runtime and ngc -p tsconfig.app.json --noEmit",
+      "26 focused backend tests and 9 ChromeHeadless tests passed",
+      "Re-ran trust-receipt-links.database.spec.ts with configured default grants reproduced",
+      "Applied migrations 146 and 147 with the configured migration runner. Verified ledger entries, forced RLS and append-only application-role grants."
+    ],
+    "release": "Database migrated. Backend and frontend deployment pending."
+  },
+  "trustReconciliationQueueAgeing": {
+    "updatedOn": "2026-11-27",
+    "scope": "Order the TRUST reconciliation queue by the oldest outstanding payment link. Show the linked amounts awaiting confirmation and the manager check count per invoice.",
+    "verification": [
+      "npm run build in sophia-runtime and ngc -p tsconfig.app.json --noEmit",
+      "26 focused Jest tests passed, including a disposable PostgreSQL test of two pending payments on one invoice and their successive reconciliation",
+      "9 ChromeHeadless payment panel and receipt form tests passed"
+    ],
+    "release": "No schema change. Backend and frontend deployment pending."
   }
 }
