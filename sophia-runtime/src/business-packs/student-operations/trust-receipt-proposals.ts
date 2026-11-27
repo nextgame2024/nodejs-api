@@ -24,7 +24,7 @@ export interface ProposalEvent {
 
 export interface DispatchReceipt {
   id:string;revision:number;actor:string;reason:string;queuedAt:Date;expiresAt:Date;expired:boolean;
-  cancelledAt:Date|null;cancelledBy:string|null;cancelReason:string|null;
+  submitted:boolean;paymentId:string|null;cancelledAt:Date|null;cancelledBy:string|null;cancelReason:string|null;
 }
 export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewer:string) {
   const {rows:[row]}=await db.query<Snapshot & {blocked:string|null}>(`
@@ -79,8 +79,10 @@ export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewe
     head.actor===reviewer?'An independent authorised reviewer must check this approval.':null);
   const {rows:[dispatch]}=await db.query<DispatchReceipt>(`SELECT q.dispatch_id AS id,q.approval_revision AS revision,q.released_by AS actor,
     q.reason,q.queued_at AS "queuedAt",q.expires_at AS "expiresAt",clock_timestamp()>=q.expires_at AS expired,
-    c.cancelled_at AS "cancelledAt",c.actor AS "cancelledBy",c.reason AS "cancelReason"
+    a.dispatch_id IS NOT NULL AS submitted,f.payment_id AS "paymentId",c.cancelled_at AS "cancelledAt",c.actor AS "cancelledBy",c.reason AS "cancelReason"
     FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN ${s}.student_trust_payment_submissions a USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN ${s}.student_trust_submission_confirmations f USING(customer_id,connection_id,dispatch_id)
     WHERE q.customer_id=$1 AND q.connection_id=$2 AND q.verification_id=$3 ORDER BY q.approval_revision DESC LIMIT 1`,
     [scope[0],scope[1],scope[3]]);
   return {dispatch:dispatch ?? null,state,blocked,accountIssue,releaseCheck,revision:head?.revision ?? 0,snapshot,token,history};
@@ -100,6 +102,7 @@ export async function recordProposal(db:PoolClient,s:string,scope:Scope,actor:st
         prior.reason!==input.reason || prior.evidence_token!==input.token) throw new ConflictException('This request was already used with different details.');
     return {revision:prior.revision};
   }
+  if (detail.dispatch?.submitted) throw new ConflictException('Review the submitted payment in the dispatch register.');
   const head=detail.history[0], withdraw=input.action==='withdraw';
   if (input.revision!==detail.revision || input.token!==(withdraw?head?.token:detail.token))
     throw new ConflictException('Refresh the proposal and review the evidence again.');

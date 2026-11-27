@@ -5033,5 +5033,38 @@
       "Migration 168 applied with zero pending; verified forced RLS and append-only runtime access on both tables"
     ],
     "release": "Previous manual invoice check reported deployed. Deploy backend and frontend for worker checks. The operator is invoked explicitly. Payment submission and connected pilot acceptance remain open."
+  },
+  "trustPaymentSubmissionPilot": {
+    "updatedOn": "2026-11-28",
+    "roadmapItem": "12",
+    "completedSubtasks": [
+      "Scope payment OAuth access to the pilot customer",
+      "Gate writes by exact customer and connection",
+      "Enforce a configured per-payment AUD ceiling",
+      "Require statement provenance unless pre-feed posting is enabled",
+      "Recheck active customer and independent manager entitlements",
+      "Verify the live active AUD receiving account",
+      "Recheck the invoice and its imported payment list before submission",
+      "Require a matched worker result and unexpired approval",
+      "Reserve one submission per receipt before provider I/O",
+      "Prevent late cancellation and supersession of a reserved instruction",
+      "Bind amount, account, invoice and date to the approved snapshot",
+      "Send a single Xero request with stable reference and idempotency key",
+      "Recheck the release deadline and kill switch before the HTTP write",
+      "Persist the acknowledged payment ID",
+      "Recover by exact dispatch reference when the acknowledgement was lost",
+      "Verify provider payment identity, account, invoice, contact, amount, date, status and currency",
+      "Keep ambiguous outcomes available for read-only recovery",
+      "Atomically confirm the provider receipt and link the original verification",
+      "Protect the receipt against conflicting manual links",
+      "Show submission status, filters and the verified payment ID in Payments and Control"
+    ],
+    "verification": [
+      "npm run build passed in sophia-runtime",
+      "116 targeted backend tests passed with disposable PostgreSQL and synthetic Xero responses",
+      "158 targeted ChromeHeadless tests passed",
+      "Migration 169 applied with zero pending; forced tenant isolation and append-only runtime grants verified on three tables"
+    ],
+    "release": "Previous verification worker reported deployed. Deploy updated runtime and frontend. Live submission is opt-in. Connected pilot and finance acceptance remain open. A submission without verifiable provider evidence requires investigation."
   }
 }

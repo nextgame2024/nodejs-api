@@ -188,6 +188,12 @@ export class TrustReceiptsController {
     const note = linkDecisionNote(body);
     const params = [p.tenantId,connection,invoice,id,payment];
     return this.database.tenantTransaction(p.tenantId, async db => {
+      await lockSplitInvoices(db,p.tenantId,connection,[invoice]);
+      const pending=await db.query(`SELECT 1 FROM ${runtimeConfig().schema}.student_trust_payment_submissions a
+        LEFT JOIN ${runtimeConfig().schema}.student_trust_submission_confirmations f USING(customer_id,connection_id,dispatch_id)
+        WHERE a.customer_id=$1 AND a.connection_id=$2 AND a.verification_id=$3 AND f.payment_id IS DISTINCT FROM $4::uuid`,
+        [p.tenantId,connection,id,payment]);
+      if (pending.rowCount) throw new ConflictException('Verify the submitted Xero payment before linking this receipt.');
       const inserted = await db.query(`INSERT INTO ${this.links}
         (customer_id,connection_id,verification_id,payment_id,payment_amount,linked_by,decision_note)
         SELECT r.customer_id,r.connection_id,r.verification_id,candidate.id,candidate.amount,$6,$7

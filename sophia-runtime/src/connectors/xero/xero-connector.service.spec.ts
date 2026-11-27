@@ -10,6 +10,18 @@ afterAll(() => {
 });
 
 describe("XeroConnectorService", () => {
+  it('requests payment write scope only for the enabled pilot customer',()=>{
+    const keys=['XERO_TRUST_PAYMENT_SUBMISSION_ENABLED','XERO_TRUST_PAYMENT_PILOT_SCOPE'],saved=keys.map(k=>process.env[k]);
+    try {
+      process.env.XERO_TRUST_PAYMENT_PILOT_SCOPE='customer/connection';
+      delete process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED;
+      expect(xeroRequestedScopes('customer')).toContain('accounting.payments.read');
+      process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED='true';
+      expect(xeroRequestedScopes('other')).toContain('accounting.payments.read');
+      expect(xeroRequestedScopes('customer')).toContain('accounting.payments');
+      expect(xeroRequestedScopes('customer')).not.toContain('accounting.payments.read');
+    } finally {keys.forEach((key,i)=>{if(saved[i]===undefined) delete process.env[key];else process.env[key]=saved[i];});}
+  });
   it('opts into Contact write scope separately and accepts it for existing read/import paths',async()=>{
     const old=process.env.XERO_CONTACT_CREATION_ENABLED;
     try {

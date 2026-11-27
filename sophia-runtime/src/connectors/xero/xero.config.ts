@@ -12,9 +12,12 @@ export const XERO_READ_ONLY_SCOPES = [
   "accounting.attachments.read",
 ] as const;
 
-export function xeroRequestedScopes(): readonly string[] {
+export function xeroRequestedScopes(tenantId?:string): readonly string[] {
+  const pilot=process.env.XERO_TRUST_PAYMENT_PILOT_SCOPE?.split('/');
+  const paymentWrite=!!tenantId && pilot?.length===2 && pilot[0]===tenantId && !!pilot[1] && process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED==='true';
   return [...new Set([...XERO_READ_ONLY_SCOPES.map(scope=>
     scope==='accounting.attachments.read' && (process.env.XERO_ATTACHMENT_UPLOAD_ENABLED==='true'||process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED==='true')?'accounting.attachments':
+    scope==='accounting.payments.read' && paymentWrite?'accounting.payments':
     scope==='accounting.contacts.read' && process.env.XERO_CONTACT_CREATION_ENABLED==='true'?'accounting.contacts':
     scope==='accounting.invoices.read' && process.env.XERO_INVOICE_CREATION_ENABLED==='true'?'accounting.invoices':scope),
     ...(process.env.XERO_FILES_DOCUMENT_STORAGE_ENABLED==='true'?['files']:[])])];

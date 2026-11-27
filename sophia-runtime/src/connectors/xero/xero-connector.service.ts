@@ -107,7 +107,7 @@ export class XeroConnectorService {
       provider: "xero",
       configured,
       mode: "read_only",
-      requestedScopes: [...xeroRequestedScopes()],
+      requestedScopes: [...xeroRequestedScopes(tenantId)],
       connections: result.rows.map((row) => ({
         connectionId: row.xero_connection_id,
         tenantId: row.xero_tenant_id,
@@ -147,7 +147,7 @@ export class XeroConnectorService {
       response_type: "code",
       client_id: config.clientId,
       redirect_uri: config.redirectUri,
-      scope: xeroRequestedScopes().join(" "),
+      scope: xeroRequestedScopes(tenantId).join(" "),
       state,
       code_challenge: challenge,
       code_challenge_method: "S256",
@@ -595,6 +595,26 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key));
   }
 
+  async trustPaymentSession(tenant:string,connectionId:string,org:string,write:boolean) {
+    const connection=await this.loadConnection(tenant,connectionId);
+    const scopes=connection.granted_scopes;
+    const allowed=(scope:string)=>!missingScopes(scopes,[scope]).length;
+    if (connection.status!=='active' || connection.xero_tenant_id!==org ||
+        !(allowed('accounting.payments.read') || allowed('accounting.transactions.read')) ||
+        (write && (!(allowed('accounting.payments') || allowed('accounting.transactions')) || !allowed('accounting.settings.read'))))
+      throw new ConflictException('Review TRUST connection identity and payment permissions.');
+    const token=await this.accessToken(tenant,connection.xero_authorization_id,requiredConfig());
+    return {
+      bank:(id:string,name:string)=>this.providerRequest(tenant,connectionId,()=>this.client.verifyReceiptBank(token,org,id,name)),
+      submit:(payment:import('./xero.client.js').TrustXeroPayment,deadline:number)=>{
+        if (!write || !trustSubmissionEnabled(tenant,connectionId)) throw new ConflictException('TRUST submission is disabled for this connection.');
+        return this.providerRequest(tenant,connectionId,()=>this.client.submitReceiptPayment(token,org,payment,()=>Date.now()<deadline && trustSubmissionEnabled(tenant,connectionId)));
+      },
+      verify:(payment:import('./xero.client.js').TrustXeroPayment,id?:string)=>
+        this.providerRequest(tenant,connectionId,()=>this.client.verifiedReceiptPayment(token,org,payment,id)),
+    };
+  }
+
   async invoiceById(tenantId:string,connectionId:string,invoiceId:string,expectedOrganisation?:string){
     const connection=await this.loadConnection(tenantId,connectionId);
     if (expectedOrganisation!==undefined && connection.xero_tenant_id!==expectedOrganisation)
@@ -857,4 +877,9 @@ function missingScopes(granted: unknown, required: readonly string[]): string[] 
   const present = new Set(values);
   return required.filter((scope) => !present.has(scope)
     && !(scope.endsWith('.read') && present.has(scope.slice(0,-5))));
+}
+
+export function trustSubmissionEnabled(tenant:string,connection:string) {
+  return process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED==='true' &&
+    process.env.XERO_TRUST_PAYMENT_PILOT_SCOPE===tenant+'/'+connection;
 }

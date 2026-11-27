@@ -86,6 +86,8 @@ export type XeroContactRecord = {
   updatedAt: string | null;
 };
 
+export interface TrustXeroPayment {dispatch:string;invoice:string;contact:string;account:string;amount:string;date:string}
+
 export type XeroInvoiceRecord = {
   settlement?:XeroInvoiceSettlement;
   lineAmountTypes?:string|null;
@@ -194,6 +196,50 @@ export class XeroClient {
     const invoice=xeroInvoiceRecord(record(payload.Invoices[0]));
     if(invoice.invoiceId!==invoiceId||invoice.status!==status)throw new BadGatewayException('Invoice change could not be confirmed. Retry the same action.');
     return invoice;
+  }
+
+  async verifyReceiptBank(token:string,org:string,account:string,name:string) {
+    if (!xeroUuid.test(account)) throw new BadGatewayException('Invalid receiving account.');
+    const response=record(await this.json('https://api.xero.com/api.xro/2.0/Accounts/'+account,token,org));
+    const bank=Array.isArray(response.Accounts) && response.Accounts.length===1 ? record(response.Accounts[0]) : {};
+    return bank.AccountID===account && bank.Name===name && bank.Type==='BANK' && bank.Status==='ACTIVE' && bank.CurrencyCode==='AUD';
+  }
+
+  async submitReceiptPayment(token:string,org:string,p:TrustXeroPayment,sendAllowed:()=>boolean) {
+    const policy=this.requestPolicy.getStore(),ticket=await policy?.beforeRequest();
+    if (!sendAllowed()) throw new BadGatewayException('Payment release expired or disabled.');
+    const response=await fetch('https://api.xero.com/api.xro/2.0/Payments',{method:'PUT',redirect:'error',signal:AbortSignal.timeout(15_000),
+      headers:{Authorization:'Bearer '+token,'xero-tenant-id':org,'Content-Type':'application/json',Accept:'application/json','Idempotency-Key':p.dispatch},
+      body:JSON.stringify({Payments:[{Invoice:{InvoiceID:p.invoice},Account:{AccountID:p.account},Amount:Number(p.amount),Date:p.date,Reference:'Sophia '+p.dispatch}]})});
+    try { await policy?.observe(response,ticket); } catch(error) {await response.body?.cancel();throw error;}
+    if (!response.ok) {await response.body?.cancel();throw providerError(response);}
+    const body=record(await parseJson(response)),items=body.Payments;
+    const item=Array.isArray(items) && items.length===1 ? record(items[0]) : {};
+    if (item.HasValidationErrors || item.HasErrors || (Array.isArray(item.ValidationErrors) && item.ValidationErrors.length) ||
+        typeof item.PaymentID!=='string' || !xeroUuid.test(item.PaymentID)) throw new BadGatewayException('Payment requires verification.');
+    return item.PaymentID;
+  }
+
+  async verifiedReceiptPayment(token:string,org:string,p:TrustXeroPayment,knownId?:string) {
+    if (!xeroUuid.test(p.dispatch)) throw new BadGatewayException('Invalid dispatch identity.');
+    const reference='Sophia '+p.dispatch;
+    let id=knownId;
+    if (!id) {
+      const url=new URL('https://api.xero.com/api.xro/2.0/Payments');
+      url.search=new URLSearchParams({where:'Reference=="'+reference+'"',page:'1',pageSize:'2'}).toString();
+      const list=record(await this.json(url.toString(),token,org)).Payments;
+      if (!Array.isArray(list) || list.length!==1) return null;
+      id=optionalString(record(list[0]).PaymentID)??undefined;
+    }
+    if (!id || !xeroUuid.test(id)) return null;
+    const body=record(await this.json('https://api.xero.com/api.xro/2.0/Payments/'+id,token,org));
+    const item=Array.isArray(body.Payments) && body.Payments.length===1 ? record(body.Payments[0]) : {};
+    const invoice=record(item.Invoice),account=record(item.Account);
+    if (item.PaymentID!==id || item.PaymentType!=='ACCRECPAYMENT' || item.Status!=='AUTHORISED' ||
+        item.Reference!==reference || invoice.InvoiceID!==p.invoice || invoice.CurrencyCode!=='AUD' || record(invoice.Contact).ContactID!==p.contact ||
+        account.AccountID!==p.account || item.Amount!==Number(p.amount) ||
+        (optionalDate(item.DateString)??optionalXeroDate(item.Date))!==p.date) return null;
+    return id;
   }
 
   async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<XeroInvoiceReceipt> {

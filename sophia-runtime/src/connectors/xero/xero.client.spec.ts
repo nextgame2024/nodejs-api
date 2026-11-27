@@ -200,6 +200,37 @@ describe("XeroClient", () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({CreditNotes:[]})));expect(await client.contactHasRecords('token','tenant',contact,'CreditNotes')).toBe(false);
     fetchMock.mockResolvedValueOnce(new Response('{}'));await expect(client.contactHasRecords('token','tenant',contact,'Overpayments')).rejects.toThrow('could not be verified');
   });
+  it('requires the exact active AUD bank account for submission',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',bank={AccountID:id,Name:'Trust bank',Type:'BANK',Status:'ACTIVE',CurrencyCode:'AUD'};
+    const mock=jest.spyOn(globalThis,'fetch'),client=new XeroClient();
+    for (const change of [{},{Type:'CURRENT'},{Name:'Renamed'},{Status:'ARCHIVED'},{CurrencyCode:'NZD'},{AccountID:'other'}]) {
+      mock.mockResolvedValueOnce(new Response(JSON.stringify({Accounts:[{...bank,...change}]})));
+      expect(await client.verifyReceiptBank('token','org',id,'Trust bank')).toBe(!Object.keys(change).length);
+    }
+  });
+  it('sends one scoped AUD receipt and verifies its reference, account and amount on read-back',async()=>{
+    const id='11111111-1111-4111-8111-111111111111',account='22222222-2222-4222-8222-222222222222',pid='33333333-3333-4333-8333-333333333333';
+    const payment={dispatch:id,invoice:id,contact:account,account,date:'2026-11-01',amount:'3000.00'},reference='Sophia '+id;
+    const item={PaymentID:pid,Status:'AUTHORISED',PaymentType:'ACCRECPAYMENT',Reference:reference,Date:payment.date,
+      Account:{AccountID:account},Invoice:{InvoiceID:id,CurrencyCode:'AUD',Contact:{ContactID:account}},Amount:3000};
+    const reply=(value:unknown)=>new Response(JSON.stringify(value));
+    const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async()=>reply({Payments:[item]})),client=new XeroClient();
+    await expect(client.submitReceiptPayment('token','org',payment,()=>false)).rejects.toThrow('expired or disabled');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await client.submitReceiptPayment('token','org',payment,()=>true)).toBe(pid);
+    const options=fetchMock.mock.calls[0][1];
+    expect(options).toMatchObject({method:'PUT',headers:{'Idempotency-Key':id,'xero-tenant-id':'org'}});
+    expect(JSON.parse(String(options?.body))).toEqual({Payments:[{Invoice:{InvoiceID:id},Account:{AccountID:account},Date:payment.date,Amount:3000,Reference:reference}]});
+    expect(await client.verifiedReceiptPayment('token','org',payment)).toBe(pid);
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/Payments/'+pid);
+    for (const delta of [{Reference:'other'},{Amount:2999},{Status:'DELETED'},{Date:'2026-11-02'},{Account:{AccountID:id}},{Invoice:{InvoiceID:id,CurrencyCode:'USD'}}]) {
+      fetchMock.mockResolvedValueOnce(reply({Payments:[{...item,...delta}]}));
+      expect(await client.verifiedReceiptPayment('token','org',payment,pid)).toBeNull();
+    }
+    fetchMock.mockResolvedValueOnce(reply({Payments:[item,item]}));expect(await client.verifiedReceiptPayment('token','org',payment)).toBeNull();
+    fetchMock.mockRejectedValueOnce(new Error('lost'));const calls=fetchMock.mock.calls.length;
+    await expect(client.submitReceiptPayment('token','org',payment,()=>true)).rejects.toThrow();expect(fetchMock.mock.calls.length).toBe(calls+1);
+  });
   it('reads a created invoice by id and finds bounded same-day app-created candidates for reconciliation',async()=>{
     const invoiceId='11111111-1111-4111-8111-111111111111',contactId='22222222-2222-4222-8222-222222222222',payload={Invoices:[{InvoiceID:invoiceId,InvoiceNumber:'INV-10577',Type:'ACCREC',Status:'DRAFT',Contact:{ContactID:contactId},DateString:'2026-10-27',DueDateString:'2026-10-27',CurrencyCode:'AUD',Reference:'Fixture College',Total:970,LineItems:[]}]};
     const fetchMock=jest.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify(payload)));

@@ -1,3 +1,4 @@
+import {TrustPaymentSubmission} from './trust-payment-submission.js';
 import {TrustDispatchWorker} from './trust-dispatch-worker.js';
 import {beforeAll,afterAll,describe,it,expect} from '@jest/globals';
 import {createHash,randomUUID} from 'node:crypto';
@@ -29,6 +30,8 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,enabled boolean,organisation_role text,PRIMARY KEY(customer_id,xero_connection_id));
       CREATE TABLE ${schema}.student_xero_sales_catalogues(customer_id uuid,xero_connection_id uuid,snapshot jsonb,revision integer,last_synced_at timestamptz,error_code text,PRIMARY KEY(customer_id,xero_connection_id));
       CREATE TABLE ${schema}.student_operations_xero_sync_runs(customer_id uuid,xero_connection_id uuid,sync_run_id uuid,created_at timestamptz,status text,mode text);
+      CREATE TABLE ${schema}.customers(customer_id uuid PRIMARY KEY,status text);
+      CREATE TABLE ${schema}.business_pack_entitlements(customer_id uuid,identity_user_id text,role_key text,pack_id text,status text);
       CREATE TABLE ${schema}.student_operations_advisor_roster(customer_id uuid,user_id text,display_name text);
       CREATE TABLE ${schema}.business_pack_access_audit_events(customer_id uuid,identity_user_id text,pack_id text,event_type text,outcome text,correlation_id text,metadata jsonb);
       GRANT INSERT ON ${schema}.business_pack_access_audit_events TO sophia_runtime_app;
@@ -40,7 +43,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
         ADD provider_updated_at timestamptz, ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
     await admin.query(`GRANT UPDATE ON ${schema}.student_xero_sales_catalogues TO sophia_runtime_app`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -98,7 +101,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect((await service.list(principal,conn,inv))[0].statementSource).toMatchObject({record:2,sha256:source.statementFileSha256});
   });
 
-  it('binds an approval to a verified movement and current invoice with one revision per decision',async()=>{
+  it.each(['verification','submission','acknowledged'])('binds an approval to a verified movement during %s',async(mode)=>{
     const conn=randomUUID(),run=randomUUID(),inv=randomUUID(),receipt=randomUUID(),contact=randomUUID();
     await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active')`,[tenant,conn]);
     await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust')`,[tenant,conn]);
@@ -151,6 +154,54 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect((await read()).dispatch).toMatchObject({id:queued[0].id,actor:'reviewer',cancelledAt:null});
     const live={invoiceId:inv,invoiceNumber:'INV-TEST',contactId:contact,type:'ACCREC',status:'AUTHORISED',currencyCode:'AUD',
       amountDue:3500,updatedAt:updated,settlement:{entries:[]}};
+    if (mode!=='verification') {
+      const paymentId=randomUUID(),dispatch=queued[0].id;
+      let writes=0,visible=false;
+      const connector={invoiceById:async()=>live as never,trustPaymentSession:async()=>({
+        bank:async()=>true,submit:async()=>{writes++;if (mode==='acknowledged') return paymentId;throw new Error('lost response');},
+        verify:async(_payment:unknown,id?:string)=>{if (visible && mode==='acknowledged') expect(id).toBe(paymentId);return visible?paymentId:null;},
+      })};
+      const posting=new TrustPaymentSubmission(db,connector);
+      const submit=()=>posting.run(tenant,conn,dispatch,'submit');
+      expect(await posting.run(tenant,conn,dispatch,'recover')).toEqual({status:'unsubmitted'});
+      const keys=['XERO_TRUST_PAYMENT_SUBMISSION_ENABLED','XERO_TRUST_PAYMENT_PILOT_SCOPE','XERO_TRUST_PREFEED_ENABLED','XERO_TRUST_PAYMENT_MAX_AUD'];
+      const previous=keys.map(k=>process.env[k]);
+      try {
+        delete process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED;
+        await expect(submit()).rejects.toThrow('disabled');
+        process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED='true';process.env.XERO_TRUST_PAYMENT_PILOT_SCOPE=tenant+'/'+randomUUID();
+        await expect(submit()).rejects.toThrow('disabled');
+        process.env.XERO_TRUST_PAYMENT_PILOT_SCOPE=tenant+'/'+conn;delete process.env.XERO_TRUST_PREFEED_ENABLED;
+        process.env.XERO_TRUST_PAYMENT_MAX_AUD='2999.99';
+        await expect(submit()).rejects.toThrow('pilot limit');process.env.XERO_TRUST_PAYMENT_MAX_AUD='3000';
+        await admin.query(`INSERT INTO ${schema}.customers VALUES($1,'active')`,[tenant]);
+        await admin.query(`INSERT INTO ${schema}.business_pack_entitlements VALUES($1,'fixture','chief_executive','student-operations','active')`,[tenant]);
+        expect(await new TrustDispatchWorker(db,connector).processOne(tenant,conn)).toMatchObject({status:'matched'});
+        process.env.XERO_TRUST_PREFEED_ENABLED='true';
+        await expect(submit()).rejects.toThrow('manager permissions');
+        await admin.query(`INSERT INTO ${schema}.business_pack_entitlements VALUES($1,'reviewer','chief_executive','student-operations','active')`,[tenant]);
+        delete process.env.XERO_TRUST_PREFEED_ENABLED;await expect(submit()).rejects.toThrow('receipt source');
+        process.env.XERO_TRUST_PREFEED_ENABLED='true';
+        const results=await Promise.all([submit(),submit()]);
+        expect(results.map(r=>r.status)).toEqual(['awaiting_verification','awaiting_verification']);
+        expect(writes).toBe(1);
+        await expect(service.cancelDispatch(principal,conn,inv,receipt,{dispatchId:dispatch,reason:'Late cancellation'})).rejects.toThrow();
+        await expect(save({...prepare,action:'withdraw',revision:2,requestId:randomUUID()})).rejects.toThrow();
+        expect(await staging.dispatches(principal,conn,{status:'submitted'})).toMatchObject({count:1});
+        delete process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED;visible=true;
+        expect(await Promise.all([posting.run(tenant,conn,dispatch,'recover'),submit()])).toEqual([
+          {status:'confirmed',paymentId},{status:'confirmed',paymentId}]);
+        expect(await submit()).toEqual({status:'confirmed',paymentId});expect(writes).toBe(1);
+        expect(await staging.dispatches(principal,conn,{status:'confirmed'})).toMatchObject({rows:[{paymentId}]});
+        expect(await read()).toMatchObject({dispatch:{submitted:true,paymentId}});
+        expect((await service.list(principal,conn,inv))[0]).toMatchObject({linkedPaymentId:paymentId,linkedAmount:'3000.00'});
+      } finally {
+        await admin.query(`DELETE FROM ${schema}.business_pack_entitlements WHERE customer_id=$1`,[tenant]);
+        await admin.query(`DELETE FROM ${schema}.customers WHERE customer_id=$1`,[tenant]);
+        keys.forEach((key,index)=>{if(previous[index]===undefined)delete process.env[key];else process.env[key]=previous[index];});
+      }
+      return;
+    }
     let response:unknown=live;
     let duringRead:(()=>Promise<unknown>)|undefined;
     const calls:string[][]=[];

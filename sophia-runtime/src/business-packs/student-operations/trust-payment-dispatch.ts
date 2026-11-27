@@ -48,6 +48,7 @@ export async function cancelPayment(db:PoolClient,s:string,scope:[string,string,
     if (prior.actor===actor && prior.reason===input.reason) return {id:input.dispatchId};
     throw new ConflictException('This dispatch has already been cancelled.');
   }
+  if (detail.dispatch?.submitted) throw new ConflictException('The payment submission has started. Review its result.');
   if (detail.dispatch?.id!==input.dispatchId) throw new ConflictException('Refresh the dispatch record.');
   await db.query(`INSERT INTO ${s}.student_trust_dispatch_cancellations(customer_id,connection_id,dispatch_id,actor,reason)
     VALUES($1,$2,$3,$4,$5)`,[tenant,connection,input.dispatchId,actor,input.reason]);
@@ -56,14 +57,17 @@ export async function cancelPayment(db:PoolClient,s:string,scope:[string,string,
 
 export const dispatchQuery=z.object({q:z.string().trim().max(150).default(''),page:z.coerce.number().int().min(1).max(100000).default(1),
   limit:z.coerce.number().pipe(z.union([z.literal(25),z.literal(50),z.literal(100)])).default(25),
-  direction:z.enum(['asc','desc']).default('desc'),status:z.enum(['all','recorded','cancelled','expired']).default('all')}).strict();
+  direction:z.enum(['asc','desc']).default('desc'),status:z.enum(['all','recorded','cancelled','expired','submitted','confirmed']).default('all')}).strict();
 
 export async function dispatchRegister(db:PoolClient,s:string,tenant:string,connection:string,input:z.infer<typeof dispatchQuery>) {
   const result=await db.query(`WITH entries AS (
     SELECT q.dispatch_id AS id,q.queued_at AS "queuedAt",q.snapshot->>'invoice' AS invoice,q.snapshot->>'invoiceNumber' AS "invoiceNumber",
       q.snapshot->>'bankId' AS "bankId",q.snapshot->>'amount' AS amount,q.approver,q.released_by AS reviewer,
-      CASE WHEN c.dispatch_id IS NOT NULL THEN 'cancelled' WHEN q.expires_at<=statement_timestamp() THEN 'expired' ELSE 'recorded' END AS status
+      a.started_at AS "submittedAt",f.payment_id AS "paymentId",
+      CASE WHEN f.payment_id IS NOT NULL THEN 'confirmed' WHEN a.dispatch_id IS NOT NULL THEN 'submitted' WHEN c.dispatch_id IS NOT NULL THEN 'cancelled' WHEN q.expires_at<=statement_timestamp() THEN 'expired' ELSE 'recorded' END AS status
     FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN ${s}.student_trust_payment_submissions a USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN ${s}.student_trust_submission_confirmations f USING(customer_id,connection_id,dispatch_id)
     WHERE q.customer_id=$1 AND q.connection_id=$2
   ), filtered AS (SELECT * FROM entries WHERE ($3='all' OR status=$3) AND ($4='' OR strpos(lower("invoiceNumber"),lower($4))>0
     OR strpos(lower("bankId"),lower($4))>0 OR id::text=lower($4))),
