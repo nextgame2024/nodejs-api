@@ -1,3 +1,4 @@
+import {exceptionQuery,paymentExceptions} from './trust-payment-exceptions.js';
 import { reviewSubmission,submissionHistory,submissionReview,reviewPage } from './trust-submission-review.js';
 import { dispatchQuery, dispatchRegister } from './trust-payment-dispatch.js';
 import { receiptAccount, changeReceiptAccount, mappingCommand } from './trust-receipt-account.js';
@@ -185,6 +186,17 @@ export class TrustStagedDepositsController {
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       await this.requireTrust(db,p.tenantId,connection);
       return submissionHistory(db,runtimeConfig().schema,[p.tenantId,connection,dispatch],parsed.data.before);
+    });
+  }
+
+  @Get('payment-exceptions')
+  @Header('Cache-Control','private, no-store')
+  async exceptions(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Query() query:unknown) {
+    const p=manager(request),parsed=exceptionQuery.safeParse(query);
+    if(!parsed.success) throw new BadRequestException('Invalid payment follow-up filters.');
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return paymentExceptions(db,runtimeConfig().schema,p.tenantId,connection,p.identityUserId,parsed.data);
     });
   }
 

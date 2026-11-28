@@ -5209,5 +5209,24 @@
       "mvpWorkPackages": 2,
       "laterWorkPackages": 10
     }
+  },
+  "consolidatedPaymentExceptions": {
+    "delivered": [
+      "One tenant- and connection-scoped row per linked TRUST payment across legacy links and confirmed dispatches",
+      "Invoice-import, historical reconciliation, direct bank check and staff-report evidence",
+      "Reversal and conflicting-evidence classification, last available bank result and stale-check handling",
+      "Leg-level ownership, age, filters, bounded pagination and history-aware invoice navigation"
+    ],
+    "verification": [
+      "npm run build (runtime)",
+      "ngc -p tsconfig.app.json --noEmit",
+      "Student Operations and Xero Jest suites with PostgreSQL and HTTP fixtures",
+      "ChromeHeadless payment exception, TRUST and register suites, including desktop/mobile and both themes"
+    ],
+    "migration": "No schema changes. Configured migration ledger has zero pending.",
+    "developmentEstimate": {
+      "mvpWorkPackages": 1,
+      "laterWorkPackages": 10
+    }
   }
 }

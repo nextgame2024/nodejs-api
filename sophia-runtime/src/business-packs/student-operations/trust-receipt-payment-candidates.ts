@@ -36,6 +36,7 @@ export function importedInvoicePayments(searchParameter?: number) {
 export function trustReceiptPaymentCandidates(schema: string) {
   return `SELECT e.id::uuid AS id, min(e.amount) AS amount,
         bool_and(${currentPaymentList}) AS "paymentListCurrent",
+        (bool_and(e."isReconciled") IS FALSE AND bool_or(e."isReconciled") IS TRUE) AS "conflictingFlags",
         CASE WHEN bool_and(${currentPaymentList})
           AND bool_and(e."isReconciled") = bool_or(e."isReconciled")
           THEN bool_and(e."isReconciled") END AS "isReconciled"

@@ -134,6 +134,11 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       const contact=randomUUID();
       await admin.query(`INSERT INTO ${schema}.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,legal_name)
         VALUES($1,$2,$3,'Test contact')`,[tenant,conn,contact]);
+      const queueUrl=base+'/payment-exceptions';
+      expect((await fetch(queueUrl,{headers:{Authorization:'Bearer advisor'}})).status).toBe(403);
+      const open=await fetch(queueUrl,{headers:{Authorization:'Bearer manager'}});
+      expect(open.headers.get('cache-control')).toContain('no-store');
+      expect(await open.json()).toEqual({count:0,rows:[]});
       const reviewsUrl=base+'/dispatches/'+randomUUID()+'/reviews';
       expect((await fetch(reviewsUrl,{headers:{Authorization:'Bearer advisor'}})).status).toBe(403);
       const reviewPage=await fetch(reviewsUrl,{headers:{Authorization:'Bearer manager'}});
@@ -344,10 +349,24 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
         expect((await Promise.all([poll(),poll()])).sort()).toEqual([false,true]);
         expect(bankReads).toBe(1);
         expect(await staging.dispatches(principal,conn,{q:paymentId,status:'bank_pending'})).toMatchObject({rows:[{bankOutcome:'pending'}]});
+        const follow=(q={})=>staging.exceptions(principal,conn,q);
+        expect(await follow({reason:'pending'})).toMatchObject({count:1,rows:[{payment:paymentId,dispatch,imported:'awaiting_import',direct:'pending'}]});
+        await expect(staging.exceptions({studentOperationsPrincipal:{role:'advisor'}} as never,conn,{})).rejects.toThrow();
+        await expect(staging.exceptions({studentOperationsPrincipal:{tenantId:randomUUID(),role:'chief_executive'}} as never,conn,{})).rejects.toThrow();
+        await expect(follow({direction:'sideways'})).rejects.toThrow();
+        const setEntries=(entries:unknown[])=>admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$2 WHERE xero_invoice_id=$1`,[inv,JSON.stringify({entries})]);
+        const observedPayment={kind:'payment',id:paymentId,date:'2020-01-02',amount:3000,isReconciled:true};
+        await setEntries([observedPayment]);
+        expect(await follow({reason:'conflicting'})).toMatchObject({count:1,rows:[{imported:'reconciled',direct:'pending'}]});
+        await setEntries([observedPayment,{...observedPayment,isReconciled:false}]);
+        expect(await follow()).toMatchObject({count:1,rows:[{reason:'conflicting',imported:'conflicting',direct:'pending'}]});
+        await setEntries([]);
         const advance=()=>admin.query(`UPDATE ${schema}.student_trust_bank_check_results SET checked_at=checked_at-interval '2 days' WHERE dispatch_id=$1`,[dispatch]);
         await advance();bankOutcome='reconciled';expect(await poll()).toBe(true);
         expect(await staging.dispatches(principal,conn,{status:'bank_reconciled'})).toMatchObject({rows:[{bankOutcome:'reconciled'}]});
+        expect(await follow()).toMatchObject({count:0,rows:[]});
         await advance();
+        expect(await follow({reason:'stale'})).toMatchObject({count:1});
         expect(await staging.dispatches(principal,conn,{status:'bank_stale'})).toMatchObject({rows:[{bankStale:true,daysSinceConfirmation:0}]});
         expect(await staging.dispatches(principal,conn,{status:'bank_reconciled'})).toMatchObject({count:0});
         bankOutcome='deleted';expect(await poll()).toBe(true);
@@ -355,6 +374,13 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
           bankHistory:[{outcome:'deleted'},{outcome:'reconciled'},{outcome:'pending'}]}]});
         expect(await staging.dispatches(principal,conn,{status:'bank_reconciled'})).toMatchObject({count:0});
         await advance();
+        await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$2 WHERE xero_invoice_id=$1`,[inv,
+          JSON.stringify({entries:[{kind:'payment',id:paymentId,date:'2020-01-02',amount:3000,isReconciled:true}]})]);
+        expect(await follow({q:dispatch,reason:'reversed'})).toMatchObject({count:1,rows:[{direct:'deleted',imported:'reconciled',previousDirectReconciled:true}]});
+        const assignment=await service.claimReview(principal,conn,inv,receipt,paymentId);
+        expect(await follow({owner:'mine'})).toMatchObject({count:1,rows:[{claimId:assignment.claimId,mine:true}]});
+        expect(await follow({owner:'unassigned'})).toMatchObject({count:0});
+        await service.releaseReview(principal,conn,inv,receipt,paymentId,assignment.claimId);
         const slow=new TrustBankCheckWorker(db,{trustPaymentSession:async()=>({
           ...await connector.trustPaymentSession(),bankStatus:async()=>{
             await admin.query(`UPDATE ${schema}.student_trust_bank_check_claims SET started_at=now()-interval '3 minutes' WHERE dispatch_id=$1 AND attempt=4`,[dispatch]);
@@ -366,6 +392,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
         const outage=new TrustBankCheckWorker(db,{trustPaymentSession:async()=>{throw new Error('provider failure');}});
         expect(await outage.processOne(tenant,conn)).toBe(true);
         expect(await staging.dispatches(principal,conn,{status:'bank_review'})).toMatchObject({rows:[{bankOutcome:'unavailable'}]});
+        expect(await follow({reason:'reversed'})).toMatchObject({count:1,rows:[{lastKnown:'deleted',direct:'unavailable'}]});
         expect(writes).toBe(1);
         expect(await read()).toMatchObject({dispatch:{submitted:true,paymentId}});
         expect((await service.list(principal,conn,inv))[0]).toMatchObject({linkedPaymentId:paymentId,linkedAmount:'3000.00'});
@@ -1133,6 +1160,12 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     expect(await confirmed()).toMatchObject({total:1,invoices:[{confirmedPayments:{count:2,amount:5483.6}}]});
     pendingEntries[0].isReconciled=false;
     await writeEntries();
+    const follow=(extra={})=>new TrustStagedDepositsController(db).exceptions(principal,connection,{q:payment,...extra});
+    expect(await follow()).toMatchObject({count:1,rows:[{payment,dispatch:null,direct:null,imported:'pending',reason:'conflicting'}]});
+    await admin.query(`INSERT INTO ${schema}.student_xero_payment_observations(customer_id,xero_connection_id,xero_invoice_id,payment_id,amount,
+      currency_code,payment_date,is_reconciled,first_seen_run_id,first_seen_at) VALUES($1,$2,$3,$4,2741.80,'AUD',$5,true,$6,'2019-12-01') ON CONFLICT DO NOTHING`,
+      [tenant,connection,invoice,payment,date,run]);
+    expect(await follow({reason:'reversed'})).toMatchObject({count:1,rows:[{previousImportReconciled:true}]});
     expect((await confirmed(payment)).total).toBe(0);
     expect(await pending()).toMatchObject([{reconciliation:{payments:1,managerChecks:1,xeroPending:1}}]);
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET settlement=$1 WHERE xero_invoice_id=$2`,
@@ -1142,6 +1175,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','reconciliation')`,[tenant,connection,randomUUID()]);
     expect((await service.list(principal,connection,invoice)).find(r=>r.id===excessOwner)).toMatchObject({linkedOverpaymentId:credit,possibleOverpaymentIds:[]});
     await admin.query(`DELETE FROM ${schema}.student_operations_xero_contacts WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3`,[tenant,connection,contact]);
+    expect(await follow({reason:'historical'})).toMatchObject({count:1,rows:[{historical:true,invoice}]});
     const exceptions = (q?:string) => register.invoices(tenant,connection,{queue:'receipt_exceptions',q});
     for (const q of [undefined,'WAITING LINK',bankId,payment.toUpperCase(),credit]) {
       expect(await exceptions(q)).toMatchObject({total:1,invoices:[{xeroInvoiceId:invoice,

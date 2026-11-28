@@ -1,3 +1,4 @@
+import {exceptionEvidence} from './trust-payment-exceptions.js';
 import { TrustPaymentSubmission } from './trust-payment-submission.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import { currentDispatch,checkDispatchInvoice } from './trust-dispatch-invoice-check.js';
@@ -292,9 +293,8 @@ export class TrustReceiptsController {
         JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
         JOIN ${schema}.student_operations_xero_sync_configurations cfg ON cfg.customer_id=l.customer_id AND cfg.xero_connection_id=l.connection_id
         WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4 AND l.payment_id=$5
-          AND cfg.enabled AND cfg.organisation_role='trust' AND NOT EXISTS (
-            SELECT 1 FROM (${this.candidates}) candidate
-            WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount AND candidate."isReconciled" IS TRUE)
+          AND cfg.enabled AND cfg.organisation_role='trust' AND EXISTS (
+            ${exceptionEvidence(schema,true)} SELECT 1 FROM classified WHERE reason IS NOT NULL)
         ON CONFLICT DO NOTHING`, params);
       const result = await db.query(`SELECT c.claim_id AS "claimId" FROM ${this.table} r
         JOIN ${this.links} l USING (customer_id,connection_id,verification_id)
