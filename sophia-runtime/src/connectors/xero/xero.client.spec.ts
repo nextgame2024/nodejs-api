@@ -86,6 +86,19 @@ describe('invoice settlement snapshots',()=>{
   it('rejects malformed allocations instead of persisting partial financial details',()=>{expect(()=>xeroInvoiceSettlement({Payments:[{PaymentID:'bad',Amount:100}]})).toThrow();});
 });
 
+describe('settlement resource reads',()=>{
+  const id='11111111-1111-4111-8111-111111111111',account='22222222-2222-4222-8222-222222222222';
+  it('rejects unrelated records even if the provider accepts the account filter',async()=>{
+    const fetch=jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({BankTransactions:[{BankTransactionID:id,BankAccount:{AccountID:id}}]})));
+    await expect(new XeroClient().settlementResource('token','org','BankAccounts',account,2,new Date(0))).rejects.toThrow('identity');
+    expect(decodeURIComponent(String(fetch.mock.calls[0][0]))).toContain(account);
+  });
+  it('preserves an omitted reconciliation flag and allows a payment created outside Sophia',async()=>{
+    jest.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify({Payments:[{PaymentID:id,Account:{AccountID:account},Amount:10}]})));
+    expect(await new XeroClient().settlementResource('token','org','Payments',id,1)).toMatchObject({items:[{id,account,amount:10,reconciled:null}],more:false});
+  });
+});
+
 afterEach(() => {
   jest.useRealTimers();
   jest.restoreAllMocks();

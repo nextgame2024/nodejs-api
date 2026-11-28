@@ -1,3 +1,4 @@
+import { XeroSettlementImport } from '../business-packs/student-operations/xero-settlement-import.js';
 import { TrustBankCheckWorker } from '../business-packs/student-operations/trust-bank-check-worker.js';
 import 'reflect-metadata';
 import { DatabaseService } from '../database/database.service.js';
@@ -43,15 +44,16 @@ export function createSharedStudentSyncRuntime() {
   const analysis=new StudentDocumentAnalysisWorker(database,xero,new OpenAIDocumentExtractionProvider());
   const checklist=new StudentDocumentChecklistReconciler(database);
   const invoiceRecovery=new StudentInvoiceProjectionRecovery(database,xero);
+  const settlementImport=new XeroSettlementImport(database,xero);
   const bankChecks=new TrustBankCheckWorker(database,xero);
   const salesCatalogue=new StudentXeroSalesCatalogueSync(database,xero);
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
       if (process.env.XERO_TRUST_BANK_CHECKS_ENABLED==='true') {
-        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS ready',
-          [schema+'.student_trust_bank_check_claims',schema+'.student_trust_bank_check_results']);
-        if (!ready.rows[0]?.ready) throw new Error('TRUST bank checks require Runtime migration 170.');
+        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL AS ready',
+          [schema+'.student_trust_bank_check_claims',schema+'.student_trust_bank_check_results',schema+'.student_xero_import_resources']);
+        if (!ready.rows[0]?.ready) throw new Error('TRUST bank checks require Runtime migrations 170 and 174.');
       }
       if(process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED==='true'){
         requireFlags('Document workflow requires checklist, document and offer analysis.',['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
@@ -125,7 +127,10 @@ export function createSharedStudentSyncRuntime() {
       const recovered=await invoiceRecovery.processBatch(customerId);
       return await checklist.processBatch(customerId)||recovered;
     },
-    processTrustBankCheck:(customerId:string)=>bankChecks.processOne(customerId),
+    async processTrustBankCheck(customerId:string) {
+      const checked=await bankChecks.processOne(customerId);
+      return await settlementImport.processOne(customerId) || checked;
+    },
     processSalesCatalogue:(customerId:string)=>salesCatalogue.processOne(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(

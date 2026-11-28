@@ -10,6 +10,14 @@ afterAll(() => {
 });
 
 describe("XeroConnectorService", () => {
+  it('checks bank permissions and organisation identity before obtaining a token for settlement import',async()=>{
+    const database={tenantReadTransaction:async(_tenant:string,work:(db:unknown)=>Promise<unknown>)=>work({
+      query:async()=>({rows:[{status:'active',xero_tenant_id:'org',granted_scopes:['accounting.payments.read']}]})})};
+    const service=new XeroConnectorService(database as never,{} as never,{} as never);
+    await expect(service.importSettlement('customer','conn','org','BankAccounts','id',1)).rejects.toThrow('read permissions');
+    await expect(service.importSettlement('customer','conn','other','Payments','id',1)).rejects.toThrow('read permissions');
+  });
+
   it('requests payment write scope only for the enabled pilot customer',()=>{
     const keys=['XERO_TRUST_PAYMENT_SUBMISSION_ENABLED','XERO_TRUST_PAYMENT_PILOT_SCOPE'],saved=keys.map(k=>process.env[k]);
     try {

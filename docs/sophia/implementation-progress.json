@@ -5228,5 +5228,24 @@
       "mvpWorkPackages": 1,
       "laterWorkPackages": 10
     }
+  },
+  "xeroImportAndRefresh": {
+    "delivered": [
+      "Read-only payment and batch hydration from known Xero payment IDs",
+      "Mapped TRUST bank transaction pagination with a durable lease, retry and watermark",
+      "Signed invoice and contact resource deduplication and targeted reads with independent register scans",
+      "Provider detail for externally recorded payments in the TRUST follow-up queue"
+    ],
+    "verification": [
+      "Runtime npm run build",
+      "52 Student Operations, Xero and shared runtime Jest suites passed (591 tests), using disposable PostgreSQL",
+      "Focused PostgreSQL and connector rerun with bank pagination recovery and scope tests passed (31 tests across 2 suites)"
+    ],
+    "migration": "174 applied to the configured database. Verified zero pending and forced row-level security on both new tables.",
+    "developmentEstimate": {
+      "mvpWorkPackages": 0,
+      "laterWorkPackages": 10
+    },
+    "pending": "Deployment of this package, connected functional testing and business acceptance."
   }
 }

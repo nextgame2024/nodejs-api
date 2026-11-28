@@ -1,5 +1,6 @@
+import {XeroSettlementImport} from './xero-settlement-import.js';
 import {StudentOperationsCasesService} from './student-operations-cases.service.js';
-import {Module} from '@nestjs/common';
+import {BadGatewayException,Module} from '@nestjs/common';
 import {NestFactory} from '@nestjs/core';
 import {BusinessManagerIdentityBridge} from '../../admin/identity/business-manager-identity.bridge.js';
 import {TrustBankCheckWorker} from './trust-bank-check-worker.js';
@@ -59,7 +60,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_case_invoice_draft_batches(customer_id uuid,batch_id uuid,snapshot jsonb);
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
     await admin.query(`GRANT UPDATE ON ${schema}.student_xero_sales_catalogues TO sophia_runtime_app`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions','170_trust_payment_bank_checks','171_trust_staged_screenshots','172_trust_payer_relationships','173_trust_submission_reviews']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions','170_trust_payment_bank_checks','171_trust_staged_screenshots','172_trust_payer_relationships','173_trust_submission_reviews','174_xero_resource_refresh']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -79,6 +80,71 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     for (const name of ['SOPHIA_RUNTIME_SCHEMA','SOPHIA_RUNTIME_DB_SSL','SOPHIA_RUNTIME_DATABASE_URL']) {
       if(env[name]===undefined) delete process.env[name]; else process.env[name]=env[name];
     }
+  });
+  it('keeps the newest signed resource across duplicate, out-of-order and foreign tenant notifications',async()=>{
+    const customer=randomUUID(),conn=randomUUID(),org=randomUUID(),id=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.xero_connections(customer_id,xero_connection_id,status,xero_tenant_id) VALUES($1,$2,'active',$3)`,[customer,conn,org]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust')`,[customer,conn]);
+    await admin.query(`ALTER TABLE ${schema}.student_operations_xero_sync_configurations ADD last_successful_sync_at timestamptz;
+      ALTER TABLE ${schema}.student_operations_xero_sync_runs ADD trigger_type text,ADD modified_since timestamptz;
+      GRANT INSERT ON ${schema}.student_operations_xero_sync_runs TO sophia_runtime_app`);
+    const migration=await readFile(new URL('../../database/migrations/067_xero_student_read_model.sql',import.meta.url),'utf8');
+    const resolver=migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION __SOPHIA_RUNTIME_SCHEMA__.resolve_student_operations_xero_sync_target'));
+    await admin.query(resolver.split('TO sophia_runtime_app;')[0].replaceAll('__SOPHIA_RUNTIME_SCHEMA__',schema)+'TO sophia_runtime_app;');
+    const sync=new StudentOperationsXeroSyncService(db,{} as never);
+    const event={category:'INVOICE',id,at:'2026-11-20T03:00:00Z'};
+    expect(await sync.enqueueWebhook(randomUUID(),[event])).toBe(false);
+    await sync.enqueueWebhook(org,[event,{...event,at:'2026-11-19T00:00:00Z'}]);
+    await sync.enqueueWebhook(org,[event]);
+    await sync.enqueueWebhook(org,[{...event,at:'2026-11-18T00:00:00Z'}]);
+    expect((await admin.query(`SELECT trigger_type FROM ${schema}.student_operations_xero_sync_runs WHERE customer_id=$1`,[customer])).rows).toEqual([{trigger_type:'webhook'}]);
+    expect((await admin.query(`SELECT event_at FROM ${schema}.student_xero_webhook_resources WHERE customer_id=$1`,[customer])).rows[0].event_at.toISOString()).toBe('2026-11-20T03:00:00.000Z');
+  });
+  it('hydrates a historical Xero payment and its batch once across concurrent workers and isolates the result',async()=>{
+    const customer=randomUUID(),conn=randomUUID(),org=randomUUID(),inv=randomUUID(),pay=randomUUID(),batch=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.xero_connections(customer_id,xero_connection_id,status,xero_tenant_id) VALUES($1,$2,'active',$3)`,[customer,conn,org]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust')`,[customer,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id) VALUES($1,$2,$3)`,[customer,conn,inv]);
+    await admin.query(`INSERT INTO ${schema}.student_xero_payment_observations(customer_id,xero_connection_id,xero_invoice_id,payment_id,amount,first_seen_run_id)
+      VALUES($1,$2,$3,$4,10,$5)`,[customer,conn,inv,pay,randomUUID()]);
+    const calls:string[]=[];
+    const worker=new XeroSettlementImport(db,{async importSettlement(t,c,o,kind,id){
+      expect([t,c,o]).toEqual([customer,conn,org]);calls.push(kind);
+      return {more:false,items:[{id,batch,invoice:inv,account:null,contact:null,amount:10,currency:'AUD',date:null,status:'AUTHORISED',type:null,reconciled:null,members:undefined}]};
+    }});
+    await Promise.all([worker.processOne(customer),worker.processOne(customer)]);
+    await worker.processOne(customer);
+    expect(calls).toEqual(['Payments','BatchPayments']);
+    const read=(t:string)=>db.tenantReadTransaction(t,d=>d.query(`SELECT kind FROM ${schema}.student_xero_import_resources WHERE customer_id=$1`,[customer]));
+    expect((await read(customer)).rows).toHaveLength(2);
+    expect((await read(tenant)).rows).toHaveLength(0);
+  });
+  it('resumes a mapped bank account after a rate limit and expired lease, deduplicating repeated page members',async()=>{
+    const customer=randomUUID(),conn=randomUUID(),org=randomUUID(),account=randomUUID(),bank=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.xero_connections(customer_id,xero_connection_id,status,xero_tenant_id) VALUES($1,$2,'active',$3)`,[customer,conn,org]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations(customer_id,xero_connection_id,enabled,organisation_role) VALUES($1,$2,true,'trust')`,[customer,conn]);
+    await admin.query(`INSERT INTO ${schema}.student_trust_receipt_account_mappings
+      (customer_id,xero_connection_id,revision,request_id,catalogue_revision,organisation_id,receipt_label,account_id,account_name,actor,reason)
+      VALUES($1,$2,1,$3,1,$4,'trust',$5,'bank','fixture','test mapping')`,[customer,conn,randomUUID(),org,account]);
+    const pages:number[]=[];
+    const worker=new XeroSettlementImport(db,{async importSettlement(t,c,o,kind,id,page){
+      expect([t,c,o,kind,id]).toEqual([customer,conn,org,'BankAccounts',account]);
+      pages.push(page);
+      if(pages.length===2) throw new BadGatewayException({providerStatus:429,retryAfterSeconds:3600});
+      return {more:page===1,items:[{id:bank,batch:null,invoice:null,account,contact:null,amount:10,currency:'AUD',
+        date:'2026-11-20',status:'AUTHORISED',type:'RECEIVE',reconciled:true,members:undefined}]};
+    }});
+    const table=schema+'.student_xero_import_resources';
+    await worker.processOne(customer);
+    await worker.processOne(customer);
+    expect(await worker.processOne(customer)).toBe(false);
+    const cursor=await admin.query(`SELECT page,since_at,due_at>now()+interval '59 minutes' AS delayed FROM ${table} WHERE customer_id=$1 AND kind='BankAccounts'`,[customer]);
+    expect(cursor.rows).toEqual([{page:2,since_at:null,delayed:true}]);
+    await admin.query(`UPDATE ${table} SET lease_id=$2,due_at=now()-interval '1 minute' WHERE customer_id=$1 AND kind='BankAccounts'`,[customer,randomUUID()]);
+    await worker.processOne(customer);
+    expect(pages).toEqual([1,2,2]);
+    const rows=await admin.query(`SELECT kind,page,since_at IS NOT NULL AS watermark FROM ${table} WHERE customer_id=$1 ORDER BY kind`,[customer]);
+    expect(rows.rows).toEqual([{kind:'BankAccounts',page:1,watermark:true},{kind:'BankTransactions',page:1,watermark:false}]);
   });
   it('stages an unmatched TRUST deposit once, scopes access, and removes it from the queue after verification',async()=>{
     const staging=new TrustStagedDepositsController(db);

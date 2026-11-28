@@ -327,7 +327,7 @@ export class StudentOperationsXeroSyncService {
     return { connectionId, organisationRole: role };
   }
 
-  async enqueueWebhook(providerTenantId: string): Promise<boolean> {
+  async enqueueWebhook(providerTenantId: string, events: {category:string; id:string; at:string}[] = []): Promise<boolean> {
     if (!/^[0-9a-f-]{36}$/i.test(providerTenantId)) return false;
     const schema = runtimeConfig().schema;
     const target = await this.database.query<{ customer_id: string; xero_connection_id: string }>(
@@ -338,6 +338,19 @@ export class StudentOperationsXeroSyncService {
     const row = target.rows[0];
     if (!row) return false;
     const runId = await this.database.tenantTransaction(row.customer_id, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['xero-webhook/'+row.customer_id+'/'+row.xero_connection_id]);
+      if (events.length) {
+        const changes=await db.query(`INSERT INTO ${schema}.student_xero_webhook_resources AS inbox
+          (customer_id,xero_connection_id,category,resource_id,event_at)
+          SELECT DISTINCT ON (e.category,e.id) $1,$2,e.category,e.id,e.at
+          FROM jsonb_to_recordset($3::jsonb) AS e(category text,id uuid,at timestamptz)
+          JOIN ${schema}.student_operations_xero_sync_configurations c ON c.customer_id=$1 AND c.xero_connection_id=$2 AND c.enabled
+          ORDER BY e.category,e.id,e.at DESC
+          ON CONFLICT(customer_id,xero_connection_id,category,resource_id) DO UPDATE
+          SET event_at=excluded.event_at,refreshed_at=NULL WHERE excluded.event_at>inbox.event_at`,
+          [row.customer_id,row.xero_connection_id,JSON.stringify(events)]);
+        if (!changes.rowCount) return null;
+      }
       const inserted = await db.query<{ sync_run_id: string }>(
         `INSERT INTO ${schema}.student_operations_xero_sync_runs
            (customer_id, xero_connection_id, mode, trigger_type, modified_since)
@@ -861,6 +874,13 @@ export class StudentOperationsXeroSyncService {
     if (!run) return;
 
     try {
+      if (run.mode==='incremental') {
+        const targeted=await this.refreshWebhookResources(tenantId,run,owner);
+        if (targeted.complete && run.trigger_type==='webhook' && run.modified_since) {
+          await this.complete(tenantId,run,owner,targeted.contacts,targeted.invoices,true);
+          return;
+        }
+      }
       const modifiedSince = run.modified_since ?? undefined;
       let contactCount = 0;
       for (let page = 1; page <= 10_000; page += 1) {
@@ -874,6 +894,40 @@ export class StudentOperationsXeroSyncService {
     } catch (error) {
       await this.fail(tenantId, runId, owner, safeProviderFailure(error));
     }
+  }
+
+  private async refreshWebhookResources(tenant:string,run:SyncRunRow,owner:string) {
+    const table=runtimeConfig().schema+'.student_xero_webhook_resources';
+    const connection=run.xero_connection_id;
+    const pending=await this.database.tenantTransaction(tenant,db=>db.query<{category:string;resource_id:string;event_at:string}>(
+      `SELECT category,resource_id,event_at::text FROM ${table}
+       WHERE customer_id=$1 AND xero_connection_id=$2 AND refreshed_at IS NULL ORDER BY event_at,resource_id,category LIMIT 51`,[tenant,connection]));
+    let contacts=0,invoices=0;
+    let complete=pending.rows.length>0 && pending.rows.length<=50;
+    for (const event of pending.rows.slice(0,50)) {
+      try {
+        if (event.category==='CONTACT') {
+          const contact=await this.xero.contactById(tenant,connection,event.resource_id);
+          await this.persistContacts(tenant,run,owner,[contact],++contacts);
+        } else {
+          const invoice=await this.xero.invoiceById(tenant,connection,event.resource_id);
+          if(invoice.invoiceId!==event.resource_id) throw new ConflictException('Xero returned a different invoice.');
+          if(invoice.type==='ACCREC') {
+            const contact=await this.xero.contactById(tenant,connection,invoice.contactId);
+            await this.persistContacts(tenant,run,owner,[contact],++contacts);
+            await this.persistInvoices(tenant,run,owner,[invoice],++invoices);
+          }
+        }
+      } catch(error) {
+        if (safeProviderFailure(error).providerStatus!==404) throw error;
+        complete=false;
+        // The normal register sweep handles records that Xero no longer returns by ID.
+      }
+      await this.database.tenantTransaction(tenant,db=>db.query(`UPDATE ${table} SET refreshed_at=now()
+        WHERE customer_id=$1 AND xero_connection_id=$2 AND category=$3 AND resource_id=$4 AND event_at=$5`,
+        [tenant,connection,event.category,event.resource_id,event.event_at]));
+    }
+    return {contacts,invoices,complete};
   }
 
   private async importInvoicePages(
@@ -1126,9 +1180,10 @@ export class StudentOperationsXeroSyncService {
     });
   }
 
-  private complete(tenantId: string, run: SyncRunRow, owner: string, contacts: number, invoices: number) {
+  private complete(tenantId: string, run: SyncRunRow, owner: string, contacts: number, invoices: number,targeted=false) {
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(tenantId, async (db) => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['xero-webhook/'+tenantId+'/'+run.xero_connection_id]);
       await assertLease(db, schema, tenantId, run.sync_run_id, owner);
       await autoMatchCollegeContacts(db,tenantId,run.xero_connection_id);
       await db.query(`SELECT ${schema}.reconcile_latest_invoice_advisors($1::uuid)
@@ -1153,7 +1208,8 @@ export class StudentOperationsXeroSyncService {
           WHERE customer_id=$1 AND sync_run_id=$2 AND lease_owner=$3`,
         [tenantId, run.sync_run_id, owner, contacts, invoices, candidates],
       );
-      await db.query(
+      // Only a register scan advances its watermark and postpones the next scheduled sweep.
+      if(!targeted) await db.query(
         `UPDATE ${schema}.student_operations_xero_sync_configurations
             SET last_successful_sync_at=now(),
                 last_incremental_sync_at=CASE WHEN $3='incremental' THEN now() ELSE last_incremental_sync_at END,
@@ -1167,6 +1223,17 @@ export class StudentOperationsXeroSyncService {
           WHERE customer_id=$1 AND xero_connection_id=$2`,
         [tenantId, run.xero_connection_id, run.mode,process.env.XERO_SYNC_EXECUTION_MODE === 'worker'],
       );
+      if(process.env.XERO_SYNC_EXECUTION_MODE==='worker') {
+        // A delivery during an active run could not claim its own active-run slot.
+        await db.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs
+          (customer_id,xero_connection_id,mode,trigger_type,modified_since)
+          SELECT c.customer_id,c.xero_connection_id,'incremental','webhook',c.last_successful_sync_at-interval '5 minutes'
+          FROM ${schema}.student_operations_xero_sync_configurations c
+          WHERE c.customer_id=$1 AND c.xero_connection_id=$2 AND c.enabled AND EXISTS(
+            SELECT 1 FROM ${schema}.student_xero_webhook_resources r WHERE r.customer_id=c.customer_id
+              AND r.xero_connection_id=c.xero_connection_id AND r.refreshed_at IS NULL)
+          ON CONFLICT DO NOTHING`,[tenantId,run.xero_connection_id]);
+      }
       // Match against this completed run so removed provider records are excluded.
       await autoMatchStudentInvoices(db,tenantId,run.xero_connection_id);
     });

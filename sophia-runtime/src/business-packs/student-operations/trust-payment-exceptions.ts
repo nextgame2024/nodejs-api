@@ -16,7 +16,9 @@ export function exceptionEvidence(s:string,onePayment=false) {
     SELECT l.payment_id AS payment,l.verification_id AS receipt,r.invoice_id AS invoice,i.invoice_number AS "invoiceNumber",
       r.bank_transaction_id AS "bankId",l.payment_amount::text AS amount,l.linked_at AS "linkedAt",
       (now() AT TIME ZONE 'Australia/Brisbane')::date-(l.linked_at AT TIME ZONE 'Australia/Brisbane')::date AS days,
-      c.dispatch_id AS dispatch,b.outcome AS direct,substantive.outcome AS "lastKnown",substantive.checked_at AS "lastKnownAt",b.checked_at AS "checkedAt",seen.created_at AS "importedAt",
+      c.dispatch_id AS dispatch,coalesce(b.outcome,external.outcome) AS direct,
+      coalesce(substantive.outcome,external.outcome) AS "lastKnown",coalesce(substantive.checked_at,external.checked_at) AS "lastKnownAt",
+      coalesce(b.checked_at,external.checked_at) AS "checkedAt",seen.created_at AS "importedAt",
       ck.checked_at AS "staffAt",ck.reported_reconciled_on AS "staffDate",claim.claim_id AS "claimId",claim.claimed_by AS owner,
       nullif(trim(staff.display_name),'') AS "ownerLabel",
       i.invoice_status IN ('VOIDED','DELETED') OR NOT ${currentTrustInvoice(s,'i')} AS historical,
@@ -38,6 +40,19 @@ export function exceptionEvidence(s:string,onePayment=false) {
     LEFT JOIN ${s}.student_operations_xero_sync_runs seen ON (seen.customer_id,seen.xero_connection_id,seen.sync_run_id)=(i.customer_id,i.xero_connection_id,i.last_seen_sync_run_id)
     LEFT JOIN LATERAL (SELECT * FROM (${trustReceiptPaymentCandidates(s)}) candidate WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) m ON true
     LEFT JOIN ${s}.student_trust_submission_confirmations c ON (c.customer_id,c.connection_id,c.payment_id)=(l.customer_id,l.connection_id,l.payment_id)
+    LEFT JOIN LATERAL (SELECT d.checked_at, CASE
+      WHEN d.detail->>'status'='MISSING' THEN 'missing' WHEN d.detail->>'status'='DELETED' THEN 'deleted'
+      WHEN map.account_id IS NULL THEN 'unknown'
+      WHEN (d.detail->>'status'='AUTHORISED' AND d.detail->>'type'='ACCRECPAYMENT' AND d.detail->>'currency'='AUD'
+        AND d.detail->>'invoice'=r.invoice_id::text AND d.detail->>'contact'=i.xero_contact_id::text
+        AND d.detail->>'account'=map.account_id::text AND d.detail->>'date'=r.received_on::text
+        AND (d.detail->>'amount')::numeric=l.payment_amount) IS NOT TRUE THEN 'changed'
+      WHEN d.detail->>'reconciled'='true' THEN 'reconciled' WHEN d.detail->>'reconciled'='false' THEN 'pending' ELSE 'unknown' END AS outcome
+      FROM ${s}.student_xero_import_resources d
+      LEFT JOIN LATERAL (SELECT account_id FROM ${s}.student_trust_receipt_account_mappings a
+        WHERE a.customer_id=d.customer_id AND a.xero_connection_id=d.xero_connection_id ORDER BY revision DESC LIMIT 1) map ON true
+      WHERE c.dispatch_id IS NULL AND d.customer_id=l.customer_id AND d.xero_connection_id=l.connection_id
+        AND d.kind='Payments' AND d.resource_id=l.payment_id AND d.checked_at IS NOT NULL) external ON true
     LEFT JOIN LATERAL (SELECT attempt,outcome,checked_at FROM ${s}.student_trust_bank_check_results b
       WHERE (b.customer_id,b.connection_id,b.dispatch_id)=(c.customer_id,c.connection_id,c.dispatch_id) ORDER BY attempt DESC LIMIT 1) b ON true
     LEFT JOIN LATERAL (SELECT attempt,outcome,checked_at FROM ${s}.student_trust_bank_check_results prior

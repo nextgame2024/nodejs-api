@@ -437,6 +437,24 @@ describe("StudentOperationsXeroSyncService", () => {
     jest.useRealTimers();
   });
 
+  it('refreshes an individual webhook without advancing the register watermark or acknowledging a newer delivery',async()=>{
+    const id='55555555-5555-4555-8555-555555555551',at='2026-11-20 10:00:00.123456+00';
+    const run={sync_run_id:connectionId,xero_connection_id:connectionId,mode:'incremental',trigger_type:'webhook',modified_since:new Date(0)};
+    const query=jest.fn(async(sql:string,_params?:unknown[])=>{
+      if(sql.includes("SET status='processing'")) return {rows:[run],rowCount:1};
+      if(sql.includes('event_at::text')) return {rows:[{category:'CONTACT',resource_id:id,event_at:at}],rowCount:1};
+      if(sql.includes('SET refreshed_at=now()')) return {rows:[],rowCount:0}; // a newer event won
+      return {rows:[{exists:1}],rowCount:1};
+    });
+    const contactById=jest.fn().mockResolvedValue({contactId:id,legalName:'Test'});
+    const database={tenantTransaction:async(_tenant:string,fn:(db:unknown)=>Promise<unknown>)=>fn({query})};
+    await new StudentOperationsXeroSyncService(database as never,{contactById} as never).process(tenantId,connectionId);
+    expect(contactById).toHaveBeenCalledWith(tenantId,connectionId,id);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('AND event_at=$5'),[tenantId,connectionId,'CONTACT',id,at]);
+    expect(query.mock.calls.some(([sql])=>sql.includes("SET status='succeeded'"))).toBe(true);
+    expect(query.mock.calls.some(([sql])=>sql.includes('SET last_successful_sync_at=now()'))).toBe(false);
+  });
+
   it("bulk upserts provider pages and checkpoints visible progress", async () => {
     const now = new Date("2026-10-10T00:00:00.000Z");
     const run = {

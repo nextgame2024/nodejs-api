@@ -238,6 +238,31 @@ export class XeroClient {
     return outcome==='pending' || outcome==='reconciled' || outcome==='unknown' ? id : null;
   }
 
+  async settlementResource(token:string,org:string,kind:'Payments'|'BatchPayments'|'BankAccounts',id:string,page:number,since?:Date) {
+    if (!xeroUuid.test(id) || !Number.isSafeInteger(page) || page<1) throw new BadGatewayException('Invalid Xero resource identity or page.');
+    const bank=kind==='BankAccounts';
+    const collection=bank?'BankTransactions':kind;
+    const url=new URL('https://api.xero.com/api.xro/2.0/'+collection+(bank?'':'/'+id));
+    if(bank) url.search=new URLSearchParams({where:`BankAccount.AccountID==Guid("${id}")`,page:String(page),pageSize:'100',order:'UpdatedDateUTC ASC'}).toString();
+    const body=record(await this.json(url.toString(),token,org,bank?since:undefined));
+    const raw=body[collection];
+    if(!Array.isArray(raw) || (!bank && raw.length!==1)) throw new BadGatewayException('Invalid Xero settlement response.');
+    const uuid=(v:unknown)=>typeof v==='string' && xeroUuid.test(v)?v.toLowerCase():null;
+    const items=raw.map(value=>{
+      const row=record(value),invoice=record(row.Invoice??{});
+      const resourceId=uuid(bank?row.BankTransactionID:kind==='Payments'?row.PaymentID:row.BatchPaymentID);
+      const account=uuid(record((bank?row.BankAccount:row.Account)??{}).AccountID);
+      if(!resourceId || (bank?account!==id:resourceId!==id)) throw new BadGatewayException('Unexpected Xero settlement identity.');
+      return {id:resourceId,account,invoice:uuid(invoice.InvoiceID),contact:uuid(record(invoice.Contact??row.Contact??{}).ContactID),
+        amount:optionalNumber(row.Amount??row.TotalAmount??row.Total),currency:optionalString(invoice.CurrencyCode??row.CurrencyCode),
+        date:optionalDate(row.DateString)??optionalXeroDate(row.Date),status:optionalString(row.Status),type:optionalString(row.PaymentType??row.Type),
+        reconciled:typeof row.IsReconciled==='boolean'?row.IsReconciled:null,
+        batch:uuid(row.BatchPaymentID??record(row.BatchPayment??{}).BatchPaymentID),
+        members:kind==='BatchPayments' && Array.isArray(row.Payments)?row.Payments.map(p=>uuid(record(p).PaymentID)).filter(Boolean):undefined};
+    });
+    return {items,more:bank && paginationPageCount(body,page,items.length,100)>page};
+  }
+
   async receiptBankStatus(token:string,org:string,p:TrustXeroPayment,id:string):Promise<TrustBankOutcome> {
     if (!xeroUuid.test(id)) throw new BadGatewayException('Invalid payment identity.');
     let body:Record<string,unknown>;

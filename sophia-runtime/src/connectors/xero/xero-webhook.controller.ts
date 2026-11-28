@@ -39,10 +39,19 @@ export class XeroWebhookController {
     }
     const parsed = WebhookSchema.safeParse(body);
     if (!parsed.success) return {};
-    const tenantIds = new Set(parsed.data.events
-      .filter((event) => event.eventCategory === "INVOICE" || event.eventCategory === "CONTACT")
-      .map((event) => event.tenantId));
-    for (const tenantId of tenantIds) await this.sync.enqueueWebhook(tenantId);
+    const tenants = new Map<string, {category:string; id:string; at:string}[]>();
+    for (const event of parsed.data.events) {
+      if (event.eventCategory !== 'INVOICE' && event.eventCategory !== 'CONTACT') continue;
+      const events = tenants.get(event.tenantId) ?? [];
+      tenants.set(event.tenantId, events);
+      const id = z.string().uuid().safeParse(event.resourceId);
+      const at = z.string().datetime({offset:true}).safeParse(typeof event.eventDateUtc==='string' && /^\d{4}-\d\d-\d\dT[\d:.]+$/.test(event.eventDateUtc) ? event.eventDateUtc+'Z' : event.eventDateUtc);
+      if (id.success && at.success) events.push({category:event.eventCategory,id:id.data,at:at.data});
+    }
+    for (const [tenant, events] of tenants) {
+      if (events.length) await this.sync.enqueueWebhook(tenant, events);
+      else await this.sync.enqueueWebhook(tenant);
+    }
     return {};
   }
 }

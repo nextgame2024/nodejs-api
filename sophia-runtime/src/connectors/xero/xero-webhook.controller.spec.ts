@@ -36,6 +36,16 @@ describe("XeroWebhookController", () => {
     expect(enqueueWebhook).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
   });
 
+  it('forwards resource IDs with UTC timestamps from signed invoice events',async()=>{
+    const tenantId='11111111-1111-4111-8111-111111111111',resourceId='22222222-2222-4222-8222-222222222222';
+    const enqueueWebhook=jest.fn().mockResolvedValue(true);
+    const body={events:[{tenantId,resourceId,eventDateUtc:'2026-11-20T10:00:00.123',eventCategory:'INVOICE'}]};
+    const rawBody=Buffer.from(JSON.stringify(body));
+    const signature=createHmac('sha256','webhook-key').update(rawBody).digest('base64');
+    await new XeroWebhookController({enqueueWebhook} as never).receive({rawBody},signature,body);
+    expect(enqueueWebhook).toHaveBeenCalledWith(tenantId,[{id:resourceId,at:'2026-11-20T10:00:00.123Z',category:'INVOICE'}]);
+  });
+
   it("rejects an invalid signature before enqueueing work", async () => {
     const enqueueWebhook = jest.fn();
     const controller = new XeroWebhookController({ enqueueWebhook } as never);

@@ -595,6 +595,16 @@ export class XeroConnectorService {
     return this.providerRequest(tenantId,connectionId,()=>this.client.removeInvoice(accessToken,connection.xero_tenant_id,invoiceId,status,key));
   }
 
+  async importSettlement(tenant:string,connectionId:string,org:string,kind:'Payments'|'BatchPayments'|'BankAccounts',id:string,page:number,since?:Date) {
+    const connection=await this.loadConnection(tenant,connectionId);
+    const scope=kind==='BankAccounts'?'accounting.banktransactions.read':'accounting.payments.read';
+    if(connection.status!=='active' || connection.xero_tenant_id!==org ||
+        (missingScopes(connection.granted_scopes,[scope]).length && missingScopes(connection.granted_scopes,['accounting.transactions.read']).length))
+      throw new ConflictException('Review the Xero connection and settlement read permissions.');
+    const token=await this.accessToken(tenant,connection.xero_authorization_id,requiredConfig());
+    return this.providerRequest(tenant,connectionId,()=>this.client.settlementResource(token,org,kind,id,page,since),'discovery');
+  }
+
   async trustPaymentSession(tenant:string,connectionId:string,org:string,write:boolean) {
     const connection=await this.loadConnection(tenant,connectionId);
     const scopes=connection.granted_scopes;

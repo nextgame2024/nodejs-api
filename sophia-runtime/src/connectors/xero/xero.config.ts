@@ -8,6 +8,7 @@ export const XERO_READ_ONLY_SCOPES = [
   "accounting.settings.read",
   "accounting.invoices.read",
   "accounting.payments.read",
+  "accounting.banktransactions.read",
   "accounting.contacts.read",
   "accounting.attachments.read",
 ] as const;
