@@ -4,19 +4,23 @@ import { listResiduals, recordResidual, residualCommand, residualDetail, residua
 import { aud, cents, splitLineOptions, assignLinePurposes } from './trust-split-lines.js';
 import { lockSplitInvoices } from './trust-split-reservations.js';
 import { matchOutcomes, outcomeQuery } from './trust-match-outcomes.js';
-import { createHash } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
 import { currentTrustInvoice } from './trust-receipt-payment-candidates.js';
-import { BadRequestException, Body, ConflictException, Controller, Get, Header, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { StudentOperationsWorkspaceService } from './student-operations-workspace.service.js';
+import { StreamableFile,UploadedFile,UseInterceptors,ForbiddenException,BadRequestException, Body, ConflictException, Controller, Get, Header, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
 import { runtimeConfig } from '../../config/runtime-config.js';
 import { DatabaseService } from '../../database/database.service.js';
 import { analysisToday } from './student-document-analysis-state.js';
 import { StudentOperationsWorkspaceGuard } from './student-operations-workspace.guard.js';
-import { manager, receiptFields } from './trust-receipts.controller.js';
+import { manager, receiptFields,receiptEvidenceType } from './trust-receipts.controller.js';
 
 const stageFields = receiptFields.pick({account:true,receivedOn:true,amount:true,reference:true,bankTransactionId:true,
   statementFileName:true,statementFileSha256:true,statementRecord:true}).required();
+const imageFields=stageFields.omit({statementFileName:true,statementFileSha256:true,statementRecord:true});
+type ImageUpload={buffer:Buffer;mimetype:string};
 const queryFields = z.object({page:z.coerce.number().int().min(1).max(100000).default(1),q:z.string().trim().max(150).default('')}).strict();
 const splitFields=z.object({
   allocations:z.array(z.object({
@@ -42,7 +46,7 @@ type Request = Parameters<typeof manager>[0];
 @Controller('business-packs/student-operations/v1/workspace/trust-staged-deposits/:connectionId')
 @UseGuards(StudentOperationsWorkspaceGuard)
 export class TrustStagedDepositsController {
-  constructor(private readonly database:DatabaseService) {}
+  constructor(private readonly database:DatabaseService,private readonly workspace:StudentOperationsWorkspaceService=new StudentOperationsWorkspaceService(database)) {}
   private async requireTrust(db:PoolClient,tenant:string,connection:string) {
     const schema=runtimeConfig().schema;
     const enabled=await db.query(`SELECT 1 FROM ${schema}.student_operations_xero_sync_configurations c
@@ -58,12 +62,68 @@ export class TrustStagedDepositsController {
     if (!parsed.success || !parsed.data.bankTransactionId || parsed.data.receivedOn>analysisToday()) {
       throw new BadRequestException('Check the deposit date, amount, account, transaction ID and CSV source.');
     }
-    const d=parsed.data;
+    return this.saveDeposit(p,connection,parsed.data);
+  }
+
+  @Post('screenshot')
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880,files:1,fields:5,fieldSize:2048,parts:7}}))
+  async stageScreenshot(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Body() body:unknown,@UploadedFile() image?:ImageUpload) {
+    const p=manager(request),parsed=imageFields.safeParse(body);
+    if (!parsed.success || !parsed.data.bankTransactionId || parsed.data.receivedOn>analysisToday())
+      throw new BadRequestException('Check the account, bank date, amount and transaction ID.');
+    if (!image || image.buffer.length>5242880 || !receiptEvidenceType(image)) throw new BadRequestException('Select a PNG or JPEG screenshot up to 5 MB.');
+    return this.saveDeposit(p,connection,parsed.data,image);
+  }
+
+  @Get(':depositId/screenshot')
+  @Header('Cache-Control','private, no-store')
+  @Header('X-Content-Type-Options','nosniff')
+  async screenshot(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,@Param('depositId',ParseUUIDPipe) deposit:string) {
+    const p=request.studentOperationsPrincipal,correlation=request.studentOperationsCorrelationId??randomUUID();
+    const audit=(outcome:'allowed'|'denied')=>this.workspace.recordAccess(p.tenantId,p.identityUserId,outcome,correlation,
+      {action:'trust_deposit.screenshot_download',connectionId:connection,depositId:deposit});
+    if(p.role!=='chief_executive'){await audit('denied');throw new ForbiddenException();}
+    const row=await this.database.tenantReadTransaction(p.tenantId,async db=>(await db.query(
+      `SELECT e.evidence,e.evidence_type FROM ${runtimeConfig().schema}.student_trust_staged_screenshots e
+       JOIN ${runtimeConfig().schema}.student_operations_xero_sync_configurations c ON c.customer_id=e.customer_id AND c.xero_connection_id=e.connection_id
+       JOIN ${runtimeConfig().schema}.xero_connections x ON x.customer_id=c.customer_id AND x.xero_connection_id=c.xero_connection_id
+       WHERE e.customer_id=$1 AND e.connection_id=$2 AND e.deposit_id=$3 AND c.enabled AND c.organisation_role='trust' AND x.status='active'`,
+      [p.tenantId,connection,deposit])).rows[0]);
+    await audit(row?'allowed':'denied');
+    if(!row) throw new NotFoundException();
+    return new StreamableFile(row.evidence,{type:row.evidence_type,disposition:'attachment; filename="bank-deposit.'+(row.evidence_type==='image/png'?'png':'jpg')+'"'});
+  }
+
+  private saveDeposit(p:ReturnType<typeof manager>,connection:string,d:z.infer<typeof imageFields> & Partial<z.infer<typeof stageFields>>,image?:ImageUpload) {
     const schema=runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId,async db=>{
       await this.requireTrust(db,p.tenantId,connection);
       const params=[p.tenantId,connection,d.account,d.bankTransactionId,d.receivedOn,d.amount,d.reference,
         d.statementFileName,d.statementFileSha256,d.statementRecord,p.identityUserId];
+      await db.query("SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array($1::uuid,$2::uuid,lower($3),$4::text)::text,171))",params.slice(0,4));
+      const supplemental=schema+'.student_trust_staged_statement_sources';
+      if (d.statementFileSha256) {
+        await db.query("SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array($1::uuid,$2::uuid,$3::text,$4::integer)::text,171))",
+          [p.tenantId,connection,d.statementFileSha256,d.statementRecord]);
+        const conflict=await db.query(`SELECT 1 FROM ${supplemental} src JOIN ${schema}.student_trust_staged_deposits dep
+          USING(customer_id,connection_id,deposit_id) WHERE src.customer_id=$1 AND src.connection_id=$2 AND src.statement_file_sha256=$3
+          AND src.statement_record=$4 AND (lower(dep.account_label)<>lower($5) OR dep.bank_transaction_id<>$6)`,
+          [p.tenantId,connection,d.statementFileSha256,d.statementRecord,d.account,d.bankTransactionId]);
+        if (conflict.rowCount) throw new ConflictException('This statement row belongs to another saved deposit.');
+      }
+      const saveImage=async(id:string)=>{
+        if (!image) return false;
+        const table=schema+'.student_trust_staged_screenshots';
+        const values=[p.tenantId,connection,id,image.buffer,image.mimetype,p.identityUserId];
+        const saved=await db.query(`INSERT INTO ${table}(customer_id,connection_id,deposit_id,evidence,evidence_type,uploaded_by)
+          VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,values);
+        if (saved.rowCount) return true;
+        const same=await db.query(`SELECT 1 FROM ${table} WHERE customer_id=$1 AND connection_id=$2 AND deposit_id=$3
+          AND sha256=encode(sha256($4::bytea),'hex') AND evidence_type=$5`,values.slice(0,5));
+        if (!same.rowCount) throw new ConflictException('A different screenshot is already attached to this deposit.');
+        return false;
+      };
       const inserted=await db.query(`INSERT INTO ${schema}.student_trust_staged_deposits
         (customer_id,connection_id,account_label,bank_transaction_id,received_on,amount,reference,
          statement_file_name,statement_file_sha256,statement_record,staged_by)
@@ -72,9 +132,9 @@ export class TrustStagedDepositsController {
             AND ((lower(r.account_label)=lower($3) AND r.bank_transaction_id=$4)
               OR (r.statement_file_sha256=$9 AND r.statement_record=$10)))
         ON CONFLICT DO NOTHING RETURNING deposit_id AS id`,params);
-      if (inserted.rowCount) return {id:inserted.rows[0].id,created:true};
+      if (inserted.rowCount) {await saveImage(inserted.rows[0].id);return {id:inserted.rows[0].id,created:true};}
       // A later export may contain the same movement. Keep its first source, and reject conflicting identities.
-      const prior=await db.query(`SELECT deposit_id AS id,
+      const prior=await db.query(`SELECT deposit_id AS id,statement_record,
         (lower(account_label)=lower($3) AND bank_transaction_id=$4 AND received_on=$5 AND amount=$6 AND reference=$7) AS same
         FROM ${schema}.student_trust_staged_deposits WHERE customer_id=$1 AND connection_id=$2
         AND ((lower(account_label)=lower($3) AND bank_transaction_id=$4) OR (statement_file_sha256=$8 AND statement_record=$9))`,
@@ -83,7 +143,16 @@ export class TrustStagedDepositsController {
         const verified=await db.query(`SELECT 1 FROM ${schema}.student_trust_receipt_verifications
           WHERE customer_id=$1 AND connection_id=$2 AND lower(account_label)=lower($3) AND bank_transaction_id=$4`,
           params.slice(0,4));
-        if (!verified.rowCount) return {id:prior.rows[0].id,created:false};
+        if (!verified.rowCount) {
+          const existing=prior.rows[0];
+          if (d.statementRecord && !existing.statement_record) {
+            const attached=await db.query(`INSERT INTO ${supplemental}(customer_id,connection_id,deposit_id,statement_file_name,
+              statement_file_sha256,statement_record,attached_by) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+              [p.tenantId,connection,existing.id,d.statementFileName,d.statementFileSha256,d.statementRecord,p.identityUserId]);
+            return {id:existing.id,created:!!attached.rowCount};
+          }
+          return {id:existing.id,created:await saveImage(existing.id)};
+        }
       }
       throw new ConflictException('This deposit is already verified or its bank or statement identity conflicts with existing evidence.');
     });
@@ -426,8 +495,13 @@ export class TrustStagedDepositsController {
       await this.requireTrust(db,p.tenantId,connection);
       const result=await db.query(`SELECT d.deposit_id AS id,d.account_label AS account,d.received_on::text AS date,
         d.amount::text,d.reference,d.bank_transaction_id AS "transactionId",
-        jsonb_build_object('name',d.statement_file_name,'sha256',d.statement_file_sha256,'record',d.statement_record) AS source
-        FROM ${schema}.student_trust_staged_deposits d WHERE d.customer_id=$1 AND d.connection_id=$2
+        CASE WHEN coalesce(d.statement_record,src.statement_record) IS NOT NULL THEN jsonb_build_object(
+          'name',coalesce(d.statement_file_name,src.statement_file_name),'sha256',coalesce(d.statement_file_sha256,src.statement_file_sha256),
+          'record',coalesce(d.statement_record,src.statement_record)) END AS source,
+        e.sha256 AS "screenshotSha256"
+        FROM ${schema}.student_trust_staged_deposits d LEFT JOIN ${schema}.student_trust_staged_screenshots e USING(customer_id,connection_id,deposit_id)
+        LEFT JOIN ${schema}.student_trust_staged_statement_sources src USING(customer_id,connection_id,deposit_id)
+        WHERE d.customer_id=$1 AND d.connection_id=$2
         AND ($3='' OR d.bank_transaction_id=$3 OR strpos(lower(d.reference),lower($3))>0 OR strpos(lower(d.account_label),lower($3))>0)
         AND NOT EXISTS (SELECT 1 FROM ${schema}.student_trust_receipt_verifications r WHERE r.customer_id=d.customer_id
           AND r.connection_id=d.connection_id AND lower(r.account_label)=lower(d.account_label)

@@ -610,6 +610,8 @@ export class XeroConnectorService {
         if (!write || !trustSubmissionEnabled(tenant,connectionId)) throw new ConflictException('TRUST submission is disabled for this connection.');
         return this.providerRequest(tenant,connectionId,()=>this.client.submitReceiptPayment(token,org,payment,()=>Date.now()<deadline && trustSubmissionEnabled(tenant,connectionId)));
       },
+      bankStatus:(payment:import('./xero.client.js').TrustXeroPayment,id:string)=>
+        this.providerRequest(tenant,connectionId,()=>this.client.receiptBankStatus(token,org,payment,id)),
       verify:(payment:import('./xero.client.js').TrustXeroPayment,id?:string)=>
         this.providerRequest(tenant,connectionId,()=>this.client.verifiedReceiptPayment(token,org,payment,id)),
     };

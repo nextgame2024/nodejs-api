@@ -86,6 +86,8 @@ export type XeroContactRecord = {
   updatedAt: string | null;
 };
 
+export type TrustBankOutcome='pending'|'reconciled'|'unknown'|'deleted'|'changed'|'missing'|'unavailable';
+
 export interface TrustXeroPayment {dispatch:string;invoice:string;contact:string;account:string;amount:string;date:string}
 
 export type XeroInvoiceRecord = {
@@ -232,14 +234,27 @@ export class XeroClient {
       id=optionalString(record(list[0]).PaymentID)??undefined;
     }
     if (!id || !xeroUuid.test(id)) return null;
-    const body=record(await this.json('https://api.xero.com/api.xro/2.0/Payments/'+id,token,org));
+    const outcome=await this.receiptBankStatus(token,org,p,id);
+    return outcome==='pending' || outcome==='reconciled' || outcome==='unknown' ? id : null;
+  }
+
+  async receiptBankStatus(token:string,org:string,p:TrustXeroPayment,id:string):Promise<TrustBankOutcome> {
+    if (!xeroUuid.test(id)) throw new BadGatewayException('Invalid payment identity.');
+    let body:Record<string,unknown>;
+    try {body=record(await this.json('https://api.xero.com/api.xro/2.0/Payments/'+id,token,org));}
+    catch(error) {
+      if (error instanceof BadGatewayException && (error.getResponse() as {providerStatus?:number}).providerStatus===404) return 'missing';
+      throw error;
+    }
     const item=Array.isArray(body.Payments) && body.Payments.length===1 ? record(body.Payments[0]) : {};
+    if (item.PaymentID!==id) return 'changed';
+    if (item.Status==='DELETED') return 'deleted';
     const invoice=record(item.Invoice),account=record(item.Account);
     if (item.PaymentID!==id || item.PaymentType!=='ACCRECPAYMENT' || item.Status!=='AUTHORISED' ||
-        item.Reference!==reference || invoice.InvoiceID!==p.invoice || invoice.CurrencyCode!=='AUD' || record(invoice.Contact).ContactID!==p.contact ||
+        item.Reference!=='Sophia '+p.dispatch || invoice.InvoiceID!==p.invoice || invoice.CurrencyCode!=='AUD' || record(invoice.Contact).ContactID!==p.contact ||
         account.AccountID!==p.account || item.Amount!==Number(p.amount) ||
-        (optionalDate(item.DateString)??optionalXeroDate(item.Date))!==p.date) return null;
-    return id;
+        (optionalDate(item.DateString)??optionalXeroDate(item.Date))!==p.date) return 'changed';
+    return item.IsReconciled===true?'reconciled':item.IsReconciled===false?'pending':'unknown';
   }
 
   async createInvoice(accessToken:string,tenantId:string,value:XeroInvoiceCreate,key:string):Promise<XeroInvoiceReceipt> {

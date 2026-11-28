@@ -27,6 +27,15 @@ beforeAll(()=>{process.env.SOPHIA_RUNTIME_DATABASE_URL='postgresql://example.inv
 afterAll(()=>{if(oldUrl===undefined) delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;});
 beforeEach(()=>{jest.clearAllMocks();query.mockReset();tenantRead.mockReset();status.mockReset();});
 describe('Shared worker Runtime adapter',()=>{
+  it('requires migration 170 before scheduled TRUST bank checks start',async()=>{
+    const previous=process.env.XERO_TRUST_BANK_CHECKS_ENABLED;
+    try {
+      process.env.XERO_TRUST_BANK_CHECKS_ENABLED='true';query.mockResolvedValue({rows:[{ready:false}]});
+      await expect(createSharedStudentSyncRuntime().preflight()).rejects.toThrow('170');
+    } finally {
+      if(previous===undefined) delete process.env.XERO_TRUST_BANK_CHECKS_ENABLED;else process.env.XERO_TRUST_BANK_CHECKS_ENABLED=previous;
+    }
+  });
   it('requires the document workflow dependencies and migration 098 before activation',async()=>{
     const keys=['STUDENT_DOCUMENT_WORKFLOW_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED'],previous=keys.map(k=>process.env[k]);
     try{
@@ -107,7 +116,7 @@ describe('Shared worker Runtime adapter',()=>{
     const previous=keys.map(key=>process.env[key]);keys.forEach(key=>process.env[key]='true');
     query.mockResolvedValue({rows:[{ready:true}]});
     try {
-      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false,STUDENT_DOCUMENT_CHECKLIST_ENABLED:false,STUDENT_DOCUMENT_WORKFLOW_ENABLED:false});
+      expect(await createSharedStudentSyncRuntime().preflight()).toEqual({...Object.fromEntries(keys.map(key=>[key,true])),XERO_TRUST_BANK_CHECKS_ENABLED:false,STUDENT_SYNC_HEALTH_LOGS_ENABLED:false,STUDENT_DOCUMENT_ANALYSIS_ENABLED:false,STUDENT_OFFER_ANALYSIS_ENABLED:false,STUDENT_DOCUMENT_CHECKLIST_ENABLED:false,STUDENT_DOCUMENT_WORKFLOW_ENABLED:false});
     } finally {keys.forEach((key,index)=>{if(previous[index]===undefined) delete process.env[key];else process.env[key]=previous[index];});}
   });
   it('requires migration 085 before enabling document rechecks',async()=>{

@@ -25,7 +25,7 @@ suite('Contact review atomic creation and tenant scope',()=>{
    CREATE TABLE sophia_runtime.xero_connections(customer_id uuid,xero_connection_id uuid,status text);
    CREATE TABLE sophia_runtime.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,organisation_role text,enabled boolean);
    CREATE TABLE sophia_runtime.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid);
-   CREATE TABLE sophia_runtime.student_college_xero_contact_links(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,college_id uuid,classification text CHECK(classification IN ('college','other','unresolved')),revision integer DEFAULT 1,reviewed_by text,reviewed_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_contact_id),CHECK((classification='college')=(college_id IS NOT NULL)));
+   CREATE TABLE sophia_runtime.student_college_xero_contact_links(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,college_id uuid,student_user_id uuid,classification text CHECK(classification IN ('college','other','unresolved')),revision integer DEFAULT 1,reviewed_by text,reviewed_at timestamptz DEFAULT now(),PRIMARY KEY(customer_id,xero_connection_id,xero_contact_id),CHECK((classification='college')=(college_id IS NOT NULL)));
    CREATE TABLE sophia_runtime.student_college_xero_mapping_events(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,actor_identity text,previous_value jsonb,confirmed_value jsonb);
    GRANT USAGE ON SCHEMA sophia_runtime TO sophia_runtime_app;
    GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA sophia_runtime TO sophia_runtime_app;`);

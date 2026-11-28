@@ -21,6 +21,7 @@ import { StudentOperationsWorkspaceService, type StudentOperationsWorkspacePrinc
 type Request = {studentOperationsPrincipal: StudentOperationsWorkspacePrincipal; studentOperationsCorrelationId?: string};
 type Evidence = {buffer: Buffer; mimetype: string};
 export const receiptFields = z.object({
+  stagedScreenshotId:z.uuid().optional(),
   statementFileName: z.string().trim().min(1).max(255).regex(/^[^/\\\x00-\x1f\x7f]+\.csv$/i).optional(),
   statementFileSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   statementRecord: z.string().regex(/^[1-9]\d{0,3}$/).transform(Number).pipe(z.number().int().min(2).max(1001)).optional(),
@@ -147,7 +148,7 @@ export class TrustReceiptsController {
        ) AS "reviewedDepositId",
        CASE WHEN statement_record IS NOT NULL THEN jsonb_build_object(
          'name',statement_file_name,'sha256',statement_file_sha256,'record',statement_record) END AS "statementSource",
-       evidence_type IS NOT NULL AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
+       staged_screenshot_id AS "stagedScreenshotId",(evidence_type IS NOT NULL OR staged_screenshot_id IS NOT NULL) AS "hasEvidence", l.payment_id AS "linkedPaymentId", l.payment_amount::text AS "linkedAmount",
        (SELECT candidate."isReconciled" FROM (${this.candidates}) candidate
          WHERE candidate.id=l.payment_id AND candidate.amount=l.payment_amount) AS "linkedPaymentReconciled",
        ARRAY(SELECT ${observationFields}
@@ -376,7 +377,10 @@ export class TrustReceiptsController {
       throw new ForbiddenException();
     }
     const row = await this.database.tenantReadTransaction(p.tenantId, async db => (await db.query(
-      `SELECT evidence,evidence_type FROM ${this.table} WHERE customer_id=$1 AND connection_id=$2 AND invoice_id=$3 AND verification_id=$4`,
+      `SELECT coalesce(r.evidence,e.evidence) AS evidence,coalesce(r.evidence_type,e.evidence_type) AS evidence_type
+       FROM ${this.table} r LEFT JOIN ${runtimeConfig().schema}.student_trust_staged_screenshots e ON
+         (e.customer_id,e.connection_id,e.deposit_id)=(r.customer_id,r.connection_id,r.staged_screenshot_id)
+       WHERE r.customer_id=$1 AND r.connection_id=$2 AND r.invoice_id=$3 AND r.verification_id=$4`,
       [p.tenantId,connection,invoice,id])).rows[0]);
     await audit(row?.evidence ? 'allowed' : 'denied');
     if (!row?.evidence) throw new NotFoundException();
@@ -384,7 +388,7 @@ export class TrustReceiptsController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:11, fieldSize:2048, parts:13}}))
+  @UseInterceptors(FileInterceptor('file',{limits:{fileSize:5242880, files:1, fields:12, fieldSize:2048, parts:14}}))
   async verify(@Req() request: Request, @Param('connectionId',ParseUUIDPipe) connection: string,
     @Param('invoiceId',ParseUUIDPipe) invoice: string, @Headers('idempotency-key') key: string,
     @Body() body: unknown, @UploadedFile() file?: Evidence) {
@@ -402,6 +406,8 @@ export class TrustReceiptsController {
     if (!!importedId !== !!importedAmount || (importedAmount && (Number(importedAmount) <= 0 || Number(importedAmount) > Number(amount)))) {
       throw new BadRequestException('Check the selected payment and full bank receipt amount.');
     }
+    const stagedId=parsed.data.stagedScreenshotId;
+    if (stagedId && (!bankTransactionId || file)) throw new BadRequestException('Use the saved screenshot with its original bank details.');
     const type = receiptEvidenceType(file);
     const [whole, fraction = ''] = amount.split('.');
     const centsAmount = whole + '.' + fraction.padEnd(2, '0');
@@ -410,12 +416,33 @@ export class TrustReceiptsController {
       if (paymentPurpose) parts.push(paymentPurpose);
       const receiptPayload = importedId ? {parts,bankTransactionId,importedId,importedAmount:Number(importedAmount)} : bankTransactionId ? {parts,bankTransactionId} : parts;
       const payload = hasSource ? {receiptPayload,statementFileName,statementFileSha256,statementRecord} : receiptPayload;
-      return createHash('sha256').update(JSON.stringify(payload)).update(file?.buffer ?? '').digest('hex');
+      return createHash('sha256').update(JSON.stringify(stagedId?{payload,stagedId}:payload)).update(file?.buffer ?? '').digest('hex');
     };
     const hash = fingerprint(centsAmount);
     const schema = runtimeConfig().schema;
     return this.database.tenantTransaction(p.tenantId, async db => {
       if (bankTransactionId) {
+        await db.query("SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array($1::uuid,$2::uuid,lower($3),$4::text)::text,171))",
+          [p.tenantId,connection,account,bankTransactionId]);
+        if (stagedId) {
+          const source=await db.query(`SELECT 1 FROM ${schema}.student_trust_staged_deposits d
+            JOIN ${schema}.student_trust_staged_screenshots e USING(customer_id,connection_id,deposit_id)
+            LEFT JOIN ${schema}.student_trust_staged_statement_sources src USING(customer_id,connection_id,deposit_id)
+            WHERE d.customer_id=$1 AND d.connection_id=$2 AND d.deposit_id=$3 AND lower(d.account_label)=lower($4)
+              AND d.bank_transaction_id=$5 AND d.received_on=$6 AND d.amount=$7 AND d.reference=$8
+              AND coalesce(d.statement_file_sha256,src.statement_file_sha256) IS NOT DISTINCT FROM $9 AND coalesce(d.statement_record,src.statement_record) IS NOT DISTINCT FROM $10
+              AND coalesce(d.statement_file_name,src.statement_file_name) IS NOT DISTINCT FROM $11`,
+            [p.tenantId,connection,stagedId,account,bankTransactionId,receivedOn,amount,reference,statementFileSha256??null,statementRecord??null,statementFileName??null]);
+          if (!source.rowCount) throw new ConflictException('Select the saved deposit again and review its original evidence.');
+        }
+        if (!stagedId) {
+          const saved=await db.query(`SELECT 1 FROM ${schema}.student_trust_staged_screenshots e JOIN
+            ${schema}.student_trust_staged_deposits d USING(customer_id,connection_id,deposit_id)
+            WHERE d.customer_id=$1 AND d.connection_id=$2 AND lower(d.account_label)=lower($3) AND d.bank_transaction_id=$4
+            AND NOT EXISTS (SELECT 1 FROM ${this.table} r WHERE r.customer_id=d.customer_id AND r.verification_id=$5)`,
+            [p.tenantId,connection,account,bankTransactionId,key]);
+          if (saved.rowCount) throw new ConflictException('Choose the saved deposit to include its bank screenshot.');
+        }
         // Serialize final match reviews with verification of the same staged bank movement.
         await db.query(`SELECT pg_advisory_xact_lock(hashtextextended(concat_ws('/',d.customer_id,d.connection_id,d.deposit_id),0))
           FROM ${schema}.student_trust_staged_deposits d WHERE d.customer_id=$1 AND d.connection_id=$2
@@ -427,8 +454,8 @@ export class TrustReceiptsController {
       const inserted = await db.query(`INSERT INTO ${this.table}
         (customer_id,connection_id,invoice_id,verification_id,verified_by,received_on,amount,account_label,reference,
          evidence,evidence_type,payload_hash,invoice_due_at_verification,payment_purpose,bank_transaction_id,imported_payment_amount,
-         statement_file_name,statement_file_sha256,statement_record)
-        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14,$15::numeric,$16,$17,$18
+         statement_file_name,statement_file_sha256,statement_record,staged_screenshot_id)
+        SELECT i.customer_id,i.xero_connection_id,i.xero_invoice_id,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,i.amount_due,$13,$14,$15::numeric,$16,$17,$18,$19
         FROM ${schema}.student_operations_xero_invoices i JOIN ${schema}.student_operations_xero_sync_configurations c
           USING (customer_id,xero_connection_id)
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.xero_invoice_id=$3
@@ -437,7 +464,7 @@ export class TrustReceiptsController {
           AND (${importedId ? `i.invoice_status IN ('PAID','AUTHORISED') AND ${currentPaymentList}
             AND ($15::numeric=$7::numeric OR (i.invoice_status='PAID' AND i.amount_due=0))
             AND EXISTS (SELECT 1 FROM (${importedInvoicePayments()}) payment
-              WHERE payment.id=$19::text AND payment.payment_date=$6::date::text AND payment.amount=$15::numeric)
+              WHERE payment.id=$20::text AND payment.payment_date=$6::date::text AND payment.amount=$15::numeric)
             AND NOT EXISTS (SELECT 1 FROM ${this.table} prior
               WHERE prior.customer_id=i.customer_id AND prior.connection_id=i.xero_connection_id AND prior.invoice_id=i.xero_invoice_id
               AND prior.received_on=$6::date AND prior.amount=$7::numeric AND prior.verification_id<>$4
@@ -447,7 +474,7 @@ export class TrustReceiptsController {
           AND $6::date <= (now() AT TIME ZONE 'Australia/Brisbane')::date
         ON CONFLICT DO NOTHING RETURNING verification_id`,
         [p.tenantId,connection,invoice,key,p.identityUserId,receivedOn,amount,account,reference,file?.buffer??null,type,hash,paymentPurpose || null,bankTransactionId || null,importedAmount ?? null,
-          statementFileName ?? null,statementFileSha256 ?? null,statementRecord ?? null,...(importedId ? [importedId] : [])]);
+          statementFileName ?? null,statementFileSha256 ?? null,statementRecord ?? null,stagedId??null,...(importedId ? [importedId] : [])]);
       if (inserted.rowCount) {
         const reserved=await db.query(`SELECT held.bank_transaction_id FROM ${schema}.student_trust_split_allocations a
           JOIN ${schema}.student_trust_staged_deposits held USING(customer_id,connection_id,deposit_id)

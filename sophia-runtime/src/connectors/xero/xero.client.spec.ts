@@ -223,6 +223,15 @@ describe("XeroClient", () => {
     expect(JSON.parse(String(options?.body))).toEqual({Payments:[{Invoice:{InvoiceID:id},Account:{AccountID:account},Date:payment.date,Amount:3000,Reference:reference}]});
     expect(await client.verifiedReceiptPayment('token','org',payment)).toBe(pid);
     expect(String(fetchMock.mock.calls[2][0])).toContain('/Payments/'+pid);
+    for (const [flag,outcome] of [[true,'reconciled'],[false,'pending'],[undefined,'unknown'],['false','unknown']] as const) {
+      fetchMock.mockResolvedValueOnce(reply({Payments:[{...item,IsReconciled:flag}]}));
+      expect(await client.receiptBankStatus('token','org',payment,pid)).toBe(outcome);
+    }
+    fetchMock.mockResolvedValueOnce(reply({Payments:[{PaymentID:pid,Status:'DELETED'}]}));
+    expect(await client.receiptBankStatus('token','org',payment,pid)).toBe('deleted');
+    fetchMock.mockResolvedValueOnce(new Response('',{status:404}));
+    expect(await client.receiptBankStatus('token','org',payment,pid)).toBe('missing');
+
     for (const delta of [{Reference:'other'},{Amount:2999},{Status:'DELETED'},{Date:'2026-11-02'},{Account:{AccountID:id}},{Invoice:{InvoiceID:id,CurrencyCode:'USD'}}]) {
       fetchMock.mockResolvedValueOnce(reply({Payments:[{...item,...delta}]}));
       expect(await client.verifiedReceiptPayment('token','org',payment,pid)).toBeNull();

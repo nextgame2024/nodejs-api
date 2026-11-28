@@ -88,6 +88,30 @@ From the built runtime, run the verification worker first. For the selected matc
 
 Use `npm run trust:payment -- recover <customer-uuid> <connection-uuid> <dispatch-uuid>` after interruption or an uncertain response. Recovery works with submission disabled. It reads the acknowledged payment ID when available, otherwise searches Xero for the exact dispatch reference. Missing, ambiguous or inconsistent provider evidence leaves the dispatch awaiting verification. If the process stopped between reservation and transmission, or Xero rejected the payment, finance must investigate the unresolved intent. Automatic retransmission and clearing unresolved reservations are outside this batch. The connected pilot should exercise a partial AUD receipt, compare the Xero balance, and confirm the payment once against the bank statement.
 
+### Item 13 · Bank checks after payment confirmation
+
+The operator reported deploying the payment submission batch. Migration 170 adds tenant-isolated bank check claims and results. The shared student sync worker can poll one known, confirmed TRUST payment per tick across its configured customers. Enable `XERO_TRUST_BANK_CHECKS_ENABLED=true` on the shared worker and use its existing `STUDENT_SYNC_DOCUMENT_CUSTOMER_IDS` list for the pilot. This lane requires payment read access only. It runs independently of the submission switch.
+
+The register displays the most recent direct Xero observation and up to five recent results. A staff reconciliation report has its own timestamp. Search by PaymentID, open the organisation-scoped payment link, or filter for payments awaiting a first check, pending, reconciled, overdue or requiring review. Failed checks preserve earlier observations. A reconciled flag older than 25 hours moves to the overdue filter. Age is measured from local payment confirmation. Assigned staff and unassigned cases are shown for open bank follow-up.
+
+### Screenshot evidence before invoice identification
+
+Pedro can stage a TRUST bank transaction and its screenshot in Payments and Control before selecting an invoice. A later statement import can add its source to the same deposit. Verification retains the original image and bank details. Uploading evidence does not post a Xero payment. Migration 171 is applied, with tenant isolation and append-only access verified for both evidence tables.
+
+### Development remaining after this batch
+
+**Planning estimate: 15 development work packages** across the full roadmap. Five finish the verified-receipt MVP and ten cover roadmap items 14–23. This is a grouping of remaining deliverables, not a count of individual edits, deployments or acceptance exercises. The first 13 roadmap items span overlapping components. The estimate groups their remaining code by usable outcome. Existing controls for the manager pilot are the baseline; configuring permissions for additional staff was deferred by the operator.
+
+| MVP work package | Remaining development | Roadmap items |
+|---|---|---|
+| 1. Import and refresh | Extend payment detail coverage beyond confirmed Sophia submissions, add relevant bank/batch reads and resource-level webhook deduplication and refresh. | 03–05 |
+| 2. Cross-organisation case view | Finish the case-level view across confirmed TRUST and PTY origins, including incomplete history and navigation back to the originating queue. | 06–07 |
+| 4. Matching coverage | Extend the current number, reference and amount ranking to payer/sponsor evidence and explicit conflict handling. | 09 |
+| 5. Unresolved submission handling | Give finance a durable resolution workflow for a reservation that produces no verifiable provider payment, with an audit trail and duplicate-payment safeguards. | 11–12 |
+| 6. Consolidated exception follow-up | Bring direct checks, imported observations and staff review into one actionable queue across historical links and posted dispatches, including contradictory or reversed evidence. | 10, 13 |
+
+The ten later packages are college settlements (14), commission eligibility and collection (15), client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Policy decisions for college settlements, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.
+
 ## Test and operational validation
 
 Use synthetic names, fake merchant/account IDs and fixed business dates. Freeze time around approval expiry, Xero's idempotency window, Brisbane midnight, bank value date and Stripe expected arrival. Unit-test scoring/decimal maths and state transitions. Run PostgreSQL integration tests using the runtime role and RLS, Nest connector contracts against recorded **synthetic** responses, and Angular tests through normal manager navigation. Run fault-injection between provider success and local receipt commit. Financial tests pass only when both the expected actions and the absence of unintended accounting movements can be asserted.

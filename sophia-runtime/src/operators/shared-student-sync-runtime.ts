@@ -1,3 +1,4 @@
+import { TrustBankCheckWorker } from '../business-packs/student-operations/trust-bank-check-worker.js';
 import 'reflect-metadata';
 import { DatabaseService } from '../database/database.service.js';
 import { runtimeConfig } from '../config/runtime-config.js';
@@ -16,7 +17,7 @@ import { StudentDocumentChecklistReconciler } from '../business-packs/student-op
 import { StudentXeroSalesCatalogueSync } from '../business-packs/student-operations/student-xero-sales-catalogue.js';
 import { StudentInvoiceProjectionRecovery } from '../business-packs/student-operations/student-invoice-projection-recovery.js';
 
-const featureFlagNames=['XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
+const featureFlagNames=['XERO_TRUST_BANK_CHECKS_ENABLED','XERO_SHARED_BACKOFF_ENABLED','STUDENT_DOCUMENT_SOURCE_DEDUP_ENABLED',
   'XERO_SHARED_QUOTA_ENABLED','STUDENT_DOCUMENT_RECHECKS_ENABLED','STUDENT_SYNC_HEALTH_LOGS_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED','STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_WORKFLOW_ENABLED'] as const;
 function featureFlags() {
   // An explicit allowlist of booleans only: never log arbitrary environment
@@ -42,10 +43,16 @@ export function createSharedStudentSyncRuntime() {
   const analysis=new StudentDocumentAnalysisWorker(database,xero,new OpenAIDocumentExtractionProvider());
   const checklist=new StudentDocumentChecklistReconciler(database);
   const invoiceRecovery=new StudentInvoiceProjectionRecovery(database,xero);
+  const bankChecks=new TrustBankCheckWorker(database,xero);
   const salesCatalogue=new StudentXeroSalesCatalogueSync(database,xero);
   return {
     async preflight() {
       studentDocumentFetchBudgetMinutes();
+      if (process.env.XERO_TRUST_BANK_CHECKS_ENABLED==='true') {
+        const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS ready',
+          [schema+'.student_trust_bank_check_claims',schema+'.student_trust_bank_check_results']);
+        if (!ready.rows[0]?.ready) throw new Error('TRUST bank checks require Runtime migration 170.');
+      }
       if(process.env.STUDENT_DOCUMENT_WORKFLOW_ENABLED==='true'){
         requireFlags('Document workflow requires checklist, document and offer analysis.',['STUDENT_DOCUMENT_CHECKLIST_ENABLED','STUDENT_DOCUMENT_ANALYSIS_ENABLED','STUDENT_OFFER_ANALYSIS_ENABLED']);
         const ready=await database.query<{ready:boolean}>('SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL AS ready',[`${schema}.student_case_invoice_draft_batches`,`${schema}.student_xero_sales_catalogues`]);
@@ -118,6 +125,7 @@ export function createSharedStudentSyncRuntime() {
       const recovered=await invoiceRecovery.processBatch(customerId);
       return await checklist.processBatch(customerId)||recovered;
     },
+    processTrustBankCheck:(customerId:string)=>bankChecks.processOne(customerId),
     processSalesCatalogue:(customerId:string)=>salesCatalogue.processOne(customerId),
     async processInvoices() {
       const due=await database.query<{customer_id:string;sync_run_id:string}>(
