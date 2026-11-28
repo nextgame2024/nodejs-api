@@ -5133,5 +5133,40 @@
       "mvpWorkPackages": 5,
       "laterWorkPackages": 10
     }
+  },
+  "trustPayerMatching": {
+    "completed": [
+      "Tenant-scoped payer relationship storage",
+      "Append-only revision history",
+      "Manager-only review endpoint",
+      "Manager-only relationship lookup",
+      "Contact and organisation validation",
+      "Name and reason validation",
+      "Replay-safe concurrent confirmation",
+      "Stale-revision detection",
+      "Relationship withdrawal",
+      "Whole-word bank payer matching",
+      "Invoice contact name matching",
+      "Sponsor evidence ranking",
+      "Manual confirmed payer search",
+      "Cross-contact conflict detection before pagination",
+      "Versioned matching decisions",
+      "Historical relationship evidence display",
+      "Manager relationship review form",
+      "Refresh and retry after a stale review",
+      "PostgreSQL and HTTP integration coverage",
+      "Angular browser and layout regression coverage"
+    ],
+    "migration": "172 applied on configured database. Ledger clear, forced row-level security and append-only grants verified.",
+    "verification": [
+      "npm run build (runtime)",
+      "ngc -p tsconfig.app.json --noEmit",
+      "Jest student-operations and Xero suites with the receipt, PTY and suppliers PostgreSQL fixtures",
+      "Angular ChromeHeadless TRUST, payment operations, student register and service suites"
+    ],
+    "developmentEstimate": {
+      "mvpWorkPackages": 4,
+      "laterWorkPackages": 10
+    }
   }
 }

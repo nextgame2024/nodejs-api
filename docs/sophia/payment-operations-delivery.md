@@ -98,15 +98,18 @@ The register displays the most recent direct Xero observation and up to five rec
 
 Pedro can stage a TRUST bank transaction and its screenshot in Payments and Control before selecting an invoice. A later statement import can add its source to the same deposit. Verification retains the original image and bank details. Uploading evidence does not post a Xero payment. Migration 171 is applied, with tenant isolation and append-only access verified for both evidence tables.
 
+### Reviewed payers and sponsor matching
+
+In Payments and Control, Pedro can open a candidate invoice contact, confirm a bank payer or sponsor with a reason, and withdraw the relationship later. Matching rule 2 checks complete names in the bank description and flags evidence pointing to different eligible invoice contacts, including conflicts outside the current results page. Manual lookup also finds invoices by a confirmed payer name. Decisions retain the relationship revision and the evidence visible at review. Earlier decisions retain their original rule version. Matching and relationship review leave Xero untouched.
+
 ### Development remaining after this batch
 
-**Planning estimate: 15 development work packages** across the full roadmap. Five finish the verified-receipt MVP and ten cover roadmap items 14–23. This is a grouping of remaining deliverables, not a count of individual edits, deployments or acceptance exercises. The first 13 roadmap items span overlapping components. The estimate groups their remaining code by usable outcome. Existing controls for the manager pilot are the baseline; configuring permissions for additional staff was deferred by the operator.
+**Planning estimate: 14 development work packages** across the full roadmap. Four finish the verified-receipt MVP and ten cover roadmap items 14–23. This is a grouping of remaining deliverables, not a count of individual edits, deployments or acceptance exercises. The first 13 roadmap items span overlapping components. The estimate groups their remaining code by usable outcome. Existing controls for the manager pilot are the baseline; configuring permissions for additional staff was deferred by the operator.
 
 | MVP work package | Remaining development | Roadmap items |
 |---|---|---|
 | 1. Import and refresh | Extend payment detail coverage beyond confirmed Sophia submissions, add relevant bank/batch reads and resource-level webhook deduplication and refresh. | 03–05 |
 | 2. Cross-organisation case view | Finish the case-level view across confirmed TRUST and PTY origins, including incomplete history and navigation back to the originating queue. | 06–07 |
-| 4. Matching coverage | Extend the current number, reference and amount ranking to payer/sponsor evidence and explicit conflict handling. | 09 |
 | 5. Unresolved submission handling | Give finance a durable resolution workflow for a reservation that produces no verifiable provider payment, with an audit trail and duplicate-payment safeguards. | 11–12 |
 | 6. Consolidated exception follow-up | Bring direct checks, imported observations and staff review into one actionable queue across historical links and posted dispatches, including contradictory or reversed evidence. | 10, 13 |
 

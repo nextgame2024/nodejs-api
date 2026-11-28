@@ -31,7 +31,14 @@ const splitFields=z.object({
   }).strict()).min(1).max(20),
 }).strict();
 
-const ruleVersion=1;
+const ruleVersion=2;
+function bankWords(value:string) {
+  return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').trim();
+}
+const relationshipFields=z.object({
+  name:z.string().trim().min(3).max(100),relationship:z.enum(['payer','sponsor']),active:z.boolean(),
+  revision:z.number().int().nonnegative(),reason:z.string().trim().min(1).max(500),
+}).strict();
 const decisionFields=queryFields.extend({
   invoiceId:z.uuid(), decision:z.enum(['accepted','dismissed']), reason:z.string().trim().min(1).max(500),
   revision:z.number().int().nonnegative(), evidenceToken:z.string().regex(/^[0-9a-f]{64}$/), requestId:z.uuid(),
@@ -383,6 +390,49 @@ export class TrustStagedDepositsController {
     });
   }
 
+  @Get('contacts/:contactId/payers')
+  @Header('Cache-Control','private, no-store')
+  async payers(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('contactId',ParseUUIDPipe) contact:string) {
+    const p=manager(request),schema=runtimeConfig().schema;
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      const {rows}=await db.query(`SELECT DISTINCT ON(name_key) payer_name AS name,relationship,revision,active,
+        reason,actor,reviewed_at AS "reviewedAt" FROM ${schema}.student_trust_payer_relationships
+        WHERE customer_id=$1 AND connection_id=$2 AND contact_id=$3 ORDER BY name_key,revision DESC`,[p.tenantId,connection,contact]);
+      return {relationships:rows};
+    });
+  }
+
+  @Post('contacts/:contactId/payers')
+  async reviewPayer(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('contactId',ParseUUIDPipe) contact:string,@Body() body:unknown) {
+    const p=manager(request),schema=runtimeConfig().schema;
+    const parsed=relationshipFields.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Enter the payer name, relationship and review reason.');
+    const input=parsed.data,key=bankWords(input.name);
+    if (key.length<3 || !/\p{L}/u.test(key)) throw new BadRequestException('Enter a recognisable payer name.');
+    const scope=[p.tenantId,connection,contact,key];
+    return this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      // Serialize revisions for this contact, including the first relationship.
+      const found=await db.query(`SELECT 1 FROM ${schema}.student_operations_xero_contacts
+        WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_contact_id=$3`,scope.slice(0,3));
+      if (!found.rowCount) throw new NotFoundException();
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[scope.map(value=>value.toLowerCase()).join('/')]);
+      const table=schema+'.student_trust_payer_relationships';
+      const {rows:[last]}=await db.query(`SELECT revision,active,relationship,actor,reason FROM ${table}
+        WHERE customer_id=$1 AND connection_id=$2 AND contact_id=$3 AND name_key=$4 ORDER BY revision DESC LIMIT 1`,scope);
+      if (last?.revision===input.revision+1 && last.active===input.active && last.relationship===input.relationship
+        && last.actor===p.identityUserId && last.reason===input.reason) return {revision:last.revision};
+      if ((last?.revision??0)!==input.revision || (!input.active && !last?.active)) throw new ConflictException('Reload the payer relationships before saving.');
+      const revision=input.revision+1;
+      await db.query(`INSERT INTO ${table}(customer_id,connection_id,contact_id,name_key,revision,payer_name,relationship,active,reason,actor)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[...scope,revision,input.name,input.relationship,input.active,input.reason,p.identityUserId]);
+      return {revision};
+    });
+  }
+
   private async candidatePage(db:PoolClient,tenant:string,connection:string,depositId:string,q:string,page:number) {
       const schema=runtimeConfig().schema;
       const deposit=await this.availableDeposit(db,tenant,connection,depositId);
@@ -390,27 +440,46 @@ export class TrustStagedDepositsController {
       const numberTokens=(reference.toLowerCase().match(/[\p{L}\p{N}]+(?:[-_/][\p{L}\p{N}]+)*/gu) ?? [])
         .filter(token=>token!==reference.toLowerCase() && /[0-9]/.test(token) && /[a-z]/i.test(token));
       // Reference evidence takes precedence over a coincidentally equal balance.
-      const result=await db.query<InvoiceEvidence>(`WITH evidence AS (
-        SELECT i.xero_invoice_id AS id,i.invoice_number AS "invoiceNumber",i.invoice_reference AS reference,
-          c.legal_name AS contact,round(i.amount_due,2) AS balance,
+      const result=await db.query<InvoiceEvidence>(`WITH latest_payers AS (
+        SELECT DISTINCT ON(contact_id,name_key) contact_id,name_key,payer_name,relationship,revision,active
+        FROM ${schema}.student_trust_payer_relationships WHERE customer_id=$1 AND connection_id=$2
+          AND (strpos($8,' '||name_key||' ')>0 OR ($9<>'' AND strpos(name_key,$9)>0)) ORDER BY contact_id,name_key,revision DESC
+      ), payer_matches AS (
+        SELECT contact_id,jsonb_agg(jsonb_build_object('name',payer_name,'relationship',relationship,'revision',revision)
+          ORDER BY name_key) FILTER (WHERE strpos($8,' '||name_key||' ')>0) AS matches,
+          bool_or($9<>'' AND strpos(name_key,$9)>0) AS searchable FROM latest_payers WHERE active GROUP BY contact_id
+      ), evidence AS (
+        SELECT pm.searchable,i.xero_invoice_id AS id,i.invoice_number AS "invoiceNumber",i.invoice_reference AS reference,
+          c.legal_name AS contact,c.xero_contact_id AS "contactId",coalesce(pm.matches,'[]'::jsonb) AS "payerMatches",
+          (length(names.contact_key)>=3 AND names.contact_key ~ '[[:alpha:]]' AND strpos($8,' '||names.contact_key||' ')>0) IS TRUE AS "contactMatch",
+          round(i.amount_due,2) AS balance,
           ($3<>'' AND lower(btrim(i.invoice_number))=lower($3)) IS TRUE AS "numberMatch",
           (lower(btrim(i.invoice_number))=ANY($7::text[])) IS TRUE AS "numberInReference",
           ($3<>'' AND lower(btrim(i.invoice_reference))=lower($3)) IS TRUE AS "referenceMatch",
           round(i.amount_due,2)=$4::numeric AS "amountMatch"
         FROM ${schema}.student_operations_xero_invoices i
         JOIN ${schema}.student_operations_xero_contacts c USING(customer_id,xero_connection_id,xero_contact_id)
+        LEFT JOIN payer_matches pm ON pm.contact_id=c.xero_contact_id
+        CROSS JOIN LATERAL (SELECT trim(regexp_replace(lower(c.legal_name),'[^[:alnum:]]+',' ','g')) AS contact_key) names
         WHERE i.customer_id=$1 AND i.xero_connection_id=$2 AND i.invoice_type='ACCREC'
           AND i.invoice_status='AUTHORISED' AND i.currency_code='AUD' AND round(i.amount_due,2)>0
           AND ${currentTrustInvoice(schema,'i')}
+      ), signals AS (
+        SELECT *,("numberMatch" OR "numberInReference" OR "referenceMatch") AS identifier,
+          ("contactMatch" OR jsonb_array_length("payerMatches")>0) AS identity FROM evidence
+      ), matched_contacts AS (
+        SELECT count(DISTINCT "contactId") AS contacts FROM signals WHERE identifier OR identity
       ), ranked AS (
-        SELECT *,8*"numberMatch"::int+4*"numberInReference"::int+2*"referenceMatch"::int+"amountMatch"::int AS score
-        FROM evidence WHERE CASE WHEN $5='' THEN "numberMatch" OR "numberInReference" OR "referenceMatch" OR "amountMatch"
+        SELECT signals.*,((identifier OR identity) AND contacts>1) AS "contactConflict",32*"numberMatch"::int+16*"numberInReference"::int+8*"referenceMatch"::int+
+          4*(jsonb_array_length("payerMatches")>0)::int+2*"contactMatch"::int+"amountMatch"::int AS score
+        FROM signals CROSS JOIN matched_contacts WHERE CASE WHEN $5='' THEN identifier OR identity OR "amountMatch"
           ELSE strpos(lower("invoiceNumber"),lower($5))>0 OR strpos(lower(reference),lower($5))>0
-            OR strpos(lower(contact),lower($5))>0 END
+            OR strpos(lower(contact),lower($5))>0 OR searchable END
       )
-      SELECT *,($4::numeric-balance)::text AS difference,count(*) OVER(PARTITION BY score)::int AS peers
+      SELECT id,"invoiceNumber",reference,contact,"contactId",balance,"numberMatch","numberInReference","referenceMatch",
+        "payerMatches","contactMatch","contactConflict","amountMatch",score,($4::numeric-balance)::text AS difference,count(*) OVER(PARTITION BY score)::int AS peers
       FROM ranked ORDER BY score DESC,"invoiceNumber" NULLS LAST,id LIMIT 11 OFFSET $6`,
-        [tenant,connection,reference,deposit.amount,q,(page-1)*10,numberTokens]);
+        [tenant,connection,reference,deposit.amount,q,(page-1)*10,numberTokens,' '+bankWords(reference)+' ',bankWords(q)]);
       const candidates=result.rows.slice(0,10);
       const table=schema+'.student_trust_invoice_match_decisions';
       const scope=[tenant,connection,depositId];
