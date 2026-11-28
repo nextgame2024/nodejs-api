@@ -120,13 +120,19 @@ Pedro can search by invoice, bank transaction, payment or dispatch, filter by fo
 
 ### Development remaining after this batch
 
-**10 development packages remain across the full roadmap. The verified-receipt MVP has zero remaining development packages.** User functional testing and finance acceptance remain open. Additional staff permissions can be configured when the operator defines those roles.
+**9 development packages remain across the full roadmap. The verified-receipt MVP has zero remaining development packages.** User functional testing and finance acceptance remain open. Additional staff permissions can be configured when the operator defines those roles.
 
 Runtime migration 174 stores tenant-scoped import cursors and webhook resource versions. The shared worker with `XERO_TRUST_BANK_CHECKS_ENABLED=true` refreshes known invoice payments and referenced batches for its configured customers. Bank transaction pages use the currently mapped TRUST account and require bank transaction read access. New authorisations request `accounting.banktransactions.read`. Existing connections with payment permission can continue payment imports independently. Bank transactions, batch membership and invoice payments retain their separate Xero identities.
 
 Signed invoice and contact deliveries coalesce by organisation, resource and provider timestamp. Incremental runs refresh the affected records. Register scans retain their own watermark and schedule. The follow-up queue compares externally recorded payments with the linked receipt, invoice and mapped bank account. Settlement imports use read operations only.
 
-The ten later packages are college settlements (14), commission eligibility and collection (15), client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Policy decisions for college settlements, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.
+### College settlements (14)
+
+Payments and Control now has a college register ordered by due date, including obligations due before expected funding, unapplied refunds and direct receipts with open TRUST invoices. The student case records the college, approved contract reference, instalment, gross AUD amount and any authorised offset. Staff can link a confirmed offer instalment, a case payment schedule and a matching imported college bill. A supplier bill reference can also be recorded when the import has no matching bill.
+
+Student evidence can reference an uploaded case document. A separate college acknowledgement applies all or part of that evidence to the obligation. Agency remittances, authorised offsets, refunds of confirmed cash and unapplied refunds remain individually traceable. Entries carry the manager identity, effective date and reference. The normal case deletion flow protects this history before contacting a provider. College settlement entries affect the Sophia obligation only.
+
+The nine remaining packages are commission eligibility and collection (15), client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Decisions about commission policy, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.
 
 ## Test and operational validation
 

@@ -5247,5 +5247,25 @@
       "laterWorkPackages": 10
     },
     "pending": "Deployment of this package, connected functional testing and business acceptance."
+  },
+  "collegeSettlementRegister": {
+    "delivered": [
+      "Contractual college dues with case, reviewed instalment, payment schedule and optional imported bill linkage",
+      "Separate student evidence, college acknowledgement, agency remittance, authorised offset, applied refund and unapplied refund events",
+      "Case document evidence snapshots and tenant-scoped manager access",
+      "Due-date register, expected-funding alerts and accountant review for direct receipts on cases with open TRUST invoices"
+    ],
+    "verification": [
+      "Runtime build",
+      "595 Student Operations, Xero and shared worker Jest tests passed",
+      "Focused PostgreSQL rerun verified the reviewed offer, case-document snapshot, supplier bill, outstanding TRUST balance and role isolation",
+      "167 ChromeHeadless tests passed across college settlements, case view, Payments and Control and the student register, including mobile and desktop in light and dark mode"
+    ],
+    "migration": "175 applied. Configured ledger reports zero pending. Forced row-level security and append-only runtime grants verified on both tables.",
+    "developmentEstimate": {
+      "mvpWorkPackages": 0,
+      "laterWorkPackages": 9
+    },
+    "next": "Commission eligibility and collection (15)."
   }
 }

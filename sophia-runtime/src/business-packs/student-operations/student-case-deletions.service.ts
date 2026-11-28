@@ -42,6 +42,8 @@ export class StudentCaseDeletionsService{
       // inserted its lease. Never steal a live claim from a stale pre-lock read.
       const prior=(await db.query(`SELECT *,lease_expires_at>now() AS leased FROM ${s}.student_case_deletions WHERE customer_id=$1 AND case_id=$2 FOR UPDATE`,[p.tenantId,id])).rows[0];
       if(c.record_version!==version)throw new ConflictException('This case changed. Reload it before deleting.');
+      const obligation=await db.query(`SELECT 1 FROM ${s}.student_college_obligations WHERE customer_id=$1 AND case_id=$2 LIMIT 1`,[p.tenantId,id]);
+      if(obligation.rowCount)throw new ConflictException('This case has a college settlement record. Archive it to retain the financial history.');
       if(prior?.leased)throw new ConflictException('Case deletion is still processing. Retry shortly.');
       // Serialize new cases/restores with the contact archive decision.
       await db.query(`SELECT student_id FROM ${s}.student_operations_students WHERE customer_id=$1 AND student_id=$2 FOR UPDATE`,[p.tenantId,c.student_id]);
