@@ -51,7 +51,8 @@ function openTrustInvoice(s:string) {
 export class CollegeSettlementsController {
   constructor(private readonly db:DatabaseService,private readonly cases:StudentOperationsCasesService){}
   @Get('college-obligations')
-  async queue(@Req() req:Request,@Query('page') input?:string,@Query('limit') size?:string,@Query('direction') sort?:string){
+  async queue(@Req() req:Request,@Query('page') input?:string,@Query('limit') size?:string,@Query('direction') sort?:string,@Query('scope') scope?:string){
+    const commission=parse(z.enum(['open','commission']).default('open'),scope)==='commission';
     const limit=Number(parse(z.enum(['25','50','100']).default('25'),size));
     const direction=parse(z.enum(['asc','desc']).default('asc'),sort);
     const p=manager(req),page=parse(pageNumber,input),s=caseSchema();
@@ -60,7 +61,7 @@ export class CollegeSettlementsController {
         (b.direct>0 AND ${openTrustInvoice(s)}) AS review
         FROM (${balances(s)}) b JOIN ${s}.student_operations_cases c USING(customer_id,case_id)
         JOIN ${s}.student_operations_colleges n USING(customer_id,college_id)
-        WHERE b.customer_id=$1), open AS (SELECT * FROM register WHERE balance>0 OR unapplied>0 OR review), paged AS (
+        WHERE b.customer_id=$1), open AS (SELECT * FROM register WHERE ${commission?'cash>0 OR used_offset>0':'balance>0 OR unapplied>0 OR review'}), paged AS (
         SELECT case_id AS "caseId",case_reference AS "caseNumber",college_name AS college,instalment,due_on::text AS due,
         balance::text,unapplied::text,review,(balance>0 AND due_on<funding_on) IS TRUE AS "fundingRisk",obligation_id AS id
         FROM open ORDER BY due_on ${direction},obligation_id LIMIT $3 OFFSET $2)

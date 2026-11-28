@@ -5,6 +5,7 @@ import pg from 'pg';
 import {BadGatewayException,ConflictException,ForbiddenException} from '@nestjs/common';
 import {StudentXeroSalesCatalogueSync,readPtySaleOptions} from './student-xero-sales-catalogue.js';
 import {StudentCollegeMatchingService} from './student-college-matching.service.js';
+import {CommissionClaimsController} from './commission-claims.controller.js';
 import {StudentCommissionInvoicesService} from './student-commission-invoices.service.js';
 import {StudentOperationsXeroSyncService} from './student-operations-xero-sync.service.js';
 import {autoMatchCollegeContacts} from './student-college-auto-matching.js';
@@ -29,6 +30,8 @@ function invoice(value:XeroInvoiceCreate,id:string):XeroInvoiceRecord{return {in
 
 suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
  let pool:pg.Pool,service:StudentCommissionInvoicesService;
+ let claims:CommissionClaimsController;
+ const req={studentOperationsPrincipal:p} as never;
  let changedTrust=false,providerFailure=false,live=0,maxLive=0;
  let concurrencyGate:Promise<void>|null=null,releaseConcurrency:(()=>void)|undefined;
  const createInvoice=jest.fn(async(value:XeroInvoiceCreate,_key:string)=>{
@@ -53,6 +56,9 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
     CREATE TABLE ${schema}.customers(customer_id uuid PRIMARY KEY,external_company_id text,status text);
     CREATE TABLE ${schema}.xero_connections(customer_id uuid,xero_connection_id uuid,status text,PRIMARY KEY(xero_connection_id,customer_id));
     CREATE TABLE ${schema}.student_operations_xero_sync_configurations(customer_id uuid,xero_connection_id uuid,organisation_role text,enabled boolean,next_sync_at timestamptz,PRIMARY KEY(customer_id,xero_connection_id));
+    CREATE TABLE ${schema}.student_operations_case_invoice_links(customer_id uuid,case_id uuid,xero_connection_id uuid,xero_invoice_id uuid);
+    CREATE TABLE ${schema}.student_college_obligations(customer_id uuid,case_id uuid,obligation_id uuid,college_id uuid,offer_id uuid,offer_sequence int,PRIMARY KEY(customer_id,case_id,obligation_id));
+    CREATE TABLE ${schema}.student_college_settlement_events(customer_id uuid,case_id uuid,obligation_id uuid,event_id uuid,kind text,amount numeric,offset_amount numeric,occurred_on date,reference text);
     CREATE TABLE ${schema}.student_case_deletions(customer_id uuid,case_id uuid,completed_at timestamptz,targets jsonb);
     CREATE TABLE ${schema}.student_operations_xero_contacts(customer_id uuid,xero_connection_id uuid,xero_contact_id uuid,contact_status text,legal_name text,email text,PRIMARY KEY(customer_id,xero_connection_id,xero_contact_id));
     CREATE TABLE ${schema}.student_operations_college_directory(customer_id uuid,college_id uuid,college_name text,PRIMARY KEY(customer_id,college_id));
@@ -71,17 +77,19 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   await pool.query('ALTER TABLE public.bm_college_commission_rules DROP CONSTRAINT IF EXISTS bm_commission_configuration_version');
   await pool.query(sql('140_student_commission_rule_configuration.sql'));
   await pool.query(sql('155_xero_payment_observations.sql'));
+  await pool.query(sql('174_xero_resource_refresh.sql'));await pool.query(sql('176_college_commission_claims.sql'));
   // Contact review has evolved since the original PTY fixtures; these narrow fixtures keep its list contract current.
   await pool.query(`ALTER TABLE ${schema}.student_college_xero_contact_links ADD COLUMN supplier_id uuid, ADD COLUMN student_user_id uuid;
     CREATE VIEW ${schema}.student_contact_review_directory AS SELECT customer_id,college_id AS id,college_name AS name,'college'::text AS kind,'active'::text AS status,NULL::text AS trading_name,NULL::text AS acronym FROM ${schema}.student_operations_college_directory WHERE customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid;
     CREATE VIEW ${schema}.student_invoice_link_directory AS SELECT NULL::uuid AS customer_id,NULL::uuid AS user_id,NULL::text AS name,NULL::text AS email,NULL::text AS student_reference WHERE false;
     GRANT SELECT ON ${schema}.student_contact_review_directory,${schema}.student_invoice_link_directory TO sophia_runtime_app;`);
   for(const table of ['customers','xero_connections','student_operations_xero_sync_configurations','student_operations_xero_contacts','student_operations_college_directory','student_case_invoice_draft_batches','student_case_offers','student_xero_sales_catalogues','student_operations_xero_invoices','student_operations_xero_sync_runs'])await pool.query(`ALTER TABLE ${schema}.${table} ENABLE ROW LEVEL SECURITY; ALTER TABLE ${schema}.${table} FORCE ROW LEVEL SECURITY; CREATE POLICY tenant_scope ON ${schema}.${table} USING(customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid) WITH CHECK(customer_id=NULLIF(current_setting('sophia.tenant_id',true),'')::uuid);`);
-  const cases={authorizedCase:async(db:pg.PoolClient,principal:{tenantId:string},id:string)=>{const found=await db.query(`SELECT 1 FROM ${schema}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2`,[principal.tenantId,id]);if(!found.rowCount)throw new ForbiddenException();return {lifecycle_status:'pre_sale'};},activity:async()=>{}};
+  const cases={authorizedCase:async(db:pg.PoolClient,principal:{tenantId:string},id:string,lock=false)=>{const found=await db.query(`SELECT 1 FROM ${schema}.student_case_invoice_draft_batches WHERE customer_id=$1 AND case_id=$2 ${lock?'FOR UPDATE':''}`,[principal.tenantId,id]);if(!found.rowCount)throw new ForbiddenException();return {lifecycle_status:'pre_sale',student_id:itemId};},activity:async()=>{}};
   service=new StudentCommissionInvoicesService({tenantTransaction:tx,tenantReadTransaction:tx} as never,cases as never,{invoiceCreationSession:session} as never);
+  claims=new CommissionClaimsController({tenantTransaction:tx,tenantReadTransaction:tx} as never,cases as never,service,{invoiceCreationSession:session} as never);
  },20000);
  beforeEach(async()=>{
-  await pool.query(`TRUNCATE ${schema}.student_commission_exports,${schema}.student_commission_drafts,${schema}.student_case_xero_invoice_exports,${schema}.student_case_invoice_draft_batches CASCADE;
+  await pool.query(`TRUNCATE ${schema}.student_xero_import_resources,${schema}.student_case_offers,${schema}.student_college_settlement_events,${schema}.student_college_obligations,${schema}.student_commission_exports,${schema}.student_commission_drafts,${schema}.student_case_xero_invoice_exports,${schema}.student_case_invoice_draft_batches CASCADE;
     DELETE FROM ${schema}.student_college_xero_mapping_events;DELETE FROM ${schema}.student_college_xero_contact_links;DELETE FROM ${schema}.student_operations_xero_contacts;DELETE FROM ${schema}.student_operations_college_directory;DELETE FROM ${schema}.student_operations_xero_sync_configurations;DELETE FROM ${schema}.xero_connections;DELETE FROM ${schema}.customers;DELETE FROM ${schema}.student_xero_sales_catalogues;DELETE FROM ${schema}.student_operations_xero_invoices;DELETE FROM ${schema}.student_operations_xero_sync_runs;`);
   await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);
   await pool.query(`INSERT INTO public.bm_colleges(college_id,company_id,college_name,status) VALUES($1,$2,$3,'active')`,[collegeId,tenant,'Fixture College']);
@@ -99,6 +107,82 @@ suite('PTY migrations and commission execution with PostgreSQL RLS',()=>{
   changedTrust=providerFailure=false;live=maxLive=0;concurrencyGate=null;releaseConcurrency=undefined;createInvoice.mockClear();session.mockClear();
  });
  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.query('DELETE FROM public.bm_college_commission_rules WHERE company_id=$1',[tenant]);await pool.query('DELETE FROM public.bm_colleges WHERE company_id IN ($1,$2)',[tenant,other]);await pool.end();}if(oldUrl===undefined)delete process.env.SOPHIA_RUNTIME_DATABASE_URL;else process.env.SOPHIA_RUNTIME_DATABASE_URL=oldUrl;if(oldSchema===undefined)delete process.env.SOPHIA_RUNTIME_SCHEMA;else process.env.SOPHIA_RUNTIME_SCHEMA=oldSchema;if(oldFlag===undefined)delete process.env.XERO_INVOICE_CREATION_ENABLED;else process.env.XERO_INVOICE_CREATION_ENABLED=oldFlag;});
+ async function setupClaim(){
+  const id=randomUUID(),offer=randomUUID(),offset=randomUUID();
+  await pool.query(`UPDATE ${schema}.student_case_invoice_draft_batches SET offer_id=$1`,[offer]);
+  await pool.query(`INSERT INTO ${schema}.student_case_offers VALUES($1,$2,true)`,[tenant,offer]);
+  await pool.query(`INSERT INTO ${schema}.student_college_obligations VALUES($1,$2,$3,$4,$5,1)`,[tenant,caseId,id,collegeId,offer]);
+  await pool.query(`INSERT INTO ${schema}.student_college_settlement_events VALUES ($1,$2,$3,$4,'direct_confirmation',75,0,'2026-01-01','confirmation'),($1,$2,$3,$5,'agency_payment',15,10,'2026-01-02','offset')`,[tenant,caseId,id,randomUUID(),offset]);
+  await prepareAll();
+  const token=(await claims.view(req,caseId,id)).token;
+  const decision={requestId:randomUUID(),revision:0,decision:'eligible',policy:'Contract 1',earnedOn:'2026-01-01',token};
+  return {id,offset,decision};
+ }
+ it.each(['uncertain','ineligible'])('requires current eligibility to replace a %s decision before direct billing',async decisionState=>{
+  const {id,decision}=await setupClaim();
+  await claims.decide(req,caseId,id,{...decision,decision:decisionState,earnedOn:null});
+  const create={action:'create',revision:1,invoiceId:null};
+  await expect(claims.attach(req,caseId,id,create)).rejects.toThrow('entitlement');
+  await claims.decide(req,caseId,id,{...decision,revision:1,requestId:randomUUID()});
+  expect((await tx(other,db=>db.query(`SELECT * FROM ${schema}.student_commission_reviews`))).rowCount).toBe(0);
+  await expect(claims.view({studentOperationsPrincipal:{role:'advisor'}} as never,caseId,id)).rejects.toThrow(ForbiddenException);
+  await pool.query('UPDATE public.bm_college_commission_rules SET commission_basis_points=2800 WHERE company_id=$1',[tenant]);
+  expect((await claims.view(req,caseId,id)).stale).toBe(true);
+  await expect(claims.attach(req,caseId,id,{...create,revision:2})).rejects.toThrow();
+  expect(createInvoice).not.toHaveBeenCalled();
+ });
+ it('recovers a submitted direct draft through its imported reference and separately verifies cash and offsets',async()=>{
+  const {id,decision,offset}=await setupClaim();await claims.decide(req,caseId,id,decision);
+  providerFailure=true;
+  const create={action:'create',revision:1,invoiceId:null};
+  await expect(claims.attach(req,caseId,id,create)).rejects.toThrow('uncertain');
+  await expect(claims.attach(req,caseId,id,create)).rejects.toThrow('submitted');
+  expect(createInvoice).toHaveBeenCalledTimes(1);
+  const run=randomUUID(),inv=randomUUID(),pay=randomUUID(),date='2026-01-02';
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,xero_connection_id,status,mode) VALUES($1,$2,$3,'succeeded','initial')`,[tenant,run,ptyId]);
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,invoice_status,total,xero_contact_id,invoice_type,invoice_reference,currency_code,last_seen_sync_run_id,settlement) VALUES($1,$2,$3,'PAID',33,$4,'ACCREC',$5,'AUD',$6,$7)`,[tenant,ptyId,inv,contactId,'College commission '+id,run,{entries:[{kind:'payment',id:pay,date,amount:23}]}]);
+  await claims.attach(req,caseId,id,{action:'link',revision:1,invoiceId:inv});
+  const detail={invoice:inv,contact:contactId,account:itemId,currency:'AUD',amount:23,date,reconciled:true,status:'AUTHORISED',type:'ACCRECPAYMENT'};
+  await pool.query(`INSERT INTO ${schema}.student_xero_import_resources(customer_id,xero_connection_id,kind,resource_id,detail,checked_at) VALUES($1,$2,'Payments',$3,$4,now())`,[tenant,ptyId,pay,detail]);
+  const cash={kind:'cash',source:pay,minor:2300,revision:1,requestId:randomUUID()};
+  await pool.query(`UPDATE ${schema}.student_xero_import_resources SET checked_at=now()-interval '2 days'`);
+  await expect(claims.allocate(req,caseId,id,cash)).rejects.toThrow('source');
+  await pool.query(`UPDATE ${schema}.student_xero_import_resources SET checked_at=now()`);
+  await claims.allocate(req,caseId,id,cash);await claims.allocate(req,caseId,id,cash);
+  await expect(claims.allocate(req,caseId,id,{...cash,requestId:randomUUID()})).rejects.toThrow();
+  await claims.allocate(req,caseId,id,{...cash,requestId:randomUUID(),kind:'offset',source:offset,minor:1000});
+  expect((await claims.view(req,caseId,id)).totals).toMatchObject({cash:2300,offset:1000,outstanding:0});
+  await pool.query(`UPDATE ${schema}.student_xero_import_resources SET detail=detail||'{"reconciled":false}'::jsonb`);
+  expect((await claims.view(req,caseId,id)).totals).toMatchObject({cash:0,offset:1000,outstanding:2300,disputed:2300});
+ });
+ it.each(['paired','historical'])('verifies the learner and college before linking a %s PTY invoice',async origin=>{
+  const {id,decision}=await setupClaim();
+  await claims.decide(req,caseId,id,decision);
+  const run=randomUUID();
+  let inv=randomUUID() as string;
+  if(origin==='paired'){
+    await trustReceipts();const result=await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});
+    inv=result.results[0].invoiceId!;
+  }
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,xero_connection_id,status,mode) VALUES($1,$2,$3,'succeeded','initial')`,[tenant,run,ptyId]);
+  await pool.query(`INSERT INTO ${schema}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,invoice_status,total,xero_contact_id,invoice_type,invoice_reference,currency_code,last_seen_sync_run_id) VALUES($1,$2,$3,'DRAFT',33,$4,'ACCREC','Fixture Student','AUD',$5)`,[tenant,ptyId,inv,contactId,run]);
+  const command={action:'link',revision:1,invoiceId:inv};
+  if(origin==='historical'){
+    await expect(claims.attach(req,caseId,id,command)).rejects.toThrow('Verify');
+    await expect(claims.attach(req,caseId,id,{...command,action:'create',invoiceId:null})).rejects.toThrow('existing PTY');
+    await pool.query(`INSERT INTO ${schema}.student_operations_case_invoice_links VALUES($1,$2,$3,$4)`,[tenant,caseId,ptyId,inv]);
+  }
+  expect((await claims.attach(req,caseId,id,command)).id).toBe(inv);
+  expect((await claims.view(req,caseId,id)).link).toMatchObject({origin,status:'linked',id:inv});
+ });
+ it('creates exactly one direct PTY draft without a TRUST receipt',async()=>{
+  const {id,decision}=await setupClaim();await claims.decide(req,caseId,id,decision);
+  const create={action:'create',revision:1,invoiceId:null};
+  const result=await claims.attach(req,caseId,id,create);
+  expect(result.id).toBeTruthy();expect(await claims.attach(req,caseId,id,create)).toEqual(result);
+  await trustReceipts();await service.create(p,caseId,batchId,{sequences:[1],confirmed:true});
+  expect(createInvoice).toHaveBeenCalledTimes(1);
+ });
  it('separates archived/imported contacts from pending active sales and keeps empty-page totals',async()=>{
   const run=randomUUID(),oldRun=randomUUID(),pending=randomUUID(),archived=randomUUID(),supplier=randomUUID(),deletedOnly=randomUUID(),otherCustomer=randomUUID();
   await pool.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs(customer_id,sync_run_id,xero_connection_id,status,mode,created_at)

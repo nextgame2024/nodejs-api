@@ -120,7 +120,7 @@ Pedro can search by invoice, bank transaction, payment or dispatch, filter by fo
 
 ### Development remaining after this batch
 
-**9 development packages remain across the full roadmap. The verified-receipt MVP has zero remaining development packages.** User functional testing and finance acceptance remain open. Additional staff permissions can be configured when the operator defines those roles.
+**8 development packages remain across the full roadmap. The verified-receipt MVP has zero remaining development packages.** User functional testing and finance acceptance remain open. Additional staff permissions can be configured when the operator defines those roles.
 
 Runtime migration 174 stores tenant-scoped import cursors and webhook resource versions. The shared worker with `XERO_TRUST_BANK_CHECKS_ENABLED=true` refreshes known invoice payments and referenced batches for its configured customers. Bank transaction pages use the currently mapped TRUST account and require bank transaction read access. New authorisations request `accounting.banktransactions.read`. Existing connections with payment permission can continue payment imports independently. Bank transactions, batch membership and invoice payments retain their separate Xero identities.
 
@@ -132,7 +132,13 @@ Payments and Control now has a college register ordered by due date, including o
 
 Student evidence can reference an uploaded case document. A separate college acknowledgement applies all or part of that evidence to the obligation. Agency remittances, authorised offsets, refunds of confirmed cash and unapplied refunds remain individually traceable. Entries carry the manager identity, effective date and reference. The normal case deletion flow protects this history before contacting a provider. College settlement entries affect the Sophia obligation only.
 
-The nine remaining packages are commission eligibility and collection (15), client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Decisions about commission policy, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.
+### Commission eligibility and collection (15)
+
+In Payments and Control, open **College settlements** and select **Review commission on confirmed settlements**. Fully settled obligations remain available here. Open the student case and its instalment, then choose **Commission eligibility and collection**. For an eligible instalment, prepare its PTY commission calculation and record the applicable contract reference and contractual earning date. A manager can record an uncertain or ineligible decision while waiting for evidence.
+
+Sophia retains the reviewed college, learner, instalment, rule and AUD calculation. A manager can confirm a matching paired export or a historical PTY invoice linked to the student case. A confirmed direct college settlement can support a new PTY draft after explicit approval, including when no TRUST invoice exists. A submitted draft with an unknown outcome is recovered from the PTY import using the obligation reference. PTY cash and contractual offsets each require their own source and manager allocation. Changed payment evidence reopens the affected amount for review.
+
+The eight remaining packages are client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Decisions about commission policy, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.
 
 ## Test and operational validation
 

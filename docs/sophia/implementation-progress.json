@@ -5267,5 +5267,26 @@
       "laterWorkPackages": 9
     },
     "next": "Commission eligibility and collection (15)."
+  },
+  "collegeCommissionReceivables": {
+    "status": "Implemented. Connected functional testing and business acceptance remain open.",
+    "scope": [
+      "Manager eligibility decisions with versioned calculation, contract and earning date for each college instalment.",
+      "Linked paired or historical PTY invoice, or explicitly approved direct-college draft with durable submission and import recovery.",
+      "Separate partial PTY cash and contractual offsets, outstanding balance, allocation history and changed payment evidence.",
+      "Confirmed college settlements remain accessible after the college balance reaches zero."
+    ],
+    "migration": "176 applied to the configured database. Zero migrations pending. Forced row-level security verified on all three new tables.",
+    "verification": [
+      "598 backend regression tests passed across 53 suites.",
+      "48 final PostgreSQL commission and college settlement integration tests passed across two suites.",
+      "169 ChromeHeadless manager regression tests passed.",
+      "3 focused commission browser regressions passed on the final interface."
+    ],
+    "developmentEstimate": {
+      "mvpWorkPackages": 0,
+      "laterWorkPackages": 8
+    },
+    "next": "Client Stripe ingestion (16)."
   }
 }

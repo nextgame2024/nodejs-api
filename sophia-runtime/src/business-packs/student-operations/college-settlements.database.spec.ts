@@ -75,6 +75,8 @@ const socket=process.env.STUDENT_RECEIPT_TEST_SOCKET;
     const pay={...evidence('agency_payment','80'),offset:'20'};
     await expect(api.record(req,c,net.id,{...pay,offset:'21'})).rejects.toThrow();
     await api.record(req,c,net.id,pay);await api.record(req,c,net.id,pay);
+    expect((await api.queue(req)).rows.some((r:{id:string})=>r.id===net.id)).toBe(false);
+    expect((await api.queue(req,'1','25','asc','commission')).rows.some((r:{id:string})=>r.id===net.id)).toBe(true);
     await api.record(req,c,net.id,evidence('unapplied_refund','5'));
     expect((await api.list(req,c,'2')).row).toMatchObject({balance:'0.00',cash:'80.00',usedOffset:'20.00',unapplied:'5.00'});
     await expect(api.record(req,c,net.id,evidence('applied_refund','81'))).rejects.toThrow();
