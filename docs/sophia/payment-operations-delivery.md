@@ -106,14 +106,19 @@ In Payments and Control, Pedro can open a candidate invoice contact, confirm a b
 
 Payments and Control resolves a receipt or invoice to its confirmed case using the workspace, Xero connection and document ID. The case panel shows linked TRUST and PTY documents, including confirmed exports awaiting import. Pedro can inspect a document inline or open the full student case in a new tab. Closing the inline review preserves the originating queue, filters and page. Earlier imports are labelled, and missing financial values display as unknown. The case list uses the existing case access and financial field permissions.
 
+### Resolving an uncertain TRUST submission
+
+In Payments and Control, open the payment dispatch queue and choose **Submission review** on a reserved payment. **Check for the existing Xero payment** uses the original organisation and dispatch reference or the acknowledged payment ID. Only an exact provider match confirms the payment and links it to the receipt.
+
+Record the bank and Xero evidence in the review. **Record investigation** adds a dated entry under the manager’s identity. **Close review and retain reservation** closes the finance follow-up. Finance can reopen it if new evidence arrives. The reservation continues to prevent another submission throughout. Later provider confirmation takes precedence over the local review status and preserves the review history. The queue supports filters for active investigations and closed reviews.
+
 ### Development remaining after this batch
 
-**Planning estimate: 13 development work packages** across the full roadmap. Three finish the verified-receipt MVP and ten cover roadmap items 14–23. This is a grouping of remaining deliverables, not a count of individual edits, deployments or acceptance exercises. The first 13 roadmap items span overlapping components. The estimate groups their remaining code by usable outcome. Existing controls for the manager pilot are the baseline; configuring permissions for additional staff was deferred by the operator.
+**Planning estimate: 12 development work packages** across the full roadmap. Two finish the verified-receipt MVP and ten cover roadmap items 14–23. This is a grouping of remaining deliverables, not a count of individual edits, deployments or acceptance exercises. The first 13 roadmap items span overlapping components. The estimate groups their remaining code by usable outcome. Existing controls for the manager pilot are the baseline; configuring permissions for additional staff was deferred by the operator.
 
 | MVP work package | Remaining development | Roadmap items |
 |---|---|---|
 | 1. Import and refresh | Extend payment detail coverage beyond confirmed Sophia submissions, add relevant bank/batch reads and resource-level webhook deduplication and refresh. | 03–05 |
-| 5. Unresolved submission handling | Give finance a durable resolution workflow for a reservation that produces no verifiable provider payment, with an audit trail and duplicate-payment safeguards. | 11–12 |
 | 6. Consolidated exception follow-up | Bring direct checks, imported observations and staff review into one actionable queue across historical links and posted dispatches, including contradictory or reversed evidence. | 10, 13 |
 
 The ten later packages are college settlements (14), commission eligibility and collection (15), client Stripe ingestion (16), payout reconciliation (17), remittance preview (18), delivery tracking (19), credit allocations (20), refunds and reversals (21), combined posting (22), and variance reporting (23). Existing commission draft and matching components reduce the work within those packages. Policy decisions for college settlements, credit handling and the Stripe source can affect the estimate. The prior count of 23 measures numbered items awaiting documented acceptance. Connected user testing and sign-off are excluded from the development estimate.

@@ -1,3 +1,4 @@
+import { TrustPaymentSubmission } from './trust-payment-submission.js';
 import { XeroConnectorService } from '../../connectors/xero/xero-connector.service.js';
 import { currentDispatch,checkDispatchInvoice } from './trust-dispatch-invoice-check.js';
 import { enqueueFields, cancelFields, enqueuePayment, cancelPayment } from './trust-payment-dispatch.js';
@@ -99,6 +100,21 @@ export class TrustReceiptsController {
     const after=await read();
     if (before.token!==after.token) throw new ConflictException('Refresh the changed dispatch.');
     return {issue:checkDispatchInvoice(after,live),checkedAt:new Date().toISOString()};
+  }
+
+  @Post(':receiptId/dispatch/:dispatchId/recover')
+  @Header('Cache-Control','private, no-store')
+  async recoverSubmission(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('invoiceId',ParseUUIDPipe) invoice:string,@Param('receiptId',ParseUUIDPipe) receipt:string,
+    @Param('dispatchId',ParseUUIDPipe) dispatch:string) {
+    const p=manager(request),s=runtimeConfig().schema;
+    const found=await this.database.tenantReadTransaction(p.tenantId,db=>db.query(`SELECT 1 FROM ${s}.student_trust_payment_submissions a
+      JOIN ${s}.student_trust_receipt_verifications v USING(customer_id,connection_id,verification_id)
+      JOIN ${s}.student_operations_xero_sync_configurations c ON c.customer_id=a.customer_id AND c.xero_connection_id=a.connection_id
+      WHERE a.customer_id=$1 AND a.connection_id=$2 AND v.invoice_id=$3 AND a.verification_id=$4 AND a.dispatch_id=$5
+        AND c.enabled AND c.organisation_role='trust'`,[p.tenantId,connection,invoice,receipt,dispatch]));
+    if (!found.rowCount) throw new NotFoundException('Submitted dispatch unavailable.');
+    return new TrustPaymentSubmission(this.database,this.xero).run(p.tenantId,connection,dispatch,'recover');
   }
 
   @Post(':receiptId/dispatch/cancel')

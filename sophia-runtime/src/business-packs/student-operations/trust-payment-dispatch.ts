@@ -57,20 +57,24 @@ export async function cancelPayment(db:PoolClient,s:string,scope:[string,string,
 
 export const dispatchQuery=z.object({q:z.string().trim().max(150).default(''),page:z.coerce.number().int().min(1).max(100000).default(1),
   limit:z.coerce.number().pipe(z.union([z.literal(25),z.literal(50),z.literal(100)])).default(25),
-  direction:z.enum(['asc','desc']).default('desc'),status:z.enum(['all','recorded','cancelled','expired','submitted','confirmed','bank_pending','bank_reconciled','bank_review','bank_unchecked','bank_stale']).default('all')}).strict();
+  direction:z.enum(['asc','desc']).default('desc'),status:z.enum(['all','recorded','cancelled','expired','submitted','investigating','review_closed','confirmed','bank_pending','bank_reconciled','bank_review','bank_unchecked','bank_stale']).default('all')}).strict();
 
 export async function dispatchRegister(db:PoolClient,s:string,tenant:string,connection:string,input:z.infer<typeof dispatchQuery>) {
   const result=await db.query(`WITH entries AS (
     SELECT q.dispatch_id AS id,q.queued_at AS "queuedAt",q.snapshot->>'invoice' AS invoice,q.snapshot->>'invoiceNumber' AS "invoiceNumber",
       q.snapshot->>'bankId' AS "bankId",q.snapshot->>'amount' AS amount,q.approver,q.released_by AS reviewer,
-      a.started_at AS "submittedAt",f.payment_id AS "paymentId",b.outcome AS "bankOutcome",b.checked_at AS "bankCheckedAt",
+      q.verification_id AS receipt,coalesce(r.revision,0) AS "reviewRevision",ack.payment_id AS "acknowledgedId",a.started_at AS "submittedAt",f.payment_id AS "paymentId",b.outcome AS "bankOutcome",b.checked_at AS "bankCheckedAt",
       (b.checked_at < statement_timestamp()-interval '25 hours') IS TRUE AS "bankStale",
       floor(extract(epoch FROM statement_timestamp()-f.verified_at)/86400)::int AS "daysSinceConfirmation",
       claim.claim_id IS NOT NULL AS assigned,owner.display_name AS "bankOwner",
       att.reported_reconciled_on AS "staffReportedOn",att.checked_at AS "staffCheckedAt",
-      CASE WHEN f.payment_id IS NOT NULL THEN 'confirmed' WHEN a.dispatch_id IS NOT NULL THEN 'submitted' WHEN c.dispatch_id IS NOT NULL THEN 'cancelled' WHEN q.expires_at<=statement_timestamp() THEN 'expired' ELSE 'recorded' END AS status
+      CASE WHEN f.payment_id IS NOT NULL THEN 'confirmed' WHEN r.action='close' THEN 'review_closed' WHEN r.action='investigate' THEN 'investigating' WHEN a.dispatch_id IS NOT NULL THEN 'submitted' WHEN c.dispatch_id IS NOT NULL THEN 'cancelled' WHEN q.expires_at<=statement_timestamp() THEN 'expired' ELSE 'recorded' END AS status
     FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
     LEFT JOIN ${s}.student_trust_payment_submissions a USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN ${s}.student_trust_submission_acknowledgements ack USING(customer_id,connection_id,dispatch_id)
+    LEFT JOIN LATERAL (SELECT revision,action FROM ${s}.student_trust_submission_reviews rv
+      WHERE (rv.customer_id,rv.connection_id,rv.dispatch_id)=(q.customer_id,q.connection_id,q.dispatch_id)
+      ORDER BY revision DESC LIMIT 1) r ON true
     LEFT JOIN ${s}.student_trust_submission_confirmations f USING(customer_id,connection_id,dispatch_id)
     LEFT JOIN ${s}.student_trust_payment_reconciliation_checks att ON
       (att.customer_id,att.connection_id,att.payment_id)=(f.customer_id,f.connection_id,f.payment_id)
@@ -84,7 +88,7 @@ export async function dispatchRegister(db:PoolClient,s:string,tenant:string,conn
   ), filtered AS (SELECT * FROM entries WHERE ($3='all' OR status=$3 OR (status='confirmed' AND $3=CASE
     WHEN "bankStale" THEN 'bank_stale' WHEN "bankOutcome" IS NULL THEN 'bank_unchecked' WHEN "bankOutcome"='pending' THEN 'bank_pending'
     WHEN "bankOutcome"='reconciled' THEN 'bank_reconciled' ELSE 'bank_review' END)) AND ($4='' OR strpos(lower("invoiceNumber"),lower($4))>0
-    OR strpos(lower("bankId"),lower($4))>0 OR id::text=lower($4) OR "paymentId"::text=lower($4))),
+    OR strpos(lower("bankId"),lower($4))>0 OR id::text=lower($4) OR "paymentId"::text=lower($4) OR "acknowledgedId"::text=lower($4))),
   page AS (SELECT * FROM filtered ORDER BY "queuedAt" ${input.direction},id LIMIT $5 OFFSET $6)
   SELECT count(*)::int AS count,coalesce((SELECT jsonb_agg(to_jsonb(p)||jsonb_build_object('workerCheck',w.check,'bankHistory',h.history) ORDER BY "queuedAt" ${input.direction},id)
     FROM page p LEFT JOIN LATERAL (

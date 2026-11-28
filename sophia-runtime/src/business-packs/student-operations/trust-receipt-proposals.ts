@@ -24,7 +24,7 @@ export interface ProposalEvent {
 
 export interface DispatchReceipt {
   id:string;revision:number;actor:string;reason:string;queuedAt:Date;expiresAt:Date;expired:boolean;
-  submitted:boolean;paymentId:string|null;cancelledAt:Date|null;cancelledBy:string|null;cancelReason:string|null;
+  reviewAction:'investigate'|'close'|null;submitted:boolean;paymentId:string|null;cancelledAt:Date|null;cancelledBy:string|null;cancelReason:string|null;
 }
 export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewer:string) {
   const {rows:[row]}=await db.query<Snapshot & {blocked:string|null}>(`
@@ -79,7 +79,7 @@ export async function receiptProposal(db:PoolClient,s:string,scope:Scope,reviewe
     head.actor===reviewer?'An independent authorised reviewer must check this approval.':null);
   const {rows:[dispatch]}=await db.query<DispatchReceipt>(`SELECT q.dispatch_id AS id,q.approval_revision AS revision,q.released_by AS actor,
     q.reason,q.queued_at AS "queuedAt",q.expires_at AS "expiresAt",clock_timestamp()>=q.expires_at AS expired,
-    a.dispatch_id IS NOT NULL AS submitted,f.payment_id AS "paymentId",c.cancelled_at AS "cancelledAt",c.actor AS "cancelledBy",c.reason AS "cancelReason"
+    (SELECT r.action FROM ${s}.student_trust_submission_reviews r WHERE (r.customer_id,r.connection_id,r.dispatch_id)=(q.customer_id,q.connection_id,q.dispatch_id) ORDER BY revision DESC LIMIT 1) AS "reviewAction",a.dispatch_id IS NOT NULL AS submitted,f.payment_id AS "paymentId",c.cancelled_at AS "cancelledAt",c.actor AS "cancelledBy",c.reason AS "cancelReason"
     FROM ${s}.student_trust_payment_dispatches q LEFT JOIN ${s}.student_trust_dispatch_cancellations c USING(customer_id,connection_id,dispatch_id)
     LEFT JOIN ${s}.student_trust_payment_submissions a USING(customer_id,connection_id,dispatch_id)
     LEFT JOIN ${s}.student_trust_submission_confirmations f USING(customer_id,connection_id,dispatch_id)

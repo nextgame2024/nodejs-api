@@ -1,3 +1,4 @@
+import { reviewSubmission,submissionHistory,submissionReview,reviewPage } from './trust-submission-review.js';
 import { dispatchQuery, dispatchRegister } from './trust-payment-dispatch.js';
 import { receiptAccount, changeReceiptAccount, mappingCommand } from './trust-receipt-account.js';
 import { listResiduals, recordResidual, residualCommand, residualDetail, residualQuery } from './trust-residuals.js';
@@ -162,6 +163,28 @@ export class TrustStagedDepositsController {
         }
       }
       throw new ConflictException('This deposit is already verified or its bank or statement identity conflicts with existing evidence.');
+    });
+  }
+
+  @Post('dispatches/:dispatchId/reviews')
+  async reviewDispatch(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('dispatchId',ParseUUIDPipe) dispatch:string,@Body() body:unknown) {
+    const p=manager(request),parsed=submissionReview.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Enter the investigation evidence and outcome.');
+    return this.database.tenantTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return reviewSubmission(db,runtimeConfig().schema,[p.tenantId,connection,dispatch],p.identityUserId,parsed.data);
+    });
+  }
+  @Get('dispatches/:dispatchId/reviews')
+  @Header('Cache-Control','private, no-store')
+  async dispatchReviews(@Req() request:Request,@Param('connectionId',ParseUUIDPipe) connection:string,
+    @Param('dispatchId',ParseUUIDPipe) dispatch:string,@Query() query:unknown) {
+    const p=manager(request),parsed=reviewPage.safeParse(query);
+    if (!parsed.success) throw new BadRequestException('Invalid history cursor.');
+    return this.database.tenantReadTransaction(p.tenantId,async db=>{
+      await this.requireTrust(db,p.tenantId,connection);
+      return submissionHistory(db,runtimeConfig().schema,[p.tenantId,connection,dispatch],parsed.data.before);
     });
   }
 

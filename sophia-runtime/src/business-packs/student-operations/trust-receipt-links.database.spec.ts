@@ -59,7 +59,7 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_case_invoice_draft_batches(customer_id uuid,batch_id uuid,snapshot jsonb);
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
     await admin.query(`GRANT UPDATE ON ${schema}.student_xero_sales_catalogues TO sophia_runtime_app`);
-    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions','170_trust_payment_bank_checks','171_trust_staged_screenshots','172_trust_payer_relationships']) {
+    for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions','170_trust_payment_bank_checks','171_trust_staged_screenshots','172_trust_payer_relationships','173_trust_submission_reviews']) {
       if (file.startsWith('160_')) await admin.query(`GRANT UPDATE,DELETE,TRUNCATE ON ${schema}.student_trust_staged_deposits TO sophia_runtime_app`);
       if (file.startsWith('147_')) await admin.query(`GRANT UPDATE,DELETE ON ${schema}.student_trust_payment_reconciliation_checks TO sophia_runtime_app`);
       const sql=await readFile(new URL('../../database/migrations/'+file+'.sql',import.meta.url),'utf8');
@@ -134,6 +134,13 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       const contact=randomUUID();
       await admin.query(`INSERT INTO ${schema}.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,legal_name)
         VALUES($1,$2,$3,'Test contact')`,[tenant,conn,contact]);
+      const reviewsUrl=base+'/dispatches/'+randomUUID()+'/reviews';
+      expect((await fetch(reviewsUrl,{headers:{Authorization:'Bearer advisor'}})).status).toBe(403);
+      const reviewPage=await fetch(reviewsUrl,{headers:{Authorization:'Bearer manager'}});
+      expect(reviewPage.headers.get('cache-control')).toContain('no-store');
+      expect(await reviewPage.json()).toEqual({entries:[],next:null});
+      expect((await fetch(reviewsUrl,{method:'POST',headers:{Authorization:'Bearer manager','Content-Type':'application/json'},
+        body:JSON.stringify({action:'close',evidence:'Checked',requestId:randomUUID(),revision:0})})).status).toBe(404);
       const payerUrl=base+'/contacts/'+contact+'/payers';
       const review=(role:string)=>fetch(payerUrl,{method:'POST',headers:{Authorization:'Bearer '+role,'Content-Type':'application/json'},
         body:JSON.stringify({name:'Test Parent',relationship:'sponsor',reason:'Bank evidence',active:true,revision:0})});
@@ -297,11 +304,38 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
         await expect(service.cancelDispatch(principal,conn,inv,receipt,{dispatchId:dispatch,reason:'Late cancellation'})).rejects.toThrow();
         await expect(save({...prepare,action:'withdraw',revision:2,requestId:randomUUID()})).rejects.toThrow();
         expect(await staging.dispatches(principal,conn,{status:'submitted'})).toMatchObject({count:1});
+        const api=new TrustReceiptsController(db,new StudentOperationsWorkspaceService(db),connector as never);
+        const check=()=>api.recoverSubmission(principal,conn,inv,receipt,dispatch);
+        await expect(api.recoverSubmission(principal,conn,inv,randomUUID(),dispatch)).rejects.toThrow();
+        expect(await check()).toEqual({status:'awaiting_verification'});
+        const review={action:'investigate',evidence:'Checked bank statement and Xero invoice',revision:0,requestId:randomUUID()};
+        const record=(body:unknown)=>staging.reviewDispatch(principal,conn,dispatch,body);
+        await expect(staging.reviewDispatch({studentOperationsPrincipal:{role:'advisor'}} as never,conn,dispatch,review)).rejects.toThrow();
+        await expect(staging.reviewDispatch(principal,randomUUID(),dispatch,review)).rejects.toThrow();
+        await expect(record({...review,evidence:' '})).rejects.toThrow();
+        expect(await Promise.all([record(review),record(review)])).toEqual([{revision:1},{revision:1}]);
+        await expect(record({...review,evidence:'Changed evidence'})).rejects.toThrow();
+        expect(await staging.dispatches(principal,conn,{status:'investigating'})).toMatchObject({count:1,rows:[{reviewRevision:1,
+          acknowledgedId:mode==='acknowledged'?paymentId:null}]});
+        const closed={...review,revision:1,action:'close',evidence:'Finance completed the external investigation',requestId:randomUUID()};
+        await record(closed);
+        expect(await staging.dispatches(principal,conn,{status:'review_closed'})).toMatchObject({count:1});
+        expect((await read()).dispatch).toMatchObject({reviewAction:'close',submitted:true,paymentId:null});
+        expect(await submit()).toEqual({status:'awaiting_verification'});expect(writes).toBe(1);
+        const reopen={...review,revision:2,evidence:'New bank evidence',requestId:randomUUID()};
+        await record(reopen);await record({...closed,revision:3,requestId:randomUUID()});
+        const history=await staging.dispatchReviews(principal,conn,dispatch,{before:3});
+        expect(history.entries).toMatchObject([{revision:2,actor:'fixture',action:'close'},{revision:1,action:'investigate'}]);
+        await expect(record({...closed,revision:1,requestId:randomUUID()})).rejects.toThrow();
         delete process.env.XERO_TRUST_PAYMENT_SUBMISSION_ENABLED;visible=true;
         expect(await Promise.all([posting.run(tenant,conn,dispatch,'recover'),submit()])).toEqual([
           {status:'confirmed',paymentId},{status:'confirmed',paymentId}]);
         expect(await submit()).toEqual({status:'confirmed',paymentId});expect(writes).toBe(1);
         expect(await staging.dispatches(principal,conn,{status:'confirmed'})).toMatchObject({rows:[{paymentId}]});
+        expect(await check()).toEqual({status:'confirmed',paymentId});
+        expect(await staging.dispatches(principal,conn,{status:'review_closed'})).toMatchObject({count:0});
+        await expect(record({...reopen,revision:4,requestId:randomUUID()})).rejects.toThrow('confirmed');
+        expect(await record(closed)).toEqual({revision:2});
         const poller=new TrustBankCheckWorker(db,connector);
         expect(await poller.processOne(randomUUID(),conn)).toBe(false);
         expect(await poller.processOne(tenant,randomUUID())).toBe(false);
