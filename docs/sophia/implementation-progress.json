@@ -5168,5 +5168,26 @@
       "mvpWorkPackages": 4,
       "laterWorkPackages": 10
     }
+  },
+  "crossOrganisationCaseReview": {
+    "delivered": [
+      "Confirmed case origin lookup for current invoices and historical receipt exceptions",
+      "Read-only cross-organisation case and invoice drill-down inside the payment queue",
+      "Case invoice import date, historical coverage and unknown balances",
+      "Exact connection and invoice identity for duplicate document numbers",
+      "Tenant isolation and restricted financial fields retained"
+    ],
+    "verification": [
+      "npm run build (runtime)",
+      "ngc -p tsconfig.app.json --noEmit",
+      "Student Operations and Xero Jest suites with disposable PostgreSQL and HTTP fixtures",
+      "EXPLAIN ANALYZE for the case list and count on a synthetic 12,000-link backlog",
+      "ChromeHeadless case, reconciliation and register suites, including 375px and 1280px in both themes"
+    ],
+    "migration": "No schema change. Configured migration ledger checked with zero pending.",
+    "developmentEstimate": {
+      "mvpWorkPackages": 3,
+      "laterWorkPackages": 10
+    }
   }
 }

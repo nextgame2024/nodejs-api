@@ -1,3 +1,4 @@
+import {StudentOperationsCasesService} from './student-operations-cases.service.js';
 import {Module} from '@nestjs/common';
 import {NestFactory} from '@nestjs/core';
 import {BusinessManagerIdentityBridge} from '../../admin/identity/business-manager-identity.bridge.js';
@@ -45,6 +46,17 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
       CREATE TABLE ${schema}.student_operations_students(customer_id uuid,student_id uuid,legal_name text,student_reference text,PRIMARY KEY(student_id,customer_id));
       ALTER TABLE ${schema}.student_operations_xero_invoices ADD invoice_number text, ADD invoice_reference text, ADD due_date date, ADD amount_paid numeric,
         ADD provider_updated_at timestamptz, ADD line_items jsonb, ADD sent_to_contact boolean, ADD concept text, ADD advisor_name text, ADD college_name text, ADD payment_track text;
+      CREATE TABLE ${schema}.student_operations_cases(customer_id uuid,case_id uuid,case_reference text,student_id uuid,deleting_at timestamptz);
+      CREATE TABLE ${schema}.student_operations_student_user_links(customer_id uuid,student_id uuid,user_id uuid,student_reference text);
+      CREATE TABLE ${schema}.student_operations_case_advisors(customer_id uuid,case_id uuid,is_primary boolean,advisor_user_id uuid);
+      CREATE TABLE ${schema}.student_operations_case_invoice_links(customer_id uuid,case_id uuid,xero_connection_id uuid,xero_invoice_id uuid);
+      CREATE INDEX student_operations_case_invoice_links_case ON ${schema}.student_operations_case_invoice_links(customer_id,case_id);
+      CREATE TABLE ${schema}.student_case_xero_invoice_exports(customer_id uuid,case_id uuid,xero_connection_id uuid,xero_invoice_id uuid,status text,
+        sequence integer,batch_id uuid,xero_invoice_number text,provider_status text);
+      CREATE TABLE ${schema}.student_commission_exports(LIKE ${schema}.student_case_xero_invoice_exports INCLUDING ALL,trust_connection_id uuid,trust_invoice_id uuid);
+      CREATE TABLE ${schema}.student_case_invoice_removals(customer_id uuid,xero_connection_id uuid,xero_invoice_id uuid,completed boolean);
+      CREATE TABLE ${schema}.student_commission_drafts(customer_id uuid,batch_id uuid,sequence int,snapshot jsonb);
+      CREATE TABLE ${schema}.student_case_invoice_draft_batches(customer_id uuid,batch_id uuid,snapshot jsonb);
       GRANT SELECT ON ALL TABLES IN SCHEMA ${schema} TO sophia_runtime_app;`);
     await admin.query(`GRANT UPDATE ON ${schema}.student_xero_sales_catalogues TO sophia_runtime_app`);
     for (const file of ['143_trust_receipt_verifications','144_trust_receipt_payment_links','145_trust_receipt_overpayment_links','146_trust_payment_reconciliation_checks','147_trust_reconciliation_check_privileges','148_trust_receipt_payment_purpose','149_trust_reconciliation_claims','150_trust_reconciliation_claim_history','151_trust_receipt_payment_link_note','152_trust_receipt_overpayment_link_note','153_trust_reported_reconciliation_date','154_trust_receipt_bank_transaction_id','155_xero_payment_observations','156_xero_payment_observation_history_index','157_trust_imported_payment_verification','158_trust_statement_record_lineage','159_trust_staged_deposits','160_trust_staged_deposit_privileges','161_trust_invoice_match_decisions','162_trust_split_reservations','163_trust_split_line_allocations','164_trust_residual_reviews','165_trust_receipt_proposals','166_trust_receipt_account_mappings','167_trust_payment_dispatch_queue','168_trust_dispatch_worker_checks','169_trust_payment_submissions','170_trust_payment_bank_checks','171_trust_staged_screenshots','172_trust_payer_relationships']) {
@@ -492,6 +504,58 @@ const socket = process.env.STUDENT_RECEIPT_TEST_SOCKET;
     await expect(preview(input)).rejects.toThrow('Refresh the invoice lines');
     await admin.query(`UPDATE ${schema}.student_operations_xero_invoices SET amount_due=100 WHERE xero_invoice_id=$1`,[inv]);
     expect((await lookup()).lines).toEqual([]);
+  });
+
+  it('reads only confirmed case origins across organisations and preserves incomplete financial history',async()=>{
+    const cases=new StudentOperationsCasesService(db),register=new StudentOperationsXeroSyncService(db,{} as never);
+    const caseId=randomUUID(),student=randomUUID(),advisor=randomUUID(),trust=randomUUID(),pty=randomUUID(),invoiceId=randomUUID(),run=randomUUID(),contact=randomUUID();
+    const manager={tenantId:tenant,identityUserId:'manager',role:'chief_executive'} as const;
+    await admin.query(`INSERT INTO ${schema}.student_operations_cases VALUES($1,$2,'CASE-1',$3,NULL)`,[tenant,caseId,student]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_student_user_links VALUES($1,$2,$3,'S1')`,[tenant,student,randomUUID()]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_case_advisors VALUES($1,$2,true,$3)`,[tenant,caseId,advisor]);
+    await admin.query(`INSERT INTO ${schema}.xero_connections VALUES($1,$2,'active'),($1,$3,'active')`,[tenant,trust,pty]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_configurations VALUES($1,$2,true,'trust'),($1,$3,true,'operating')`,[tenant,trust,pty]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now(),'succeeded','initial')`,[tenant,trust,run]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_contacts(customer_id,xero_connection_id,xero_contact_id,legal_name) VALUES($1,$2,$3,'Fixture')`,[tenant,trust,contact]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_invoices(customer_id,xero_connection_id,xero_invoice_id,xero_contact_id,invoice_number,invoice_status,
+      invoice_type,currency_code,amount_due,amount_paid,last_seen_sync_run_id) VALUES($1,$2,$3,$4,'INV-1','AUTHORISED','ACCREC','AUD',25,0,$5)`,[tenant,trust,invoiceId,contact,run]);
+    await admin.query(`INSERT INTO ${schema}.student_operations_case_invoice_links VALUES($1,$2,$3,$4)`,[tenant,caseId,trust,invoiceId]);
+    await admin.query(`INSERT INTO ${schema}.student_commission_exports(customer_id,case_id,xero_connection_id,xero_invoice_id,status,xero_invoice_number)
+      VALUES($1,$2,$3,$4,'created','INV-1'),($1,$2,$3,$5,'review_required','INV-1')`,[tenant,caseId,pty,invoiceId,randomUUID()]);
+    expect(await register.invoice(tenant,trust,invoiceId)).toMatchObject({cases:[{id:caseId,reference:'CASE-1'}]});
+    const list=(p=manager,q={})=>cases.invoices(p as never,caseId,q);
+    const result=await list();
+    expect(result.total).toBe(2);
+    expect(result.invoices).toEqual(expect.arrayContaining([expect.objectContaining({organisation:'TRUST',coverage:'imported',amountPaid:'0',amountDue:'25'}),
+      expect.objectContaining({organisation:'PTY',coverage:'awaiting_import',amountPaid:null,amountDue:null})]));
+    // Exercise the actual list and count queries with unrelated records in the tenant.
+    const backlogConnection=randomUUID();
+    await admin.query(`INSERT INTO ${schema}.student_operations_case_invoice_links
+      SELECT $1,gen_random_uuid(),$2,gen_random_uuid() FROM generate_series(1,12000)`,[tenant,backlogConnection]);
+    await admin.query(`ANALYZE ${schema}.student_operations_case_invoice_links`);
+    const plans:string[]=[];
+    const measured=new StudentOperationsCasesService({tenantReadTransaction:(t:string,work:Function)=>
+      db.tenantReadTransaction(t,client=>work({query:async(sql:string,params:unknown[])=>{
+        if(sql.includes('WITH invoice_ids')) {
+          const plan=await client.query('EXPLAIN (ANALYZE,FORMAT JSON) '+sql,params);
+          plans.push(JSON.stringify(plan.rows[0]['QUERY PLAN']));
+        }
+        return client.query(sql,params);
+      }}))} as never);
+    expect((await measured.invoices(manager as never,caseId,{})).total).toBe(2);
+    expect(plans).toHaveLength(2);
+    for(const plan of plans) expect(plan).toContain('student_operations_case_invoice_links_case');
+    await admin.query(`DELETE FROM ${schema}.student_operations_case_invoice_links WHERE xero_connection_id=$1`,[backlogConnection]);
+    await admin.query(`ANALYZE ${schema}.student_operations_case_invoice_links`);
+    expect((await list(manager,{organisation:'pty'})).total).toBe(1);
+    expect((await list(manager,{page:1,limit:1})).invoices[0].connectionId).not.toBe((await list(manager,{page:2,limit:1})).invoices[0].connectionId);
+    const restricted=await cases.invoices({tenantId:tenant,role:'advisor',identityUserId:advisor} as never,caseId,{});
+    expect(restricted.invoices.every(row=>!('amountDue' in row)&&!('amountPaid' in row))).toBe(true);
+    await expect(list({...manager,tenantId:randomUUID()})).rejects.toThrow('Case not found');
+    await admin.query(`INSERT INTO ${schema}.student_operations_xero_sync_runs VALUES($1,$2,$3,now()+interval '1 day','succeeded','reconciliation')`,[tenant,trust,randomUUID()]);
+    expect((await list(manager,{organisation:'trust'})).invoices[0].coverage).toBe('historical');
+    await admin.query(`INSERT INTO ${schema}.student_case_invoice_removals VALUES($1,$2,$3,true)`,[tenant,trust,invoiceId]);
+    expect((await list()).total).toBe(1);
   });
 
   it('ranks reviewed payers across contacts, records conflicts and invalidates withdrawn evidence',async()=>{

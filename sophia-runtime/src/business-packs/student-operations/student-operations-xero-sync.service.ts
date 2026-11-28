@@ -751,7 +751,10 @@ export class StudentOperationsXeroSyncService {
     if (!z.uuid().safeParse(invoiceId).success) throw new NotFoundException("Xero invoice not found.");
     if (receiptHistory) {
       const history = await this.invoices(tenantId,connectionId,{queue:'receipt_exceptions',limit:1},undefined,undefined,invoiceId);
-      if (history.invoices[0]) return {...history.invoices[0],lineItems:[],settlement:null,relatedInvoices:[]};
+      if (history.invoices[0]) {
+        const cases=await this.database.tenantReadTransaction(tenantId,db=>this.invoiceCases(db,tenantId,connectionId,invoiceId));
+        return {...history.invoices[0],lineItems:[],settlement:null,relatedInvoices:[],cases};
+      }
     }
     const schema = runtimeConfig().schema;
     return this.database.tenantReadTransaction(tenantId, async (db) => {
@@ -787,7 +790,7 @@ export class StudentOperationsXeroSyncService {
       );
       const row = result.rows[0];
       if (!row) throw new NotFoundException("Xero invoice not found.");
-      return { ...(await this.financialProjection(db,tenantId,connectionId,[row]))[0], lineItems: Array.isArray(row.line_items) ? row.line_items : [],settlement:row.settlement??null,relatedInvoices:await this.relatedInvoices(db,tenantId,connectionId,invoiceId) };
+      return { ...(await this.financialProjection(db,tenantId,connectionId,[row]))[0], lineItems: Array.isArray(row.line_items) ? row.line_items : [],settlement:row.settlement??null,cases:await this.invoiceCases(db,tenantId,connectionId,invoiceId),relatedInvoices:await this.relatedInvoices(db,tenantId,connectionId,invoiceId) };
     });
   }
 
@@ -810,6 +813,18 @@ export class StudentOperationsXeroSyncService {
       collegeName:mapping?.college_name??null,collegeId:mapping?.college_id??null,matchingStatus:mapping?.classification??'unresolved'};});
   }
 
+  private async invoiceCases(db:PoolClient,tenant:string,connection:string,invoice:string) {
+    const s=runtimeConfig().schema;
+    return (await db.query(`WITH origins AS (
+      SELECT case_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3
+      UNION SELECT case_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND status='created'
+      UNION SELECT case_id FROM ${s}.student_commission_exports WHERE customer_id=$1 AND xero_connection_id=$2 AND xero_invoice_id=$3 AND status='created'
+    ) SELECT c.case_id AS id,c.case_reference AS reference FROM origins JOIN ${s}.student_operations_cases c USING(case_id)
+      WHERE c.customer_id=$1 AND c.deleting_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM ${s}.student_case_invoice_removals r WHERE r.customer_id=$1 AND r.xero_connection_id=$2 AND r.xero_invoice_id=$3 AND r.completed
+      ) ORDER BY c.case_reference,c.case_id`,[tenant,connection,invoice])).rows;
+  }
+
   private async relatedInvoices(db:PoolClient,tenant:string,connectionId:string,invoiceId:string){
     const s=runtimeConfig().schema;
     if(!(await db.query('SELECT to_regclass($1) IS NOT NULL AS ready',[`${s}.student_commission_exports`])).rows[0]?.ready)return [];
@@ -819,7 +834,9 @@ export class StudentOperationsXeroSyncService {
       UNION ALL SELECT e.case_id,e.batch_id,e.sequence,e.xero_connection_id,e.xero_invoice_id,'operating',e.trust_connection_id,e.trust_invoice_id
       FROM ${s}.student_commission_exports e WHERE e.customer_id=$1 AND e.status='created')
       SELECT r.case_id AS "caseId",r.sequence,r.role,r.connection_id AS "connectionId",r.invoice_id AS "invoiceId",i.invoice_number AS "invoiceNumber",i.invoice_status AS status,
-        i.currency_code AS "currencyCode",i.invoice_date AS date,i.due_date AS "dueDate",i.amount_paid AS "amountPaid",i.amount_due AS "amountDue",i.xero_invoice_id IS NOT NULL AS indexed
+        i.currency_code AS "currencyCode",i.invoice_date AS date,i.due_date AS "dueDate",CASE WHEN i.last_seen_sync_run_id IS NOT NULL THEN i.amount_paid END AS "amountPaid",
+        CASE WHEN i.last_seen_sync_run_id IS NOT NULL THEN i.amount_due END AS "amountDue",
+        ${currentTrustInvoice(s,'i')} AS indexed
       FROM related r LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=r.connection_id AND i.xero_invoice_id=r.invoice_id
       WHERE r.source_connection=$2 AND r.source_invoice=$3 ORDER BY r.sequence,r.connection_id,r.invoice_id`,[tenant,connectionId,invoiceId])).rows;
   }

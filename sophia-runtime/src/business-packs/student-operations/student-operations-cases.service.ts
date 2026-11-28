@@ -1,3 +1,4 @@
+import {currentTrustInvoice} from './trust-receipt-payment-candidates.js';
 import {assertCollegeContactAvailable} from './student-college-contact-lifecycle.js';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
@@ -13,6 +14,13 @@ import { documentWorkflowEnabled } from './student-document-analysis-state.js';
 import { invoiceRemovalAction } from './student-invoice-removal-policy.js';
 import { invoiceCanEdit } from './student-invoice-edit-policy.js';
 
+// Both imported organisations use the same sync-run and full-refresh semantics.
+function invoiceCoverage(s:string) {
+  return `CASE WHEN i.last_seen_sync_run_id IS NULL THEN 'awaiting_import'
+    WHEN ${currentTrustInvoice(s,'i')} THEN 'imported' ELSE 'historical' END`;
+}
+const invoiceOrganisation=`CASE WHEN pe.xero_invoice_id IS NOT NULL THEN 'PTY' WHEN e.xero_invoice_id IS NOT NULL THEN 'TRUST'
+  WHEN xc.organisation_role='operating' THEN 'PTY' WHEN xc.organisation_role='trust' THEN 'TRUST' END`;
 function caseInvoiceSource(s:string){return {
   ids:`SELECT linked.* FROM (SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_operations_case_invoice_links WHERE customer_id=$1 AND case_id=$2
     UNION SELECT xero_connection_id,xero_invoice_id FROM ${s}.student_case_xero_invoice_exports WHERE customer_id=$1 AND case_id=$2 AND status='created'
@@ -20,6 +28,7 @@ function caseInvoiceSource(s:string){return {
     WHERE NOT EXISTS(SELECT 1 FROM ${s}.student_case_invoice_removals r WHERE r.customer_id=$1 AND r.xero_connection_id=linked.xero_connection_id AND r.xero_invoice_id=linked.xero_invoice_id AND r.completed)`,
   joins:`FROM invoice_ids ids
     LEFT JOIN ${s}.student_operations_xero_invoices i ON i.customer_id=$1 AND i.xero_connection_id=ids.xero_connection_id AND i.xero_invoice_id=ids.xero_invoice_id
+    LEFT JOIN ${s}.student_operations_xero_sync_runs seen ON seen.customer_id=$1 AND seen.xero_connection_id=ids.xero_connection_id AND seen.sync_run_id=i.last_seen_sync_run_id
     LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
     LEFT JOIN ${s}.student_commission_exports pe ON pe.customer_id=$1 AND pe.case_id=$2 AND pe.xero_connection_id=ids.xero_connection_id AND pe.xero_invoice_id=ids.xero_invoice_id AND pe.status='created'
     LEFT JOIN ${s}.student_commission_drafts pd ON pd.customer_id=pe.customer_id AND pd.batch_id=pe.batch_id AND pd.sequence=pe.sequence
@@ -310,22 +319,23 @@ export class StudentOperationsCasesService {
       // Use the same deduplicated set for rows and pagination/counts; never count
       // drafts or uncertain provider outcomes as linked invoices.
       const {ids:invoiceIds,joins}=caseInvoiceSource(s);
-      const filter=q.organisation==='both'?'':`WHERE ${q.organisation==='pty'?"xc.organisation_role='operating' OR pe.xero_invoice_id IS NOT NULL":"xc.organisation_role IS DISTINCT FROM 'operating' AND pe.xero_invoice_id IS NULL"}`;
+      const filter=q.organisation==='both'?'':`WHERE (${invoiceOrganisation})='${q.organisation==='pty'?'PTY':'TRUST'}'`;
       const rows=await db.query(`WITH invoice_ids AS (${invoiceIds})
         SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",coalesce(i.invoice_number,e.xero_invoice_number,pe.xero_invoice_number) AS "invoiceNumber",
-          coalesce(i.invoice_status,e.provider_status,pe.provider_status,'DRAFT') AS status,coalesce(i.invoice_type,'ACCREC') AS type,
+          coalesce(i.invoice_status,e.provider_status,pe.provider_status,'UNKNOWN') AS status,coalesce(i.invoice_type,'ACCREC') AS type,
           coalesce(i.invoice_date,(d.invoice->>'issueDate')::date,(pd.snapshot->'value'->>'date')::date) AS date,coalesce(i.due_date,(d.invoice->>'dueDate')::date,(pd.snapshot->'value'->>'dueDate')::date) AS "dueDate",
-          CASE WHEN pe.xero_invoice_id IS NOT NULL OR xc.organisation_role='operating' THEN 'PTY' ELSE 'TRUST' END AS "organisation",
+          ${invoiceOrganisation} AS organisation,${invoiceCoverage(s)} AS coverage,seen.created_at AS "importedAt",
           coalesce(e.batch_id,pe.batch_id) AS "draftBatchId",coalesce(e.sequence,pe.sequence) AS "draftSequence"
           ${financial?`,CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.invoice_reference ELSE coalesce(pd.snapshot->'value'->>'reference',b.snapshot->>'collegeName') END AS reference,
             CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.payment_track WHEN pe.xero_invoice_id IS NOT NULL THEN NULL ELSE 'PENDING' END AS "paymentTrack",
             coalesce(i.currency_code,b.snapshot->>'currency',pd.snapshot->'value'->>'currencyCode') AS currency,coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100,(pd.snapshot->>'totalMinor')::numeric/100) AS total,
-            coalesce(i.amount_paid,0) AS "amountPaid",coalesce(i.amount_due,(d.invoice->>'totalMinor')::numeric/100,(pd.snapshot->>'totalMinor')::numeric/100) AS "amountDue"`:''}
+            CASE WHEN seen.sync_run_id IS NOT NULL THEN i.amount_paid END AS "amountPaid",CASE WHEN seen.sync_run_id IS NOT NULL THEN i.amount_due END AS "amountDue"`:''}
         ${joins}
         ${filter}
         ORDER BY date DESC NULLS LAST,ids.xero_invoice_id,ids.xero_connection_id LIMIT $3 OFFSET $4`,[p.tenantId,id,q.limit,(q.page-1)*q.limit]);
       // Counts need only identities and organisation metadata, not JSON invoice lines.
       const count=await db.query(`WITH invoice_ids AS (${invoiceIds}) SELECT count(*)::int total FROM invoice_ids ids
+        LEFT JOIN ${s}.student_case_xero_invoice_exports e ON e.customer_id=$1 AND e.case_id=$2 AND e.xero_connection_id=ids.xero_connection_id AND e.xero_invoice_id=ids.xero_invoice_id AND e.status='created'
         LEFT JOIN ${s}.student_commission_exports pe ON pe.customer_id=$1 AND pe.case_id=$2 AND pe.xero_connection_id=ids.xero_connection_id AND pe.xero_invoice_id=ids.xero_invoice_id AND pe.status='created'
         LEFT JOIN ${s}.student_operations_xero_sync_configurations xc ON xc.customer_id=$1 AND xc.xero_connection_id=ids.xero_connection_id
         ${filter}`,[p.tenantId,id]);
@@ -341,15 +351,15 @@ export class StudentOperationsCasesService {
     return this.database.tenantReadTransaction(p.tenantId,async db=>{
       const c=await this.authorizedCase(db,p,id),s=caseSchema(),source=caseInvoiceSource(s);
       const rows=(await db.query(`WITH invoice_ids AS (${source.ids})
-        SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",i.xero_invoice_id IS NOT NULL AS indexed,
-          coalesce(i.invoice_number,e.xero_invoice_number,pe.xero_invoice_number) AS "invoiceNumber",coalesce(i.invoice_status,e.provider_status,pe.provider_status,'DRAFT') AS status,
+        SELECT ids.xero_connection_id AS "connectionId",ids.xero_invoice_id AS "invoiceId",i.xero_invoice_id IS NOT NULL AS indexed,${invoiceCoverage(s)} AS coverage,seen.created_at AS "importedAt",
+          coalesce(i.invoice_number,e.xero_invoice_number,pe.xero_invoice_number) AS "invoiceNumber",coalesce(i.invoice_status,e.provider_status,pe.provider_status,'UNKNOWN') AS status,
           coalesce(i.invoice_type,'ACCREC') AS type,coalesce(i.invoice_date,(d.invoice->>'issueDate')::date,(pd.snapshot->'value'->>'date')::date) AS date,
           coalesce(i.due_date,(d.invoice->>'dueDate')::date,(pd.snapshot->'value'->>'dueDate')::date) AS "dueDate",coalesce(i.currency_code,b.snapshot->>'currency',pd.snapshot->'value'->>'currencyCode') AS currency,
           CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.invoice_reference ELSE coalesce(pd.snapshot->'value'->>'reference',b.snapshot->>'collegeName') END AS reference,
           CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.advisor_name ELSE b.snapshot->>'advisorLabel' END AS "advisorName",
           CASE WHEN i.xero_invoice_id IS NOT NULL THEN i.payment_track WHEN pe.xero_invoice_id IS NOT NULL THEN NULL ELSE 'PENDING' END AS "paymentTrack",
-          coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100,(pd.snapshot->>'totalMinor')::numeric/100) AS total,coalesce(i.amount_paid,0) AS "amountPaid",
-          coalesce(i.amount_due,(d.invoice->>'totalMinor')::numeric/100,(pd.snapshot->>'totalMinor')::numeric/100) AS "amountDue",i.line_items AS "lineItems",
+          coalesce(i.total,(d.invoice->>'totalMinor')::numeric/100,(pd.snapshot->>'totalMinor')::numeric/100) AS total,CASE WHEN seen.sync_run_id IS NOT NULL THEN i.amount_paid END AS "amountPaid",
+          CASE WHEN seen.sync_run_id IS NOT NULL THEN i.amount_due END AS "amountDue",i.line_items AS "lineItems",
           i.provider_updated_at AS "updatedAt",i.last_seen_sync_run_id IS NOT NULL AS synchronized,d.invoice AS draft,b.snapshot AS snapshot,pd.snapshot AS "commissionSnapshot",profile.legal_name AS "studentName"
         ${source.joins}
         JOIN ${s}.student_operations_students profile ON profile.customer_id=$1 AND profile.student_id=$5

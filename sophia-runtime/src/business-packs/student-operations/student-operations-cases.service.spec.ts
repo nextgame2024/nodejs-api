@@ -10,7 +10,7 @@ describe('Case view data', () => {
     const service=new StudentOperationsCasesService({tenantReadTransaction:async(_tenant:string,work:any)=>work({query})} as never);
     const result=await service.invoices({tenantId:'11111111-1111-4111-8111-111111111111',role:'chief_executive'} as never,'22222222-2222-4222-8222-222222222222',{organisation:'pty'});
     expect(result.total).toBe(1);expect(result.invoices[0]).toMatchObject({organisation:'PTY',canEdit:true,removalAction:'delete'});
-    for(const sql of calls.slice(1)){expect(sql).toContain('student_commission_exports');expect(sql).toContain("xc.organisation_role='operating' OR pe.xero_invoice_id IS NOT NULL");expect(sql).toContain("AND status='created'");}
+    for(const sql of calls.slice(1)){expect(sql).toContain('student_commission_exports');expect(sql).toContain("WHEN xc.organisation_role='operating' THEN 'PTY'");expect(sql).toContain("AND status='created'");}
     await expect(service.invoices({} as never,'case',{organisation:'invalid'})).rejects.toThrow('Invalid case request');
   });
   it('opens a confirmed PTY receipt before indexing using its amounts and tracking',async()=>{
